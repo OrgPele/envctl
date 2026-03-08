@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -31,6 +32,8 @@ class PortPlanner:
         time_provider: Callable[[], float] | None = None,
         event_handler: Callable[[str, dict[str, object]], None] | None = None,
         availability_mode: str = "auto",
+        preferred_port_strategy: str = "project_slot",
+        scope_key: str | None = None,
     ) -> None:
         self.backend_base = backend_base
         self.frontend_base = frontend_base
@@ -48,14 +51,19 @@ class PortPlanner:
         self.time_provider = time_provider or time.time
         self.event_handler = event_handler
         self.availability_mode = availability_mode.strip().lower() or "auto"
+        strategy = preferred_port_strategy.strip().lower()
+        if strategy not in {"project_slot", "legacy_spacing"}:
+            strategy = "project_slot"
+        self.preferred_port_strategy = strategy
+        self.scope_key = str(scope_key or "global").strip() or "global"
         self.max_port: Final[int] = 65000
 
     def plan_project(self, project: str, index: int = 0, requested: dict[str, int] | None = None, sources: dict[str, str] | None = None, retries: dict[str, int] | None = None) -> dict[str, PortPlan]:
         requested = requested or {}
         sources = sources or {}
         retries = retries or {}
-        backend_requested = requested.get("backend", self.backend_base + (index * self.spacing))
-        frontend_requested = requested.get("frontend", self.frontend_base + (index * self.spacing))
+        backend_requested = requested.get("backend", self._preferred_port(project, "backend", self.backend_base, index=index))
+        frontend_requested = requested.get("frontend", self._preferred_port(project, "frontend", self.frontend_base, index=index))
         return {
             "backend": PortPlan(project=project, requested=backend_requested, assigned=backend_requested, final=backend_requested, source=sources.get("backend", "env"), retries=retries.get("backend", 0)),
             "frontend": PortPlan(project=project, requested=frontend_requested, assigned=frontend_requested, final=frontend_requested, source=sources.get("frontend", "env"), retries=retries.get("frontend", 0)),
@@ -73,9 +81,9 @@ class PortPlanner:
         sources = sources or {}
         retries = retries or {}
         plans = self.plan_project(project, index=index, requested=requested, sources=sources, retries=retries)
-        db_requested = requested.get("db", self.db_base + index)
-        redis_requested = requested.get("redis", self.redis_base + index)
-        n8n_requested = requested.get("n8n", self.n8n_base + index)
+        db_requested = requested.get("db", self._preferred_port(project, "db", self.db_base, index=index))
+        redis_requested = requested.get("redis", self._preferred_port(project, "redis", self.redis_base, index=index))
+        n8n_requested = requested.get("n8n", self._preferred_port(project, "n8n", self.n8n_base, index=index))
         plans.update(
             {
                 "db": PortPlan(
@@ -182,6 +190,48 @@ class PortPlanner:
 
     def _lock_path(self, port: int) -> Path:
         return self.lock_dir / f"{port}.lock"
+
+    def _preferred_port(self, project: str, service_name: str, base: int, *, index: int) -> int:
+        if self.preferred_port_strategy == "legacy_spacing":
+            if service_name in {"backend", "frontend"}:
+                return base + (index * self.spacing)
+            return base + index
+        slot = self._project_slot(project)
+        return base + slot
+
+    def _project_slot(self, project: str) -> int:
+        normalized = self._normalize_project_identity(project)
+        if normalized in {"", "main"}:
+            return 0
+        span = self._project_slot_span()
+        digest = hashlib.sha1(f"{self.scope_key}:{normalized}".encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % span
+
+    def _project_slot_span(self) -> int:
+        bases = sorted(
+            {
+                int(port)
+                for port in (
+                    self.db_base,
+                    self.n8n_base,
+                    self.redis_base,
+                    self.backend_base,
+                    self.frontend_base,
+                )
+                if int(port) > 0
+            }
+        )
+        if len(bases) > 1:
+            gaps = [upper - lower for lower, upper in zip(bases, bases[1:]) if upper > lower]
+            if gaps:
+                return max(1, min(gaps))
+        return max(int(self.spacing), 1)
+
+    @staticmethod
+    def _normalize_project_identity(project: str) -> str:
+        normalized = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(project).strip())
+        normalized = "-".join(part for part in normalized.split("-") if part)
+        return normalized
 
     def _reserve_port(self, port: int, owner: str) -> bool:
         lock_path = self._lock_path(port)

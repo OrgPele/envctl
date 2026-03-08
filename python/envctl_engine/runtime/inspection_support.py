@@ -120,6 +120,12 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"backend_port_base: {effective['ports']['backend']}")
     print(f"frontend_port_base: {effective['ports']['frontend']}")
     print(f"port_spacing: {effective['ports']['spacing']}")
+    preferred_strategy = (
+        runtime.env.get("ENVCTL_PORT_PREFERRED_STRATEGY")
+        or runtime.config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY")
+        or "project_slot"
+    )
+    print(f"preferred_port_strategy: {preferred_strategy}")
     return 0
 
 

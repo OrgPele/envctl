@@ -407,6 +407,11 @@ class PythonEngineRuntime:
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,
+            preferred_port_strategy=self.env.get(
+                "ENVCTL_PORT_PREFERRED_STRATEGY",
+                config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),
+            ),
+            scope_key=config.runtime_scope_id,
         )
         self.requirements = RequirementsOrchestrator()
         self.services = ServiceManager()
