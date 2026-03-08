@@ -1,0 +1,451 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PYTHON_ROOT = REPO_ROOT / "python"
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from envctl_engine.ui.selector_model import SelectorItem
+from envctl_engine.ui.textual.screens import selector
+
+
+class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_arrow_navigation_moves_single_row_per_keypress(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+            SelectorItem(
+                id="service:gamma",
+                label="Gamma Worker",
+                kind="service",
+                token="gamma",
+                scope_signature=("service:gamma",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            list_view = app.query_one("#selector-list")
+            self.assertEqual(list_view.index, 0)
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 1)
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 2)
+            await pilot.press("up")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 1)
+            app.exit(None)
+
+    async def test_arrow_navigation_clamps_at_edges(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+            SelectorItem(
+                id="service:gamma",
+                label="Gamma Worker",
+                kind="service",
+                token="gamma",
+                scope_signature=("service:gamma",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            list_view = app.query_one("#selector-list")
+            self.assertEqual(list_view.index, 0)
+            await pilot.press("up")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 0)
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 1)
+            app.exit(None)
+
+    async def test_vim_style_navigation_keys_move_cursor(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+            SelectorItem(
+                id="service:gamma",
+                label="Gamma Worker",
+                kind="service",
+                token="gamma",
+                scope_signature=("service:gamma",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            list_view = app.query_one("#selector-list")
+            self.assertEqual(list_view.index, 0)
+            await pilot.press("j")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 1)
+            await pilot.press("k")
+            await pilot.pause()
+            self.assertEqual(list_view.index, 0)
+            app.exit(None)
+
+    async def test_escape_cancels_selector(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            list_view = app.query_one("#selector-list")
+            self.assertEqual(list_view.index, 0)
+            await pilot.press("escape")
+        self.assertIsNone(app.return_value)
+
+
+    async def test_keyboard_navigation_recovers_after_focus_drift(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-filter")
+            await pilot.press("down")
+            await pilot.press("space")
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["beta"])
+
+    async def test_mouse_click_selects_single_mode_without_enter(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Analyze",
+            options=options,
+            multi=False,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-row-1")
+        self.assertEqual(app.return_value, ["beta"])
+
+    async def test_mouse_click_toggles_multi_row_once(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-row-1")
+            await pilot.pause()
+            self.assertTrue(app._rows[1].selected)  # type: ignore[attr-defined]
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["beta"])
+
+    async def test_repeated_click_toggles_multi_row_selection(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-row-1")
+            await pilot.click("#selector-row-1")
+            await pilot.pause()
+            self.assertFalse(app._rows[1].selected)  # type: ignore[attr-defined]
+            await pilot.click("#selector-row-1")
+            await pilot.pause()
+            self.assertTrue(app._rows[1].selected)  # type: ignore[attr-defined]
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["beta"])
+
+    async def test_enter_from_empty_filter_submits_focused_row(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-filter")
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["alpha"])
+
+    async def test_space_toggles_even_when_filter_has_focus(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#selector-filter")
+            await pilot.press("space")
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["alpha"])
+
+
+class SelectorDriverTracePolicyTests(unittest.TestCase):
+    def test_driver_trace_defaults_on_in_deep_mode(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVCTL_DEBUG_UI_MODE": "deep",
+                "ENVCTL_DEBUG_SELECTOR_KEYS": "1",
+            },
+            clear=False,
+        ):
+            self.assertTrue(selector._selector_driver_trace_enabled(None))
+
+    def test_driver_trace_enables_with_explicit_flag(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVCTL_DEBUG_UI_MODE": "deep",
+                "ENVCTL_DEBUG_SELECTOR_KEYS": "1",
+                "ENVCTL_DEBUG_SELECTOR_DRIVER_KEYS": "1",
+            },
+            clear=False,
+        ):
+            self.assertTrue(selector._selector_driver_trace_enabled(None))
+
+    def test_driver_trace_disables_with_explicit_off_flag(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVCTL_DEBUG_UI_MODE": "deep",
+                "ENVCTL_DEBUG_SELECTOR_KEYS": "1",
+                "ENVCTL_DEBUG_SELECTOR_DRIVER_KEYS": "0",
+            },
+            clear=False,
+        ):
+            self.assertFalse(selector._selector_driver_trace_enabled(None))
+
+    def test_prompt_toolkit_io_probe_returns_tuple_when_disabled(self) -> None:
+        with selector._instrument_prompt_toolkit_posix_io(  # type: ignore[attr-defined]
+            emit=None,
+            deep_debug=True,
+            enabled=False,
+            selector_id="test_selector",
+        ) as probe_tuple:
+            self.assertIsInstance(probe_tuple, tuple)
+            self.assertEqual(len(probe_tuple), 1)
+            self.assertEqual(probe_tuple[0](), {})
+
+class TextualSelectorFallbackRecoveryTests(unittest.TestCase):
+    def test_fallback_values_prefers_selected_then_focused_then_first_visible(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        # No selected row and no focused index yet -> first visible fallback.
+        self.assertEqual(app.fallback_values(), ["alpha"])  # type: ignore[attr-defined]
+
+
+if __name__ == "__main__":
+    unittest.main()
