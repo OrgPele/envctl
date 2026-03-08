@@ -1,5 +1,9 @@
 # AI Playbooks
 
+This guide collects short workflow patterns for high-throughput development, agent-assisted work, and cross-implementation comparison.
+
+Use it when you want a task recipe more than a conceptual explanation.
+
 ## Parallel Implementation Loop
 
 ```bash
@@ -19,6 +23,13 @@ envctl logs --all --logs-tail 300
 ```
 
 Run one test command across all targets and compare outcomes quickly.
+
+Good follow-up:
+
+```bash
+envctl health --all
+envctl errors --all
+```
 
 ## Tight Loop for One Project
 
@@ -43,3 +54,28 @@ Use non-interactive mode for scripts/agents:
 envctl --headless --resume
 envctl test --all --skip-startup --load-state
 ```
+
+Recommended pattern for safer automation:
+
+```bash
+envctl show-config --json
+envctl explain-startup --json
+envctl --headless --resume
+```
+
+## Debugging Workflow for Agents
+
+When an agent or automated run hits an interactive/runtime issue:
+
+```bash
+ENVCTL_DEBUG_UI_MODE=deep envctl
+envctl --debug-report
+```
+
+This gives you something shareable and reproducible instead of a vague "interactive mode was weird" report.
+
+## Related Guides
+
+- [Common Workflows](common-workflows.md)
+- [Planning and Worktrees](planning-and-worktrees.md)
+- [Python Engine Guide](python-engine-guide.md)

@@ -1,0 +1,155 @@
+# Testing and Validation
+
+This guide explains how the repository validates runtime behavior and what level of coverage is expected when you change the Python engine, compatibility layers, or docs.
+
+## Test Layers
+
+The project validates behavior across several layers:
+
+- Python unit and integration tests under `tests/python/`
+- BATS end-to-end tests under `tests/bats/`
+- release/cutover gate scripts under `scripts/`
+- documentation/reference parity checks
+
+Each layer catches different classes of failures.
+
+## Python Tests
+
+Python tests are the fastest way to validate:
+
+- route parsing
+- config loading
+- startup/resume policy
+- state model behavior
+- debug bundle logic
+- doctor output
+- UI/backend resolution
+
+Use these when you are changing internal Python behavior and want tight feedback loops.
+
+## BATS Tests
+
+BATS tests matter when behavior is externally visible through the CLI contract.
+
+Typical reasons to add or update BATS coverage:
+
+- command routing changes
+- lifecycle command behavior changes
+- parity-sensitive startup behavior
+- shell compatibility / explicit fallback behavior
+- reference/doc surface expectations that are enforced externally
+
+## Release and Governance Scripts
+
+Scripts in `scripts/` act as validation tools and governance checks.
+
+Examples:
+
+- parity manifest generation and audit
+- shell ownership ledger generation/audit
+- shipability gate checks
+- debug bundle analysis helpers
+
+If your change affects one of these machine-readable contracts, update the script-side checks too.
+
+## Docs Are Part of the Contract
+
+This repository already treats docs as part of the behavioral surface.
+
+That means changes may require updates to:
+
+- user guides
+- reference pages
+- developer guides
+- README
+- planning/migration docs when governance semantics change
+
+If the runtime and docs diverge, operators and contributors both lose time.
+
+## Minimum Expectation by Change Type
+
+### Parser or command-surface change
+
+Expected:
+
+- parser tests
+- dispatch/command behavior tests
+- reference docs update
+
+### Startup/resume/runtime-truth change
+
+Expected:
+
+- targeted Python tests
+- BATS coverage if externally visible
+- `explain-startup` or doctor validation if behavior is operator-visible
+- docs update
+
+### State or artifact contract change
+
+Expected:
+
+- state repository/model tests
+- compatibility tests if legacy reads/writes are affected
+- docs update if operators or tooling inspect the artifact
+
+### Debug or doctor change
+
+Expected:
+
+- debug/runtime tests
+- docs update if user-facing output or guidance changed
+- governance/cutover checks if gate semantics changed
+
+### Shell compatibility change
+
+Expected:
+
+- explicit fallback validation if still supported
+- shell prune / release gate validation
+- migration docs update if policy meaning changed
+
+## Validation Commands
+
+Common commands:
+
+```bash
+bats tests/bats/*.bats
+python3.12 -m venv .venv
+.venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
+```
+
+Use narrower scopes while iterating, then widen before finishing.
+
+## How to Choose Test Scope
+
+Use a narrow test scope when:
+
+- iterating on one module
+- validating a local hypothesis
+- working on docs plus one small code path
+
+Use a wider scope when:
+
+- changing command routing
+- changing startup/resume semantics
+- touching compatibility or cutover logic
+- changing artifacts or runtime-map shape
+
+## Documentation Validation
+
+At minimum, verify:
+
+- links resolve
+- examples still match the command surface
+- user docs describe the primary runtime, not an outdated fallback story
+
+For doc-heavy changes, a repository-wide markdown link check is worth running.
+
+## Common Mistakes
+
+- updating code without updating `explain-startup`
+- changing user-visible flags without updating reference docs
+- changing artifact semantics without updating doctor/debug expectations
+- assuming unit tests are enough for CLI-visible behavior
+- forgetting that shell fallback and cutover governance still have test implications
