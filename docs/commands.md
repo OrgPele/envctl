@@ -24,6 +24,7 @@ envctl --list-targets
 - `restart`
 - `test`
 - `logs`
+- `clear-logs`
 - `health`
 - `errors`
 - `doctor`

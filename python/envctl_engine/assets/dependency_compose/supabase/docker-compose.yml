@@ -1,0 +1,77 @@
+services:
+  supabase-db:
+    image: ${SUPABASE_DB_IMAGE:-supabase/postgres:15.1.0.147}
+    restart: unless-stopped
+    networks:
+      - default
+      - supabase-net
+    environment:
+      POSTGRES_PASSWORD: ${SUPABASE_DB_PASSWORD:-supabase-db-password}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      JWT_SECRET: ${SUPABASE_JWT_SECRET:-supabase-local-jwt-secret}
+      ANON_KEY: ${SUPABASE_ANON_KEY:-local-anon-key}
+      SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-local-service-role-key}
+    ports:
+      - "${SUPABASE_DB_PORT:-54322}:5432"
+    volumes:
+      - supabase_db_data:/var/lib/postgresql/data
+      - ./init/01-create-n8n-db.sql:/docker-entrypoint-initdb.d/01-create-n8n-db.sql:ro
+      - ./init/02-bootstrap-gotrue-auth.sql:/docker-entrypoint-initdb.d/02-bootstrap-gotrue-auth.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  supabase-auth:
+    image: ${SUPABASE_AUTH_IMAGE:-supabase/gotrue:v2.150.0}
+    restart: unless-stopped
+    networks:
+      - default
+      - supabase-net
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:54322}
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:${SUPABASE_DB_PASSWORD:-supabase-db-password}@supabase-db:5432/postgres?search_path=auth,public
+      GOTRUE_DB_NAMESPACE: auth
+      DB_NAMESPACE: auth
+      GOTRUE_SITE_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:54322}
+      GOTRUE_URI_ALLOW_LIST: ${SUPABASE_PUBLIC_URL:-http://localhost:54322}/*
+      GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-supabase-local-jwt-secret}
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_ISSUER: ${SUPABASE_PUBLIC_URL:-http://localhost:54322}/auth/v1
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_LOG_LEVEL: info
+
+  supabase-kong:
+    image: ${SUPABASE_KONG_IMAGE:-kong:2.8.1}
+    restart: unless-stopped
+    networks:
+      - default
+      - supabase-net
+    depends_on:
+      - supabase-auth
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_LOG_LEVEL: warn
+    volumes:
+      - ./kong.yml:/home/kong/kong.yml:ro
+
+volumes:
+  supabase_db_data:
+
+networks:
+  supabase-net: {}

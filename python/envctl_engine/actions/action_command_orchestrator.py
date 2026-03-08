@@ -1,0 +1,972 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import hashlib
+import concurrent.futures
+import os
+from pathlib import Path
+import subprocess
+import sys
+from typing import Any, Callable, Mapping
+
+from envctl_engine.actions.actions_analysis import default_analyze_command, default_migrate_command
+from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
+from envctl_engine.actions.action_command_support import (
+    build_action_env,
+    build_action_extra_env,
+    build_action_replacements,
+    service_types_from_route_services,
+)
+from envctl_engine.actions.action_target_support import (
+    ActionCommandResolution,
+    execute_targeted_action,
+)
+from envctl_engine.actions.action_test_support import (
+    TestExecutionSpec as _TestExecutionSpec,
+    TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
+    TestTargetContext as _TestTargetContext,
+    build_test_execution_specs,
+    build_test_target_contexts,
+    is_backend_only_selection,
+    rich_progress_available as _rich_progress_available,
+)
+from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
+from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
+from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.test_output.test_runner import TestRunner
+from envctl_engine.test_output.symbols import format_duration
+from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.spinner import spinner, use_spinner_policy
+from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
+
+
+class ActionCommandOrchestrator:
+    def __init__(self, runtime: Any) -> None:
+        self.runtime: Any = runtime
+
+    def execute(self, route: Route) -> int:
+        rt = self.runtime
+        if route.command in {"delete-worktree", "blast-worktree"}:
+            code = self.run_delete_worktree_action(route)
+            rt._emit("action.command.finish", command=route.command, code=code)  # type: ignore[attr-defined]
+            return code
+
+        targets, error = self.resolve_targets(route, trees_only=False)
+        if error is not None:
+            print(error)
+            rt._emit("action.command.finish", command=route.command, code=1, error=error)  # type: ignore[attr-defined]
+            return 1
+
+        handler_map: dict[str, Callable[[Route, list[object]], int]] = {
+            "test": self.run_test_action,
+            "pr": self.run_pr_action,
+            "commit": self.run_commit_action,
+            "analyze": self.run_analyze_action,
+            "migrate": self.run_migrate_action,
+        }
+        handler = handler_map.get(route.command)
+        if handler is None:
+            return rt._unsupported_command(route.command)  # type: ignore[attr-defined]
+
+        spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
+        op_id = f"action.{route.command}"
+        start_status = self._command_start_status(route.command, targets)
+        suppress_action_spinner = route.command == "test" and bool(route.flags.get("interactive_command"))
+        action_spinner_enabled = spinner_policy.enabled and not suppress_action_spinner
+        emit_spinner_policy(
+            getattr(rt, "_emit", None),
+            spinner_policy,
+            context={"component": "action.command", "command": route.command, "op_id": op_id},
+        )
+        if suppress_action_spinner:
+            rt._emit(  # type: ignore[attr-defined]
+                "ui.spinner.disabled",
+                component="action.command",
+                command=route.command,
+                op_id=op_id,
+                reason="interactive_test_action_spinner_suppressed",
+            )
+
+        rt._emit("action.command.start", command=route.command, mode=route.mode)  # type: ignore[attr-defined]
+        self._emit_status(start_status)
+        with use_spinner_policy(spinner_policy), spinner(
+            start_status,
+            enabled=action_spinner_enabled,
+            start_immediately=False,
+        ) as active_spinner:
+            if action_spinner_enabled:
+                active_spinner.start()
+                rt._emit(  # type: ignore[attr-defined]
+                    "ui.spinner.lifecycle",
+                    component="action.command",
+                    command=route.command,
+                    op_id=op_id,
+                    state="start",
+                    message=start_status,
+                )
+            code = handler(route, targets)
+            if action_spinner_enabled:
+                if code == 0:
+                    completion = f"{route.command} completed"
+                    active_spinner.succeed(completion)
+                    rt._emit(  # type: ignore[attr-defined]
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="success",
+                        message=completion,
+                    )
+                else:
+                    failure = f"{route.command} failed"
+                    active_spinner.fail(failure)
+                    rt._emit(  # type: ignore[attr-defined]
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="fail",
+                        message=failure,
+                    )
+                rt._emit(  # type: ignore[attr-defined]
+                    "ui.spinner.lifecycle",
+                    component="action.command",
+                    command=route.command,
+                    op_id=op_id,
+                    state="stop",
+                )
+        rt._emit("action.command.finish", command=route.command, code=code)  # type: ignore[attr-defined]
+        return code
+
+    def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
+        rt = self.runtime
+        if trees_only:
+            candidates = rt._discover_projects(mode="trees")  # type: ignore[attr-defined]
+        else:
+            candidates = rt._discover_projects(mode=route.mode)  # type: ignore[attr-defined]
+            if not candidates and route.mode == "main":
+                candidates = rt._discover_projects(mode="trees")  # type: ignore[attr-defined]
+
+        run_all = bool(route.flags.get("all"))
+        untested_selected = bool(route.flags.get("untested"))
+        project_selectors = {name.lower() for name in route.projects}
+        project_selectors.update(rt._selectors_from_passthrough(route.passthrough_args))  # type: ignore[attr-defined]
+
+        services = route.flags.get("services")
+        if isinstance(services, list):
+            for project in self.projects_for_services(services):
+                project_selectors.add(project.lower())
+
+        if run_all:
+            if not candidates:
+                return [], "No projects discovered for selected mode."
+            return candidates, None
+
+        if not project_selectors and not run_all:
+            if self._interactive_selection_allowed(route):
+                selection = rt._select_project_targets(  # type: ignore[attr-defined]
+                    prompt=f"Select {route.command} target",
+                    projects=candidates,
+                    allow_all=True,
+                    allow_untested=route.command == "test",
+                    multi=True,
+                )
+                if selection.cancelled:
+                    return [], self._no_target_selected_message(route)
+                selection.apply_to_route(route)
+                run_all = bool(route.flags.get("all"))
+                project_selectors = {name.lower() for name in route.projects}
+                untested_selected = bool(route.flags.get("untested"))
+            else:
+                return [], self._no_target_selected_message(route)
+
+        if not project_selectors and not run_all and not untested_selected:
+            return [], self._no_target_selected_message(route)
+        if run_all:
+            if not candidates:
+                return [], "No projects discovered for selected mode."
+            return candidates, None
+        selected = [candidate for candidate in candidates if candidate.name.lower() in project_selectors]
+        if not selected:
+            if route.command == "test" and untested_selected:
+                return [], None
+            requested = ", ".join(sorted(project_selectors))
+            return [], f"No matching targets found for: {requested}"
+        return selected, None
+
+    def _interactive_selection_allowed(self, route: Route) -> bool:
+        rt = self.runtime
+        # If this is an interactive command from the dashboard, trust that we're in interactive mode
+        if bool(route.flags.get("interactive_command")):
+            return True
+        # Otherwise, check TTY availability
+        if not RuntimeTerminalUI._can_interactive_tty():
+            return False
+        batch_requested = False
+        if hasattr(rt, "_batch_mode_requested"):
+            batch_requested = bool(rt._batch_mode_requested(route))  # type: ignore[attr-defined]
+        if batch_requested and not bool(route.flags.get("interactive_command")):
+            return False
+        return True
+
+    def projects_for_services(self, service_targets: list[object]) -> list[str]:
+        rt = self.runtime
+        normalized_targets = [str(target).strip().lower() for target in service_targets if str(target).strip()]
+        if not normalized_targets:
+            return []
+
+        state = rt._try_load_existing_state(mode="trees") or rt._try_load_existing_state(mode="main")  # type: ignore[attr-defined]
+        resolved: list[str] = []
+        for target in normalized_targets:
+            matched = False
+            if state is not None:
+                for service_name in state.services:
+                    if service_name.lower() == target:
+                        project = rt._project_name_from_service(service_name)  # type: ignore[attr-defined]
+                        if project:
+                            resolved.append(project)
+                            matched = True
+            if matched:
+                continue
+            project = rt._project_name_from_service(target)  # type: ignore[attr-defined]
+            if project:
+                resolved.append(project)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for project in resolved:
+            lowered = project.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(project)
+        return deduped
+
+    def run_test_action(self, route: Route, targets: list[object]) -> int:
+        return run_test_action_impl(
+            self,
+            route,
+            targets,
+            rich_progress_available=_rich_progress_available,
+            suite_spinner_group_cls=_TestSuiteSpinnerGroup,
+            test_runner_cls=TestRunner,
+            futures_module=concurrent.futures,
+            resolve_spinner_policy=resolve_spinner_policy,
+        )
+
+    def run_pr_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        return self.run_project_action(
+            route,
+            targets,
+            command_name="pr",
+            env_key="ENVCTL_ACTION_PR_CMD",
+            default_command=default_pr_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
+            default_append_project_path=False,
+            extra_env=self.action_extra_env(route),
+        )
+
+    def run_commit_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        return self.run_project_action(
+            route,
+            targets,
+            command_name="commit",
+            env_key="ENVCTL_ACTION_COMMIT_CMD",
+            default_command=default_commit_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
+            default_append_project_path=False,
+            extra_env=self.action_extra_env(route),
+        )
+
+    def run_analyze_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        return self.run_project_action(
+            route,
+            targets,
+            command_name="analyze",
+            env_key="ENVCTL_ACTION_ANALYZE_CMD",
+            default_command=default_analyze_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
+            default_append_project_path=False,
+            extra_env=self.action_extra_env(route),
+        )
+
+    def run_migrate_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        raw = rt.env.get("ENVCTL_ACTION_MIGRATE_CMD")  # type: ignore[attr-defined]
+        interactive_command = bool(route.flags.get("interactive_command"))
+        extra_env = self.action_extra_env(route)
+
+        def resolve_command(context: object) -> ActionCommandResolution:
+            target = getattr(context, "target_obj")
+            target_root = Path(str(getattr(context, "root")))
+            if raw is not None:
+                replacements = self.action_replacements(targets, target=target)
+                try:
+                    command = rt._split_command(raw, replacements=replacements)  # type: ignore[attr-defined]
+                except RuntimeError as exc:
+                    return ActionCommandResolution(command=None, cwd=None, error=str(exc))
+                return ActionCommandResolution(command=command, cwd=target_root)
+            resolution = default_migrate_command(target_root)
+            return ActionCommandResolution(
+                command=resolution.command,
+                cwd=resolution.cwd,
+                error=resolution.error,
+            )
+
+        return execute_targeted_action(
+            targets=targets,
+            command_name="migrate",
+            interactive_command=interactive_command,
+            resolve_command=resolve_command,
+            build_env=lambda context: self.action_env(
+                "migrate",
+                targets,
+                route=route,
+                target=getattr(context, "target_obj"),
+                extra=extra_env,
+            ),
+            process_run=lambda command, cwd, env: rt.process_runner.run(  # type: ignore[attr-defined]
+                command,
+                cwd=cwd,
+                env=dict(env),
+                timeout=300.0,
+            ),
+            emit_status=self._emit_status,
+            interactive_print_failures=False,
+        )
+
+    def _no_target_selected_message(self, route: Route) -> str:
+        command = route.command
+        label_map = {
+            "pr": "PR",
+            "analyze": "analysis",
+            "migrate": "migration",
+            "logs": "log",
+        }
+        label = label_map.get(str(command).strip().lower(), str(command).strip().lower())
+        if self._interactive_selection_allowed(route):
+            return f"No {label} target selected."
+        mode = str(route.mode).strip().lower()
+        discovery = "envctl --list-trees --json" if mode == "trees" else "envctl --list-targets --main --json"
+        return (
+            f"No {label} target selected. "
+            f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', or '--all'."
+        )
+
+    @staticmethod
+    def _service_types_from_route_services(route: Route) -> set[str]:
+        return service_types_from_route_services(route)
+
+    def _test_service_selection(
+        self,
+        route: Route,
+        backend_flag: object,
+        frontend_flag: object,
+    ) -> tuple[bool, bool]:
+        return is_backend_only_selection(
+            backend_flag,
+            frontend_flag,
+            self._service_types_from_route_services(route),
+        )
+
+    def _build_test_execution_specs(
+        self,
+        *,
+        raw: str | None,
+        targets: list[object],
+        target_contexts: list["_TestTargetContext"],
+        include_backend: bool,
+        include_frontend: bool,
+        run_all: bool,
+        untested: bool,
+    ) -> list["_TestExecutionSpec"]:
+        rt = self.runtime
+        return build_test_execution_specs(
+            raw_command=raw,
+            target_contexts=target_contexts,
+            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            run_all=run_all,
+            untested=untested,
+            split_command=lambda command_raw, replacements: rt._split_command(  # type: ignore[attr-defined]
+                command_raw,
+                replacements=dict(replacements),
+            ),
+            replacements_for_target=lambda target: self.action_replacements(targets, target=target),
+            is_legacy_tree_test_script=self._is_legacy_tree_test_script,
+        )
+
+    def run_project_action(
+        self,
+        route: Route,
+        targets: list[object],
+        *,
+        command_name: str,
+        env_key: str,
+        default_command: list[str] | None,
+        default_cwd: Path,
+        default_append_project_path: bool,
+        extra_env: Mapping[str, str],
+    ) -> int:
+        rt = self.runtime
+        raw = rt.env.get(env_key)  # type: ignore[attr-defined]
+        interactive_command = bool(route.flags.get("interactive_command"))
+        if raw is None and default_command is None:
+            print(f"No {command_name} command configured. Set {env_key} or add repo utility script.")
+            return 1
+
+        def resolve_command(context: object) -> ActionCommandResolution:
+            target = getattr(context, "target_obj")
+            target_root = Path(str(getattr(context, "root")))
+            if raw is not None:
+                replacements = self.action_replacements(targets, target=target)
+                try:
+                    command = rt._split_command(raw, replacements=replacements)  # type: ignore[attr-defined]
+                except RuntimeError as exc:
+                    return ActionCommandResolution(command=None, cwd=None, error=str(exc))
+                return ActionCommandResolution(command=command, cwd=target_root)
+
+            command: list[str] = []
+            replacements = self.action_replacements(targets, target=target)
+            for token in list(default_command or []):
+                value = str(token)
+                for key, replacement in replacements.items():
+                    value = value.replace(f"{{{key}}}", replacement)
+                command.append(value)
+            if default_append_project_path:
+                command.append(str(target_root))
+            return ActionCommandResolution(command=command, cwd=default_cwd)
+
+        return execute_targeted_action(
+            targets=targets,
+            command_name=command_name,
+            interactive_command=interactive_command,
+            resolve_command=resolve_command,
+            build_env=lambda context: self.action_env(
+                command_name,
+                targets,
+                route=route,
+                target=getattr(context, "target_obj"),
+                extra=extra_env,
+            ),
+            process_run=lambda command, cwd, env: rt.process_runner.run(  # type: ignore[attr-defined]
+                command,
+                cwd=cwd,
+                env=dict(env),
+                timeout=300.0,
+            ),
+            emit_status=self._emit_status,
+            interactive_print_failures=True,
+        )
+
+    def action_replacements(
+        self,
+        targets: list[object],
+        *,
+        target: object | None,
+    ) -> dict[str, str]:
+        rt = self.runtime
+        return build_action_replacements(
+            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+            targets=targets,
+            target=target,
+        )
+
+    def action_env(
+        self,
+        command_name: str,
+        targets: list[object],
+        *,
+        route: Route | None = None,
+        target: object | None,
+        extra: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        rt = self.runtime
+        return build_action_env(
+            process_env=os.environ,
+            runtime_env=rt.env,  # type: ignore[arg-type,attr-defined]
+            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+            command_name=command_name,
+            targets=targets,
+            route=route,
+            target=target,
+            extra=extra,
+        )
+
+    @staticmethod
+    def action_extra_env(route: Route) -> dict[str, str]:
+        return build_action_extra_env(route)
+
+    def run_delete_worktree_action(self, route: Route) -> int:
+        return run_delete_worktree_action_impl(self, route)
+
+    def _emit_status(self, message: str) -> None:
+        rt = self.runtime
+        text = str(message).strip()
+        if not text:
+            return
+        rt._emit("ui.status", message=text)  # type: ignore[attr-defined]
+
+    def _colors_enabled(self) -> bool:
+        rt_env = getattr(self.runtime, "env", {})
+        interactive_tty = False
+        can_interactive_tty = getattr(self.runtime, "_can_interactive_tty", None)
+        if callable(can_interactive_tty):
+            try:
+                interactive_tty = bool(can_interactive_tty())
+            except Exception:
+                interactive_tty = False
+        return colors_enabled(rt_env, stream=sys.stdout, interactive_tty=interactive_tty)
+
+    def _colorize(self, text: str, *, fg: str | None = None, bold: bool = False, dim: bool = False) -> str:
+        if not self._colors_enabled():
+            return text
+        palette = {
+            "red": "31",
+            "green": "32",
+            "yellow": "33",
+            "blue": "34",
+            "magenta": "35",
+            "cyan": "36",
+            "gray": "90",
+        }
+        codes: list[str] = []
+        if bold:
+            codes.append("1")
+        if dim:
+            codes.append("2")
+        if fg is not None:
+            code = palette.get(str(fg).strip().lower())
+            if code is not None:
+                codes.append(code)
+        if not codes:
+            return text
+        return f"\033[{';'.join(codes)}m{text}\033[0m"
+
+    @staticmethod
+    def _command_start_status(command_name: str, targets: list[object]) -> str:
+        target_names = [str(getattr(target, "name", "")).strip() for target in targets]
+        target_names = [name for name in target_names if name]
+        if not target_names:
+            return f"Running {command_name}..."
+        if len(target_names) == 1:
+            return f"Running {command_name} for {target_names[0]}..."
+        return f"Running {command_name} for {len(target_names)} targets..."
+
+    @staticmethod
+    def _test_scope_status(project_names: list[str], *, run_all: bool, untested: bool) -> str:
+        if run_all:
+            return "Running tests for all discovered projects..."
+        if untested and not project_names:
+            return "Running tests for untested projects..."
+        if len(project_names) == 1:
+            return f"Running tests for {project_names[0]}..."
+        if project_names:
+            return f"Running tests for {len(project_names)} selected projects..."
+        return "Running tests..."
+
+    @staticmethod
+    def _test_execution_status(command: list[str], *, args: list[str], source: str, cwd: Path) -> str:
+        if source == "configured":
+            snippet = " ".join(command[:3]).strip()
+            if snippet:
+                return f"Executing configured test command: {snippet}..."
+            return "Executing configured test command..."
+
+        if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
+            target = command[3] if len(command) > 3 else "tests"
+            return f"Running pytest suite at {target}..."
+        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
+            return "Running unittest discovery (test_*.py)..."
+        if len(command) >= 3 and command[1] == "run" and command[2] == "test":
+            manager = command[0]
+            return f"Running {manager} test script in {cwd}..."
+        if len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh"):
+            projects_arg = next((value for value in args if value.startswith("projects=")), "")
+            if projects_arg:
+                selected = projects_arg.split("=", 1)[1]
+                count = len([name for name in selected.split(",") if name])
+                return f"Running tree test matrix for {count} selected project(s)..."
+            if "untested=true" in args:
+                return "Running tree test matrix for untested projects..."
+            return "Running tree test matrix for all projects..."
+        return "Executing detected test command..."
+
+    def _test_parallel_enabled(self, route: Route, specs: list["_TestExecutionSpec"]) -> bool:
+        rt = self.runtime
+        if len(specs) <= 1:
+            return False
+        if any(
+            self._is_legacy_tree_test_script(spec.spec.command)
+            for spec in specs
+        ):
+            return False
+        forced = route.flags.get("test_parallel")
+        if isinstance(forced, bool):
+            return forced
+        configured = rt.env.get("ENVCTL_ACTION_TEST_PARALLEL") or rt.config.raw.get("ENVCTL_ACTION_TEST_PARALLEL")  # type: ignore[attr-defined]
+        return parse_bool(configured, True)
+
+    def _test_parallel_max_workers(self, route: Route, specs: list["_TestExecutionSpec"]) -> int:
+        rt = self.runtime
+        total = max(len(specs), 1)
+        configured_values: list[object] = [
+            route.flags.get("test_parallel_max"),
+            rt.env.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),  # type: ignore[attr-defined]
+            rt.config.raw.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),  # type: ignore[attr-defined]
+        ]
+        limit = 4
+        for raw in configured_values:
+            parsed = parse_int(raw, 0)
+            if parsed > 0:
+                limit = parsed
+                break
+        return max(1, min(total, limit))
+
+    def _test_suite_spinner_policy_enabled(self, policy: Any) -> tuple[bool, str]:
+        rt = self.runtime
+        env = getattr(rt, "env", {})
+        mode = str(env.get("ENVCTL_UI_SPINNER_MODE", "")).strip().lower()
+        if mode == "off":
+            return False, "spinner_mode_off"
+        if not parse_bool(env.get("ENVCTL_UI_SPINNER"), True):
+            return False, "spinner_env_off"
+        if not parse_bool(env.get("ENVCTL_UI_RICH"), True):
+            return False, "rich_env_off"
+        reason = str(getattr(policy, "reason", "")).strip().lower()
+        if reason == "spinner_backend_missing":
+            return False, "spinner_backend_missing"
+        if reason == "ci_mode":
+            return False, "ci_mode"
+        # Intentionally ignore policy reason=non_tty for test suite rows in
+        # interactive dashboard mode; nested launcher/PTY stacks can report
+        # non-tty here while rich rendering still works.
+        return True, "enabled"
+
+    def _persist_test_summary_artifacts(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        outcomes: list[dict[str, object]],
+    ) -> None:
+        if not targets:
+            return
+
+        rt = self.runtime
+        project_roots: dict[str, Path] = {}
+        for target in targets:
+            name = str(getattr(target, "name", "")).strip()
+            root_raw = str(getattr(target, "root", "")).strip()
+            if not name or not root_raw:
+                continue
+            project_roots[name] = Path(root_raw)
+        if not project_roots:
+            for outcome in outcomes:
+                name = str(outcome.get("project_name", "")).strip()
+                root_raw = str(outcome.get("project_root", "")).strip()
+                if not name or not root_raw:
+                    continue
+                project_roots[name] = Path(root_raw)
+        if not project_roots:
+            return
+
+        run_dir = self._new_test_results_run_dir(rt.config.base_dir)  # type: ignore[attr-defined]
+        summaries: dict[str, dict[str, object]] = {}
+        for project_name, project_root in project_roots.items():
+            summaries[project_name] = self._write_failed_tests_summary(
+                run_dir=run_dir,
+                project_name=project_name,
+                project_root=project_root,
+                outcomes=outcomes,
+            )
+
+        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
+        if state is None:
+            return
+
+        existing = state.metadata.get("project_test_summaries")
+        metadata = dict(existing) if isinstance(existing, dict) else {}
+        metadata.update(summaries)
+        state.metadata["project_test_summaries"] = metadata
+        state.metadata["project_test_results_root"] = str(run_dir)
+        state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
+
+        rt.state_repository.save_resume_state(  # type: ignore[attr-defined]
+            state=state,
+            emit=rt._emit,
+            runtime_map_builder=build_runtime_map,
+        )
+        rt._emit(  # type: ignore[attr-defined]
+            "test.summary.persisted",
+            mode=route.mode,
+            projects=sorted(summaries),
+            run_dir=str(run_dir),
+        )
+
+    def _new_test_results_run_dir(self, base_dir: Path) -> Path:
+        results_root = base_dir / "test-results"
+        results_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
+        candidate = results_root / stamp
+        if not candidate.exists():
+            candidate.mkdir(parents=True, exist_ok=True)
+            return candidate
+        suffix = 1
+        while True:
+            suffixed = results_root / f"{stamp}_{suffix}"
+            if not suffixed.exists():
+                suffixed.mkdir(parents=True, exist_ok=True)
+                return suffixed
+            suffix += 1
+
+    def _write_failed_tests_summary(
+        self,
+        *,
+        run_dir: Path,
+        project_name: str,
+        project_root: Path,
+        outcomes: list[dict[str, object]],
+    ) -> dict[str, object]:
+        safe_project = project_name.replace(" ", "_")
+        output_dir = run_dir / safe_project
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = output_dir / "failed_tests_summary.txt"
+        state_path = output_dir / "test_state.txt"
+
+        failures = self._collect_failed_tests(outcomes, project_name=project_name)
+        generated_at = datetime.now().astimezone()
+        lines = [
+            "# envctl Failed Test Summary",
+            f"# Generated at: {generated_at.strftime('%a %b %d %H:%M:%S %Z %Y')}",
+            "",
+        ]
+        if failures:
+            for suite_name, failed_test, error_text in failures:
+                lines.append(f"[{suite_name}]")
+                lines.append(f"- {failed_test}")
+                if error_text:
+                    for detail in str(error_text).splitlines()[:6]:
+                        stripped = detail.rstrip()
+                        if stripped:
+                            lines.append(f"    {stripped}")
+                lines.append("")
+        else:
+            lines.append("No failed tests.")
+            lines.append("")
+        summary_path.write_text("\n".join(lines), encoding="utf-8")
+
+        head, status_hash, status_lines = self._git_state_components(project_root)
+        state_path.write_text(
+            f"state|{project_name}|{project_root}|{head}|{status_hash}|{status_lines}\n",
+            encoding="utf-8",
+        )
+
+        return {
+            "summary_path": str(summary_path),
+            "state_path": str(state_path),
+            "status": "failed" if failures else "passed",
+            "failed_tests": len(failures),
+            "updated_at": generated_at.isoformat(),
+        }
+
+    def _collect_failed_tests(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        project_name: str | None = None,
+    ) -> list[tuple[str, str, str]]:
+        collected: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+        for item in ordered:
+            if project_name is not None:
+                item_project_name = str(item.get("project_name", "")).strip()
+                if item_project_name != project_name:
+                    continue
+            source = str(item.get("suite", "suite"))
+            parsed = item.get("parsed")
+            failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
+            error_details = dict(getattr(parsed, "error_details", {}) or {}) if parsed is not None else {}
+            suite_name = self._suite_display_name(source)
+            for failed_test in failed_tests:
+                test_name = str(failed_test).strip()
+                if not test_name:
+                    continue
+                dedupe_key = (suite_name, test_name)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                error_text = self._resolve_failed_test_error(error_details, test_name)
+                collected.append((suite_name, test_name, error_text))
+        return collected
+
+    @staticmethod
+    def _resolve_failed_test_error(error_details: dict[str, object], test_name: str) -> str:
+        direct = error_details.get(test_name)
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+        if "::" in test_name:
+            file_key = test_name.split("::", 1)[0]
+            file_error = error_details.get(file_key)
+            if isinstance(file_error, str) and file_error.strip():
+                return file_error.strip()
+        return ""
+
+    @staticmethod
+    def _git_state_components(project_root: Path) -> tuple[str, str, int]:
+        head = ""
+        status = ""
+        try:
+            head_proc = subprocess.run(
+                ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if head_proc.returncode == 0:
+                head = (head_proc.stdout or "").strip()
+            status_proc = subprocess.run(
+                ["git", "-C", str(project_root), "status", "--porcelain=1"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if status_proc.returncode == 0:
+                status = status_proc.stdout or ""
+        except Exception:
+            head = ""
+            status = ""
+        status_hash = hashlib.sha1(status.encode("utf-8")).hexdigest()
+        status_lines = len([line for line in status.splitlines() if line.strip()])
+        return head, status_hash, status_lines
+
+    @staticmethod
+    def _suite_display_name(source: str) -> str:
+        if source == "backend_pytest":
+            return "Backend (pytest)"
+        if source == "frontend_package_test":
+            return "Frontend (package test)"
+        if source == "root_unittest":
+            return "Backend (unittest)"
+        if source == "package_test":
+            return "Repository package test"
+        if source == "configured":
+            return "Configured test command"
+        return source.replace("_", " ")
+
+    def _print_test_suite_overview(self, outcomes: list[dict[str, object]]) -> None:
+        if not outcomes:
+            return
+        print("")
+        print(self._colorize("======================================================================", fg="cyan"))
+        print(self._colorize("Test Suite Summary", fg="cyan", bold=True))
+        print(self._colorize("======================================================================", fg="cyan"))
+        project_labels = {
+            str(item.get("project_name", "")).strip()
+            for item in outcomes
+            if str(item.get("project_name", "")).strip()
+        }
+        multi_project = len(project_labels) > 1
+        total_passed = 0
+        total_failed = 0
+        total_skipped = 0
+        total_known = 0
+        total_duration = 0.0
+        grouped_outcomes: dict[str, list[dict[str, object]]] = {}
+        for item in sorted(
+            outcomes,
+            key=lambda value: (
+                str(value.get("project_name", "")).lower(),
+                int(value.get("index", 0)),
+            ),
+        ):
+            project_name = str(item.get("project_name", "")).strip() or "Main"
+            grouped_outcomes.setdefault(project_name, []).append(item)
+
+        for project_name, project_items in grouped_outcomes.items():
+            if multi_project:
+                print(self._colorize(project_name, fg="blue", bold=True))
+            for item in project_items:
+                source = str(item.get("suite", "suite"))
+                label = self._suite_display_name(source)
+                label_rendered = self._colorize(label, fg="cyan", bold=True)
+                if multi_project:
+                    label_rendered = f"  {label_rendered}"
+                returncode = int(item.get("returncode", 1))
+                parsed = item.get("parsed")
+                parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
+                passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
+                failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
+                skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
+                duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
+                duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
+
+                icon = self._colorize("✓", fg="green", bold=True) if returncode == 0 else self._colorize("✗", fg="red", bold=True)
+                if parsed_total > 0:
+                    total_passed += passed
+                    total_failed += failed
+                    total_skipped += skipped
+                    total_known += parsed_total
+                    total_duration += max(duration_ms / 1000.0, 0.0)
+                    passed_text = self._colorize(f"{passed} passed", fg="green")
+                    failed_text = self._colorize(f"{failed} failed", fg="red")
+                    skipped_text = self._colorize(f"{skipped} skipped", fg="yellow")
+                    print(
+                        f"{icon} {label_rendered}: {passed_text}, {failed_text}, {skipped_text}"
+                        f" (total {parsed_total}, duration {duration_text})"
+                    )
+                else:
+                    total_duration += max(duration_ms / 1000.0, 0.0)
+                    if returncode == 0:
+                        print(
+                            f"{icon} {label_rendered}: "
+                            f"{self._colorize('completed', fg='green', bold=True)} "
+                            f"(no parsed test counts, duration {duration_text})"
+                        )
+                    else:
+                        print(
+                            f"{icon} {label_rendered}: "
+                            f"{self._colorize('failed', fg='red', bold=True)} "
+                            f"(no parsed test counts, duration {duration_text})"
+                        )
+            if multi_project:
+                print("")
+
+        if total_known > 0:
+            overall_prefix = self._colorize("Overall:", fg="cyan", bold=True)
+            overall_passed = self._colorize(f"{total_passed} passed", fg="green")
+            overall_failed = self._colorize(f"{total_failed} failed", fg="red")
+            overall_skipped = self._colorize(f"{total_skipped} skipped", fg="yellow")
+            print(
+                f"{overall_prefix} {overall_passed}, {overall_failed}, {overall_skipped}"
+                f" (total {total_known}, duration {format_duration(total_duration)})"
+            )
+        print(self._colorize("======================================================================", fg="cyan"))
+
+    def _print_interactive_test_plan(self, execution_specs: list["_TestExecutionSpec"]) -> None:
+        grouped: dict[str, list[_TestExecutionSpec]] = {}
+        for execution in execution_specs:
+            grouped.setdefault(execution.project_name, []).append(execution)
+        print(self._colorize("Selected test targets:", fg="cyan", bold=True))
+        for project_name, specs in grouped.items():
+            print(f"  {self._colorize(project_name, fg='blue', bold=True)}")
+            for execution in specs:
+                suite_label = self._suite_display_name(execution.spec.source)
+                suite_text = self._colorize(suite_label, fg="magenta")
+                print(f"    - {suite_text}")
+
+    @staticmethod
+    def _is_legacy_tree_test_script(command: list[str]) -> bool:
+        return len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh")
+
+    def _test_target_contexts(self, targets: list[object]) -> list["_TestTargetContext"]:
+        rt = self.runtime
+        return build_test_target_contexts(targets, repo_root=rt.config.base_dir)  # type: ignore[attr-defined]

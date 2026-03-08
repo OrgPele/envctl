@@ -170,6 +170,13 @@ envctl_forward_to_engine() {
     export RUN_REPO_ROOT="$repo_root"
     export RUN_ENGINE_PATH="$ENVCTL_SELECTED_ENGINE"
     export RUN_LAUNCHER_ADAPTER="$ENVCTL_SELECTED_ADAPTER"
+    if [ -z "${ENVCTL_ENGINE_PYTHON_V1:-}" ]; then
+        if [ "${ENVCTL_ENGINE_SHELL_FALLBACK:-false}" = true ]; then
+            export ENVCTL_ENGINE_PYTHON_V1=false
+        else
+            export ENVCTL_ENGINE_PYTHON_V1=true
+        fi
+    fi
     if [ -n "$ENVCTL_SELECTED_WORKSPACE" ]; then
         export RUN_ADAPTER_WORKSPACE_DIR="$ENVCTL_SELECTED_WORKSPACE"
     fi

@@ -12,9 +12,11 @@ This directory contains focused docs for setup, operation, and contribution.
 - [Planning and Worktrees](planning-and-worktrees.md)
 - [AI Playbooks](playbooks.md)
 - [Architecture](architecture.md)
+- [Python Engine Migration Ops](planning/refactoring/envctl-python-engine-migration-operations.md)
 
 ## Operations
 - [Troubleshooting](troubleshooting.md)
+- [Interactive Selector Key Throughput Investigation (Paused)](troubleshooting/interactive-selector-key-throughput-readme.md)
 
 ## Project Meta
 - [Contributing](contributing.md)

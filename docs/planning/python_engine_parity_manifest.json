@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-03-06T11:42:24+00:00",
+  "engine_default": "python",
+  "fallback": {
+    "env_var": "ENVCTL_ENGINE_SHELL_FALLBACK",
+    "description": "Set true to force shell engine fallback during migration window"
+  },
+  "modes": {
+    "main": {
+      "start": "python_complete",
+      "resume": "python_complete",
+      "restart": "python_complete",
+      "stop": "python_complete",
+      "stop-all": "python_complete",
+      "blast-all": "python_complete"
+    },
+    "trees": {
+      "start": "python_complete",
+      "plan": "python_complete",
+      "resume": "python_complete",
+      "restart": "python_complete",
+      "stop": "python_complete",
+      "stop-all": "python_complete",
+      "blast-all": "python_complete"
+    }
+  },
+  "commands": {
+    "config": "python_complete",
+    "dashboard": "python_complete",
+    "doctor": "python_complete",
+    "test": "python_complete",
+    "logs": "python_complete",
+    "health": "python_complete",
+    "errors": "python_complete",
+    "delete-worktree": "python_complete",
+    "blast-worktree": "python_complete",
+    "pr": "python_complete",
+    "commit": "python_complete",
+    "analyze": "python_complete",
+    "migrate": "python_complete",
+    "list-commands": "python_complete",
+    "list-targets": "python_complete",
+    "help": "python_complete"
+  }
+}

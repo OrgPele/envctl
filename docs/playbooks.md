@@ -40,6 +40,6 @@ envctl --repo ~/projects/service-c --resume
 Use non-interactive mode for scripts/agents:
 
 ```bash
-envctl --batch --resume
+envctl --headless --resume
 envctl test --all --skip-startup --load-state
 ```
