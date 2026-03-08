@@ -1016,6 +1016,44 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["effective"]["default_mode"], "trees")
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
 
+    def test_runtime_uses_legacy_spacing_strategy_when_requested(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"ENVCTL_PORT_PREFERRED_STRATEGY": "legacy_spacing"})
+
+        self.assertEqual(runtime.port_planner.preferred_port_strategy, "legacy_spacing")
+        plans = runtime.port_planner.plan_project_stack("tree-beta", index=2)
+        self.assertEqual(plans["backend"].final, 8040)
+        self.assertEqual(plans["frontend"].final, 9040)
+        self.assertEqual(plans["db"].final, 5434)
+
+    def test_show_config_plain_output_reports_preferred_port_strategy(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"ENVCTL_PORT_PREFERRED_STRATEGY": "legacy_spacing"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config"], env={}))
+        self.assertEqual(code, 0)
+        self.assertIn("preferred_port_strategy: legacy_spacing", buffer.getvalue())
+
     def test_show_state_json_reports_missing_state(self) -> None:
         runtime = self._runtime()
 

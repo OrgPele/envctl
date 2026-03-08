@@ -45,6 +45,36 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(plans["redis"].final, 6379)
         self.assertEqual(plans["n8n"].final, 5678)
 
+    def test_main_project_identity_is_normalized(self) -> None:
+        planner = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
+
+        first = planner.plan_project_stack(" Main ", index=0)
+        second = planner.plan_project_stack("main", index=4)
+
+        self.assertEqual(first["backend"].final, 8000)
+        self.assertEqual(second["frontend"].final, 9000)
+        self.assertEqual(first["db"].final, 5432)
+        self.assertEqual(second["redis"].final, 6379)
+
+    def test_project_identity_normalization_keeps_equivalent_names_stable(self) -> None:
+        planner = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
+
+        first = planner.plan_project_stack("Feature A/1", index=0)
+        second = planner.plan_project_stack("feature-a-1", index=9)
+
+        self.assertEqual(first["backend"].final, second["backend"].final)
+        self.assertEqual(first["frontend"].final, second["frontend"].final)
+        self.assertEqual(first["db"].final, second["db"].final)
+
+    def test_project_slot_is_scoped_by_repo_identity(self) -> None:
+        planner_a = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
+        planner_b = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-b")
+
+        slot_a = planner_a._project_slot("tree-alpha")
+        slot_b = planner_b._project_slot("tree-alpha")
+
+        self.assertNotEqual(slot_a, slot_b)
+
     def test_reserve_next_assigns_unique_ports_across_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             base_port = 54320
@@ -71,6 +101,18 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(updated.source, "retry")
         self.assertEqual(updated.final, 8010)
         self.assertEqual(updated.retries, 2)
+
+    def test_project_slot_span_uses_smallest_gap_between_service_bases(self) -> None:
+        planner = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            db_base=8050,
+            redis_base=8150,
+            n8n_base=8250,
+            spacing=20,
+        )
+
+        self.assertEqual(planner._project_slot_span(), 50)
 
     def test_requirement_plan_assigns_unique_ports_per_tree(self) -> None:
         planner = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
@@ -111,6 +153,22 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(plans["db"].final, 5434)
         self.assertEqual(plans["redis"].final, 6381)
         self.assertEqual(plans["n8n"].final, 5680)
+
+    def test_invalid_strategy_falls_back_to_project_slot(self) -> None:
+        planner = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            spacing=20,
+            preferred_port_strategy="unexpected",
+            scope_key="repo-a",
+        )
+
+        project_slot = planner.plan_project_stack("tree-alpha", index=0)
+        redis_slot = project_slot["redis"].final - 6379
+        backend_slot = project_slot["backend"].final - 8000
+
+        self.assertEqual(planner.preferred_port_strategy, "project_slot")
+        self.assertEqual(redis_slot, backend_slot)
 
 
 if __name__ == "__main__":
