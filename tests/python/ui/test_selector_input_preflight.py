@@ -274,6 +274,128 @@ class SelectorInputPreflightTests(unittest.TestCase):
 
         self.assertEqual(preflight.call_count, 2)
 
+    def test_grouped_selector_dashboard_common_group_skips_preflight_and_subprocess(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env = {"ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP": "dashboard"}
+        with (
+            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch("envctl_engine.ui.backend._run_selector_subprocess") as subprocess_run,
+            patch(
+                "envctl_engine.ui.textual.screens.selector.select_grouped_targets_textual",
+                return_value=TargetSelection(cancelled=True),
+            ) as textual_run,
+        ):
+            result = ui_backend._select_grouped_targets_via_textual(  # noqa: SLF001
+                prompt="Restart",
+                projects=[],
+                services=[],
+                allow_all=True,
+                multi=True,
+                runtime=runtime,
+            )
+
+        preflight.assert_not_called()
+        subprocess_run.assert_not_called()
+        textual_run.assert_called_once()
+        self.assertTrue(result.cancelled)
+
+    def test_grouped_selector_preflight_common_group_runs_preflight_without_subprocess(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env = {"ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP": "preflight"}
+        with (
+            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch("envctl_engine.ui.backend._run_selector_subprocess") as subprocess_run,
+            patch(
+                "envctl_engine.ui.textual.screens.selector.select_grouped_targets_textual",
+                return_value=TargetSelection(cancelled=True),
+            ) as textual_run,
+        ):
+            result = ui_backend._select_grouped_targets_via_textual(  # noqa: SLF001
+                prompt="Restart",
+                projects=[],
+                services=[],
+                allow_all=True,
+                multi=True,
+                runtime=runtime,
+            )
+
+        preflight.assert_called_once()
+        subprocess_run.assert_not_called()
+        textual_run.assert_called_once()
+        self.assertTrue(result.cancelled)
+
+    def test_grouped_selector_subprocess_common_group_runs_subprocess_without_preflight(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env = {"ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP": "subprocess"}
+        with (
+            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch(
+                "envctl_engine.ui.backend._run_selector_subprocess",
+                return_value=TargetSelection(cancelled=True),
+            ) as subprocess_run,
+        ):
+            result = ui_backend._select_grouped_targets_via_textual(  # noqa: SLF001
+                prompt="Restart",
+                projects=[],
+                services=[],
+                allow_all=True,
+                multi=True,
+                runtime=runtime,
+            )
+
+        preflight.assert_not_called()
+        subprocess_run.assert_called_once()
+        self.assertTrue(result.cancelled)
+
+    def test_grouped_selector_tail_group_dashboard_entry_forces_dashboard_common_group(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env = {"ENVCTL_DEBUG_PLAN_TAIL_GROUP": "dashboard_entry"}
+        with (
+            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch("envctl_engine.ui.backend._run_selector_subprocess") as subprocess_run,
+            patch(
+                "envctl_engine.ui.textual.screens.selector.select_grouped_targets_textual",
+                return_value=TargetSelection(cancelled=True),
+            ) as textual_run,
+        ):
+            result = ui_backend._select_grouped_targets_via_textual(  # noqa: SLF001
+                prompt="Restart",
+                projects=[],
+                services=[],
+                allow_all=True,
+                multi=True,
+                runtime=runtime,
+            )
+
+        preflight.assert_not_called()
+        subprocess_run.assert_not_called()
+        textual_run.assert_called_once()
+        self.assertTrue(result.cancelled)
+
+    def test_grouped_selector_tail_group_selector_launch_uses_default_common_path(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env = {"ENVCTL_DEBUG_PLAN_TAIL_GROUP": "selector_launch"}
+        with (
+            patch.dict("os.environ", {"TERM_PROGRAM": "Apple_Terminal"}, clear=False),
+            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch(
+                "envctl_engine.ui.backend._run_selector_subprocess",
+                return_value=TargetSelection(cancelled=True),
+            ) as subprocess_run,
+        ):
+            result = ui_backend._select_grouped_targets_via_textual(  # noqa: SLF001
+                prompt="Restart",
+                projects=[],
+                services=[],
+                allow_all=True,
+                multi=True,
+                runtime=runtime,
+            )
+
+        preflight.assert_called_once()
+        subprocess_run.assert_called_once()
+        self.assertTrue(result.cancelled)
+
     def test_legacy_backend_project_and_grouped_paths_call_preflight(self) -> None:
         runtime = _RuntimeStub()
         backend = ui_backend.LegacyInteractiveBackend()

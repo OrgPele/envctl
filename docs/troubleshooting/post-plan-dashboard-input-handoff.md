@@ -1,9 +1,5 @@
 # Post-Plan Dashboard Input Bug: Full Handoff
 
-> Historical investigation archive.
-> The `ENVCTL_DEBUG_PLAN_*` split-matrix commands documented here are no longer a supported debug surface and may no longer work.
-> For current debugging, use snapshots, doctor/debug bundles, `--debug-report`, and the permanent write-up in [service-launch-io-ownership.md](/Users/kfiramar/projects/envctl/docs/troubleshooting/service-launch-io-ownership.md).
-
 ## Problem Statement
 There is a post-`--plan` interactive input bug in `envctl`.
 

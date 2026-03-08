@@ -240,6 +240,33 @@ def _debug_tty_group_enabled(runtime: Any, name: str) -> bool:
     return name in groups
 
 
+def _debug_tty_common_group(runtime: Any) -> str:
+    tail_raw = ""
+    env = getattr(runtime, "env", None)
+    if isinstance(env, Mapping):
+        tail_raw = str(env.get("ENVCTL_DEBUG_PLAN_TAIL_GROUP", "")).strip().lower()
+        if not tail_raw:
+            broad_raw = str(env.get("ENVCTL_DEBUG_PLAN_BROAD_GROUP", "")).strip().lower()
+            if broad_raw == "dashboard_loop_entry":
+                tail_raw = "dashboard_entry"
+            elif broad_raw == "prompt_cycle":
+                tail_raw = "command_read"
+            elif broad_raw == "selector_handoff":
+                tail_raw = "selector_launch"
+    if tail_raw in {"dashboard_entry", "command_read"}:
+        return "dashboard"
+    if tail_raw == "selector_launch":
+        return ""
+    raw = ""
+    if isinstance(env, Mapping):
+        raw = str(env.get("ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP", "")).strip().lower()
+    if not raw:
+        raw = str(os.environ.get("ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP", "")).strip().lower()
+    if raw in {"dashboard", "preflight", "subprocess"}:
+        return raw
+    return ""
+
+
 def _emit_debug_tty_group(runtime: Any, *, group: str, action: str, enabled: bool, detail: str) -> None:
     emit = getattr(runtime, "_emit", None)
     if not callable(emit):
@@ -254,6 +281,29 @@ def _emit_debug_tty_group(runtime: Any, *, group: str, action: str, enabled: boo
     )
 
 
+def _emit_debug_tty_common_group(
+    runtime: Any,
+    *,
+    selector_kind: str,
+    common_group: str,
+    run_preflight: bool,
+    run_subprocess: bool,
+    run_inprocess_direct: bool,
+) -> None:
+    emit = getattr(runtime, "_emit", None)
+    if not callable(emit):
+        return
+    emit(
+        "startup.debug_tty_common_group",
+        component="ui.backend",
+        selector_kind=selector_kind,
+        group=common_group or "default",
+        run_preflight=run_preflight,
+        run_subprocess=run_subprocess,
+        run_inprocess_direct=run_inprocess_direct,
+    )
+
+
 def _select_project_targets_via_textual(
     *,
     prompt: str,
@@ -264,13 +314,27 @@ def _select_project_targets_via_textual(
     initial_project_names: Sequence[str] | None,
     runtime: Any,
 ) -> TargetSelection:
-    run_subprocess = _selector_subprocess_enabled(runtime)
-    _run_selector_preflight(
+    common_group = _debug_tty_common_group(runtime)
+    run_preflight = common_group in {"", "preflight"}
+    run_subprocess = common_group == "subprocess" or (
+        common_group == "" and _selector_subprocess_enabled(runtime)
+    )
+    run_inprocess_direct = common_group in {"dashboard", "preflight"}
+    _emit_debug_tty_common_group(
         runtime,
         selector_kind="project",
-        prompt=prompt,
-        multi=multi,
+        common_group=common_group,
+        run_preflight=run_preflight,
+        run_subprocess=run_subprocess,
+        run_inprocess_direct=run_inprocess_direct,
     )
+    if run_preflight:
+        _run_selector_preflight(
+            runtime,
+            selector_kind="project",
+            prompt=prompt,
+            multi=multi,
+        )
     if run_subprocess:
         return _run_selector_subprocess(
             runtime=runtime,
@@ -283,6 +347,18 @@ def _select_project_targets_via_textual(
                 "multi": bool(multi),
                 "initial_project_names": [str(name) for name in (initial_project_names or [])],
             },
+        )
+    if run_inprocess_direct:
+        from .textual.screens.selector import select_project_targets_textual
+
+        return select_project_targets_textual(
+            prompt=prompt,
+            projects=projects,
+            allow_all=allow_all,
+            allow_untested=allow_untested,
+            multi=multi,
+            initial_project_names=initial_project_names,
+            emit=getattr(runtime, "_emit", None),
         )
     from .terminal_session import temporary_tty_character_mode
 
@@ -315,13 +391,27 @@ def _select_grouped_targets_via_textual(
     multi: bool,
     runtime: Any,
 ) -> TargetSelection:
-    run_subprocess = _selector_subprocess_enabled(runtime)
-    _run_selector_preflight(
+    common_group = _debug_tty_common_group(runtime)
+    run_preflight = common_group in {"", "preflight"}
+    run_subprocess = common_group == "subprocess" or (
+        common_group == "" and _selector_subprocess_enabled(runtime)
+    )
+    run_inprocess_direct = common_group in {"dashboard", "preflight"}
+    _emit_debug_tty_common_group(
         runtime,
         selector_kind="grouped",
-        prompt=prompt,
-        multi=multi,
+        common_group=common_group,
+        run_preflight=run_preflight,
+        run_subprocess=run_subprocess,
+        run_inprocess_direct=run_inprocess_direct,
     )
+    if run_preflight:
+        _run_selector_preflight(
+            runtime,
+            selector_kind="grouped",
+            prompt=prompt,
+            multi=multi,
+        )
     if run_subprocess:
         return _run_selector_subprocess(
             runtime=runtime,
@@ -333,6 +423,17 @@ def _select_grouped_targets_via_textual(
                 "allow_all": bool(allow_all),
                 "multi": bool(multi),
             },
+        )
+    if run_inprocess_direct:
+        from .textual.screens.selector import select_grouped_targets_textual
+
+        return select_grouped_targets_textual(
+            prompt=prompt,
+            projects=projects,
+            services=list(services),
+            allow_all=allow_all,
+            multi=multi,
+            emit=getattr(runtime, "_emit", None),
         )
     from .terminal_session import temporary_tty_character_mode
 

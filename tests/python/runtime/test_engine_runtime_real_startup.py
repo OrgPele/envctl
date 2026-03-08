@@ -2837,6 +2837,524 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
 
+    def test_plan_debug_skip_plan_services_enters_dashboard_with_synthetic_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_SKIP_PLAN_SERVICES": "1",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            requirements = RequirementsResult(
+                project="feature-a-1",
+                db={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": True, "simulated": False},
+                redis={"requested": 6379, "final": 6379, "retries": 0, "success": True, "enabled": True, "simulated": False},
+                n8n={"requested": 5678, "final": 5678, "retries": 0, "success": True, "enabled": False, "simulated": False},
+                supabase={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False, "simulated": False},
+                health="healthy",
+                failures=[],
+            )
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop) as loop_mock,
+                patch.object(engine, "_start_requirements_for_project", return_value=requirements),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(loop_mock.call_count, 1)
+            state = captured["state"]
+            self.assertIn("feature-a-1 Backend", state.services)
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+
+    def test_plan_debug_skip_plan_requirements_skips_dependency_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_DEBUG_SKIP_PLAN_REQUIREMENTS": "1"})
+
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            with patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be skipped")):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+
+    def test_plan_debug_skip_plan_startup_enters_synthetic_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_DEBUG_SKIP_PLAN_STARTUP": "1"})
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_resume", return_value=0) as resume_mock,
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop) as loop_mock,
+                patch.object(engine, "_start_project_context", side_effect=RuntimeError("startup should be skipped")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(resume_mock.call_count, 0)
+            self.assertEqual(loop_mock.call_count, 1)
+            state = captured["state"]
+            self.assertTrue(state.metadata.get("debug_skip_plan_startup"))
+            self.assertIn("feature-a-1 Backend", state.services)
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+
+    def test_plan_debug_real_noop_execution_enters_dashboard_without_project_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop) as loop_mock,
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should not run")),
+                patch.object(engine.startup_orchestrator, "start_project_services", side_effect=RuntimeError("services should not run")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(loop_mock.call_count, 1)
+            state = captured["state"]
+            self.assertIn("feature-a-1 Backend", state.services)
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_execution_mode"
+            )
+            self.assertEqual(event.get("execution"), "real_noop_execution")
+            self.assertEqual(event.get("exec_group"), "completion")
+
+    def test_plan_debug_exec_group_requirements_runs_real_requirements_and_synthetic_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "requirements",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop) as loop_mock,
+                patch.object(engine.startup_orchestrator, "start_project_services", side_effect=RuntimeError("services should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(loop_mock.call_count, 1)
+            state = captured["state"]
+            self.assertIn("feature-a-1", state.requirements)
+            self.assertTrue(state.requirements["feature-a-1"].component("redis").get("enabled") is not None)
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_execution_mode"
+            )
+            self.assertEqual(event.get("exec_group"), "requirements")
+
+    def test_plan_debug_exec_group_services_runs_real_services_and_synthetic_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop) as loop_mock,
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(loop_mock.call_count, 1)
+            state = captured["state"]
+            self.assertTrue(state.requirements["feature-a-1"].component("redis").get("simulated"))
+            self.assertIn("feature-a-1 Backend", state.services)
+            self.assertFalse(state.services["feature-a-1 Backend"].synthetic)
+
+    def test_plan_debug_service_group_bootstrap_skips_launch_attach(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "bootstrap",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine.services, "start_project_with_attach", side_effect=RuntimeError("attach should be skipped")),
+                patch.object(engine.services, "start_service_with_retry", side_effect=RuntimeError("attach should be skipped")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+            self.assertEqual(state.services["feature-a-1 Backend"].status, "unknown")
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_service_group"
+            )
+            self.assertEqual(event.get("group"), "bootstrap")
+            self.assertTrue(event.get("run_bootstrap"))
+            self.assertFalse(event.get("run_launch_attach"))
+            self.assertFalse(event.get("run_record_merge"))
+
+    def test_plan_debug_service_group_launch_attach_skips_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "launch_attach",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine, "_prepare_backend_runtime", side_effect=RuntimeError("backend bootstrap should be skipped")),
+                patch.object(engine, "_prepare_frontend_runtime", side_effect=RuntimeError("frontend bootstrap should be skipped")),
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertFalse(state.services["feature-a-1 Backend"].synthetic)
+            self.assertEqual(state.services["feature-a-1 Backend"].status, "running")
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_service_group"
+            )
+            self.assertEqual(event.get("group"), "launch_attach")
+            self.assertFalse(event.get("run_bootstrap"))
+            self.assertTrue(event.get("run_launch_attach"))
+            self.assertFalse(event.get("run_record_merge"))
+
+    def test_plan_debug_service_group_record_merge_uses_synthetic_running_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "record_merge",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine, "_prepare_backend_runtime", side_effect=RuntimeError("backend bootstrap should be skipped")),
+                patch.object(engine, "_prepare_frontend_runtime", side_effect=RuntimeError("frontend bootstrap should be skipped")),
+                patch.object(engine.services, "start_project_with_attach", side_effect=RuntimeError("attach should be skipped")),
+                patch.object(engine.services, "start_service_with_retry", side_effect=RuntimeError("attach should be skipped")),
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+            self.assertEqual(state.services["feature-a-1 Backend"].status, "running")
+            self.assertTrue(state.services["feature-a-1 Backend"].listener_pids)
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_service_group"
+            )
+            self.assertEqual(event.get("group"), "record_merge")
+            self.assertFalse(event.get("run_bootstrap"))
+            self.assertFalse(event.get("run_launch_attach"))
+            self.assertTrue(event.get("run_record_merge"))
+
+    def test_plan_debug_attach_group_process_start_skips_probe_and_retry_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "launch_attach",
+                    "ENVCTL_DEBUG_PLAN_ATTACH_GROUP": "process_start",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine.services, "start_project_with_attach", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine.services, "start_service_with_retry", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine, "_detect_service_actual_port", side_effect=RuntimeError("probe should be skipped")),
+                patch.object(engine, "_prepare_backend_runtime", side_effect=RuntimeError("backend bootstrap should be skipped")),
+                patch.object(engine, "_prepare_frontend_runtime", side_effect=RuntimeError("frontend bootstrap should be skipped")),
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertFalse(state.services["feature-a-1 Backend"].synthetic)
+            self.assertEqual(state.services["feature-a-1 Backend"].status, "running")
+            self.assertEqual(state.services["feature-a-1 Backend"].actual_port, 8000)
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_attach_group"
+            )
+            self.assertEqual(event.get("group"), "process_start")
+            self.assertTrue(event.get("run_process_start"))
+            self.assertFalse(event.get("run_listener_probe"))
+            self.assertFalse(event.get("run_attach_merge"))
+
+    def test_plan_debug_attach_group_listener_probe_uses_detect_without_retry_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "launch_attach",
+                    "ENVCTL_DEBUG_PLAN_ATTACH_GROUP": "listener_probe",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine.services, "start_project_with_attach", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine.services, "start_service_with_retry", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine, "_prepare_backend_runtime", side_effect=RuntimeError("backend bootstrap should be skipped")),
+                patch.object(engine, "_prepare_frontend_runtime", side_effect=RuntimeError("frontend bootstrap should be skipped")),
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+                patch.object(engine, "_detect_service_actual_port", side_effect=[8061, 9061]),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertEqual(state.services["feature-a-1 Backend"].actual_port, 8061)
+            self.assertEqual(state.services["feature-a-1 Frontend"].actual_port, 9061)
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_attach_group"
+            )
+            self.assertEqual(event.get("group"), "listener_probe")
+            self.assertFalse(event.get("run_process_start"))
+            self.assertTrue(event.get("run_listener_probe"))
+            self.assertFalse(event.get("run_attach_merge"))
+
+    def test_plan_debug_attach_group_attach_merge_uses_synthetic_running_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_EXEC_GROUP": "services",
+                    "ENVCTL_DEBUG_PLAN_SERVICE_GROUP": "launch_attach",
+                    "ENVCTL_DEBUG_PLAN_ATTACH_GROUP": "attach_merge",
+                    "ENVCTL_DEBUG_PLAN_PREENTRY_GROUP": "branch_setup,project_loop,finalize",
+                    "ENVCTL_DEBUG_PLAN_POSTPREENTRY_GROUP": "full_dashboard",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            captured = {}
+
+            def fake_loop(state):
+                captured["state"] = state
+                return 0
+
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", side_effect=fake_loop),
+                patch.object(engine.services, "start_project_with_attach", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine.services, "start_service_with_retry", side_effect=RuntimeError("retry shell should be skipped")),
+                patch.object(engine, "_prepare_backend_runtime", side_effect=RuntimeError("backend bootstrap should be skipped")),
+                patch.object(engine, "_prepare_frontend_runtime", side_effect=RuntimeError("frontend bootstrap should be skipped")),
+                patch.object(engine, "_start_requirement_component", side_effect=RuntimeError("requirements should be synthetic")),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = captured["state"]
+            self.assertTrue(state.services["feature-a-1 Backend"].synthetic)
+            self.assertEqual(state.services["feature-a-1 Backend"].status, "running")
+            event = next(
+                evt
+                for evt in engine.events
+                if evt.get("event") == "startup.debug_attach_group"
+            )
+            self.assertEqual(event.get("group"), "attach_merge")
+            self.assertFalse(event.get("run_process_start"))
+            self.assertFalse(event.get("run_listener_probe"))
+            self.assertTrue(event.get("run_attach_merge"))
+
     def test_plan_snapshot_emits_real_path_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2846,45 +3364,13 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
                 env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
                     "ENVCTL_DEBUG_PLAN_SNAPSHOT": "1",
                 },
             )
-            engine.process_runner = _FakeProcessRunner()  # type: ignore[attr-defined]
-
-            requirements = RequirementsResult(
-                project="feature-a-1",
-                components={
-                    "redis": {"enabled": True, "success": True, "health": "healthy"},
-                },
-                health="healthy",
-                failures=[],
-            )
-            services = {
-                "feature-a-1 Backend": ServiceRecord(
-                    name="feature-a-1 Backend",
-                    type="backend",
-                    cwd=str(repo),
-                    pid=1111,
-                    requested_port=8000,
-                    actual_port=8000,
-                    status="running",
-                ),
-                "feature-a-1 Frontend": ServiceRecord(
-                    name="feature-a-1 Frontend",
-                    type="frontend",
-                    cwd=str(repo),
-                    pid=1112,
-                    requested_port=9000,
-                    actual_port=9000,
-                    status="running",
-                ),
-            }
 
             route = parse_route(["--plan", "feature-a"], env={})
-            with (
-                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0),
-                patch.object(engine, "_start_project_context", return_value=(requirements, services)),
-            ):
+            with patch.object(engine, "_run_interactive_dashboard_loop", return_value=0):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -2896,6 +3382,129 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIn("plan_selector_exit", checkpoints)
             self.assertIn("startup_branch_enter", checkpoints)
             self.assertIn("before_dashboard_entry", checkpoints)
+
+    def test_plan_debug_orch_group_without_threads_disables_startup_spinner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_ORCH_GROUP": "tty,transition",
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            with patch.object(engine, "_run_interactive_dashboard_loop", return_value=0):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            lifecycle_events = [
+                event
+                for event in engine.events
+                if event.get("event") == "ui.spinner.lifecycle"
+                and event.get("op_id") == "startup.execute"
+            ]
+            self.assertFalse(lifecycle_events)
+
+    def test_plan_debug_orch_group_without_tty_uses_status_refresh_instead_of_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_ORCH_GROUP": "threads,transition",
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0),
+                patch.object(engine, "_print_summary") as summary_mock,
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            summary_mock.assert_not_called()
+            self.assertTrue(
+                any(
+                    event.get("event") == "ui.status"
+                    and event.get("message") == "Startup complete; refreshing dashboard..."
+                    for event in engine.events
+                )
+            )
+
+    def test_plan_debug_orch_group_without_transition_suppresses_startup_breakdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION": "1",
+                    "ENVCTL_DEBUG_PLAN_ORCH_GROUP": "threads,tty",
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a"], env={})
+            with (
+                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0),
+                patch.object(engine, "_print_summary") as summary_mock,
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            summary_mock.assert_not_called()
+            self.assertFalse(
+                any(event.get("event") == "startup.breakdown" for event in engine.events)
+            )
+
+    def test_plan_debug_skip_plan_auto_resume_env_disables_auto_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_DEBUG_SKIP_PLAN_AUTO_RESUME": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            with (
+                patch.object(engine, "_try_load_existing_state", return_value=state),
+                patch.object(engine, "_resume", return_value=0) as resume_mock,
+                patch.object(engine, "_start_project_context", side_effect=RuntimeError("expected startup path")),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            self.assertEqual(resume_mock.call_count, 0)
+            self.assertIn("expected startup path", out.getvalue())
 
     def test_plan_no_resume_flag_disables_auto_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
