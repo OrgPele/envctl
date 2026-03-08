@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 import shlex
 import sys
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, cast
 import uuid
 
 from ..debug.debug_utils import hash_command
@@ -16,237 +15,6 @@ from .spinner import Spinner, spinner, spinner_enabled, use_spinner_policy
 from .spinner_service import emit_spinner_policy, resolve_spinner_policy
 from .debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
 from .terminal_session import TerminalSession, _restore_stdin_terminal_sane
-
-
-def _debug_plan_broad_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_BROAD_GROUP", "")).strip().lower()
-    if raw in {"dashboard_loop_entry", "prompt_cycle", "selector_handoff"}:
-        return raw
-    return ""
-
-
-def _debug_plan_tail_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_TAIL_GROUP", "")).strip().lower()
-    if raw in {"dashboard_entry", "command_read", "selector_launch"}:
-        return raw
-    broad_group = _debug_plan_broad_group(runtime)
-    if broad_group == "dashboard_loop_entry":
-        return "dashboard_entry"
-    if broad_group == "prompt_cycle":
-        return "command_read"
-    if broad_group == "selector_handoff":
-        return "selector_launch"
-    return ""
-
-
-def _debug_plan_command_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_COMMAND_GROUP", "")).strip().lower()
-    if raw in {"reload", "render", "prelude"}:
-        return raw
-    return ""
-
-
-def _debug_plan_command_common_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_COMMAND_COMMON_GROUP", "")).strip().lower()
-    if raw in {"session", "writes", "read"}:
-        return raw
-    return ""
-
-
-def _debug_plan_command_always_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_COMMAND_ALWAYS_GROUP", "")).strip().lower()
-    if raw in {"banner", "spinner", "state"}:
-        return raw
-    return ""
-
-
-def _debug_plan_entry_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_ENTRY_GROUP", "")).strip().lower()
-    if raw in {"bootstrap", "render", "dispatch"}:
-        return raw
-    return ""
-
-
-def _debug_plan_postloop_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_POSTLOOP_GROUP", "")).strip().lower()
-    if raw in {"direct_selector", "dashboard_only", "dashboard_selector"}:
-        return raw
-    return ""
-
-
-def _debug_plan_selector_group(runtime: object) -> str:
-    rt = cast(Any, runtime)
-    raw = ""
-    env = getattr(rt, "env", None)
-    if isinstance(env, Mapping):
-        raw = str(env.get("ENVCTL_DEBUG_PLAN_SELECTOR_GROUP", "")).strip().lower()
-    if raw in {"context", "backend", "child", "minimal_direct", "state_direct", "helper_real", "standalone_child"}:
-        return raw
-    return ""
-
-
-def _open_debug_grouped_selector_minimal(runtime: object) -> bool:
-    from types import SimpleNamespace
-    from .textual.screens.selector import select_grouped_targets_textual
-
-    rt = cast(Any, runtime)
-    projects = [
-        SimpleNamespace(name="Project A"),
-        SimpleNamespace(name="Project B"),
-    ]
-    services = [
-        "Project A Backend",
-        "Project A Frontend",
-        "Project B Backend",
-        "Project B Frontend",
-    ]
-    selection = select_grouped_targets_textual(
-        prompt="Debug direct selector",
-        projects=projects,
-        services=services,
-        allow_all=True,
-        multi=True,
-        emit=getattr(rt, "_emit", None),
-    )
-    if selection.cancelled:
-        print("No test target selected.")
-        return True
-    print("Debug selector returned selection.")
-    return True
-
-
-def _open_debug_grouped_selector_state_direct(runtime: object, state: RunState) -> bool:
-    from types import SimpleNamespace
-    from .textual.screens.selector import select_grouped_targets_textual
-
-    rt = cast(Any, runtime)
-    project_names = sorted({name.rsplit(" ", 1)[0] for name in state.services if name.endswith(("Backend", "Frontend"))})
-    if not project_names:
-        project_names = sorted(state.requirements.keys())
-    projects = [SimpleNamespace(name=name) for name in project_names]
-    services = sorted(state.services.keys())
-    selection = select_grouped_targets_textual(
-        prompt="Debug state-direct selector",
-        projects=projects,
-        services=services,
-        allow_all=True,
-        multi=True,
-        emit=getattr(rt, "_emit", None),
-    )
-    if selection.cancelled:
-        print("No test target selected.")
-        return True
-    print("Debug selector returned selection.")
-    return True
-
-
-def _open_debug_grouped_selector(runtime: object, state: RunState) -> bool:
-    rt = cast(Any, runtime)
-    selector_group = _debug_plan_selector_group(rt)
-    rt._emit(
-        "startup.debug_selector_group",
-        component="ui.command_loop",
-        group=selector_group or "child",
-        action="enter",
-    )
-    if selector_group == "minimal_direct":
-        return _open_debug_grouped_selector_minimal(rt)
-    if selector_group == "state_direct":
-        return _open_debug_grouped_selector_state_direct(rt, state)
-    services = sorted(state.services.keys())
-    dashboard_orchestrator = getattr(rt, "dashboard_orchestrator", None)
-    if dashboard_orchestrator is None:
-        from .dashboard.orchestrator import DashboardOrchestrator
-        dashboard_orchestrator = DashboardOrchestrator(rt)
-    project_builder = getattr(dashboard_orchestrator, "_project_names_from_state", None)
-    prompt_builder = getattr(dashboard_orchestrator, "_interactive_target_prompt", None)
-    projects = project_builder(state, rt) if callable(project_builder) else []
-    prompt = prompt_builder("test") if callable(prompt_builder) else "Run tests for"
-    if selector_group == "standalone_child":
-        from .backend import _run_selector_subprocess
-
-        payload = {
-            "kind": "grouped",
-            "prompt": prompt,
-            "project_names": [str(getattr(project, "name", "")) for project in projects],
-            "services": services,
-            "allow_all": True,
-            "multi": True,
-        }
-        selection = _run_selector_subprocess(runtime=rt, payload=payload)
-        if selection.cancelled:
-            print("No test target selected.")
-            return True
-        print("Debug selector returned selection.")
-        return True
-    if selector_group == "context":
-        from .textual.screens.selector import select_grouped_targets_textual
-
-        selection = select_grouped_targets_textual(
-            prompt=prompt,
-            projects=projects,
-            services=services,
-            allow_all=True,
-            multi=True,
-            emit=getattr(rt, "_emit", None),
-        )
-    else:
-        env = getattr(rt, "env", None)
-        previous_common = ""
-        if isinstance(env, dict):
-            previous_common = str(env.get("ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP", ""))
-            if selector_group == "backend":
-                env["ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP"] = "preflight"
-            elif selector_group == "child":
-                env.pop("ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP", None)
-        try:
-            selection = rt._select_grouped_targets(
-                prompt=prompt,
-                projects=projects,
-                services=services,
-                allow_all=True,
-                multi=True,
-            )
-        finally:
-            if isinstance(env, dict):
-                if selector_group == "backend":
-                    if previous_common:
-                        env["ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP"] = previous_common
-                    else:
-                        env.pop("ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP", None)
-    if selection.cancelled:
-        print("No test target selected.")
-        return True
-    print("Debug selector returned selection.")
-    return True
 
 
 def run_dashboard_command_loop(
@@ -265,36 +33,13 @@ def run_dashboard_command_loop(
         rt._print_dashboard_snapshot(state)
         return 0
 
-    debug_command_common_group = _debug_plan_command_common_group(rt)
-    debug_entry_group = _debug_plan_entry_group(rt)
-    debug_postloop_group = _debug_plan_postloop_group(rt)
-    use_session_bootstrap = not debug_command_common_group or debug_command_common_group == "session"
-    use_prompt_writes = not debug_command_common_group or debug_command_common_group == "writes"
-    use_real_read = not debug_command_common_group or debug_command_common_group == "read"
-    if _debug_plan_tail_group(rt) == "dashboard_entry" and debug_entry_group:
-        use_session_bootstrap = debug_entry_group == "bootstrap"
-        use_prompt_writes = debug_entry_group == "render"
-        use_real_read = False
-
-    session: TerminalSession | None = None
-    if use_session_bootstrap or use_real_read:
-        session = TerminalSession(
-            getattr(rt, "env", {}),
-            input_provider=input_provider,
-            emit=getattr(rt, "_emit", None),
-            debug_recorder=getattr(rt, "_debug_recorder", None),
-        )
-    if use_session_bootstrap:
-        rt._emit("ui.input.backend_policy", component="ui.command_loop", policy="prefer_basic_input")
-    if debug_command_common_group:
-        rt._emit(
-            "startup.debug_command_common_group",
-            component="ui.command_loop",
-            group=debug_command_common_group,
-            use_session_bootstrap=use_session_bootstrap,
-            use_prompt_writes=use_prompt_writes,
-            use_real_read=use_real_read,
-        )
+    session = TerminalSession(
+        getattr(rt, "env", {}),
+        input_provider=input_provider,
+        emit=getattr(rt, "_emit", None),
+        debug_recorder=getattr(rt, "_debug_recorder", None),
+    )
+    rt._emit("ui.input.backend_policy", component="ui.command_loop", policy="prefer_basic_input")
     use_color = colors_enabled(getattr(rt, "env", {}), stream=sys.stdout, interactive_tty=True)
     reset = "" if not use_color else "\033[0m"
     cyan = "" if not use_color else "\033[36m"
@@ -303,125 +48,46 @@ def run_dashboard_command_loop(
 
     minimal_dashboard = str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_MINIMAL_DASHBOARD', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
     debug_plan_snapshot = snapshot_enabled(getattr(rt, "env", {}))
-    debug_broad_group = _debug_plan_broad_group(rt)
-    debug_tail_group = _debug_plan_tail_group(rt)
-    debug_command_group = _debug_plan_command_group(rt)
-    debug_command_always_group = _debug_plan_command_always_group(rt)
-    use_always_banner = not debug_command_always_group or debug_command_always_group == "banner"
-    use_always_spinner = not debug_command_always_group or debug_command_always_group == "spinner"
-    use_always_state = not debug_command_always_group or debug_command_always_group == "state"
-    if debug_tail_group == "dashboard_entry" and debug_entry_group:
-        use_always_banner = debug_entry_group == "bootstrap"
-        use_always_spinner = debug_entry_group == "bootstrap"
-        use_always_state = debug_entry_group == "bootstrap"
-        rt._emit(
-            "startup.debug_entry_group",
-            component="ui.command_loop",
-            group=debug_entry_group,
-            use_always_banner=use_always_banner,
-            use_always_spinner=use_always_spinner,
-            use_always_state=use_always_state,
-            use_session_bootstrap=use_session_bootstrap,
-            use_prompt_writes=use_prompt_writes,
-        )
-    if debug_command_always_group:
-        rt._emit(
-            "startup.debug_command_always_group",
-            component="ui.command_loop",
-            group=debug_command_always_group,
-            use_always_banner=use_always_banner,
-            use_always_spinner=use_always_spinner,
-            use_always_state=use_always_state,
-        )
-    if use_always_state:
-        rt._emit("ui.command_loop.enter", minimal=minimal_dashboard)
-    if debug_broad_group:
-        rt._emit(
-            "startup.debug_broad_group",
-            component="ui.command_loop",
-            group=debug_broad_group,
-            mapped_tail_group=debug_tail_group,
-            action="enter",
-            enabled=True,
-        )
-    if debug_tail_group:
-        rt._emit(
-            "startup.debug_tail_group",
-            component="ui.command_loop",
-            group=debug_tail_group,
-            action="enter",
-            enabled=True,
-        )
-    if use_always_banner:
-        print("")
-        print(f"{cyan}Interactive mode enabled. Services continue running until you stop them.{reset}")
-        print(f"{cyan}Type 'help' for commands. Type 'q' to quit interactive mode.{reset}")
+    rt._emit("ui.command_loop.enter", minimal=minimal_dashboard)
+    print("")
+    print(f"{cyan}Interactive mode enabled. Services continue running until you stop them.{reset}")
+    print(f"{cyan}Type 'help' for commands. Type 'q' to quit interactive mode.{reset}")
     base_spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
-    if use_always_spinner:
-        rt._emit("ui.spinner.backend", backend=base_spinner_policy.backend)
-        emit_spinner_policy(
-            getattr(rt, "_emit", None),
-            base_spinner_policy,
-            context={"component": "ui.command_loop", "scope": "interactive_loop"},
-        )
-    if use_session_bootstrap:
-        _call_or_default_flush(flush_pending_input)
-
-    if debug_postloop_group:
-        rt._emit(
-            "startup.debug_postloop_group",
-            component="ui.command_loop",
-            group=debug_postloop_group,
-            enabled=True,
-        )
+    rt._emit("ui.spinner.backend", backend=base_spinner_policy.backend)
+    emit_spinner_policy(
+        getattr(rt, "_emit", None),
+        base_spinner_policy,
+        context={"component": "ui.command_loop", "scope": "interactive_loop"},
+    )
+    _call_or_default_flush(flush_pending_input)
 
     current_state = state
     first_dashboard_render = True
     try:
-        if debug_postloop_group == "direct_selector":
-            _open_debug_grouped_selector(rt, current_state)
-            return 0
-
         while True:
-            if use_prompt_writes and not minimal_dashboard:
-                if not debug_command_group or debug_command_group == "reload":
-                    rt._emit(
-                        "startup.debug_command_group",
-                        component="ui.command_loop",
-                        group=debug_command_group or "all",
-                        action="state_reload",
-                        enabled=True,
-                    )
-                    refreshed = rt._try_load_existing_state(
-                        mode=current_state.mode,
-                        strict_mode_match=True,
-                    )
-                    if refreshed is not None:
-                        current_state = refreshed
-                if not debug_command_group or debug_command_group == "render":
-                    rt._emit(
-                        "startup.debug_command_group",
-                        component="ui.command_loop",
-                        group=debug_command_group or "all",
-                        action="dashboard_render",
-                        enabled=True,
-                    )
-                    print("")
-                    rt._print_dashboard_snapshot(current_state)
-                    print(f"{magenta}Commands:{reset} (q)uit")
-                    print(
-                        f"  {magenta}Lifecycle:{reset} (s)top | (r)estart | stop-all | blast-all"
-                    )
-                    print(
-                        f"  {magenta}Actions:{reset} (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate"
-                    )
-                    print(
-                        f"  {magenta}Inspect:{reset} (l)ogs | (x) clear-logs | (h)ealth | (e)rrors | confi(g)"
-                    )
-            elif use_prompt_writes:
+            if not minimal_dashboard:
+                refreshed = rt._try_load_existing_state(
+                    mode=current_state.mode,
+                    strict_mode_match=True,
+                )
+                if refreshed is not None:
+                    current_state = refreshed
+                print("")
+                rt._print_dashboard_snapshot(current_state)
+                print(f"{magenta}Commands:{reset} (q)uit")
+                print(
+                    f"  {magenta}Lifecycle:{reset} (s)top | (r)estart | stop-all | blast-all"
+                )
+                print(
+                    f"  {magenta}Actions:{reset} (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate"
+                )
+                print(
+                    f"  {magenta}Inspect:{reset} (l)ogs | (x) clear-logs | (h)ealth | (e)rrors | confi(g)"
+                )
+            else:
                 print("")
                 print(f"{cyan}Minimal interactive mode (debug). Type commands or q to quit.{reset}")
-            if use_prompt_writes and first_dashboard_render and debug_plan_snapshot:
+            if first_dashboard_render and debug_plan_snapshot:
                 emit_plan_handoff_snapshot(
                     getattr(rt, "_emit", None),
                     env=getattr(rt, "env", {}),
@@ -434,62 +100,12 @@ def run_dashboard_command_loop(
                 )
                 first_dashboard_render = False
             rt._emit("ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="input")
-            if debug_command_group:
-                rt._emit(
-                    "startup.debug_command_group",
-                    component="ui.command_loop",
-                    group=debug_command_group,
-                    action="prompt_prelude",
-                    enabled=debug_command_group == "prelude",
-                )
             rt._emit("ui.input.read.begin", component="ui.command_loop")
             try:
-                if debug_tail_group == "dashboard_entry" and debug_entry_group in {"bootstrap", "render"}:
-                    rt._emit(
-                        "startup.debug_entry_group",
-                        component="ui.command_loop",
-                        group=debug_entry_group,
-                        action="direct_selector_open",
-                    )
-                    _open_debug_grouped_selector(rt, current_state)
-                    raw = "q"
-                elif debug_tail_group == "dashboard_entry":
-                    raw = "t"
-                    rt._emit(
-                        "startup.debug_tail_group",
-                        component="ui.command_loop",
-                        group=debug_tail_group,
-                        action="inject_command",
-                        enabled=True,
-                        value="t",
-                    )
-                elif debug_command_common_group in {"session", "writes"}:
-                    raw = "t"
-                    rt._emit(
-                        "startup.debug_command_common_group",
-                        component="ui.command_loop",
-                        group=debug_command_common_group,
-                        action="inject_command",
-                        value="t",
-                    )
-                elif debug_postloop_group in {"dashboard_only", "dashboard_selector"}:
-                    raw = "t"
-                    rt._emit(
-                        "startup.debug_postloop_group",
-                        component="ui.command_loop",
-                        group=debug_postloop_group,
-                        action="inject_command",
-                        value="t",
-                    )
-                elif read_command_line is not None:
+                if read_command_line is not None:
                     raw = read_command_line("Enter command: ")
                 else:
-                    raw = (session or TerminalSession(
-                        getattr(rt, "env", {}),
-                        input_provider=input_provider,
-                        emit=getattr(rt, "_emit", None),
-                        debug_recorder=getattr(rt, "_debug_recorder", None),
-                    )).read_command_line("Enter command: ")
+                    raw = session.read_command_line("Enter command: ")
                 rt._emit("ui.input.read.end", component="ui.command_loop", bytes_read=len(raw.encode("utf-8", errors="ignore")))
             except EOFError:
                 print(f"{yellow}No interactive TTY input available; leaving interactive mode.{reset}")
@@ -528,16 +144,6 @@ def run_dashboard_command_loop(
                 continue
 
             normalized_command = _normalize_interactive_command(raw)
-            if debug_postloop_group == "dashboard_only" and normalized_command == "test":
-                rt._emit(
-                    "startup.debug_postloop_group",
-                    component="ui.command_loop",
-                    group=debug_postloop_group,
-                    action="suppress_selector",
-                    enabled=True,
-                )
-                print('Debug dashboard-only mode: selector suppressed.')
-                continue
             command_id = f"cmd-{uuid.uuid4().hex[:12]}"
             salt = str(getattr(rt, "_debug_hash_salt", "interactive"))
             command_hash, command_length = hash_command(raw, salt)

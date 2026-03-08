@@ -33,60 +33,9 @@ def start_project_context(orchestrator,
     run_id: str,
 ) -> tuple[RequirementsResult, dict[str, Any]]:
     rt: Any = orchestrator.runtime
-    debug_skip_plan_project_execution = bool(
-        route is not None
-        and str(getattr(route, 'command', '')).strip().lower() == 'plan'
-        and str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_SKIP_PLAN_PROJECT_EXECUTION', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-    )
-    debug_real_noop_execution = bool(
-        route is not None
-        and str(getattr(route, 'command', '')).strip().lower() == 'plan'
-        and (
-            bool(route.flags.get("_debug_real_noop_execution"))
-            or str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_PLAN_REAL_NOOP_EXECUTION', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-        )
-    )
-    debug_exec_group = str(route.flags.get("_debug_exec_group", "")).strip().lower() if route is not None else ""
-    if debug_exec_group not in {"requirements", "services", "completion"}:
-        debug_exec_group = "completion"
-    debug_service_group = str(route.flags.get("_debug_service_group", "")).strip().lower() if route is not None else ""
-    if debug_service_group not in {"bootstrap", "launch_attach", "record_merge"}:
-        debug_service_group = ""
-    debug_skip_plan_requirements = bool(
-        route is not None
-        and str(getattr(route, 'command', '')).strip().lower() == 'plan'
-        and str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_SKIP_PLAN_REQUIREMENTS', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-    )
-    debug_skip_plan_services = bool(
-        route is not None
-        and str(getattr(route, 'command', '')).strip().lower() == 'plan'
-        and str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_SKIP_PLAN_SERVICES', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-    )
-    if debug_skip_plan_project_execution:
-        debug_skip_plan_requirements = True
-        debug_skip_plan_services = True
-    if debug_real_noop_execution:
-        debug_skip_plan_requirements = debug_exec_group != "requirements"
-        debug_skip_plan_services = debug_exec_group != "services"
-        rt._emit(
-            "startup.debug_execution_mode",
-            project=context.name,
-            command='plan',
-            mode="real_noop_execution",
-            exec_group=debug_exec_group,
-        )
     orchestrator._report_progress(route, f"Starting project {context.name}...", project=context.name)
     rt._reserve_project_ports(context)  # type: ignore[attr-defined]
-    if debug_skip_plan_requirements:
-        skip_reason = (
-            f"debug_plan_exec_group:{debug_exec_group}"
-            if debug_real_noop_execution
-            else ('debug_skip_plan_project_execution' if debug_skip_plan_project_execution else 'debug_skip_plan_requirements')
-        )
-        rt._emit('requirements.debug_skip', project=context.name, command='plan', reason=skip_reason)
-        requirements = _synthetic_requirements_result(rt, context=context, mode=mode, route=route)
-    else:
-        requirements = orchestrator._requirements_for_restart_context(context=context, mode=mode, route=route)
+    requirements = orchestrator._requirements_for_restart_context(context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):  # type: ignore[attr-defined]
         raise RuntimeError(
             f"Requirements unavailable for {context.name}: "
@@ -102,42 +51,14 @@ def start_project_context(orchestrator,
         ),
         project=context.name,
     )
-    if debug_skip_plan_services:
-        skip_reason = (
-            f"debug_plan_exec_group:{debug_exec_group}"
-            if debug_real_noop_execution
-            else ('debug_skip_plan_project_execution' if debug_skip_plan_project_execution else 'debug_skip_plan_services')
-        )
-        rt._emit('service.debug_skip', project=context.name, command='plan', reason=skip_reason)
-        project_services = _synthetic_service_records(rt, context=context, mode=mode)
-    else:
-        project_services = orchestrator.start_project_services(
-            context,
-            requirements=requirements,
-            run_id=run_id,
-            route=route,
-        )
+    project_services = orchestrator.start_project_services(
+        context,
+        requirements=requirements,
+        run_id=run_id,
+        route=route,
+    )
     try:
-        skip_truth_assert = bool(debug_service_group in {"bootstrap", "record_merge"})
-        if not debug_skip_plan_services and not skip_truth_assert:
-            poststart_truth_group = str(getattr(route, "flags", {}).get("_debug_poststart_truth_group", "")).strip().lower() if route is not None else ""
-            if poststart_truth_group not in {"pid_wait", "port_fallback", "truth_discovery"}:
-                poststart_truth_group = ""
-            if poststart_truth_group:
-                rt._emit(  # type: ignore[attr-defined]
-                    "startup.debug_poststart_truth_group",
-                    project=context.name,
-                    group=poststart_truth_group,
-                    run_pid_wait=poststart_truth_group == "pid_wait",
-                    run_port_fallback=poststart_truth_group == "port_fallback",
-                    run_truth_discovery=poststart_truth_group == "truth_discovery",
-                )
-            previous_poststart_truth_group = getattr(rt, "_debug_poststart_truth_group", "")
-            setattr(rt, "_debug_poststart_truth_group", poststart_truth_group)
-            try:
-                rt._assert_project_services_post_start_truth(context=context, services=project_services)  # type: ignore[attr-defined]
-            finally:
-                setattr(rt, "_debug_poststart_truth_group", previous_poststart_truth_group)
+        rt._assert_project_services_post_start_truth(context=context, services=project_services)  # type: ignore[attr-defined]
     except RuntimeError:
         rt._terminate_started_services(project_services)  # type: ignore[attr-defined]
         raise
@@ -608,81 +529,6 @@ def start_project_services(orchestrator,
     port_allocator = orchestrator._port_allocator(rt)
     process_runtime = orchestrator._process_runtime(rt)
     effective_mode = str(route.mode if route is not None else "main").strip().lower() or "main"
-    service_group = str(getattr(route, "flags", {}).get("_debug_service_group", "")).strip().lower() if route is not None else ""
-    if service_group not in {"bootstrap", "launch_attach", "record_merge"}:
-        service_group = ""
-    attach_group = str(getattr(route, "flags", {}).get("_debug_attach_group", "")).strip().lower() if route is not None else ""
-    if attach_group not in {"process_start", "listener_probe", "attach_merge"}:
-        attach_group = ""
-    listener_group = str(getattr(route, "flags", {}).get("_debug_listener_group", "")).strip().lower() if route is not None else ""
-    if listener_group not in {"pid_wait", "port_fallback", "rebound_discovery"}:
-        listener_group = ""
-    pid_wait_group = str(getattr(route, "flags", {}).get("_debug_pid_wait_group", "")).strip().lower() if route is not None else ""
-    if pid_wait_group not in {"signal_gate", "pid_port_lsof", "tree_port_scan"}:
-        pid_wait_group = ""
-    pid_wait_service = str(getattr(route, "flags", {}).get("_debug_pid_wait_service", "")).strip().lower() if route is not None else ""
-    if pid_wait_service not in {"backend", "frontend", "both"}:
-        pid_wait_service = ""
-    backend_actual_group = str(getattr(route, "flags", {}).get("_debug_backend_actual_group", "")).strip().lower() if route is not None else ""
-    if backend_actual_group not in {"request_setup", "detect_call", "resolve_actual"}:
-        backend_actual_group = ""
-    run_bootstrap = service_group in {"", "bootstrap"}
-    run_launch_attach = service_group in {"", "launch_attach"}
-    run_record_merge = service_group in {"", "record_merge"}
-    if service_group:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_service_group",
-            project=context.name,
-            group=service_group,
-            run_bootstrap=run_bootstrap,
-            run_launch_attach=run_launch_attach,
-            run_record_merge=run_record_merge,
-        )
-    if attach_group:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_attach_group",
-            project=context.name,
-            group=attach_group,
-            run_process_start=attach_group == "process_start",
-            run_listener_probe=attach_group == "listener_probe",
-            run_attach_merge=attach_group == "attach_merge",
-        )
-    if listener_group:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_listener_group",
-            project=context.name,
-            group=listener_group,
-            run_pid_wait=listener_group == "pid_wait",
-            run_port_fallback=listener_group == "port_fallback",
-            run_rebound_discovery=listener_group == "rebound_discovery",
-        )
-    if pid_wait_group:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_pid_wait_group",
-            project=context.name,
-            group=pid_wait_group,
-            run_signal_gate=pid_wait_group == "signal_gate",
-            run_pid_port_lsof=pid_wait_group == "pid_port_lsof",
-            run_tree_port_scan=pid_wait_group == "tree_port_scan",
-        )
-    if pid_wait_service:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_pid_wait_service",
-            project=context.name,
-            group=pid_wait_service,
-            run_backend=pid_wait_service == "backend",
-            run_frontend=pid_wait_service == "frontend",
-            run_both=pid_wait_service == "both",
-        )
-    if backend_actual_group:
-        rt._emit(  # type: ignore[attr-defined]
-            "startup.debug_backend_actual_group",
-            project=context.name,
-            group=backend_actual_group,
-            run_request_setup=backend_actual_group == "request_setup",
-            run_detect_call=backend_actual_group == "detect_call",
-            run_resolve_actual=backend_actual_group == "resolve_actual",
-        )
     backend_plan = context.ports["backend"]
     frontend_plan = context.ports["frontend"]
     backend_cwd = context.root / str(getattr(rt.config, "backend_dir_name", "backend"))
@@ -751,7 +597,7 @@ def start_project_services(orchestrator,
         return {}
     service_started = time.monotonic()
     prepare_backend_duration_ms = 0.0
-    if run_bootstrap and "backend" in selected_service_types:
+    if "backend" in selected_service_types:
         prepare_backend_started = time.monotonic()
         rt._prepare_backend_runtime(  # type: ignore[attr-defined]
             context=context,
@@ -770,7 +616,7 @@ def start_project_services(orchestrator,
             duration_ms=prepare_backend_duration_ms,
         )
     prepare_frontend_duration_ms = 0.0
-    if run_bootstrap and "frontend" in selected_service_types:
+    if "frontend" in selected_service_types:
         prepare_frontend_started = time.monotonic()
         rt._prepare_frontend_runtime(  # type: ignore[attr-defined]
             context=context,
@@ -890,99 +736,44 @@ def start_project_services(orchestrator,
     backend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_BACKEND_ACTUAL_PORT"), 0)
     frontend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_FRONTEND_ACTUAL_PORT"), 0)
 
-    def pid_wait_service_selected(service_name: str) -> bool:
-        if listener_group != "pid_wait" or not pid_wait_service or pid_wait_service == "both":
-            return True
-        return pid_wait_service == service_name
-
     def detect_backend_actual(pid: int | None, requested: int) -> int:
         rt._emit("service.bind.requested", project=context.name, service="backend", requested_port=requested)  # type: ignore[attr-defined]
         detect_started = time.monotonic()
         if backend_actual_override > 0:
             actual = backend_actual_override
-        elif not pid_wait_service_selected("backend"):
-            actual = requested
-            rt._emit(  # type: ignore[attr-defined]
-                "startup.debug_pid_wait_service.synthetic_actual",
-                project=context.name,
-                service="backend",
-                group=pid_wait_service,
-                requested_port=requested,
-            )
         else:
-            if backend_actual_group == "request_setup":
-                actual = requested
+            detected = rt._detect_service_actual_port(  # type: ignore[attr-defined]
+                pid=pid,
+                requested_port=requested,
+                service_name="backend",
+            )
+            if detected is not None:
+                actual = detected
+                if actual != requested:
+                    rt._emit("port.rebound", project=context.name, service="backend", port=actual)  # type: ignore[attr-defined]
+            elif rt._listener_truth_enforced():  # type: ignore[attr-defined]
+                detail = rt._service_listener_failure_detail(log_path=backend_log_path, pid=pid)  # type: ignore[attr-defined]
+                error_suffix = f" ({detail})" if detail else ""
                 rt._emit(  # type: ignore[attr-defined]
-                    "startup.debug_backend_actual_group.synthetic_actual",
+                    "service.failure",
                     project=context.name,
                     service="backend",
-                    group=backend_actual_group,
+                    failure_class="listener_not_detected",
                     requested_port=requested,
+                    detail=detail,
+                )
+                raise RuntimeError(
+                    f"backend listener not detected for {context.name} on port {requested}{error_suffix}"
                 )
             else:
-                if backend_actual_group == "resolve_actual":
-                    detected = requested
-                    rt._emit(  # type: ignore[attr-defined]
-                        "startup.debug_backend_actual_group.synthetic_detected",
-                        project=context.name,
-                        service="backend",
-                        group=backend_actual_group,
-                        requested_port=requested,
-                    )
-                else:
-                    detected = rt._detect_service_actual_port(  # type: ignore[attr-defined]
-                        pid=pid,
-                        requested_port=requested,
-                        service_name="backend",
-                        debug_listener_group=listener_group,
-                        debug_pid_wait_group=pid_wait_group,
-                    )
-                if backend_actual_group == "detect_call":
-                    actual = detected if detected is not None else requested
-                    if detected is None:
-                        rt._emit(  # type: ignore[attr-defined]
-                            "startup.debug_backend_actual_group.synthetic_actual",
-                            project=context.name,
-                            service="backend",
-                            group=backend_actual_group,
-                            requested_port=requested,
-                        )
-                elif detected is not None:
-                    actual = detected
-                    if actual != requested:
-                        rt._emit("port.rebound", project=context.name, service="backend", port=actual)  # type: ignore[attr-defined]
-                elif listener_group:
-                    actual = requested
-                    rt._emit(  # type: ignore[attr-defined]
-                        "startup.debug_listener_group.synthetic_actual",
-                        project=context.name,
-                        service="backend",
-                        group=listener_group,
-                        requested_port=requested,
-                    )
-                elif rt._listener_truth_enforced():  # type: ignore[attr-defined]
-                    detail = rt._service_listener_failure_detail(log_path=backend_log_path, pid=pid)  # type: ignore[attr-defined]
-                    error_suffix = f" ({detail})" if detail else ""
-                    rt._emit(  # type: ignore[attr-defined]
-                        "service.failure",
-                        project=context.name,
-                        service="backend",
-                        failure_class="listener_not_detected",
-                        requested_port=requested,
-                        detail=detail,
-                    )
-                    raise RuntimeError(
-                        f"backend listener not detected for {context.name} on port {requested}{error_suffix}"
-                    )
-                else:
-                    rt._emit(  # type: ignore[attr-defined]
-                        "service.failure",
-                        project=context.name,
-                        service="backend",
-                        failure_class="listener_unverified",
-                        requested_port=requested,
-                    )
-                    actual = requested
+                rt._emit(  # type: ignore[attr-defined]
+                    "service.failure",
+                    project=context.name,
+                    service="backend",
+                    failure_class="listener_unverified",
+                    requested_port=requested,
+                )
+                actual = requested
         rt._emit("service.bind.actual", project=context.name, service="backend", actual_port=actual)  # type: ignore[attr-defined]
         rt._emit(  # type: ignore[attr-defined]
             "service.attach.phase",
@@ -1000,51 +791,21 @@ def start_project_services(orchestrator,
             actual = frontend_actual_override
         else:
             probe_port = requested + rebound_delta if rebound_delta > 0 else requested
-            if not pid_wait_service_selected("frontend"):
-                actual = probe_port
-                rt._emit(  # type: ignore[attr-defined]
-                    "startup.debug_pid_wait_service.synthetic_actual",
-                    project=context.name,
-                    service="frontend",
-                    group=pid_wait_service,
-                    requested_port=probe_port,
-                )
-                rt._emit("service.bind.actual", project=context.name, service="frontend", actual_port=actual)  # type: ignore[attr-defined]
-                rt._emit(  # type: ignore[attr-defined]
-                    "service.attach.phase",
-                    project=context.name,
-                    service="frontend",
-                    phase="actual_port_detection",
-                    duration_ms=round((time.monotonic() - detect_started) * 1000.0, 2),
-                )
-                return actual
             detected = rt._detect_service_actual_port(  # type: ignore[attr-defined]
                 pid=pid,
                 requested_port=probe_port,
                 service_name="frontend",
-                debug_listener_group=listener_group,
-                debug_pid_wait_group=pid_wait_group,
             )
-            if detected is None and not listener_group and probe_port != requested:
+            if detected is None and probe_port != requested:
                 detected = rt._detect_service_actual_port(  # type: ignore[attr-defined]
                     pid=pid,
                     requested_port=requested,
                     service_name="frontend",
-                    debug_pid_wait_group=pid_wait_group,
                 )
             if detected is not None:
                 actual = detected
                 if actual != requested:
                     rt._emit("port.rebound", project=context.name, service="frontend", port=actual)  # type: ignore[attr-defined]
-            elif listener_group:
-                actual = probe_port
-                rt._emit(  # type: ignore[attr-defined]
-                    "startup.debug_listener_group.synthetic_actual",
-                    project=context.name,
-                    service="frontend",
-                    group=listener_group,
-                    requested_port=probe_port,
-                )
             elif rt._listener_truth_enforced():  # type: ignore[attr-defined]
                 detail = rt._service_listener_failure_detail(log_path=frontend_log_path, pid=pid)  # type: ignore[attr-defined]
                 error_suffix = f" ({detail})" if detail else ""
@@ -1125,184 +886,73 @@ def start_project_services(orchestrator,
             synthetic=False,
         )
 
-    if run_launch_attach and attach_group == "process_start":
-        attach_started = time.monotonic()
-        project_services: dict[str, Any] = {}
-        if "backend" in selected_service_types:
-            backend_started, backend_error, backend_pid = start_backend(backend_plan.final)
-            if not backend_started:
-                raise RuntimeError(backend_error or f"failed starting backend for {context.name}")
-            project_services[f"{context.name} Backend"] = _running_service_record(
-                service_name="backend",
-                requested_port=backend_plan.final,
-                actual_port=backend_plan.final,
-                pid=backend_pid,
-                cwd=backend_cwd,
-                log_path=backend_log_path,
-            )
-        if "frontend" in selected_service_types:
-            frontend_started, frontend_error, frontend_pid = start_frontend(frontend_plan.final)
-            if not frontend_started:
-                raise RuntimeError(frontend_error or f"failed starting frontend for {context.name}")
-            project_services[f"{context.name} Frontend"] = _running_service_record(
-                service_name="frontend",
-                requested_port=frontend_plan.final,
-                actual_port=frontend_plan.final,
-                pid=frontend_pid,
-                cwd=frontend_cwd,
-                log_path=frontend_log_path,
-            )
-        attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.component",
+    attach_parallel = orchestrator._service_attach_parallel_enabled(
+        route=route,
+        selected_service_types=selected_service_types,
+    )
+    rt._emit(  # type: ignore[attr-defined]
+        "service.attach.execution",
+        project=context.name,
+        mode="parallel" if attach_parallel else "sequential",
+        selected_service_types=sorted(selected_service_types),
+    )
+    if orchestrator._requirements_timing_enabled(route) and not orchestrator._suppress_timing_output(route):
+        print(
+            "Service attach execution for "
+            f"{context.name}: "
+            f"{'parallel' if attach_parallel else 'sequential'} "
+            f"(services={','.join(sorted(selected_service_types))})"
+        )
+    attach_started = time.monotonic()
+    if selected_service_types == {"backend", "frontend"}:
+        records = rt.services.start_project_with_attach(  # type: ignore[attr-defined]
             project=context.name,
-            component="start_project_with_attach",
-            duration_ms=attach_duration_ms,
+            backend_port=backend_plan.final,
+            frontend_port=frontend_plan.final,
+            backend_cwd=str(backend_cwd),
+            frontend_cwd=str(frontend_cwd),
+            start_backend=start_backend,
+            start_frontend=start_frontend,
+            reserve_next=reserve_next,
+            detect_backend_actual=detect_backend_actual,
+            detect_frontend_actual=detect_frontend_actual,
+            on_retry=on_service_retry,
+            parallel_start=attach_parallel,
         )
-        total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.summary",
-            project=context.name,
-            prepare_backend_runtime=prepare_backend_duration_ms,
-            prepare_frontend_runtime=prepare_frontend_duration_ms,
-            start_project_with_attach=attach_duration_ms,
-            total=total_duration_ms,
-        )
-        return project_services
-
-    if run_launch_attach and attach_group == "listener_probe":
-        attach_started = time.monotonic()
-        project_services = {}
-        if "backend" in selected_service_types:
-            backend_started, backend_error, backend_pid = start_backend(backend_plan.final)
-            if not backend_started:
-                raise RuntimeError(backend_error or f"failed starting backend for {context.name}")
-            backend_actual = detect_backend_actual(backend_pid, backend_plan.final)
-            project_services[f"{context.name} Backend"] = _running_service_record(
-                service_name="backend",
-                requested_port=backend_plan.final,
-                actual_port=backend_actual,
-                pid=backend_pid,
-                cwd=backend_cwd,
-                log_path=backend_log_path,
-            )
-        if "frontend" in selected_service_types:
-            frontend_started, frontend_error, frontend_pid = start_frontend(frontend_plan.final)
-            if not frontend_started:
-                raise RuntimeError(frontend_error or f"failed starting frontend for {context.name}")
-            frontend_actual = detect_frontend_actual(frontend_pid, frontend_plan.final)
-            project_services[f"{context.name} Frontend"] = _running_service_record(
-                service_name="frontend",
-                requested_port=frontend_plan.final,
-                actual_port=frontend_actual,
-                pid=frontend_pid,
-                cwd=frontend_cwd,
-                log_path=frontend_log_path,
-            )
-        attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.component",
-            project=context.name,
-            component="start_project_with_attach",
-            duration_ms=attach_duration_ms,
-        )
-        total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.summary",
-            project=context.name,
-            prepare_backend_runtime=prepare_backend_duration_ms,
-            prepare_frontend_runtime=prepare_frontend_duration_ms,
-            start_project_with_attach=attach_duration_ms,
-            total=total_duration_ms,
-        )
-        return project_services
-
-    if run_launch_attach and attach_group == "attach_merge":
-        project_services = _synthetic_running_service_records(
-            rt,
-            context=context,
-            mode=effective_mode,
-        )
-        total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.summary",
-            project=context.name,
-            prepare_backend_runtime=prepare_backend_duration_ms,
-            prepare_frontend_runtime=prepare_frontend_duration_ms,
-            start_project_with_attach=0.0,
-            total=total_duration_ms,
-        )
-        return project_services
-
-    if run_launch_attach:
-        rt._emit(  # type: ignore[attr-defined]
-            "service.attach.execution",
-            project=context.name,
-            mode="parallel" if attach_parallel else "sequential",
-            selected_service_types=sorted(selected_service_types),
-        )
-        if orchestrator._requirements_timing_enabled(route) and not orchestrator._suppress_timing_output(route):
-            print(
-                "Service attach execution for "
-                f"{context.name}: "
-                f"{'parallel' if attach_parallel else 'sequential'} "
-                f"(services={','.join(sorted(selected_service_types))})"
-            )
-        attach_started = time.monotonic()
-        if selected_service_types == {"backend", "frontend"}:
-            records = rt.services.start_project_with_attach(  # type: ignore[attr-defined]
-                project=context.name,
-                backend_port=backend_plan.final,
-                frontend_port=frontend_plan.final,
-                backend_cwd=str(backend_cwd),
-                frontend_cwd=str(frontend_cwd),
-                start_backend=start_backend,
-                start_frontend=start_frontend,
-                reserve_next=reserve_next,
-                detect_backend_actual=detect_backend_actual,
-                detect_frontend_actual=detect_frontend_actual,
-                on_retry=on_service_retry,
-                parallel_start=attach_parallel,
-            )
-        else:
-            records = {}
-            if "backend" in selected_service_types:
-                backend = rt.services.start_service_with_retry(  # type: ignore[attr-defined]
-                    project=context.name,
-                    service_type="backend",
-                    cwd=str(backend_cwd),
-                    requested_port=backend_plan.final,
-                    start=start_backend,
-                    reserve_next=reserve_next,
-                    detect_actual=detect_backend_actual,
-                    on_retry=on_service_retry,
-                )
-                records[backend.name] = backend
-            if "frontend" in selected_service_types:
-                frontend = rt.services.start_service_with_retry(  # type: ignore[attr-defined]
-                    project=context.name,
-                    service_type="frontend",
-                    cwd=str(frontend_cwd),
-                    requested_port=frontend_plan.final,
-                    start=start_frontend,
-                    reserve_next=reserve_next,
-                    detect_actual=detect_frontend_actual,
-                    on_retry=on_service_retry,
-                )
-                records[frontend.name] = frontend
-        attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
-    elif run_record_merge:
-        records = _synthetic_running_service_records(rt, context=context, mode=effective_mode)
     else:
-        records = _synthetic_service_records(rt, context=context, mode=effective_mode)
+        records = {}
+        if "backend" in selected_service_types:
+            backend = rt.services.start_service_with_retry(  # type: ignore[attr-defined]
+                project=context.name,
+                service_type="backend",
+                cwd=str(backend_cwd),
+                requested_port=backend_plan.final,
+                start=start_backend,
+                reserve_next=reserve_next,
+                detect_actual=detect_backend_actual,
+                on_retry=on_service_retry,
+            )
+            records[backend.name] = backend
+        if "frontend" in selected_service_types:
+            frontend = rt.services.start_service_with_retry(  # type: ignore[attr-defined]
+                project=context.name,
+                service_type="frontend",
+                cwd=str(frontend_cwd),
+                requested_port=frontend_plan.final,
+                start=start_frontend,
+                reserve_next=reserve_next,
+                detect_actual=detect_frontend_actual,
+                on_retry=on_service_retry,
+            )
+            records[frontend.name] = frontend
+    attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
     total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
-    if run_launch_attach:
-        rt._emit(  # type: ignore[attr-defined]
-            "service.timing.component",
-            project=context.name,
-            component="start_project_with_attach",
-            duration_ms=attach_duration_ms,
-        )
+    rt._emit(  # type: ignore[attr-defined]
+        "service.timing.component",
+        project=context.name,
+        component="start_project_with_attach",
+        duration_ms=attach_duration_ms,
+    )
     rt._emit(  # type: ignore[attr-defined]
         "service.timing.summary",
         project=context.name,
@@ -1315,12 +965,11 @@ def start_project_services(orchestrator,
     )
     if orchestrator._requirements_timing_enabled(route) and not orchestrator._suppress_timing_output(route):
         timing_parts: list[str] = []
-        if run_bootstrap and "backend" in selected_service_types:
+        if "backend" in selected_service_types:
             timing_parts.append(f"prepare_backend_runtime={prepare_backend_duration_ms:.1f}ms")
-        if run_bootstrap and "frontend" in selected_service_types:
+        if "frontend" in selected_service_types:
             timing_parts.append(f"prepare_frontend_runtime={prepare_frontend_duration_ms:.1f}ms")
-        if run_launch_attach:
-            timing_parts.append(f"start_project_with_attach={attach_duration_ms:.1f}ms")
+        timing_parts.append(f"start_project_with_attach={attach_duration_ms:.1f}ms")
         timing_parts.append(f"total={total_duration_ms:.1f}ms")
         print(
             "Service timing for "
@@ -1341,7 +990,7 @@ def start_project_services(orchestrator,
         project=context.name,
         backend_port=backend_plan.final if "backend" in selected_service_types else None,
         frontend_port=frontend_plan.final if "frontend" in selected_service_types else None,
-        service_group=(service_group or "full"),
+        service_group="full",
     )
     _ = backend_command_source, frontend_command_source
     return records

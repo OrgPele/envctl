@@ -182,9 +182,6 @@ class ProcessProbe:
         fallback_enabled: bool = False,
         rebind_stale: Callable[[object, int | None], bool],
     ) -> str:
-        debug_poststart_truth_group = str(getattr(self, "_debug_poststart_truth_group", "") or "").strip().lower()
-        if debug_poststart_truth_group not in {"", "pid_wait", "port_fallback", "truth_discovery"}:
-            debug_poststart_truth_group = ""
         pid = getattr(service, "pid", None)
         if not isinstance(pid, int) or pid <= 0:
             if self._call_rebind(rebind_stale, service, pid if isinstance(pid, int) else None):
@@ -209,10 +206,10 @@ class ProcessProbe:
 
         wait_for_pid = self.backend.wait_for_pid_port
         if callable(wait_for_pid):
-            if debug_poststart_truth_group in {"", "pid_wait"} and wait_for_pid(pid, port, timeout=service_truth_timeout):
+            if wait_for_pid(pid, port, timeout=service_truth_timeout):
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
-            if debug_poststart_truth_group in {"", "port_fallback"} and self._port_fallback_running(
+            if self._port_fallback_running(
                 fallback_enabled=fallback_enabled,
                 emit=emit,
                 service=service,
@@ -221,7 +218,7 @@ class ProcessProbe:
             ):
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
-            if debug_poststart_truth_group in {"", "truth_discovery"} and truth_discovery(service, port) is not None:
+            if truth_discovery(service, port) is not None:
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
             if within_startup_grace(service):
@@ -232,10 +229,10 @@ class ProcessProbe:
 
         owns = self.backend.pid_owns_port
         if callable(owns):
-            if debug_poststart_truth_group in {"", "pid_wait"} and owns(pid, port):
+            if owns(pid, port):
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
-            if debug_poststart_truth_group in {"", "port_fallback"} and self._port_fallback_running(
+            if self._port_fallback_running(
                 fallback_enabled=fallback_enabled,
                 emit=emit,
                 service=service,
@@ -244,7 +241,7 @@ class ProcessProbe:
             ):
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
-            if debug_poststart_truth_group in {"", "truth_discovery"} and truth_discovery(service, port) is not None:
+            if truth_discovery(service, port) is not None:
                 self._call_refresh(refresh_listener_pids, service, port)
                 return "running"
             if within_startup_grace(service):

@@ -85,6 +85,8 @@ Selector reliability quick checks:
   - `docs/troubleshooting/interactive-selector-key-throughput-readme.md`
 - Permanent write-up of the post-plan dashboard input bug and fix:
   - `docs/troubleshooting/service-launch-io-ownership.md`
+- Fresh launch path reproduction that bypasses resume/restore:
+  - `envctl --plan --no-resume`
 
 ## Python runtime vs shell fallback
 - Default runtime is Python.

@@ -162,14 +162,6 @@ def service_truth_status(runtime: Any, service: object) -> str:
     if isinstance(backend, ShellProbeBackend):
         backend.process_runner = runtime.process_runner
     probe = runtime.process_probe
-    debug_truth_group = str(getattr(runtime, "_debug_dashboard_truth_group", "") or "").strip().lower()
-    if debug_truth_group not in {"", "pid_wait", "port_fallback", "truth_discovery"}:
-        debug_truth_group = ""
-    if not debug_truth_group:
-        debug_truth_group = str(getattr(runtime, "_debug_poststart_truth_group", "") or "").strip().lower()
-        if debug_truth_group not in {"", "pid_wait", "port_fallback", "truth_discovery"}:
-            debug_truth_group = ""
-    setattr(probe, "_debug_poststart_truth_group", debug_truth_group)
     status = probe.service_truth_status(
         service=service,
         listener_truth_enforced=runtime._listener_truth_enforced(),
