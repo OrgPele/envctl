@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib.util
 import os
 from typing import Mapping
 
+from .capabilities import interactive_tty_available, textual_importable
+from envctl_engine.shared.parsing import parse_bool
 from .terminal_session import can_interactive_tty
 
 
@@ -17,22 +18,11 @@ class UiBackendResolution:
 
 
 def _textual_available() -> bool:
-    return importlib.util.find_spec("textual") is not None
+    return textual_importable()
 
 
 def _interactive_tty_available() -> bool:
-    return can_interactive_tty()
-
-
-def _parse_bool(value: object, default: bool = False) -> bool:
-    if value is None:
-        return default
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return default
+    return interactive_tty_available()
 
 
 def resolve_ui_backend(env: Mapping[str, str] | None = None) -> UiBackendResolution:
@@ -62,7 +52,7 @@ def resolve_ui_backend_with_capabilities(
         )
 
     tty_ok_raw = _interactive_tty_available() if interactive_tty is None else bool(interactive_tty)
-    tty_ok = tty_ok_raw or _parse_bool(merged.get("ENVCTL_UI_TEXTUAL_HEADLESS_ALLOWED"), False)
+    tty_ok = tty_ok_raw or parse_bool(merged.get("ENVCTL_UI_TEXTUAL_HEADLESS_ALLOWED"), False)
     if not tty_ok:
         return UiBackendResolution(
             requested_mode=requested,
@@ -72,7 +62,7 @@ def resolve_ui_backend_with_capabilities(
         )
 
     textual_ok = _textual_available() if textual_available is None else bool(textual_available)
-    experimental_dashboard = _parse_bool(merged.get("ENVCTL_UI_EXPERIMENTAL_DASHBOARD"), False)
+    experimental_dashboard = parse_bool(merged.get("ENVCTL_UI_EXPERIMENTAL_DASHBOARD"), False)
 
     if requested == "legacy":
         return UiBackendResolution(

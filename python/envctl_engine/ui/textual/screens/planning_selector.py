@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import time
 from typing import Callable
 
+from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.textual.list_controller import TextualListController
 from .selector import (
     _deep_debug_enabled,
     _guard_textual_nonblocking_read,
@@ -17,15 +19,6 @@ from .selector import (
     _selector_key_trace_verbose_enabled,
     _selector_thread_stack_enabled,
 )
-
-
-def _textual_importable() -> bool:
-    try:
-        __import__("textual")
-    except Exception:
-        return False
-    return True
-
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
     if not callable(emit):
@@ -164,7 +157,7 @@ def select_planning_counts_textual(
         def __init__(self) -> None:
             super().__init__()
             self._rows: list[_PlanningRow] = rows
-            self._index_map: list[int] = list(range(len(self._rows)))
+            self._controller = TextualListController(self._rows)
             self._render_lock = asyncio.Lock()
             self._event_key_counts: dict[str, int] = {}
             self._key_snapshot_timer: object | None = None
@@ -248,10 +241,7 @@ def select_planning_counts_textual(
             return self.query_one("#planning-status", Static)
 
         def _focused_row(self) -> _PlanningRow | None:
-            focused = self._list().index
-            if focused is None or focused < 0 or focused >= len(self._index_map):
-                return None
-            return self._rows[self._index_map[focused]]
+            return self._controller.focused_row(self._list().index)
 
         async def _toggle_model_index(self, model_index: int) -> None:
             if model_index < 0 or model_index >= len(self._rows):
@@ -275,21 +265,17 @@ def select_planning_counts_textual(
             async with self._render_lock:
                 list_view = self._list()
                 filter_has_focus = self.query_one("#planning-filter", Input).has_focus
-                previous_model_index: int | None = None
-                previous_view_index = list_view.index
-                if (
-                    previous_view_index is not None
-                    and previous_view_index >= 0
-                    and previous_view_index < len(self._index_map)
-                ):
-                    previous_model_index = self._index_map[previous_view_index]
+                checkpoint = self._controller.capture_render_checkpoint(
+                    view_index=list_view.index,
+                    filter_has_focus=filter_has_focus,
+                )
                 await list_view.clear()
-                self._index_map = []
+                self._controller.index_map = []
                 rendered_items: list[ListItem] = []
                 for idx, row in enumerate(self._rows):
                     if not row.visible:
                         continue
-                    self._index_map.append(idx)
+                    self._controller.index_map.append(idx)
                     existing = f" (existing {row.existing}x)" if row.existing > 0 else ""
                     marker = "●" if row.count > 0 else "○"
                     text = f"{marker} [{row.count}x] {row.plan_file}{existing}"
@@ -306,16 +292,11 @@ def select_planning_counts_textual(
                     )
                 if rendered_items:
                     await list_view.extend(rendered_items)
-                if self._index_map:
-                    if previous_model_index is not None and previous_model_index in self._index_map:
-                        list_view.index = self._index_map.index(previous_model_index)
-                    else:
-                        list_view.index = 0
-                else:
-                    list_view.index = None
+                list_view.index = self._controller.restore_view_index(checkpoint)
+                self._controller.finish_render()
                 self._sync_status()
                 self._sync_run_state()
-                if not filter_has_focus:
+                if not checkpoint.filter_has_focus:
                     self.action_focus_list()
 
         def _sync_status(self) -> None:
@@ -358,34 +339,25 @@ def select_planning_counts_textual(
             await self._toggle_model_index(model_index)
 
         def _focused_model_index(self) -> int | None:
-            focused = self._list().index
-            if focused is None or focused < 0 or focused >= len(self._index_map):
-                return None
-            return self._index_map[focused]
+            return self._controller.focused_model_index(self._list().index)
 
         async def action_toggle_visible(self) -> None:
-            visible = [row for row in self._rows if row.visible]
-            if not visible:
+            should_enable = self._controller.apply_visible_toggle(
+                is_visible=lambda row: row.visible,
+                is_active=lambda row: row.count > 0,
+                activate=lambda row: setattr(row, "count", self._default_count(row)),
+                deactivate=lambda row: setattr(row, "count", 0),
+            )
+            if should_enable is None:
                 return
-            should_enable = not all(row.count > 0 for row in visible)
-            for row in visible:
-                row.count = self._default_count(row) if should_enable else 0
             _emit(emit, "ui.selection.toggle", target="__VISIBLE__", enabled=should_enable)
             await self._render_rows()
 
         def action_cursor_up(self) -> None:
-            list_view = self._list()
-            if not self._index_map:
-                return
-            current = list_view.index if list_view.index is not None else 0
-            list_view.index = max(0, current - 1)
+            self._list().index = self._controller.cursor_up(self._list().index)
 
         def action_cursor_down(self) -> None:
-            list_view = self._list()
-            if not self._index_map:
-                return
-            current = list_view.index if list_view.index is not None else 0
-            list_view.index = min(len(self._index_map) - 1, current + 1)
+            self._list().index = self._controller.cursor_down(self._list().index)
 
         def action_focus_filter(self) -> None:
             filter_input = self.query_one("#planning-filter", Input)
@@ -394,13 +366,15 @@ def select_planning_counts_textual(
 
         def action_focus_list(self) -> None:
             list_view = self._list()
-            if self._index_map and list_view.index is None:
-                list_view.index = 0
+            list_view.index = self._controller.ensure_list_index(list_view.index)
             self.query_one("#planning-filter", Input).can_focus = False
             list_view.focus()
 
         def action_cycle_focus(self) -> None:
-            if self.query_one("#planning-filter", Input).has_focus:
+            next_target = self._controller.cycle_focus_target(
+                filter_has_focus=self.query_one("#planning-filter", Input).has_focus
+            )
+            if next_target == "list":
                 self.action_focus_list()
             else:
                 self.action_focus_filter()
@@ -429,17 +403,17 @@ def select_planning_counts_textual(
                 action="list_selected",
                 list_index=event.index,
             )
-            if event.index < 0 or event.index >= len(self._index_map):
+            if event.index < 0 or event.index >= len(self._controller.index_map):
                 _emit(
                     emit,
                     "ui.selection.interaction",
                     screen="planning_selector",
                     action="list_selected_out_of_range",
                     list_index=event.index,
-                    visible_count=len(self._index_map),
+                    visible_count=len(self._controller.index_map),
                 )
                 return
-            model_index = self._index_map[event.index]
+            model_index = self._controller.index_map[event.index]
             await self._toggle_model_index(model_index)
 
         async def on_key(self, event: Key) -> None:

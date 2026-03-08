@@ -14,6 +14,7 @@ import termios
 import time
 from typing import Any, cast
 
+from .capabilities import prompt_toolkit_disabled
 from .debug_flight_recorder import DebugFlightRecorder
 
 _PUSHBACK_BYTES: dict[int, bytearray] = {}
@@ -978,12 +979,3 @@ def _basic_input_fd_enabled() -> bool:
     if raw is None:
         return True
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _prompt_toolkit_disabled(env: Mapping[str, str]) -> bool:
-    raw = env.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        raw = os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in {"0", "false", "no", "off"}

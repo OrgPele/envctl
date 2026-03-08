@@ -35,10 +35,11 @@ from envctl_engine.actions.action_worktree_runner import run_delete_worktree_act
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -198,19 +199,7 @@ class ActionCommandOrchestrator:
         return selected, None
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        rt = self.runtime
-        # If this is an interactive command from the dashboard, trust that we're in interactive mode
-        if bool(route.flags.get("interactive_command")):
-            return True
-        # Otherwise, check TTY availability
-        if not RuntimeTerminalUI._can_interactive_tty():
-            return False
-        batch_requested = False
-        if hasattr(rt, "_batch_mode_requested"):
-            batch_requested = bool(rt._batch_mode_requested(route))  # type: ignore[attr-defined]
-        if batch_requested and not bool(route.flags.get("interactive_command")):
-            return False
-        return True
+        return interactive_selection_allowed(self.runtime, route, allow_dashboard_override=True)
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
@@ -342,22 +331,8 @@ class ActionCommandOrchestrator:
         )
 
     def _no_target_selected_message(self, route: Route) -> str:
-        command = route.command
-        label_map = {
-            "pr": "PR",
-            "analyze": "analysis",
-            "migrate": "migration",
-            "logs": "log",
-        }
-        label = label_map.get(str(command).strip().lower(), str(command).strip().lower())
-        if self._interactive_selection_allowed(route):
-            return f"No {label} target selected."
-        mode = str(route.mode).strip().lower()
-        discovery = "envctl --list-trees --json" if mode == "trees" else "envctl --list-targets --main --json"
-        return (
-            f"No {label} target selected. "
-            f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', or '--all'."
-        )
+        interactive_allowed = self._interactive_selection_allowed(route)
+        return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
 
     @staticmethod
     def _service_types_from_route_services(route: Route) -> set[str]:

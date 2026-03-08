@@ -13,6 +13,7 @@ from envctl_engine.config import (
     LocalConfigState,
     PortDefaults,
     StartupProfile,
+    _default_port_value,
     _parse_envctl_text,
 )
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
@@ -343,16 +344,6 @@ def _resolve_dependency_enable(values: dict[str, str], dependency_id: str, *, mo
         if key in values:
             return _parse_bool_value(values.get(key), default)
     return default
-
-
-def _default_port_value(key: str) -> int:
-    defaults = {
-        "DB_PORT": 5432,
-        "REDIS_PORT": 6379,
-        "N8N_PORT_BASE": 5678,
-    }
-    return defaults.get(key, 0)
-
 
 def _validate_profile(profile: StartupProfile, *, mode: str, errors: list[str]) -> None:
     enabled = [

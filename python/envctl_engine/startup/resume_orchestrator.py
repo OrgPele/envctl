@@ -33,7 +33,6 @@ from envctl_engine.startup.resume_restore_support import (
     project_root as project_root_impl,
     restore_missing as restore_missing_impl,
 )
-import envctl_engine.startup.resume_restore_support as _resume_restore_support
 
 
 _ResumeProjectSpinnerGroup = ResumeProjectSpinnerGroup
@@ -196,20 +195,23 @@ class ResumeOrchestrator:
         *,
         route: Route | None = None,
     ) -> list[str]:
-        _resume_restore_support.spinner = spinner
-        _resume_restore_support.spinner_enabled = spinner_enabled
-        _resume_restore_support.use_spinner_policy = use_spinner_policy
-        _resume_restore_support.emit_spinner_policy = emit_spinner_policy
-        _resume_restore_support.resolve_spinner_policy = resolve_spinner_policy
-        _resume_restore_support._ResumeProjectSpinnerGroup = _ResumeProjectSpinnerGroup
-        return restore_missing_impl(self, state, missing_services, route=route)
+        return restore_missing_impl(
+            self,
+            state,
+            missing_services,
+            route=route,
+            spinner_factory=spinner,
+            spinner_enabled_fn=spinner_enabled,
+            use_spinner_policy_fn=use_spinner_policy,
+            emit_spinner_policy_fn=emit_spinner_policy,
+            resolve_spinner_policy_fn=resolve_spinner_policy,
+            project_spinner_group_cls=_ResumeProjectSpinnerGroup,
+        )
 
-    @staticmethod
     @staticmethod
     def _round_ms(value_seconds: float) -> float:
         return _round_ms_impl(value_seconds)
 
-    @staticmethod
     @staticmethod
     def _format_project_timing_line(project: str, steps: Mapping[str, float], total_ms: float) -> str:
         return _format_project_timing_line_impl(project, steps, total_ms)
@@ -263,11 +265,9 @@ class ResumeOrchestrator:
         return apply_ports_to_context_impl(self, context, state)
 
     @staticmethod
-    @staticmethod
     def _state_repository(runtime: object) -> _StateRepositoryProtocol:
         return _state_repository_impl(runtime)
 
-    @staticmethod
     @staticmethod
     def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
         return _port_allocator_impl(runtime)

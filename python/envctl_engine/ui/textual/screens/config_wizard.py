@@ -7,6 +7,7 @@ from typing import Callable
 from ....config import LocalConfigState, StartupProfile
 from ....requirements.core import dependency_definitions
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from ....config.persistence import (
     ConfigSaveResult,
     ManagedConfigValues,
@@ -15,15 +16,6 @@ from ....config.persistence import (
     save_local_config,
     validate_managed_values,
 )
-
-
-def _textual_importable() -> bool:
-    try:
-        __import__("textual")
-    except Exception:
-        return False
-    return True
-
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
     if callable(emit):

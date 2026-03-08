@@ -5,6 +5,7 @@ import time
 from typing import Callable
 
 from envctl_engine.ui.selector_model import SelectorItem
+from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
     SELECTOR_CSS,
@@ -64,7 +65,10 @@ def create_selector_app(
                     if selected and not multi:
                         selected = self._initial_model_index == idx
                     self._rows.append(_RowRef(item=item, selected=selected, visible=True))
-                self._index_map: list[int] = list(range(len(self._rows)))
+                self._controller = TextualListController(
+                    self._rows,
+                    initial_model_index=self._initial_model_index,
+                )
                 self._render_lock = asyncio.Lock()
                 self._last_focus_widget_id = "selector-list"
                 self._explicit_cancel = False
@@ -131,10 +135,7 @@ def create_selector_app(
                 return " ".join(row_classes)
 
             def _focused_model_index(self) -> int | None:
-                focused = self._list().index
-                if focused is None or focused < 0 or focused >= len(self._index_map):
-                    return None
-                return self._index_map[focused]
+                return self._controller.focused_model_index(self._list().index)
 
             def _focused_widget_id(self) -> str:
                 try:
@@ -170,21 +171,17 @@ def create_selector_app(
                 async with self._render_lock:
                     list_view = self._list()
                     filter_has_focus = self.query_one("#selector-filter", Input).has_focus
-                    previous_model_index: int | None = None
-                    previous_view_index = list_view.index
-                    if (
-                        previous_view_index is not None
-                        and previous_view_index >= 0
-                        and previous_view_index < len(self._index_map)
-                    ):
-                        previous_model_index = self._index_map[previous_view_index]
+                    checkpoint = self._controller.capture_render_checkpoint(
+                        view_index=list_view.index,
+                        filter_has_focus=filter_has_focus,
+                    )
                     await list_view.clear()
-                    self._index_map = []
+                    self._controller.index_map = []
                     rendered_items: list[ListItem] = []
                     for idx, row in enumerate(self._rows):
                         if not row.visible:
                             continue
-                        self._index_map.append(idx)
+                        self._controller.index_map.append(idx)
                         item_widget = ListItem(
                             Label(self._row_text(row), markup=False),
                             id=f"selector-row-{idx}",
@@ -193,19 +190,12 @@ def create_selector_app(
                         rendered_items.append(item_widget)
                     if rendered_items:
                         await list_view.extend(rendered_items)
-                    if self._index_map:
-                        if previous_model_index is not None and previous_model_index in self._index_map:
-                            list_view.index = self._index_map.index(previous_model_index)
-                        elif self._initial_model_index is not None and self._initial_model_index in self._index_map:
-                            list_view.index = self._index_map.index(self._initial_model_index)
-                        else:
-                            list_view.index = 0
-                    else:
-                        list_view.index = None
+                    list_view.index = self._controller.restore_view_index(checkpoint)
+                    self._controller.finish_render()
                     self._initial_model_index = None
                     self._sync_status()
                     self._sync_confirm_state()
-                    if not filter_has_focus:
+                    if not checkpoint.filter_has_focus:
                         self.action_focus_list()
 
             def _sync_status(self) -> None:
@@ -216,11 +206,11 @@ def create_selector_app(
                 if (
                     focused_view_index is not None
                     and focused_view_index >= 0
-                    and focused_view_index < len(self._index_map)
+                    and focused_view_index < len(self._controller.index_map)
                 ):
-                    focused_model_index = self._index_map[focused_view_index]
+                    focused_model_index = self._controller.index_map[focused_view_index]
                     focused_row = self._rows[focused_model_index]
-                    focus_text = f"focus: {focused_view_index + 1}/{len(self._index_map)} {focused_row.item.label}"
+                    focus_text = f"focus: {focused_view_index + 1}/{len(self._controller.index_map)} {focused_row.item.label}"
                 status = f"{selected} selected • {visible} visible • {len(self._rows)} total • {focus_text}"
                 if deep_debug and self._nav_event_counter > 0:
                     status += f" • key#{self._nav_event_counter}:{self._last_nav_key}"
@@ -230,13 +220,10 @@ def create_selector_app(
 
             def _sync_confirm_state(self) -> None:
                 run_button = self.query_one("#btn-run", Button)
-                run_button.disabled = not bool(self._index_map)
+                run_button.disabled = not bool(self._controller.index_map)
 
             def _focused_row(self) -> _RowRef | None:
-                focused = self._list().index
-                if focused is None or focused < 0 or focused >= len(self._index_map):
-                    return None
-                return self._rows[self._index_map[focused]]
+                return self._controller.focused_row(self._list().index)
 
             async def _toggle_model_index(self, model_index: int) -> None:
                 if model_index < 0 or model_index >= len(self._rows):
@@ -290,30 +277,23 @@ def create_selector_app(
                 await self._toggle_model_index(model_index)
 
             async def action_toggle_visible(self) -> None:
-                visible_pairs = [(idx, row) for idx, row in enumerate(self._rows) if row.visible]
-                visible_rows = [row for _idx, row in visible_pairs]
-                if not visible_rows:
+                should_select = self._controller.apply_visible_toggle(
+                    is_visible=lambda row: row.visible,
+                    is_active=lambda row: row.selected,
+                    activate=lambda row: setattr(row, "selected", True),
+                    deactivate=lambda row: setattr(row, "selected", False),
+                )
+                if should_select is None:
                     return
-                should_select = not all(row.selected for row in visible_rows)
-                for _idx, row in visible_pairs:
-                    row.selected = should_select
                 _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
                 await self._render_rows()
                 self.action_focus_list(reason="toggle_visible")
 
             def action_cursor_up(self) -> None:
-                list_view = self._list()
-                if not self._index_map:
-                    return
-                current = list_view.index if list_view.index is not None else 0
-                list_view.index = max(0, current - 1)
+                self._list().index = self._controller.cursor_up(self._list().index)
 
             def action_cursor_down(self) -> None:
-                list_view = self._list()
-                if not self._index_map:
-                    return
-                current = list_view.index if list_view.index is not None else 0
-                list_view.index = min(len(self._index_map) - 1, current + 1)
+                self._list().index = self._controller.cursor_down(self._list().index)
 
             def _emit_key_debug(
                 self,
@@ -374,7 +354,7 @@ def create_selector_app(
                 self._last_nav_change_ns = time.monotonic_ns()
                 self._idle_snapshot_bucket = -1
                 self._last_nav_key = "down"
-                max_view_index = len(self._index_map) - 1
+                max_view_index = len(self._controller.index_map) - 1
                 self._edge_hint = (
                     "bottom boundary"
                     if (
@@ -413,15 +393,17 @@ def create_selector_app(
 
             def action_focus_list(self, *, reason: str = "focus_list") -> None:
                 list_view = self._list()
-                if self._index_map and list_view.index is None:
-                    list_view.index = 0
+                list_view.index = self._controller.ensure_list_index(list_view.index)
                 self._allow_filter_focus = False
                 self.query_one("#selector-filter", Input).can_focus = False
                 list_view.focus()
                 self._emit_focus(reason=reason)
 
             def action_cycle_focus(self) -> None:
-                if self.query_one("#selector-filter", Input).has_focus:
+                next_target = self._controller.cycle_focus_target(
+                    filter_has_focus=self.query_one("#selector-filter", Input).has_focus
+                )
+                if next_target == "list":
                     self.action_focus_list(reason="tab_cycle")
                 else:
                     self.action_focus_filter(reason="tab_cycle")
@@ -507,7 +489,7 @@ def create_selector_app(
                     multi=multi,
                     list_index=event.index,
                 )
-                if event.index < 0 or event.index >= len(self._index_map):
+                if event.index < 0 or event.index >= len(self._controller.index_map):
                     _emit(
                         emit,
                         "ui.selection.interaction",
@@ -515,10 +497,10 @@ def create_selector_app(
                         action="list_selected_out_of_range",
                         multi=multi,
                         list_index=event.index,
-                        visible_count=len(self._index_map),
+                        visible_count=len(self._controller.index_map),
                     )
                     return
-                model_index = self._index_map[event.index]
+                model_index = self._controller.index_map[event.index]
                 if multi:
                     await self._toggle_model_index(model_index)
                 else:

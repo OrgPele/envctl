@@ -11,8 +11,14 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.selection_support import (
+    interactive_selection_allowed,
+    no_target_selected_message,
+    project_names_from_state,
+    services_from_selection,
+)
 from envctl_engine.ui.selection_types import TargetSelection
 
 
@@ -454,15 +460,7 @@ class StateActionOrchestrator:
         )
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        rt = self.runtime
-        if not RuntimeTerminalUI._can_interactive_tty():
-            return False
-        batch_requested = False
-        if hasattr(rt, "_batch_mode_requested"):
-            batch_requested = bool(rt._batch_mode_requested(route))  # type: ignore[attr-defined]
-        if batch_requested and not bool(route.flags.get("interactive_command")):
-            return False
-        return True
+        return interactive_selection_allowed(self.runtime, route)
 
     def _resolve_selected_services(self, route: Route, state: RunState) -> set[str] | None:
         if bool(route.flags.get("all")):
@@ -493,36 +491,10 @@ class StateActionOrchestrator:
         return None
 
     def _project_names_from_state(self, state: RunState) -> list[object]:
-        names: list[str] = []
-        seen: set[str] = set()
-        for name in state.services:
-            project = self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-            if not project:
-                continue
-            lowered = project.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            names.append(project)
-        return [SimpleProject(name) for name in names]
+        return project_names_from_state(self.runtime, state)
 
     def _services_from_selection(self, selection: TargetSelection, state: RunState) -> set[str]:
-        if selection.all_selected:
-            return set(state.services.keys())
-        if selection.service_names:
-            return {name for name in state.services if name in selection.service_names}
-        if selection.project_names:
-            selected: set[str] = set()
-            for name in state.services:
-                project = self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-                if not project:
-                    continue
-                for wanted in selection.project_names:
-                    if project.lower() == wanted.lower():
-                        selected.add(name)
-                        break
-            return selected
-        return set()
+        return services_from_selection(self.runtime, selection, state)
 
     def _filtered_state(self, state: RunState, selected_services: set[str]) -> RunState:
         if not selected_services:
@@ -720,23 +692,8 @@ class StateActionOrchestrator:
         }
 
     def _no_target_selected_message(self, route: Route) -> str:
-        command = route.command
-        label_map = {
-            "logs": "log",
-            "clear-logs": "log",
-            "pr": "PR",
-            "analyze": "analysis",
-            "migrate": "migration",
-        }
-        label = label_map.get(str(command).strip().lower(), str(command).strip().lower())
-        if self._interactive_selection_allowed(route):
-            return f"No {label} target selected."
-        mode = str(route.mode).strip().lower()
-        discovery = "envctl --list-trees --json" if mode == "trees" else "envctl --list-targets --main --json"
-        return (
-            f"No {label} target selected. "
-            f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', or '--all'."
-        )
+        interactive_allowed = self._interactive_selection_allowed(route)
+        return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
 
     @staticmethod
     def _clear_service_logs(state: RunState, *, quiet: bool = False) -> tuple[int, int, int, int]:
@@ -781,8 +738,3 @@ class StateActionOrchestrator:
         worker_count = min(len(services), 8)
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
             return list(pool.map(fn, services))
-
-
-class SimpleProject:
-    def __init__(self, name: str) -> None:
-        self.name = name

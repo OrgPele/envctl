@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - exercised in minimal dependency environm
 from ...debug.debug_utils import hash_command
 from ...state.models import RunState
 from ..command_aliases import normalize_interactive_command
+from ..capabilities import textual_importable as _textual_importable
 from .compat import apply_textual_driver_compat, textual_run_policy
 from .state_bridge import render_dashboard_snapshot
 
@@ -25,15 +26,6 @@ class _PlainRenderable:
 
     def __str__(self) -> str:
         return self.plain
-
-
-def _textual_importable() -> bool:
-    try:
-        __import__("textual")
-    except Exception:
-        return False
-    return True
-
 
 def _emit(runtime: Any, event: str, **payload: object) -> None:
     candidate = getattr(runtime, "_emit", None)

@@ -96,6 +96,48 @@ PACKAGE_ROOTS = [
     ENGINE_ROOT / 'ui' / 'textual' / 'screens' / 'selector',
 ]
 
+OWNERSHIP_RULES = {
+    'textual_importable': {ENGINE_ROOT / 'ui' / 'capabilities.py'},
+    'prompt_toolkit_disabled': {ENGINE_ROOT / 'ui' / 'capabilities.py'},
+    'prompt_toolkit_selector_enabled': {ENGINE_ROOT / 'ui' / 'capabilities.py'},
+    'interactive_selection_allowed': {ENGINE_ROOT / 'ui' / 'selection_support.py'},
+    'project_names_from_state': {ENGINE_ROOT / 'ui' / 'selection_support.py'},
+    'services_from_selection': {ENGINE_ROOT / 'ui' / 'selection_support.py'},
+    'sanitize_interactive_input': {
+        ENGINE_ROOT / 'ui' / 'command_parsing.py',
+        ENGINE_ROOT / 'runtime' / 'engine_runtime_ui_bridge.py',
+    },
+    'recover_single_letter_command_from_escape_fragment': {
+        ENGINE_ROOT / 'ui' / 'command_parsing.py',
+        ENGINE_ROOT / 'runtime' / 'engine_runtime_ui_bridge.py',
+    },
+    'parse_interactive_command': {
+        ENGINE_ROOT / 'ui' / 'command_parsing.py',
+        ENGINE_ROOT / 'runtime' / 'engine_runtime_ui_bridge.py',
+    },
+    'tokens_set_mode': {
+        ENGINE_ROOT / 'ui' / 'command_parsing.py',
+        ENGINE_ROOT / 'runtime' / 'engine_runtime_misc_support.py',
+    },
+    '_textual_importable': set(),
+    '_prompt_toolkit_disabled': set(),
+    '_interactive_selection_allowed': {
+        ENGINE_ROOT / 'actions' / 'action_command_orchestrator.py',
+        ENGINE_ROOT / 'runtime' / 'lifecycle_cleanup_orchestrator.py',
+        ENGINE_ROOT / 'state' / 'action_orchestrator.py',
+    },
+    '_project_names_from_state': {
+        ENGINE_ROOT / 'runtime' / 'lifecycle_cleanup_orchestrator.py',
+        ENGINE_ROOT / 'state' / 'action_orchestrator.py',
+        ENGINE_ROOT / 'state' / 'repository.py',
+        ENGINE_ROOT / 'ui' / 'dashboard' / 'orchestrator.py',
+    },
+    '_services_from_selection': {
+        ENGINE_ROOT / 'runtime' / 'lifecycle_cleanup_orchestrator.py',
+        ENGINE_ROOT / 'state' / 'action_orchestrator.py',
+    },
+}
+
 
 class ImportAuditTests(unittest.TestCase):
     def test_domain_packages_do_not_depend_on_flat_shim_modules(self) -> None:
@@ -110,6 +152,20 @@ class ImportAuditTests(unittest.TestCase):
                                 violations.append(f'{path}: import {alias.name}')
                     elif isinstance(node, ast.ImportFrom) and node.module in DEPRECATED_IMPORTS:
                         violations.append(f'{path}: from {node.module} import ...')
+        self.assertEqual([], violations)
+
+    def test_consolidated_helper_ownership_stays_in_approved_modules(self) -> None:
+        violations: list[str] = []
+        for path in ENGINE_ROOT.rglob('*.py'):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                allowed_paths = OWNERSHIP_RULES.get(node.name)
+                if allowed_paths is None:
+                    continue
+                if path not in allowed_paths:
+                    violations.append(f'{path}: def {node.name}')
         self.assertEqual([], violations)
 
 

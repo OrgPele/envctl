@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import re
 
 
 @dataclass(slots=True)
@@ -71,3 +72,8 @@ class TestOutputParser(ABC):
             TestResult with final aggregated metrics.
         """
         pass
+
+
+def strip_ansi(text: str) -> str:
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)

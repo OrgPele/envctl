@@ -6,6 +6,7 @@ import importlib
 import os
 from typing import Any, Protocol, cast
 
+from .capabilities import prompt_toolkit_disabled
 from .terminal_session import TerminalSession, can_interactive_tty, prompt_toolkit_available
 
 
@@ -162,16 +163,6 @@ class FallbackMenuPresenter:
         except Exception:
             return
 
-
-def _prompt_toolkit_disabled(env: Mapping[str, str]) -> bool:
-    raw = env.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        raw = os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in {"0", "false", "no", "off"}
-
-
 def build_menu_presenter(
     env: Mapping[str, str],
     *,
@@ -188,7 +179,7 @@ def build_menu_presenter(
     presenter: MenuPresenter
     backend = "fallback"
     if interactive_tty:
-        if not _prompt_toolkit_disabled(env) and prompt_toolkit_available():
+        if not prompt_toolkit_disabled(env) and prompt_toolkit_available():
             presenter = PromptToolkitMenuPresenter()
             backend = "prompt_toolkit"
         else:

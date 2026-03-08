@@ -12,6 +12,7 @@ from envctl_engine.shared.parsing import parse_int
 from envctl_engine.shared.process_probe import ProbeBackend, PsutilProbeBackend, ShellProbeBackend, psutil_available
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.state.repository import RuntimeStateRepository
+from envctl_engine.ui.command_parsing import tokens_set_mode as shared_tokens_set_mode
 
 
 def state_compat_mode(runtime: Any) -> str:
@@ -59,10 +60,7 @@ def probe_psutil_enabled(runtime: Any) -> bool:
 
 
 def tokens_set_mode(tokens: Iterable[str]) -> bool:
-    for token in tokens:
-        if token in {"--main", "main=true", "--tree", "--trees", "trees=true", "main=false", "trees=false"}:
-            return True
-    return False
+    return shared_tokens_set_mode(tokens)
 
 
 def status_color(status: str, *, green: str, yellow: str, red: str) -> str:

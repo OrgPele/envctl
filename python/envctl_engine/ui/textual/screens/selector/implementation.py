@@ -5,6 +5,7 @@ import os
 import time
 from typing import Any, Callable, Sequence, cast
 
+from envctl_engine.ui.capabilities import prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl
 from envctl_engine.ui.selector_model import (
     SelectorContext,
     SelectorItem,
@@ -29,7 +30,6 @@ from envctl_engine.ui.textual.screens.selector.support import (
     _guard_textual_nonblocking_read as _guard_textual_nonblocking_read_impl,
     _instrument_prompt_toolkit_posix_io as _instrument_prompt_toolkit_posix_io_impl,
     _instrument_textual_parser_keys as _instrument_textual_parser_keys_impl,
-    _prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
     _selector_backend_decision as _selector_backend_decision_impl,
     _selector_disable_focus_reporting_enabled as _selector_disable_focus_reporting_enabled_impl,
     _selector_driver_thread_snapshot as _selector_driver_thread_snapshot_impl,
@@ -57,20 +57,12 @@ _selector_driver_thread_snapshot = _selector_driver_thread_snapshot_impl
 _guard_textual_nonblocking_read = _guard_textual_nonblocking_read_impl
 _instrument_textual_parser_keys = _instrument_textual_parser_keys_impl
 _instrument_prompt_toolkit_posix_io = _instrument_prompt_toolkit_posix_io_impl
-def _prompt_toolkit_selector_enabled(*, build_only: bool) -> bool:
+
+
+def _prompt_toolkit_selector_enabled(*, build_only: bool = False) -> bool:
     if build_only:
         return False
-    backend_pref = str(os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", "")).strip().lower()
-    if backend_pref in {"textual", "tui"}:
-        return False
-    if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    raw = str(os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT", "")).strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return can_interactive_tty() and prompt_toolkit_available()
+    return _prompt_toolkit_selector_enabled_impl(os.environ)
 
 
 def _selector_backend_decision(*, build_only: bool) -> tuple[bool, dict[str, object]]:

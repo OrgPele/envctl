@@ -30,11 +30,18 @@ class _PortAllocatorProtocol(Protocol):
     def update_final_port(self, plan: object, final_port: int, *, source: str) -> None: ...
     def release(self, port: int) -> None: ...
 
-def restore_missing(orchestrator,
+def restore_missing(
+    orchestrator,
     state: RunState,
     missing_services: list[str],
     *,
     route: Route | None = None,
+    spinner_factory: Callable[..., object] = spinner,
+    spinner_enabled_fn: Callable[[Mapping[str, str] | None], bool] = spinner_enabled,
+    use_spinner_policy_fn: Callable[[object], object] = use_spinner_policy,
+    emit_spinner_policy_fn: Callable[..., None] = emit_spinner_policy,
+    resolve_spinner_policy_fn: Callable[[Mapping[str, str] | None], object] = resolve_spinner_policy,
+    project_spinner_group_cls: type[_ResumeProjectSpinnerGroup] = _ResumeProjectSpinnerGroup,
 ) -> list[str]:
     rt = orchestrator.runtime
     port_allocator = orchestrator._port_allocator(rt)
@@ -57,13 +64,13 @@ def restore_missing(orchestrator,
     timing_lines: list[str] = []
     sorted_projects = sorted(projects_to_restore)
     total_projects = len(sorted_projects)
-    spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
-    emit_spinner_policy(
+    spinner_policy = resolve_spinner_policy_fn(getattr(rt, "env", {}))
+    emit_spinner_policy_fn(
         getattr(rt, "_emit", None),
         spinner_policy,
         context={"component": "resume.restore", "op_id": "resume.restore"},
     )
-    use_spinner = spinner_enabled(getattr(rt, "env", {}))
+    use_spinner = spinner_enabled_fn(getattr(rt, "env", {}))
     parallel_enabled, parallel_workers = orchestrator._restore_parallel_config(
         route=route,
         mode=state.mode,
@@ -81,7 +88,7 @@ def restore_missing(orchestrator,
         and bool(getattr(spinner_policy, "enabled", False))
         and str(getattr(spinner_policy, "backend", "")) == "rich"
     )
-    project_spinner_group = _ResumeProjectSpinnerGroup(
+    project_spinner_group = project_spinner_group_cls(
         projects=sorted_projects,
         enabled=use_project_spinner_group,
         policy=spinner_policy,
@@ -425,7 +432,7 @@ def restore_missing(orchestrator,
                 "total_ms": project_total,
             }
 
-    with use_spinner_policy(spinner_policy), spinner(
+    with use_spinner_policy_fn(spinner_policy), spinner_factory(
         initial_message,
         enabled=use_single_spinner,
     ) as active_spinner:
