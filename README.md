@@ -12,24 +12,79 @@ The Python engine is the primary runtime. A legacy Bash/shell engine still exist
 # 1) Install envctl on your PATH
 ./bin/envctl install
 
-# 2) Create repo orchestration config now, or let `envctl config`
-#    bootstrap it on the first operational run
-cp .envctl.example /path/to/your-project/.envctl
+# 2) Go to a target repo
+cd /path/to/your-project
 
-# 3) Start and operate
-envctl --resume
-envctl dashboard
-envctl logs --all --logs-follow
-envctl --debug-report
-envctl test --all
-envctl stop-all
+# 3a) Start the main repo environment
+#     If .envctl is missing, envctl opens the guided setup wizard
+envctl --main
+
+# 3b) Or create a plan and start a worktree-driven run
+mkdir -p docs/planning/backend
+cat > docs/planning/backend/checkout.md <<'PLAN'
+# Checkout Implementation Plan
+PLAN
+
+envctl --plan
 ```
 
+## What envctl Is For
+
+`envctl` is built to:
+
+- bring up a repo-local environment quickly
+- run and compare multiple implementations or worktrees
+- keep startup, logs, tests, and inspection behind one CLI
+- support high-throughput human and AI-assisted development workflows
+
+## Docs
+
+Start here:
+
+- [Documentation Hub](docs/README.md)
+- [Getting Started](docs/user/getting-started.md)
+- [First-Run Wizard](docs/user/first-run-wizard.md)
+- [Common Workflows](docs/user/common-workflows.md)
+
+User docs:
+
+- [User Guides](docs/user/README.md)
+- [Planning and Worktrees](docs/user/planning-and-worktrees.md)
+- [Python Engine Guide](docs/user/python-engine-guide.md)
+- [FAQ](docs/user/faq.md)
+
+Reference:
+
+- [Commands](docs/reference/commands.md)
+- [Configuration](docs/reference/configuration.md)
+- [Important Flags](docs/reference/important-flags.md)
+
+Operations and troubleshooting:
+
+- [Troubleshooting](docs/operations/troubleshooting.md)
+- [Operations Index](docs/operations/README.md)
+
+Developer docs:
+
+- [Developer Guides](docs/developer/README.md)
+- [Debug and Diagnostics](docs/developer/debug-and-diagnostics.md)
+- [UI and Interaction Architecture](docs/developer/ui-and-interaction.md)
+- [Python Runtime Guide](docs/developer/python-runtime-guide.md)
+
+Project docs:
+
+- [Planning and Roadmaps](docs/planning/README.md)
+- [Changelog](docs/changelog/main_changelog.md)
+- [License](docs/license.md)
+
 ## How to Use
+
 Recommended flow:
-1. Create plan files under `ENVCTL_PLANNING_DIR` (default: `docs/planning`).
-2. Start with `envctl --plan`.
-3. Use `envctl dashboard`, `envctl logs --all --logs-follow`, and `envctl test --all` to run and compare implementations.
+
+1. Run `envctl --main` in your target repository for the normal repo-root environment.
+2. If `.envctl` does not exist, complete the guided setup wizard.
+3. Use `envctl --plan` when you want multiple implementations or worktrees side by side.
+4. Follow the user guides for the normal operating loop after startup.
 
 Example:
 
@@ -43,19 +98,6 @@ PLAN
 envctl --plan
 ```
 
-## Documentation
-- [Documentation Hub](docs/README.md)
-- [User Guides](docs/user/README.md)
-- [Getting Started](docs/user/getting-started.md)
-- [Common Workflows](docs/user/common-workflows.md)
-- [FAQ](docs/user/faq.md)
-- [Reference](docs/reference/README.md)
-- [Developer Guides](docs/developer/README.md)
-- [Operations](docs/operations/README.md)
-- [Planning and Roadmaps](docs/planning/README.md)
-- [Changelog](docs/changelog/main_changelog.md)
-- [License](docs/license.md)
-
 ## Default Config
 Use `.envctl.example` as a starting point:
 
@@ -63,55 +105,6 @@ Use `.envctl.example` as a starting point:
 - `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `docs/planning`).
 - Infra toggles support global/main/tree scopes for PostgreSQL/Supabase, Redis, and n8n.
 - `ENVCTL_ENGINE_SHELL_FALLBACK=true` still forces the deprecated legacy shell engine when you need an explicit compatibility escape hatch.
-
-## Debug Workflow
-When interactive issues are hard to reproduce (input glitches, spinner drift, state mismatch):
-
-```bash
-# Deep capture for one session
-ENVCTL_DEBUG_UI_MODE=deep envctl
-
-# Optional: force spinner behavior while debugging TTY issues
-ENVCTL_UI_SPINNER_MODE=on envctl
-
-# Pack latest debug bundle
-envctl --debug-pack
-
-# Print triage summary from latest bundle
-envctl --debug-report
-
-# Print latest bundle path quickly
-envctl --debug-last
-```
-
-By default debug capture is privacy-safe (hashed command content, no raw printable input unless explicitly enabled).
-
-Deep-dive continuity doc for the paused Apple Terminal selector key-throughput bug:
-- `docs/troubleshooting/interactive-selector-key-throughput-readme.md`
-
-Startup-latency deep diagnostics:
-
-```bash
-ENVCTL_DEBUG_UI_MODE=deep \
-ENVCTL_DEBUG_RESTORE_TIMING=1 \
-ENVCTL_DEBUG_REQUIREMENTS_TRACE=1 \
-ENVCTL_DEBUG_DOCKER_COMMAND_TIMING=1 \
-ENVCTL_DEBUG_STARTUP_BREAKDOWN=1 \
-envctl --headless
-envctl --debug-report
-```
-
-## Interactive UI Backend
-Interactive backend is policy-driven:
-
-- `ENVCTL_UI_BACKEND=auto` keeps the legacy interactive dashboard by default.
-- `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` makes `auto` prefer the Textual dashboard when Textual is available.
-- `ENVCTL_UI_BACKEND=textual` requests the Textual dashboard; if Textual is unavailable the runtime falls back to the legacy dashboard instead of failing closed.
-- `ENVCTL_UI_BACKEND=legacy` forces the legacy interactive dashboard.
-- `ENVCTL_UI_BACKEND=non_interactive` forces snapshot-only behavior.
-- Target selector menus default to the Textual plan-style selector screen even when the dashboard backend is still legacy.
-- `ENVCTL_UI_SELECTOR_IMPL=planning_style` enables prompt-toolkit cursor selector rollback.
-- `ENVCTL_UI_SELECTOR_IMPL=legacy` remains a compatibility alias that maps to the Textual selector mode.
 
 ---
 
