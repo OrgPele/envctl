@@ -10,20 +10,31 @@ The Python engine is the primary runtime. A legacy Bash/shell engine still exist
 
 ```bash
 # 1) Install envctl once so it is available in every shell
-pipx install .
+pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
 
 # Or install for the current user
-python -m pip install --user .
+python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
 
 # 2) Go to a target repo
 cd /path/to/your-project
 
-# 3a) Start the main repo environment
-#     If .envctl is missing, envctl opens the guided setup wizard
+# 3) Start envctl in the target repo
+#    If .envctl is missing, envctl opens the guided setup wizard
 envctl --main
+```
 
-# 3b) Or create a plan and start a worktree-driven run
+That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you.
+
+To reopen the wizard later:
+
+```bash
+envctl config
+```
+
+To work with plan-driven trees:
+
+```bash
 mkdir -p todo/plans/backend
 cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
@@ -39,7 +50,7 @@ Repo-clone compatibility still exists:
 ./bin/envctl uninstall
 ```
 
-That wrapper path is now compatibility-only. The primary install story is a user- or system-level package install so `envctl` is on your `PATH` in every shell.
+That wrapper path is now compatibility-only. The primary install story is a package install so `envctl` is on your `PATH` in every shell.
 
 ## What envctl Is For
 
@@ -97,7 +108,8 @@ Recommended flow:
 1. Run `envctl --main` in your target repository for the normal repo-root environment.
 2. If `.envctl` does not exist, complete the guided setup wizard.
 3. Use `envctl --plan` when you want multiple implementations or worktrees side by side.
-4. Follow the user guides for the normal operating loop after startup.
+4. Use `envctl config` any time you want to reopen and edit the configuration wizard.
+5. Follow the user guides for the normal operating loop after startup.
 
 Example:
 
@@ -111,12 +123,19 @@ PLAN
 envctl --plan
 ```
 
-## Default Config
-Use `.envctl.example` as a starting point:
+## Configuration
 
-- `ENVCTL_DEFAULT_MODE` controls startup default when no mode flag is passed (`main` or `trees`, default: `main`).
+`envctl` writes and maintains a repo-local `.envctl`.
+
+- On first interactive use, the setup wizard creates it for you.
+- Later, run `envctl config` to reopen the wizard and edit it safely.
+- `.envctl.example` is now a reference file for managed keys and defaults, not the primary onboarding flow.
+
+Common settings:
+
+- `ENVCTL_DEFAULT_MODE` controls the default mode when no mode flag is passed (`main` or `trees`, default: `main`).
 - `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `todo/plans`).
-- Infra toggles support global/main/tree scopes for PostgreSQL/Supabase, Redis, and n8n.
+- Per-mode toggles control whether backend/frontend/dependencies are managed in `main` and `trees`.
 - `ENVCTL_ENGINE_SHELL_FALLBACK=true` still forces the deprecated legacy shell engine when you need an explicit compatibility escape hatch.
 
 ---
