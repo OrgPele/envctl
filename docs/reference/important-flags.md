@@ -6,16 +6,20 @@ These are the highest-value flags for daily use.
 | Flag | Purpose |
 | --- | --- |
 | `--resume` | Resume previous runtime state and session mapping quickly. |
+| `--repo <path>` | Resolve and operate on a repo from outside that repo tree. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
 | `--main` | Run main mode only (skip trees). |
 | `--tree` / `--trees` / `trees=true` / `trees=false` | Explicit tree mode switch. |
 | `--doctor` | Run diagnostics and exit. |
 | `--dashboard` | Show runtime dashboard and exit. |
+| `show-config --json` | Print the effective managed config without starting services. |
+| `show-state --json` | Print the latest saved runtime state. |
+| `explain-startup --json` | Print the runtime's startup decision before executing it. |
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
 Allowed values are `main` and `trees` (default: `main`).
-Engine note: Python runtime is default; set `ENVCTL_ENGINE_SHELL_FALLBACK=true` to use shell fallback.
+Engine note: Python runtime is default. `ENVCTL_ENGINE_SHELL_FALLBACK=true` still enables the deprecated legacy shell runtime as an explicit compatibility fallback.
 
 ## Targeting
 | Flag | Purpose |
@@ -73,9 +77,9 @@ Engine note: Python runtime is default; set `ENVCTL_ENGINE_SHELL_FALLBACK=true` 
 ## Interactive Backend Policy
 | Flag | Purpose |
 | --- | --- |
-| `ENVCTL_UI_BACKEND=auto\|textual\|legacy` | Select interactive backend policy. |
-| `ENVCTL_UI_TEXTUAL_FORCE=1` | In `auto` mode, force Textual backend when supported. |
-| `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus (default: Textual plan-style screen; use `planning_style` for prompt-toolkit rollback; `legacy` is an alias for Textual). |
+| `ENVCTL_UI_BACKEND=auto\|textual\|legacy\|non_interactive` | Select dashboard backend policy. `auto` currently stays on legacy by default. |
+| `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` | In `auto` mode, prefer the Textual dashboard when available. |
+| `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus. Default is the Textual plan-style selector; `planning_style` enables the prompt-toolkit rollback; `legacy` is a compatibility alias that still maps to the Textual selector. |
 
 ## Cutover Gates
 | Flag | Purpose |
@@ -92,4 +96,11 @@ Engine note: Python runtime is default; set `ENVCTL_ENGINE_SHELL_FALLBACK=true` 
 
 ## Planning Path Config
 Use `ENVCTL_PLANNING_DIR` in `.envctl` to change where planning files are read from.
-Default is `docs/planning`.
+Default is `todo/plans`.
+
+When a plan is scaled to zero through `envctl --plan`, envctl blasts the related worktree(s) and archives the plan into a sibling `done` root. Example:
+
+- active: `todo/plans/backend/checkout.md`
+- archived: `todo/done/backend/checkout.md`
+
+For fuller operational guidance, see [Python Engine Guide](../user/python-engine-guide.md).

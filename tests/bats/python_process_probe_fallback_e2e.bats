@@ -7,7 +7,7 @@ setup() {
 
 @test "process probe contract and fallback listener detection stay green" {
   [ -x "$PYTHON_BIN" ] || skip "project venv python not found"
-  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/test_process_probe_contract.py tests/python/test_process_runner_listener_detection.py' _ "$REPO_ROOT" "$PYTHON_BIN"
+  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/shared/test_process_probe_contract.py tests/python/shared/test_process_runner_listener_detection.py' _ "$REPO_ROOT" "$PYTHON_BIN"
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK"* ]]
 }

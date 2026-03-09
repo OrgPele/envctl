@@ -394,6 +394,220 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertEqual(seen_discovery_modes, ["main"])
             self.assertEqual(terminate_calls, [])
 
+    def test_start_blocks_when_mode_startup_is_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine._discover_projects = lambda **_kwargs: self.fail("project discovery should not run")  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["start"], env={}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("envctl runs are disabled for main in .envctl", out.getvalue())
+
+    def test_restart_blocks_when_mode_startup_is_disabled_before_prestop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine._try_load_existing_state = lambda **_kwargs: self.fail("state lookup should not run")  # type: ignore[assignment]
+            engine._terminate_services_from_state = lambda *args, **kwargs: self.fail("pre-stop should not run")  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--restart", "--main", "--batch"], env={}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("envctl runs are disabled for main in .envctl", out.getvalue())
+
+    def test_resume_blocks_when_mode_startup_is_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine._try_load_existing_state = lambda **_kwargs: RunState(run_id="run-main", mode="main")  # type: ignore[assignment]
+            engine._reconcile_state_truth = lambda _state: self.fail("reconcile should not run")  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--resume", "--main", "--batch"], env={}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("envctl runs are disabled for main in .envctl", out.getvalue())
+
+    def test_plan_allows_worktree_setup_when_mode_runs_are_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_STARTUP_ENABLE": "false",
+                    "ENVCTL_DEFAULT_MODE": "trees",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            seen_modes: list[str] = []
+
+            def fake_discover_projects(*, mode: str):  # noqa: ANN202
+                seen_modes.append(mode)
+                return []
+
+            engine._discover_projects = fake_discover_projects  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--plan", "--batch"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+
+            self.assertEqual(code, 1)
+            self.assertEqual(seen_modes, ["trees"])
+            self.assertNotIn("envctl runs are disabled for trees in .envctl", out.getvalue())
+            self.assertIn("No projects discovered for selected mode.", out.getvalue())
+
+    def test_plan_skips_service_startup_when_mode_runs_are_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_STARTUP_ENABLE": "false",
+                    "ENVCTL_DEFAULT_MODE": "trees",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = ProjectContext(
+                name="feature-a-1",
+                root=repo / "trees" / "feature-a-1",
+                ports={
+                    "backend": PortPlan("feature-a-1", 8000, 8000, 8000, "requested"),
+                    "frontend": PortPlan("feature-a-1", 9000, 9000, 9000, "requested"),
+                    "db": PortPlan("feature-a-1", 5432, 5432, 5432, "requested"),
+                    "redis": PortPlan("feature-a-1", 6379, 6379, 6379, "requested"),
+                    "n8n": PortPlan("feature-a-1", 5678, 5678, 5678, "requested"),
+                },
+            )
+            engine._discover_projects = lambda **_kwargs: [context]  # type: ignore[assignment]
+            engine._select_plan_projects = lambda route, contexts: contexts  # type: ignore[assignment]
+            engine._start_project_context = lambda **_kwargs: self.fail("project startup should not run")  # type: ignore[assignment]
+            engine._try_load_existing_state = lambda **_kwargs: self.fail("auto-resume should not run")  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--plan", "--batch"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+
+            self.assertEqual(code, 0)
+            self.assertIn(
+                "Planning mode complete; skipping service startup because envctl runs are disabled for trees.",
+                out.getvalue(),
+            )
+
+    def test_implicit_start_opens_dashboard_when_main_runs_are_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = ProjectContext(
+                name="Main",
+                root=repo,
+                ports={
+                    "backend": PortPlan("Main", 8000, 8000, 8000, "requested"),
+                    "frontend": PortPlan("Main", 9000, 9000, 9000, "requested"),
+                },
+            )
+            engine._discover_projects = lambda **_kwargs: [context]  # type: ignore[assignment]
+            engine._start_project_context = lambda **_kwargs: self.fail("project startup should not run")  # type: ignore[assignment]
+            engine._try_load_existing_state = lambda **_kwargs: self.fail("auto-resume should not run")  # type: ignore[assignment]
+            engine._write_artifacts = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+            engine._should_enter_post_start_interactive = lambda _route: True  # type: ignore[assignment]
+
+            seen_state: list[RunState] = []
+
+            def fake_dashboard_loop(state: RunState) -> int:
+                seen_state.append(state)
+                return 0
+
+            engine._run_interactive_dashboard_loop = fake_dashboard_loop  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--main"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertNotIn("opening dashboard without starting services", out.getvalue())
+            self.assertEqual(len(seen_state), 1)
+            self.assertEqual(seen_state[0].mode, "main")
+            self.assertEqual(seen_state[0].metadata.get("dashboard_configured_service_types"), ["backend", "frontend"])
+
+    def test_explicit_start_still_blocks_when_main_runs_are_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["start", "--main", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("envctl runs are disabled for main in .envctl", out.getvalue())
+
     def test_resume_does_not_fallback_to_cross_mode_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

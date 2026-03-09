@@ -14,6 +14,7 @@ setup() {
     repo="$tmp/repo"
     runtime="$tmp/runtime"
     mkdir -p "$repo/.git" "$repo/backend" "$repo/frontend"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
 
     set +e
     out=$(PYTHONPATH="$1/python" \
@@ -27,7 +28,7 @@ setup() {
       ENVCTL_ALLOW_SYNTHETIC_DEFAULTS=true \
       ENVCTL_SYNTHETIC_TEST_MODE=true \
       BATCH=true \
-      "$2" -m envctl_engine.cli start --main 2>&1)
+      "$2" -m envctl_engine.runtime.cli start --main 2>&1)
     rc=$?
     set -e
     echo "$out"
@@ -49,11 +50,12 @@ setup() {
     repo="$tmp/repo"
     runtime="$tmp/runtime"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
 
     RUNTIME_DIR="$runtime" PYTHONPATH="$1/python" "$2" - <<"PY"
 from pathlib import Path
 import os
-from envctl_engine.models import RunState, ServiceRecord
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state import dump_state
 
 runtime = Path(os.environ["RUNTIME_DIR"])
@@ -83,7 +85,7 @@ PY
       RUN_SH_RUNTIME_DIR="$runtime" \
       ENVCTL_ENGINE_PYTHON_V1=true \
       ENVCTL_RUNTIME_TRUTH_MODE=strict \
-      "$2" -m envctl_engine.cli dashboard 2>&1)
+      "$2" -m envctl_engine.runtime.cli dashboard 2>&1)
     rc=$?
     set -e
     echo "$out"

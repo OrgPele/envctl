@@ -241,6 +241,7 @@ _COMMAND_ALIAS_PAIRS = (
     ("--dashboard", "dashboard"),
     ("config", "config"),
     ("--config", "config"),
+    ("--init", "config"),
     ("doctor", "doctor"),
     ("--restart", "restart"),
     ("restart", "restart"),

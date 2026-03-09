@@ -68,7 +68,7 @@ def _prepare_backend_runtime(
         started=env_merge_started,
     )
 
-    migrations_enabled = _backend_migrations_enabled(route)
+    migrations_enabled = _backend_migrations_enabled(self, route)
     runtime_required, runtime_reason, runtime_state = _backend_runtime_prep_required(
         backend_cwd=backend_cwd,
         manager=manager,
@@ -316,12 +316,18 @@ def _prepare_backend_runtime(
     )
 
 
-def _backend_migrations_enabled(route: Route | None) -> bool:
+def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
     if route is None:
-        return True
+        raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
+            "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
+        )
+        return parse_bool(raw, False)
     if bool(route.flags.get("_resume_restore")):
         return False
-    return True
+    raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
+        "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
+    )
+    return parse_bool(raw, False)
 
 
 def _prepare_frontend_runtime(
@@ -992,18 +998,31 @@ def _run_backend_migration_step(
         if self._backend_bootstrap_strict():
             raise
         message = str(exc)
-        print(f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})")
-        if backend_log_path:
-            print(f"  backend log: {backend_log_path}")
+        record_warning = getattr(self, "_record_project_startup_warning", None)
+        if callable(record_warning):
+            record_warning(
+                context.name,
+                f"Warning: backend migration step failed; continuing without migration ({message})",
+            )
+            if backend_log_path:
+                record_warning(context.name, f"backend log: {backend_log_path}")
+        else:
+            print(f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})")
+            if backend_log_path:
+                print(f"  backend log: {backend_log_path}")
         missing_revision = _backend_missing_revision_id(message)
         if missing_revision:
-            print(
-                "  hint: alembic revision "
+            hint_text = (
+                "hint: alembic revision "
                 f"{missing_revision} is missing in this worktree history. "
                 f"Inspect migration chain in {cwd} "
                 "(`alembic heads`, `alembic history`), then align DB revision "
                 "(for local dev only, `alembic stamp head` can unblock)."
             )
+            if callable(record_warning):
+                record_warning(context.name, hint_text)
+            else:
+                print(f"  {hint_text}")
         self._emit(
             "service.bootstrap.warning",
             project=context.name,

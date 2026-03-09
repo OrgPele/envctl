@@ -17,7 +17,7 @@ def parity_manifest_is_complete(runtime: Any) -> bool:
 
 
 def parity_manifest_info(runtime: Any) -> dict[str, str]:
-    manifest_path = runtime.config.base_dir / "docs" / "planning" / "python_engine_parity_manifest.json"
+    manifest_path = runtime.config.base_dir / "contracts" / "python_engine_parity_manifest.json"
     if not manifest_path.is_file():
         return {
             "path": str(manifest_path),
@@ -39,7 +39,7 @@ def parity_manifest_info(runtime: Any) -> dict[str, str]:
 
 
 def read_parity_manifest(runtime: Any) -> dict[str, object] | None:
-    manifest_path = runtime.config.base_dir / "docs" / "planning" / "python_engine_parity_manifest.json"
+    manifest_path = runtime.config.base_dir / "contracts" / "python_engine_parity_manifest.json"
     if not manifest_path.is_file():
         return None
     try:

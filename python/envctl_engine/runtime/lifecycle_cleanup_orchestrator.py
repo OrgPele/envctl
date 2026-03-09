@@ -10,6 +10,11 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_int
 from envctl_engine.requirements.supabase import build_supabase_project_name
+from envctl_engine.ui.selection_support import (
+    interactive_selection_allowed,
+    project_names_from_state,
+    services_from_selection,
+)
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -186,47 +191,13 @@ class LifecycleCleanupOrchestrator:
         )
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        rt = self.runtime
-        if not RuntimeTerminalUI._can_interactive_tty():
-            return False
-        batch_requested = False
-        if hasattr(rt, "_batch_mode_requested"):
-            batch_requested = bool(rt._batch_mode_requested(route))  # type: ignore[attr-defined]
-        if batch_requested and not bool(route.flags.get("interactive_command")):
-            return False
-        return True
+        return interactive_selection_allowed(self.runtime, route)
 
     def _project_names_from_state(self, state: RunState) -> list[object]:
-        names: list[str] = []
-        seen: set[str] = set()
-        for name in state.services:
-            project = self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-            if not project:
-                continue
-            lowered = project.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            names.append(project)
-        return [SimpleProject(name) for name in names]
+        return project_names_from_state(self.runtime, state)
 
     def _services_from_selection(self, selection: TargetSelection, state: RunState) -> set[str]:
-        if selection.all_selected:
-            return set(state.services.keys())
-        if selection.service_names:
-            return {name for name in state.services if name in selection.service_names}
-        if selection.project_names:
-            selected: set[str] = set()
-            for name in state.services:
-                project = self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-                if not project:
-                    continue
-                for wanted in selection.project_names:
-                    if project.lower() == wanted.lower():
-                        selected.add(name)
-                        break
-            return selected
-        return set()
+        return services_from_selection(self.runtime, selection, state)
     def clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> None:
         rt = self.runtime
         if command == "stop-all":
@@ -871,8 +842,3 @@ class LifecycleCleanupOrchestrator:
         if candidate is None:
             raise RuntimeError("process runtime dependency is not configured")
         return cast(_ProcessRuntimeProtocol, candidate)
-
-
-class SimpleProject:
-    def __init__(self, name: str) -> None:
-        self.name = name

@@ -15,6 +15,7 @@ setup() {
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
     mkdir -p "$repo/trees/feature-a/1" "$repo/trees/feature-a/2" "$repo/trees/feature-b/1"
 
     mkdir -p "$repo/bin"

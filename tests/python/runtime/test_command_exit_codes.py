@@ -5,6 +5,8 @@ from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import sys
+from io import StringIO
+from contextlib import redirect_stderr
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -181,6 +183,129 @@ class CommandExitCodeTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
+
+    def test_plan_skips_bootstrap_when_envctl_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["--plan", "feature-a"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=lambda _route, _config: 0,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+
+    def test_resume_skips_bootstrap_when_envctl_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["--resume"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=lambda _route, _config: 0,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+
+    def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            nested = repo / "sub" / "dir"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            nested.mkdir(parents=True, exist_ok=True)
+            seen: dict[str, object] = {}
+
+            def dispatcher(_route, config):  # noqa: ANN001
+                seen["base_dir"] = config.base_dir
+                return 0
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["doctor", "--repo", str(nested)],
+                    env={
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            self.assertEqual(seen.get("base_dir"), repo.resolve())
+
+    def test_cwd_inside_repo_resolves_repo_root_for_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            nested = repo / "sub" / "dir"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            nested.mkdir(parents=True, exist_ok=True)
+            seen: dict[str, object] = {}
+
+            def dispatcher(_route, config):  # noqa: ANN001
+                seen["base_dir"] = config.base_dir
+                return 0
+
+            with patch("envctl_engine.runtime.cli.Path.cwd", return_value=nested.resolve()):
+                code = cli.run(
+                    ["--help"],
+                    env={
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("base_dir"), repo.resolve())
+
+    def test_installed_cli_install_subcommand_is_actionable_failure(self) -> None:
+        err = StringIO()
+        with redirect_stderr(err):
+            code = cli.run(["install"], env={})
+        self.assertEqual(code, 1)
+        self.assertIn("does not edit your shell PATH", err.getvalue())
+
+    def test_default_command_opens_disabled_dashboard_flow_when_startup_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text("MAIN_STARTUP_ENABLE=false\n", encoding="utf-8")
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, _config):  # noqa: ANN001
+                seen["command"] = route.command
+                seen["mode"] = route.mode
+                return 0
+
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)):
+                code = cli.run(
+                    [],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("command"), "start")
+            self.assertEqual(seen.get("mode"), "main")
 
     def test_run_restores_terminal_state_in_finally_on_success(self) -> None:
         with (

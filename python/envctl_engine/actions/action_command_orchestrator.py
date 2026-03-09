@@ -35,10 +35,11 @@ from envctl_engine.actions.action_worktree_runner import run_delete_worktree_act
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -198,19 +199,7 @@ class ActionCommandOrchestrator:
         return selected, None
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        rt = self.runtime
-        # If this is an interactive command from the dashboard, trust that we're in interactive mode
-        if bool(route.flags.get("interactive_command")):
-            return True
-        # Otherwise, check TTY availability
-        if not RuntimeTerminalUI._can_interactive_tty():
-            return False
-        batch_requested = False
-        if hasattr(rt, "_batch_mode_requested"):
-            batch_requested = bool(rt._batch_mode_requested(route))  # type: ignore[attr-defined]
-        if batch_requested and not bool(route.flags.get("interactive_command")):
-            return False
-        return True
+        return interactive_selection_allowed(self.runtime, route, allow_dashboard_override=True)
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
@@ -342,22 +331,8 @@ class ActionCommandOrchestrator:
         )
 
     def _no_target_selected_message(self, route: Route) -> str:
-        command = route.command
-        label_map = {
-            "pr": "PR",
-            "analyze": "analysis",
-            "migrate": "migration",
-            "logs": "log",
-        }
-        label = label_map.get(str(command).strip().lower(), str(command).strip().lower())
-        if self._interactive_selection_allowed(route):
-            return f"No {label} target selected."
-        mode = str(route.mode).strip().lower()
-        discovery = "envctl --list-trees --json" if mode == "trees" else "envctl --list-targets --main --json"
-        return (
-            f"No {label} target selected. "
-            f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', or '--all'."
-        )
+        interactive_allowed = self._interactive_selection_allowed(route)
+        return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
 
     @staticmethod
     def _service_types_from_route_services(route: Route) -> set[str]:
@@ -678,7 +653,11 @@ class ActionCommandOrchestrator:
         if not project_roots:
             return
 
-        run_dir = self._new_test_results_run_dir(rt.config.base_dir)  # type: ignore[attr-defined]
+        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
+        if state is None:
+            return
+
+        run_dir = self._new_test_results_run_dir(state.run_id)  # type: ignore[attr-defined]
         summaries: dict[str, dict[str, object]] = {}
         for project_name, project_root in project_roots.items():
             summaries[project_name] = self._write_failed_tests_summary(
@@ -687,10 +666,6 @@ class ActionCommandOrchestrator:
                 project_root=project_root,
                 outcomes=outcomes,
             )
-
-        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
-        if state is None:
-            return
 
         existing = state.metadata.get("project_test_summaries")
         metadata = dict(existing) if isinstance(existing, dict) else {}
@@ -711,8 +686,8 @@ class ActionCommandOrchestrator:
             run_dir=str(run_dir),
         )
 
-    def _new_test_results_run_dir(self, base_dir: Path) -> Path:
-        results_root = base_dir / "test-results"
+    def _new_test_results_run_dir(self, run_id: str) -> Path:
+        results_root = self.runtime.state_repository.test_results_dir_path(run_id)  # type: ignore[attr-defined]
         results_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
         candidate = results_root / stamp
@@ -855,7 +830,7 @@ class ActionCommandOrchestrator:
         if source == "frontend_package_test":
             return "Frontend (package test)"
         if source == "root_unittest":
-            return "Backend (unittest)"
+            return "Repository tests (unittest)"
         if source == "package_test":
             return "Repository package test"
         if source == "configured":
@@ -903,6 +878,7 @@ class ActionCommandOrchestrator:
                 returncode = int(item.get("returncode", 1))
                 parsed = item.get("parsed")
                 parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
+                counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
                 passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
                 failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
                 skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
@@ -910,7 +886,7 @@ class ActionCommandOrchestrator:
                 duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
 
                 icon = self._colorize("✓", fg="green", bold=True) if returncode == 0 else self._colorize("✗", fg="red", bold=True)
-                if parsed_total > 0:
+                if counts_detected:
                     total_passed += passed
                     total_failed += failed
                     total_skipped += skipped

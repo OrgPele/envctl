@@ -59,6 +59,12 @@ class RuntimeStateRepository:
             return self.runtime_root / "runs"
         return self.runtime_root / "runs" / run_id
 
+    def test_results_dir_path(self, run_id: str, stamp: str | None = None) -> Path:
+        root = self.run_dir_path(run_id) / "test-results"
+        if not stamp:
+            return root
+        return root / stamp
+
     def save_run(
         self,
         *,

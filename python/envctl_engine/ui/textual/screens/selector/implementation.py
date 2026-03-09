@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import os
-import time
-from typing import Any, Callable, Sequence, cast
+from typing import Any, Callable, Sequence
 
 from envctl_engine.ui.selector_model import (
     SelectorContext,
@@ -29,13 +27,13 @@ from envctl_engine.ui.textual.screens.selector.support import (
     _guard_textual_nonblocking_read as _guard_textual_nonblocking_read_impl,
     _instrument_prompt_toolkit_posix_io as _instrument_prompt_toolkit_posix_io_impl,
     _instrument_textual_parser_keys as _instrument_textual_parser_keys_impl,
-    _prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
     _selector_backend_decision as _selector_backend_decision_impl,
     _selector_disable_focus_reporting_enabled as _selector_disable_focus_reporting_enabled_impl,
     _selector_driver_thread_snapshot as _selector_driver_thread_snapshot_impl,
     _selector_driver_trace_enabled as _selector_driver_trace_enabled_impl,
     _selector_id as _selector_id_impl,
     _selector_impl as _selector_impl_impl,
+    _prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
     _selector_key_trace_enabled as _selector_key_trace_enabled_impl,
     _selector_key_trace_verbose_enabled as _selector_key_trace_verbose_enabled_impl,
     _selector_thread_stack_enabled as _selector_thread_stack_enabled_impl,
@@ -57,66 +55,8 @@ _selector_driver_thread_snapshot = _selector_driver_thread_snapshot_impl
 _guard_textual_nonblocking_read = _guard_textual_nonblocking_read_impl
 _instrument_textual_parser_keys = _instrument_textual_parser_keys_impl
 _instrument_prompt_toolkit_posix_io = _instrument_prompt_toolkit_posix_io_impl
-def _prompt_toolkit_selector_enabled(*, build_only: bool) -> bool:
-    if build_only:
-        return False
-    backend_pref = str(os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", "")).strip().lower()
-    if backend_pref in {"textual", "tui"}:
-        return False
-    if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    raw = str(os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT", "")).strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return can_interactive_tty() and prompt_toolkit_available()
-
-
-def _selector_backend_decision(*, build_only: bool) -> tuple[bool, dict[str, object]]:
-    info: dict[str, object] = {"build_only": bool(build_only)}
-    can_tty = can_interactive_tty()
-    ptk_available = prompt_toolkit_available()
-    backend_pref = str(os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", "")).strip().lower()
-    raw_ptk = str(os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT", "")).strip().lower()
-    info["can_interactive_tty"] = bool(can_tty)
-    info["prompt_toolkit_available"] = bool(ptk_available)
-    info["env_selector_backend"] = backend_pref
-    info["env_ui_prompt_toolkit"] = raw_ptk
-
-    if build_only:
-        info["reason"] = "build_only"
-        info["backend"] = "textual"
-        return False, info
-    if backend_pref in {"textual", "tui"}:
-        info["reason"] = "env_forced_textual"
-        info["backend"] = "textual"
-        return False, info
-    if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:
-        enabled = can_tty and ptk_available
-        info["reason"] = "env_forced_prompt_toolkit"
-        info["backend"] = "prompt_toolkit" if enabled else "textual"
-        return enabled, info
-    if raw_ptk in {"1", "true", "yes", "on"}:
-        enabled = can_tty and ptk_available
-        info["reason"] = "env_prompt_toolkit_enabled"
-        info["backend"] = "prompt_toolkit" if enabled else "textual"
-        return enabled, info
-    if not can_tty:
-        info["reason"] = "non_tty"
-        info["backend"] = "textual"
-        return False, info
-    if raw_ptk in {"0", "false", "no", "off"}:
-        info["reason"] = "env_prompt_toolkit_disabled"
-        info["backend"] = "textual"
-        return False, info
-    if ptk_available:
-        info["reason"] = "default_prompt_toolkit"
-        info["backend"] = "prompt_toolkit"
-        return True, info
-    info["reason"] = "prompt_toolkit_unavailable"
-    info["backend"] = "textual"
-    return False, info
+_prompt_toolkit_selector_enabled = _prompt_toolkit_selector_enabled_impl
+_selector_backend_decision = _selector_backend_decision_impl
 _emit_selector_debug = _emit_selector_debug_impl
 
 

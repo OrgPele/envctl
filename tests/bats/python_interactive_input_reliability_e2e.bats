@@ -20,7 +20,7 @@ setup() {
     RUNTIME_DIR="$runtime" PYTHONPATH="$1/python" "$2" - <<"PY"
 from pathlib import Path
 import os
-from envctl_engine.models import RunState, ServiceRecord
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state import dump_state
 
 runtime = Path(os.environ["RUNTIME_DIR"])

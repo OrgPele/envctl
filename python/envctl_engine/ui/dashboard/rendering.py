@@ -32,6 +32,10 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     projection = runtime_map.get("projection", {})
     if not isinstance(projection, dict):
         projection = {}
+    if not projection:
+        metadata_roots = state.metadata.get("project_roots")
+        if isinstance(metadata_roots, dict):
+            projection = {str(project).strip(): {} for project in metadata_roots if str(project).strip()}
     terminal_width, _ = self._terminal_size()
     project_name_budget = max(20, terminal_width - 4)
     palette = self._dashboard_palette()
@@ -46,6 +50,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     gray = palette["gray"]
     dim = palette["dim"]
     separator = "=" * 56
+    runs_disabled_dashboard = _dashboard_runs_disabled(state)
     service_statuses = [str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()]
     total_services = len(service_statuses)
     running_services = sum(1 for status in service_statuses if status in {"running", "healthy"})
@@ -61,11 +66,26 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     if not session_id_text:
         session_id_text = "unknown"
     print(f"{dim}run_id: {state.run_id}  session_id: {session_id_text}  mode: {state.mode}{reset}")
-    print(f"{bold}{cyan}Running Services:{reset}")
-    print(
-        f"{dim}services: {total_services} total | {running_services} running | "
-        f"{starting_services} starting/unknown | {issue_services} issues{reset}"
+    dashboard_banner = state.metadata.get("dashboard_banner")
+    if isinstance(dashboard_banner, str) and dashboard_banner.strip():
+        print(f"{dim}{dashboard_banner.strip()}{reset}")
+    configured_service_types = _dashboard_configured_service_types(state)
+    configured_service_total = _dashboard_configured_service_total(
+        projection=projection,
+        configured_service_types=configured_service_types,
     )
+    if runs_disabled_dashboard and configured_service_total > 0:
+        print(f"{bold}{cyan}Configured Services:{reset}")
+        print(
+            f"{dim}services: {configured_service_total} configured | {running_services} running | "
+            f"{configured_service_total - running_services} not running | {issue_services} issues{reset}"
+        )
+    else:
+        print(f"{bold}{cyan}Running Services:{reset}")
+        print(
+            f"{dim}services: {total_services} total | {running_services} running | "
+            f"{starting_services} starting/unknown | {issue_services} issues{reset}"
+        )
     print(f"{cyan}{separator}{reset}")
     project_colors = [blue, magenta, cyan, green, yellow]
     for project_index, project in enumerate(sorted(projection)):
@@ -83,28 +103,32 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             print(f"  {bold}{project_color}{project_display}{reset} {dim}PR:{reset} {gray}{project_pr_url}{reset}")
         else:
             print(f"  {bold}{project_color}{project_display}{reset}")
-        self._print_dashboard_service_row(
-            label="Backend",
-            service=backend_service,
-            url=str(backend_url) if backend_url else None,
-            ok_color=green,
-            warn_color=yellow,
-            bad_color=red,
-            label_color=cyan,
-            dim=dim,
-            reset=reset,
-        )
-        self._print_dashboard_service_row(
-            label="Frontend",
-            service=frontend_service,
-            url=str(frontend_url) if frontend_url else None,
-            ok_color=green,
-            warn_color=yellow,
-            bad_color=red,
-            label_color=magenta,
-            dim=dim,
-            reset=reset,
-        )
+        if state.services or "backend" in configured_service_types:
+            self._print_dashboard_service_row(
+                label="Backend",
+                service=backend_service,
+                url=str(backend_url) if backend_url else None,
+                configured_not_running=bool(runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types),
+                ok_color=green,
+                warn_color=yellow,
+                bad_color=red,
+                label_color=cyan,
+                dim=dim,
+                reset=reset,
+            )
+        if state.services or "frontend" in configured_service_types:
+            self._print_dashboard_service_row(
+                label="Frontend",
+                service=frontend_service,
+                url=str(frontend_url) if frontend_url else None,
+                configured_not_running=bool(runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types),
+                ok_color=green,
+                warn_color=yellow,
+                bad_color=red,
+                label_color=magenta,
+                dim=dim,
+                reset=reset,
+            )
         _print_dashboard_dependency_rows(
             self,
             state=state,
@@ -124,14 +148,13 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             reset=reset,
         )
         print("")
-
-
 def _print_dashboard_service_row(
     self: Any,
     *,
     label: str,
     service: object | None,
     url: str | None,
+    configured_not_running: bool,
     ok_color: str,
     warn_color: str,
     bad_color: str,
@@ -139,6 +162,10 @@ def _print_dashboard_service_row(
     dim: str,
     reset: str,
 ) -> None:
+    if configured_not_running:
+        label_text = f"{label_color}{label}{reset}"
+        print(f"    {dim}○{reset} {label_text}: {dim}not running{reset} {dim}[Configured]{reset}")
+        return
     status = str(getattr(service, "status", "unknown") or "unknown")
     icon, color, status_label = self._dashboard_status_badge(
         status,
@@ -351,6 +378,39 @@ def _dashboard_project_root(self: Any, *, state: RunState, project: str) -> Path
         if isinstance(base_dir, str) and base_dir.strip():
             return Path(base_dir).expanduser()
     return None
+
+
+def _dashboard_configured_service_types(state: RunState) -> set[str]:
+    raw = state.metadata.get("dashboard_configured_service_types")
+    if not isinstance(raw, list):
+        return set()
+    return {str(service_type).strip().lower() for service_type in raw if str(service_type).strip()}
+
+
+def _dashboard_configured_service_total(*, projection: dict[str, object], configured_service_types: set[str]) -> int:
+    if not projection or not configured_service_types:
+        return 0
+    return sum(len(configured_service_types) for _project in projection)
+
+
+def _dashboard_runs_disabled(state: RunState) -> bool:
+    raw = state.metadata.get("dashboard_runs_disabled")
+    if isinstance(raw, bool):
+        return raw
+    dashboard_banner = state.metadata.get("dashboard_banner")
+    if not isinstance(dashboard_banner, str):
+        return False
+    return "runs are disabled" in dashboard_banner.lower()
+
+
+def _dashboard_relative_component_path(project_root: Path, component_path: Path) -> str:
+    try:
+        relative = component_path.relative_to(project_root)
+    except ValueError:
+        return str(component_path)
+    if str(relative) == ".":
+        return "."
+    return str(relative)
 
 
 def _dashboard_lookup_pr_url(self: Any, *, project: str, project_root: Path) -> str | None:

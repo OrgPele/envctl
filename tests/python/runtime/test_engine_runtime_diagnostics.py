@@ -20,7 +20,7 @@ class EngineRuntimeDiagnosticsTests(unittest.TestCase):
     def test_parity_manifest_helpers_report_generated_at_and_completeness(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
-            manifest_dir = repo_root / "docs" / "planning"
+            manifest_dir = repo_root / "contracts"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "python_engine_parity_manifest.json"
             manifest_path.write_text(

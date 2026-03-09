@@ -131,6 +131,40 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertIsNotNone(runtime.last_dispatched_route)
         self.assertEqual(runtime.last_dispatched_route.command, "stop")  # type: ignore[union-attr]
 
+    def test_hidden_dashboard_command_is_rejected_without_dispatch(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-plan",
+            mode="trees",
+            metadata={"dashboard_hidden_commands": ["restart"]},
+        )
+        runtime._latest_state = state
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("Command 'restart' is not available in this dashboard", out.getvalue())
+
+    def test_migrate_is_rejected_when_nothing_is_running(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(run_id="run-plan", mode="trees")
+        runtime._latest_state = state
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("m", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("Command 'migrate' is not available in this dashboard", out.getvalue())
+
     def test_restart_selector_uses_runtime_backend_selection(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)

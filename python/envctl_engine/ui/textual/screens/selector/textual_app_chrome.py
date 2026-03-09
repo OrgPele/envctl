@@ -41,6 +41,10 @@ Screen {
     margin-bottom: 1;
     color: $text-muted;
 }
+#selector-status.selector-status-error {
+    color: $error;
+    text-style: bold;
+}
 #selector-list {
     height: 1fr;
     border: round $surface;
@@ -51,8 +55,8 @@ Screen {
     height: auto;
 }
 ListItem.-highlight {
-    background: $warning 14%;
-    border-left: wide $warning;
+    background: $accent 8%;
+    border-left: wide $accent 35%;
     color: $text;
 }
 .selector-row {
@@ -60,19 +64,19 @@ ListItem.-highlight {
     width: 100%;
 }
 .selector-row-selected {
-    background: $success 12%;
+    background: $success 22%;
     border-left: wide $success;
 }
 .selector-row-unselected.-highlight {
-    background: $warning 18%;
-    border-left: wide $warning;
+    background: $accent 18%;
+    border-left: wide $accent;
 }
 .selector-row-selected.-highlight {
-    background: $accent 30%;
+    background: $accent 36%;
     border-left: wide $accent;
 }
 .selector-row-selected Label {
-    color: $success;
+    color: $text;
     text-style: bold;
 }
 .selector-row-selected.-highlight Label {

@@ -16,8 +16,8 @@ DEFAULT_REQUIRED_PATHS: tuple[str, ...] = (
     "tests/python",
     "tests/bats/parallel_trees_python_e2e.bats",
     "tests/bats/python_engine_parity.bats",
-    "docs/planning/python_engine_parity_manifest.json",
-    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
+    "contracts/python_engine_parity_manifest.json",
+    "contracts/envctl-shell-ownership-ledger.json",
 )
 
 DEFAULT_REQUIRED_SCOPES: tuple[str, ...] = (
@@ -173,7 +173,7 @@ def evaluate_shipability(
 
 
 def _manifest_is_complete(repo_root: Path) -> bool:
-    manifest_path = repo_root / "docs/planning/python_engine_parity_manifest.json"
+    manifest_path = repo_root / "contracts/python_engine_parity_manifest.json"
     if not manifest_path.is_file():
         return False
     try:
@@ -196,7 +196,7 @@ def _runtime_parity_is_complete() -> bool:
 
 def _manifest_freshness_is_valid(repo_root: Path, max_age_days: int = 7) -> tuple[bool, str]:
     """Check manifest generated_at timestamp is recent and proof references are valid."""
-    manifest_path = repo_root / "docs/planning/python_engine_parity_manifest.json"
+    manifest_path = repo_root / "contracts/python_engine_parity_manifest.json"
     if not manifest_path.is_file():
         return False, "manifest file missing"
     try:
@@ -305,8 +305,12 @@ _SHELL_FLAG_PATTERN = re.compile(r"--[a-z0-9][a-z0-9-]*")
 
 
 def _unsupported_documented_flags(repo_root: Path) -> list[str]:
-    docs_path = repo_root / "docs" / "important-flags.md"
-    if not docs_path.is_file():
+    docs_candidates = (
+        repo_root / "docs" / "reference" / "important-flags.md",
+        repo_root / "docs" / "important-flags.md",
+    )
+    docs_path = next((path for path in docs_candidates if path.is_file()), None)
+    if docs_path is None:
         return []
     try:
         raw = docs_path.read_text(encoding="utf-8")

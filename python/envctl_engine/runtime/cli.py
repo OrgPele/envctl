@@ -45,7 +45,7 @@ def check_prereqs(route: Route, config: EngineConfig) -> tuple[bool, str | None]
             False,
             "Missing required Python packages: "
             + ", ".join(missing_modules)
-            + ". Install with: python -m pip install -r python/requirements.txt",
+            + ". Install envctl with: python -m pip install -e .",
         )
     return True, None
 
@@ -81,12 +81,23 @@ def run(
 
     try:
         try:
+            argv, repo_arg = _extract_repo_arg(argv)
+            if argv and argv[0] in {"install", "uninstall"}:
+                print(
+                    "The installed envctl command does not edit your shell PATH. "
+                    "Use 'python -m pip install .', 'python -m pip uninstall envctl', or 'pipx uninstall envctl'. "
+                    "The repo-clone compatibility flow remains available via './bin/envctl install'.",
+                    file=sys.stderr,
+                )
+                return 1
+            base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
+            if "RUN_REPO_ROOT" not in env_map and _is_repo_root(base_dir):
+                env_map["RUN_REPO_ROOT"] = str(base_dir)
             route = _parse_initial_route(argv, env_map)
         except RouteError as exc:
             print(str(exc), file=sys.stderr)
             return 1
 
-        base_dir = Path(env_map.get("RUN_REPO_ROOT") or Path.cwd()).resolve()
         local_state = discover_local_config_state(base_dir, env_map.get("ENVCTL_CONFIG_FILE"))
         if not local_state.config_file_exists and not _command_can_skip_local_config_bootstrap(route):
             try:
@@ -167,18 +178,98 @@ def _parse_initial_route(argv: Sequence[str], env_map: Mapping[str, str]) -> Rou
 
 def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
     if route.command in {
+        "analyze",
+        "blast-all",
+        "blast-worktree",
+        "commit",
+        "dashboard",
+        "delete-worktree",
         "help",
+        "doctor",
+        "errors",
+        "health",
         "list-commands",
         "list-targets",
         "list-trees",
+        "logs",
+        "migrate",
+        "plan",
+        "pr",
+        "resume",
         "show-config",
         "show-state",
+        "stop",
+        "stop-all",
+        "test",
         "explain-startup",
     }:
         return True
     if route.command != "config":
         return False
     return bool(route.flags.get("stdin_json")) or bool(route.flags.get("set_values")) or bool(route.passthrough_args)
+
+
+def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
+    filtered: list[str] = []
+    repo_arg: str | None = None
+    index = 0
+    while index < len(argv):
+        token = str(argv[index])
+        if token == "--repo":
+            if index + 1 >= len(argv):
+                raise RouteError("Missing value for --repo")
+            value = str(argv[index + 1]).strip()
+            if not value:
+                raise RouteError("Missing value for --repo")
+            repo_arg = value
+            index += 2
+            continue
+        if token.startswith("--repo="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise RouteError("Missing value for --repo")
+            repo_arg = value
+            index += 1
+            continue
+        filtered.append(token)
+        index += 1
+    return filtered, repo_arg
+
+
+def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Path:
+    if env_map.get("RUN_REPO_ROOT"):
+        return Path(str(env_map["RUN_REPO_ROOT"])).expanduser().resolve()
+    cwd = Path.cwd().resolve()
+    if repo_arg is not None:
+        candidate = Path(repo_arg).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        candidate = candidate.resolve()
+        repo_root = _find_repo_root(candidate)
+        if repo_root is None:
+            raise RouteError(f"Invalid --repo path: {repo_arg}")
+        return repo_root
+    repo_root = _find_repo_root(cwd)
+    if repo_root is not None:
+        return repo_root
+    return cwd
+
+
+def _find_repo_root(candidate: Path) -> Path | None:
+    current = candidate
+    if current.is_file():
+        current = current.parent
+    current = current.resolve()
+    while True:
+        if _is_repo_root(current):
+            return current
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
+def _is_repo_root(path: Path) -> bool:
+    return (path / ".git").is_dir() or (path / ".git").is_file()
 
 
 if __name__ == "__main__":

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.command_parsing import (
+    parse_interactive_command as shared_parse_interactive_command,
+    recover_single_letter_command_from_escape_fragment as shared_recover_single_letter_command_from_escape_fragment,
+    sanitize_interactive_input as shared_sanitize_interactive_input,
+)
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.backend import build_interactive_backend
 from envctl_engine.ui.backend_resolver import resolve_ui_backend_with_capabilities
@@ -27,19 +31,15 @@ def run_interactive_command(runtime: Any, raw: str, state: RunState) -> tuple[bo
 
 
 def sanitize_interactive_input(raw: str) -> str:
-    return DashboardOrchestrator._sanitize_interactive_input(raw)
+    return shared_sanitize_interactive_input(raw)
 
 
 def recover_single_letter_command_from_escape_fragment(raw: str) -> str:
-    return DashboardOrchestrator._recover_single_letter_command_from_escape_fragment(raw)
+    return shared_recover_single_letter_command_from_escape_fragment(raw)
 
 
 def parse_interactive_command(raw: str) -> list[str] | None:
-    try:
-        return shlex.split(raw)
-    except ValueError as exc:
-        print(f"Invalid command syntax: {exc}")
-        return None
+    return shared_parse_interactive_command(raw)
 
 
 def flush_pending_interactive_input() -> None:

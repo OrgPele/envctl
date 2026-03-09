@@ -1,14 +1,24 @@
 from __future__ import annotations
 
-import re
-import shlex
 from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.state.models import RunState
+from envctl_engine.ui.command_parsing import (
+    parse_interactive_command,
+    recover_single_letter_command_from_escape_fragment,
+    sanitize_interactive_input,
+    tokens_set_mode,
+)
 from envctl_engine.ui.command_aliases import normalize_interactive_command
 from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
+from envctl_engine.ui.selection_support import (
+    no_target_selected_message,
+    project_names_from_state,
+    route_has_explicit_target,
+    service_types_from_service_names,
+)
 
 
 class DashboardOrchestrator:
@@ -121,6 +131,11 @@ class DashboardOrchestrator:
             runtime_any._print_dashboard_snapshot(state)
             return True, state
 
+        hidden_commands = self._dashboard_hidden_commands(state)
+        if route.command in hidden_commands:
+            print(f"Command '{route.command}' is not available in this dashboard because envctl runs are disabled for this mode.")
+            return True, state
+
         code = runtime_any.dispatch(route)
         runtime_any._emit(
             "ui.command.dispatch.result",
@@ -221,6 +236,14 @@ class DashboardOrchestrator:
     def _dashboard_owned_project_selection_commands() -> set[str]:
         return {"pr", "commit", "analyze", "migrate", "blast-worktree"}
 
+    @staticmethod
+    def _dashboard_hidden_commands(state: RunState) -> set[str]:
+        raw = state.metadata.get("dashboard_hidden_commands")
+        hidden = {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+        if not state.services:
+            hidden.add("migrate")
+        return hidden
+
     def _apply_project_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
         if self._route_has_explicit_target(route, runtime_any):
@@ -278,16 +301,7 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _no_target_selected_message(command: str) -> str:
-        label_map = {
-            "logs": "log",
-            "clear-logs": "log",
-            "pr": "PR",
-            "analyze": "analysis",
-            "migrate": "migration",
-            "blast-worktree": "worktree",
-        }
-        label = label_map.get(str(command).strip().lower(), str(command).strip().lower())
-        return f"No {label} target selected."
+        return no_target_selected_message(command, route=None, interactive_allowed=True)
 
     def _apply_restart_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
@@ -358,20 +372,7 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _route_has_explicit_target(route: Route, runtime: object) -> bool:
-        runtime_any = cast(Any, runtime)
-        if bool(route.flags.get("all")):
-            return True
-        if route.projects:
-            return True
-        services = route.flags.get("services")
-        if isinstance(services, list) and any(str(item).strip() for item in services):
-            return True
-        selectors_from_passthrough = getattr(runtime_any, "_selectors_from_passthrough", None)
-        if callable(selectors_from_passthrough):
-            selectors = selectors_from_passthrough(route.passthrough_args)
-            if isinstance(selectors, set) and selectors:
-                return True
-        return False
+        return route_has_explicit_target(route, cast(Any, runtime))
 
     @staticmethod
     def _restart_service_types_from_service_names(service_names: list[str]) -> list[str]:
@@ -391,89 +392,24 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _service_types_from_service_names(service_names: list[str]) -> set[str]:
-        types: set[str] = set()
-        for name in service_names:
-            normalized = str(name).strip().lower()
-            if normalized.endswith(" backend") or normalized == "backend":
-                types.add("backend")
-            elif normalized.endswith(" frontend") or normalized == "frontend":
-                types.add("frontend")
-        return types
+        return service_types_from_service_names(service_names)
 
     @staticmethod
     def _project_names_from_state(state: RunState, rt: object) -> list[object]:
-        runtime_any = cast(Any, rt)
-        names: list[str] = []
-        seen: set[str] = set()
-        for name in state.services:
-            project = runtime_any._project_name_from_service(name)
-            if not project:
-                continue
-            lowered = project.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            names.append(project)
-        return [SimpleProject(name) for name in names]
+        return project_names_from_state(cast(Any, rt), state)
 
     @staticmethod
     def _sanitize_interactive_input(raw: str) -> str:
-        """Sanitize interactive input by removing escape sequences."""
-        if not isinstance(raw, str) or not raw:
-            return ""
-        cleaned = re.sub(r"\x1bO[ -~]", "", raw)
-        cleaned = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", cleaned)
-        cleaned = re.sub(r"(?:(?<=^)|(?<=\s))\[(?:\d{1,3}(?:;\d{1,3})*)?[ABCD~]", " ", cleaned)
-        cleaned = re.sub(r"(?:(?<=^)|(?<=\s))O[A-D](?=$|[a-z]|\s)", " ", cleaned)
-        cleaned = re.sub(r"(?:(?<=^)|(?<=\s))\[(?=[a-z])", "", cleaned)
-        cleaned = cleaned.replace("\x1b", "")
-        cleaned = cleaned.replace("\r", " ").replace("\n", " ")
-        cleaned = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]", "", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned)
-        cleaned = cleaned.strip()
-        if cleaned:
-            return cleaned
-        return DashboardOrchestrator._recover_single_letter_command_from_escape_fragment(raw)
+        return sanitize_interactive_input(raw)
 
     @staticmethod
     def _recover_single_letter_command_from_escape_fragment(raw: str) -> str:
-        """Recover single-letter commands from escape sequences."""
-        if not isinstance(raw, str):
-            return ""
-        stripped = raw.strip()
-        if not stripped:
-            return ""
-        allowed = {"s", "r", "t", "p", "c", "a", "m", "l", "h", "e", "d", "q"}
-
-        ss3_match = re.fullmatch(r"\x1bO([A-Za-z])", stripped)
-        if ss3_match:
-            candidate = ss3_match.group(1).lower()
-            return candidate if candidate in allowed else ""
-
-        csi_modifier_match = re.fullmatch(r"\x1b\[[0-9;?]+([A-Za-z])", stripped)
-        if csi_modifier_match:
-            candidate = csi_modifier_match.group(1).lower()
-            return candidate if candidate in allowed else ""
-        return ""
+        return recover_single_letter_command_from_escape_fragment(raw)
 
     @staticmethod
     def _parse_interactive_command(raw: str) -> list[str] | None:
-        """Parse interactive command from raw input."""
-        try:
-            return shlex.split(raw)
-        except ValueError as exc:
-            print(f"Invalid command syntax: {exc}")
-            return None
+        return parse_interactive_command(raw)
 
     @staticmethod
     def _tokens_set_mode(tokens: list[str]) -> bool:
-        """Check if tokens explicitly set mode."""
-        for token in tokens:
-            if token in {"--main", "main=true", "--tree", "--trees", "trees=true", "main=false", "trees=false"}:
-                return True
-        return False
-
-
-class SimpleProject:
-    def __init__(self, name: str) -> None:
-        self.name = name
+        return tokens_set_mode(tokens)

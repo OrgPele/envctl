@@ -34,12 +34,22 @@ def requirements_ready(runtime: Any, result: RequirementsResult) -> bool:
 def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None) -> None:
     normalized_mode = str(mode).strip().lower()
     config = runtime.config
+    startup_enabled = (
+        config.startup_enabled_for_mode(normalized_mode)
+        if hasattr(config, "startup_enabled_for_mode")
+        else True
+    )
+    if not startup_enabled:
+        if _route_requires_enabled_mode(route):
+            raise RuntimeError(f"envctl runs are disabled for {normalized_mode} in .envctl. Run 'envctl config' to enable them.")
+        return
     if normalized_mode == "main":
         _ = main_requirements_mode(route)
         profile = (
             config.profile_for_mode("main")
             if hasattr(config, "profile_for_mode")
             else SimpleProfile(
+                startup_enable=True,
                 backend_enable=True,
                 frontend_enable=True,
                 postgres_enable=bool(getattr(config, "postgres_main_enable", True)),
@@ -68,6 +78,7 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
             config.profile_for_mode(normalized_mode)
             if hasattr(config, "profile_for_mode")
             else SimpleProfile(
+                startup_enable=True,
                 backend_enable=True,
                 frontend_enable=True,
                 postgres_enable=True,
@@ -98,7 +109,45 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         )
 
 
+def _route_requires_enabled_mode(route: Route | None) -> bool:
+    if route is None:
+        return True
+    command = str(route.command).strip().lower()
+    if command in {"restart", "resume"}:
+        return True
+    if command == "start":
+        return not _route_is_implicit_start(route)
+    return False
+
+
+def _route_is_implicit_start(route: Route | None) -> bool:
+    if route is None or str(route.command).strip().lower() != "start":
+        return False
+    raw_args = [str(token).strip() for token in getattr(route, "raw_args", []) if str(token).strip()]
+    if not raw_args:
+        return True
+    index = 0
+    while index < len(raw_args):
+        token = raw_args[index]
+        lowered = token.lower()
+        if lowered == "start":
+            return False
+        if lowered in {"--command", "--action"}:
+            next_token = raw_args[index + 1].lower() if index + 1 < len(raw_args) else ""
+            if next_token == "start":
+                return False
+            index += 2
+            continue
+        if lowered.startswith("--command=") or lowered.startswith("--action="):
+            if lowered.split("=", 1)[1].strip() == "start":
+                return False
+        index += 1
+    return True
+
+
 def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool:
+    if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(mode):
+        return False
     if hasattr(runtime.config, "service_enabled_for_mode"):
         return runtime.config.service_enabled_for_mode(mode, service_name)
     return str(service_name).strip().lower() in {"backend", "frontend"}
@@ -107,6 +156,8 @@ def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool
 def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
     normalized_mode = str(mode).strip().lower()
     normalized_name = str(requirement_name).strip().lower()
+    if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(normalized_mode):
+        return False
     if normalized_mode == "main":
         effective_main = effective_main_requirement_flags(runtime, route)
         if normalized_name in effective_main:
@@ -120,6 +171,7 @@ class SimpleProfile:
     def __init__(
         self,
         *,
+        startup_enable: bool,
         backend_enable: bool,
         frontend_enable: bool,
         postgres_enable: bool,
@@ -127,6 +179,7 @@ class SimpleProfile:
         supabase_enable: bool,
         n8n_enable: bool,
     ) -> None:
+        self.startup_enable = startup_enable
         self.backend_enable = backend_enable
         self.frontend_enable = frontend_enable
         self.postgres_enable = postgres_enable

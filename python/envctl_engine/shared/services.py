@@ -6,7 +6,7 @@ from envctl_engine.state.models import RunState
 def frontend_env_for_project(state: RunState, project: str, *, host: str = "localhost") -> dict[str, str]:
     backend_port = None
     for service in state.services.values():
-        if _project_name_from_service_name(service.name) != project:
+        if project_name_from_service_name(service.name) != project:
             continue
         if service.type != "backend":
             continue
@@ -18,7 +18,7 @@ def frontend_env_for_project(state: RunState, project: str, *, host: str = "loca
     }
 
 
-def _project_name_from_service_name(service_name: str) -> str:
+def project_name_from_service_name(service_name: str) -> str:
     for suffix in (" Backend", " Frontend"):
         if service_name.endswith(suffix):
             return service_name[: -len(suffix)]

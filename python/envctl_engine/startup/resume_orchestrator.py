@@ -33,7 +33,6 @@ from envctl_engine.startup.resume_restore_support import (
     project_root as project_root_impl,
     restore_missing as restore_missing_impl,
 )
-import envctl_engine.startup.resume_restore_support as _resume_restore_support
 
 
 _ResumeProjectSpinnerGroup = ResumeProjectSpinnerGroup
@@ -45,7 +44,7 @@ class ResumeOrchestrator:
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
-        state_repository = self._state_repository(rt)
+        state_repository = _state_repository_impl(rt)
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "resume.phase",
@@ -196,62 +195,18 @@ class ResumeOrchestrator:
         *,
         route: Route | None = None,
     ) -> list[str]:
-        _resume_restore_support.spinner = spinner
-        _resume_restore_support.spinner_enabled = spinner_enabled
-        _resume_restore_support.use_spinner_policy = use_spinner_policy
-        _resume_restore_support.emit_spinner_policy = emit_spinner_policy
-        _resume_restore_support.resolve_spinner_policy = resolve_spinner_policy
-        _resume_restore_support._ResumeProjectSpinnerGroup = _ResumeProjectSpinnerGroup
-        return restore_missing_impl(self, state, missing_services, route=route)
-
-    @staticmethod
-    @staticmethod
-    def _round_ms(value_seconds: float) -> float:
-        return _round_ms_impl(value_seconds)
-
-    @staticmethod
-    @staticmethod
-    def _format_project_timing_line(project: str, steps: Mapping[str, float], total_ms: float) -> str:
-        return _format_project_timing_line_impl(project, steps, total_ms)
-
-    def _restore_parallel_config(
-        self,
-        *,
-        route: Route | None,
-        mode: str,
-        project_count: int,
-    ) -> tuple[bool, int]:
-        return _restore_parallel_config_impl(self, route=route, mode=mode, project_count=project_count)
-
-    def _restore_timing_enabled(self, route: Route | None) -> bool:
-        return _restore_timing_enabled_impl(self, route)
-
-    def _requirements_reuse_decision(
-        self,
-        rt: Any,
-        *,
-        project: str,
-        requirements: RequirementsResult | None,
-        project_root: Path | None = None,
-    ) -> tuple[bool, str]:
-        return _requirements_reuse_decision_impl(
+        return restore_missing_impl(
             self,
-            rt,
-            project=project,
-            requirements=requirements,
-            project_root=project_root,
+            state,
+            missing_services,
+            route=route,
+            spinner_factory=spinner,
+            spinner_enabled_fn=spinner_enabled,
+            use_spinner_policy_fn=use_spinner_policy,
+            emit_spinner_policy_fn=emit_spinner_policy,
+            resolve_spinner_policy_fn=resolve_spinner_policy,
+            project_spinner_group_cls=_ResumeProjectSpinnerGroup,
         )
-
-    def _resume_terminate_aggressive(self, rt: Any) -> bool:
-        return _resume_terminate_aggressive_impl(self, rt)
-
-    def _reserve_application_service_ports(
-        self,
-        rt: Any,
-        context: object,
-        port_allocator: _PortAllocatorProtocol,
-    ) -> None:
-        return _reserve_application_service_ports_impl(self, rt, context, port_allocator)
 
     def context_for_project(self, state: RunState, project: str) -> object | None:
         return context_for_project_impl(self, state, project)
@@ -261,13 +216,3 @@ class ResumeOrchestrator:
 
     def apply_ports_to_context(self, context: object, state: RunState) -> None:
         return apply_ports_to_context_impl(self, context, state)
-
-    @staticmethod
-    @staticmethod
-    def _state_repository(runtime: object) -> _StateRepositoryProtocol:
-        return _state_repository_impl(runtime)
-
-    @staticmethod
-    @staticmethod
-    def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
-        return _port_allocator_impl(runtime)

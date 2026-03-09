@@ -195,6 +195,51 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn(("succeed", "Command finished; leaving interactive mode..."), spinner_calls)
         self.assertNotIn(("update", "Routing test command..."), spinner_calls)
 
+    def test_dashboard_loop_hides_irrelevant_sections_when_commands_are_disabled(self) -> None:
+        state = RunState(
+            run_id="run-plan",
+            mode="trees",
+            metadata={
+                "dashboard_hidden_commands": [
+                    "stop",
+                    "restart",
+                    "stop-all",
+                    "blast-all",
+                    "logs",
+                    "clear-logs",
+                    "health",
+                    "errors",
+                ]
+            },
+        )
+        runtime = _RuntimeStub(state)
+
+        def handle_command(_raw: str, current: RunState, _rt: object):  # noqa: ANN001
+            return False, current
+
+        out = StringIO()
+        with (
+            patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            redirect_stdout(out),
+        ):
+            code = run_dashboard_command_loop(
+                state=state,
+                runtime=runtime,
+                handle_command=handle_command,
+                sanitize=lambda value: value,
+                input_provider=lambda _prompt: "q",
+            )
+
+        self.assertEqual(code, 0)
+        rendered = out.getvalue()
+        self.assertIn("(q)uit", rendered)
+        self.assertNotIn("Lifecycle:", rendered)
+        self.assertIn("Actions:", rendered)
+        self.assertIn("Inspect:", rendered)
+        self.assertNotIn("(m)igrate", rendered)
+        self.assertNotIn("(l)ogs", rendered)
+        self.assertIn("confi(g)", rendered)
+
     def test_dashboard_loop_marks_spinner_failed_from_action_finish_event(self) -> None:
         state = RunState(run_id="run-4", mode="trees")
         runtime = _RuntimeStub(state)

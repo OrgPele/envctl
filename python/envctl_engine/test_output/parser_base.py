@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import re
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class TestResult:
     skipped: int = 0
     total: int = 0
     duration: float = 0.0
+    counts_detected: bool = False
     failed_tests: list[str] = field(default_factory=list)
     error_details: dict[str, str] = field(default_factory=dict)
     coverage_path: str | None = None
@@ -71,3 +73,8 @@ class TestOutputParser(ABC):
             TestResult with final aggregated metrics.
         """
         pass
+
+
+def strip_ansi(text: str) -> str:
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)

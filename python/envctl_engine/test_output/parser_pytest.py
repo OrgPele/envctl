@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import override
-from .parser_base import TestOutputParser, TestResult
+from .parser_base import TestOutputParser, TestResult, strip_ansi
 
 
 class PytestOutputParser(TestOutputParser):
@@ -23,7 +23,7 @@ class PytestOutputParser(TestOutputParser):
             line: Single line from pytest output.
         """
         # Strip ANSI escape codes
-        clean_line = self._strip_ansi(line)
+        clean_line = strip_ansi(line)
         self._lines.append(clean_line)
 
         # Check for section markers
@@ -50,18 +50,6 @@ class PytestOutputParser(TestOutputParser):
         # Calculate total
         self.result.total = self.result.passed + self.result.failed + self.result.errors + self.result.skipped
         return self.result
-
-    def _strip_ansi(self, text: str) -> str:
-        """Remove ANSI escape codes from text.
-
-        Args:
-            text: Text potentially containing ANSI codes.
-
-        Returns:
-            Text with ANSI codes removed.
-        """
-        ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        return ansi_escape.sub("", text)
 
     def _parse_failed_line(self, line: str) -> None:
         """Parse a FAILED line.
@@ -108,6 +96,7 @@ class PytestOutputParser(TestOutputParser):
         duration_match = re.search(r"(\d+\.\d+)s", line)
         if duration_match:
             self.result.duration = float(duration_match.group(1))
+        self.result.counts_detected = True
 
         # Extract counts
         passed_match = re.search(r"(\d+)\s+passed", line)

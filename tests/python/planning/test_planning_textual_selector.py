@@ -55,7 +55,7 @@ class PlanningTextualSelectorTests(unittest.TestCase):
         flush_mock.assert_called_once_with()
         selector_mock.assert_called_once()
 
-    def test_run_planning_selection_menu_returns_empty_when_cancelled(self) -> None:
+    def test_run_planning_selection_menu_returns_none_when_cancelled(self) -> None:
         engine = self._engine()
 
         with patch(
@@ -68,7 +68,22 @@ class PlanningTextualSelectorTests(unittest.TestCase):
                 existing_counts={"backend/task-a.md": 0},
             )
 
-        self.assertEqual(chosen, {})
+        self.assertIsNone(chosen)
+
+    def test_run_planning_selection_menu_preserves_zero_scale_when_existing_worktrees_present(self) -> None:
+        engine = self._engine()
+
+        with patch(
+            "envctl_engine.planning.worktree_domain.select_planning_counts_textual",
+            return_value={"backend/task-a.md": 0},
+        ):
+            chosen = engine._run_planning_selection_menu(
+                planning_files=["backend/task-a.md"],
+                selected_counts={"backend/task-a.md": 1},
+                existing_counts={"backend/task-a.md": 1},
+            )
+
+        self.assertEqual(chosen, {"backend/task-a.md": 0})
 
     def test_run_planning_selection_menu_restores_terminal_state_after_selector(self) -> None:
         engine = self._engine()

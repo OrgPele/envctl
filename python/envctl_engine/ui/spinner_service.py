@@ -8,18 +8,7 @@ import threading
 import time
 from typing import Callable, Mapping, TextIO
 from .color_policy import colors_enabled
-
-
-def _parse_bool(value: object, default: bool) -> bool:
-    if value is None:
-        return default
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return default
-
+from envctl_engine.shared.parsing import parse_bool
 
 def _parse_int(value: object, default: int) -> int:
     if value is None:
@@ -64,7 +53,7 @@ def resolve_spinner_policy(
     style_raw = str(merged.get("ENVCTL_UI_SPINNER_STYLE", "dots")).strip().lower()
     style = style_raw if style_raw else "dots"
     min_ms = max(0, _parse_int(merged.get("ENVCTL_UI_SPINNER_MIN_MS"), 120))
-    verbose_events = _parse_bool(merged.get("ENVCTL_UI_SPINNER_VERBOSE_EVENTS"), False)
+    verbose_events = parse_bool(merged.get("ENVCTL_UI_SPINNER_VERBOSE_EVENTS"), False)
 
     if input_phase:
         return SpinnerPolicy(
@@ -103,8 +92,8 @@ def resolve_spinner_policy(
             verbose_events=verbose_events,
         )
 
-    compatibility_disabled = _parse_bool(merged.get("ENVCTL_UI_SPINNER"), True) is False
-    rich_compat_disabled = _parse_bool(merged.get("ENVCTL_UI_RICH"), True) is False
+    compatibility_disabled = parse_bool(merged.get("ENVCTL_UI_SPINNER"), True) is False
+    rich_compat_disabled = parse_bool(merged.get("ENVCTL_UI_RICH"), True) is False
     is_tty = bool(sys.stderr.isatty() if stream_isatty is None else stream_isatty)
     ci_mode = bool(str(merged.get("CI", "")).strip())
 

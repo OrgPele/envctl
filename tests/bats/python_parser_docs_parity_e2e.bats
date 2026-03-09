@@ -12,8 +12,8 @@ setup() {
 set -euo pipefail
 repo_tmp=$(mktemp -d)
 repo="$repo_tmp/repo"
-mkdir -p "$repo/.git" "$repo/docs"
-cat > "$repo/docs/important-flags.md" <<DOC
+mkdir -p "$repo/.git" "$repo/docs/reference"
+cat > "$repo/docs/reference/important-flags.md" <<DOC
 # Important Flags
 | Flag | Purpose |
 | --- | --- |
@@ -22,7 +22,7 @@ DOC
 
 PYTHONPATH="$1/python" "$2" - <<PY
 from pathlib import Path
-from envctl_engine.release_gate import evaluate_shipability
+from envctl_engine.shell.release_gate import evaluate_shipability
 
 repo = Path("$repo")
 result = evaluate_shipability(

@@ -14,6 +14,7 @@ import termios
 import time
 from typing import Any, cast
 
+from .capabilities import prompt_toolkit_disabled
 from .debug_flight_recorder import DebugFlightRecorder
 
 _PUSHBACK_BYTES: dict[int, bytearray] = {}
@@ -625,7 +626,7 @@ class TerminalSession:
             self._emit_backend("fallback")
             return text
         _restore_stdin_terminal_sane(emit=self._emit)
-        force_basic = self._prefer_basic_input or _force_basic_input_backend(self.env) or _prompt_toolkit_disabled(self.env)
+        force_basic = self._prefer_basic_input or _force_basic_input_backend(self.env) or prompt_toolkit_disabled(self.env)
         if force_basic:
             text = _read_command_line_basic(
                 prompt,
@@ -978,12 +979,3 @@ def _basic_input_fd_enabled() -> bool:
     if raw is None:
         return True
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _prompt_toolkit_disabled(env: Mapping[str, str]) -> bool:
-    raw = env.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        raw = os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT")
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in {"0", "false", "no", "off"}

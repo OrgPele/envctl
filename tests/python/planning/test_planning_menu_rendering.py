@@ -138,6 +138,31 @@ class PlanningMenuRenderingTests(unittest.TestCase):
         self.assertEqual(result.selected_counts, {"a.md": 1})
         self.assertGreaterEqual(flush_mock.call_count, 2)
 
+    def test_run_submit_preserves_zero_counts_when_existing_worktrees_present(self) -> None:
+        menu = PlanningSelectionMenu()
+        planning_files = ["a.md"]
+        selected = {"a.md": 1}
+        existing = {"a.md": 1}
+
+        with (
+            patch("sys.stdin.fileno", return_value=7),
+            patch("termios.tcgetattr", return_value=[0, 0, 0, 0, 0, 0]),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch("os.read", side_effect=[b"x", b"\n"]),
+            patch.object(PlanningSelectionMenu, "flush_pending_input"),
+            patch.object(PlanningSelectionMenu, "_prompt_toolkit_enabled", return_value=False),
+            redirect_stdout(StringIO()),
+        ):
+            result = menu.run(
+                planning_files=planning_files,
+                selected_counts=selected,
+                existing_counts=existing,
+            )
+
+        self.assertFalse(result.cancelled)
+        self.assertEqual(result.selected_counts, {"a.md": 0})
+
     def test_ctrl_c_is_treated_as_cancel(self) -> None:
         menu = PlanningSelectionMenu()
         planning_files = ["a.md"]

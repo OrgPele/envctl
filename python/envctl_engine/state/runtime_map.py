@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from envctl_engine.shared.services import project_name_from_service_name
 from envctl_engine.state.models import RunState
 
 
@@ -11,7 +12,7 @@ def build_runtime_map(state: RunState, *, host: str = "localhost") -> dict[str, 
     port_to_service: dict[int, str] = {}
     service_to_actual_port: dict[str, int] = {}
     for service in state.services.values():
-        project = _project_name_from_service_name(service.name)
+        project = project_name_from_service_name(service.name)
         project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None})
         port = service.actual_port if service.actual_port is not None else service.requested_port
         if service.type == "backend":
@@ -64,20 +65,12 @@ def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dic
         }
     return projection
 
-
-def _project_name_from_service_name(service_name: str) -> str:
-    for suffix in (" Backend", " Frontend"):
-        if service_name.endswith(suffix):
-            return service_name[: -len(suffix)]
-    return service_name
-
-
 def build_runtime_map_without_projection(state: RunState) -> dict[str, object]:
     projects: dict[str, dict[str, object]] = {}
     port_to_service: dict[int, str] = {}
     service_to_actual_port: dict[str, int] = {}
     for service in state.services.values():
-        project = _project_name_from_service_name(service.name)
+        project = project_name_from_service_name(service.name)
         project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None})
         port = service.actual_port if service.actual_port is not None else service.requested_port
         if service.type == "backend":

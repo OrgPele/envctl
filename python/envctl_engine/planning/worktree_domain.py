@@ -408,6 +408,9 @@ def _select_plan_projects(
         return []
 
     plan_counts = self._prompt_planning_selection(planning_files, raw_projects)
+    if plan_counts is None:
+        print("Planning selection cancelled.")
+        return []
     if not plan_counts:
         print("No planning files selected.")
         return []
@@ -426,7 +429,12 @@ def _select_plan_projects(
         print(duplicate_error)
         return []
 
-    filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
+    positive_plan_counts = {plan_file: count for plan_file, count in plan_counts.items() if int(count) > 0}
+    if not positive_plan_counts:
+        print("Planning counts scaled to zero; no worktrees remain.")
+        return []
+
+    filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=positive_plan_counts)
     if not filtered:
         print("No tree paths found for selected planning file(s).")
         return []
@@ -435,7 +443,7 @@ def _select_plan_projects(
         "planning.selection.resolved",
         selection="interactive",
         selected=[name for name, _ in filtered],
-        plans=list(plan_counts.keys()),
+        plans=list(positive_plan_counts.keys()),
     )
     selected_names = {name for name, _ in filtered}
     return [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
@@ -482,7 +490,7 @@ def _run_planning_selection_menu(
     planning_files: list[str],
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
-) -> dict[str, int]:
+) -> dict[str, int] | None:
     from envctl_engine.ui.terminal_session import _reset_terminal_escape_modes, normalize_standard_tty_state
 
     try:
@@ -494,7 +502,7 @@ def _run_planning_selection_menu(
             emit=getattr(self, "_emit", None),
         )
         if chosen is None:
-            return {}
+            return None
         return chosen
     except Exception:
         return {plan_file: count for plan_file, count in selected_counts.items() if count > 0}
@@ -608,8 +616,6 @@ def _resolve_planning_selection_target(
         planning_rel = ""
     if planning_rel and normalized.startswith(f"{planning_rel}/"):
         normalized = normalized[len(planning_rel) + 1 :]
-    if normalized.startswith("docs/planning/"):
-        normalized = normalized[len("docs/planning/") :]
     if not normalized.endswith(".md"):
         normalized = f"{normalized}.md"
 
@@ -625,6 +631,14 @@ def _resolve_planning_selection_target(
 
 def _plan_selection_memory_path(self: Any) -> Path:
     return self.runtime_root / "planning_selection.json"
+
+
+def _planning_root(self: Any) -> Path:
+    return self.config.planning_dir
+
+
+def _planning_done_root(self: Any) -> Path:
+    return self._planning_root().parent / "done"
 
 
 def _load_plan_selection_memory(self: Any) -> dict[str, int]:
@@ -747,12 +761,13 @@ def _sync_plan_worktrees_from_plan_counts(
                     )
                     if remove_error:
                         return projects, remove_error
+                    print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
                     projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
                     if desired == 0:
                         self._cleanup_empty_feature_root(feature=feature)
                         projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
 
-                if desired == 0 and not keep_plan:
+                if desired == 0 and existing > 0 and not keep_plan:
                     self._move_plan_to_done(plan_file)
             if enabled:
                 active_spinner.succeed("Planning worktree sync completed")
@@ -795,7 +810,7 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
         for path in feature_root.iterdir()
         if path.is_dir() and path.name.isdigit()
     }
-    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(self.config.planning_dir / plan_file)})
+    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(self._planning_root() / plan_file)})
 
     for _ in range(count):
         iteration = self._next_available_iteration(existing_iters)
@@ -872,14 +887,14 @@ def _delete_feature_worktrees(
             warnings = blast_cleanup(
                 project_name=_name,
                 project_root=root,
-                source_command="plan-worktree-sync",
+                source_command="blast-worktree",
             )
             for warning in warnings:
                 self._emit(  # type: ignore[attr-defined]
                     "cleanup.worktree.warning",
                     project=_name,
                     warning=warning,
-                    source_command="plan-worktree-sync",
+                    source_command="blast-worktree",
                 )
         result = delete_worktree_path(
             repo_root=self.config.base_dir,
@@ -906,20 +921,21 @@ def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
 
 
 def _move_plan_to_done(self: Any, plan_file: str) -> None:
-    src = self.config.planning_dir / plan_file
+    src = self._planning_root() / plan_file
     if not src.is_file():
         return
     rel_dir = Path(plan_file).parent
     if str(rel_dir) in {"", "."}:
         rel_dir = Path("_misc")
-    done_dir = self.config.planning_dir / "done" / rel_dir
+    done_dir = self._planning_done_root() / rel_dir
     done_dir.mkdir(parents=True, exist_ok=True)
     dest = done_dir / src.name
     if dest.exists():
         stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
     src.replace(dest)
-    print(f"Moved {plan_file} to done/{rel_dir}/{src.name}.")
+    relative_done = dest.relative_to(self._planning_done_root())
+    print(f"Moved {plan_file} to done/{relative_done}.")
 
 
 def _feature_project_candidates(

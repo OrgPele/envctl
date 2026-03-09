@@ -71,8 +71,15 @@ def run_with_retry(*, initial_port: int, start: Callable[[int], tuple[bool, str 
 def build_container_name(*, prefix: str, project_root: Path, project_name: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9]+", "-", project_name).strip("-").lower() or "project"
     digest = hashlib.sha1(str(project_root).encode("utf-8")).hexdigest()[:8]
-    name = f"{prefix}-{normalized}-{digest}"
-    return name[:63].rstrip("-")
+    separator = "-"
+    suffix = f"{separator}{digest}"
+    base_prefix = f"{prefix}{separator}"
+    max_len = 63
+    available = max_len - len(base_prefix) - len(suffix)
+    if available <= 0:
+        return f"{prefix[: max_len - len(suffix)].rstrip(separator)}{suffix}".rstrip(separator)
+    trimmed = normalized[:available].rstrip(separator) or "project"
+    return f"{base_prefix}{trimmed}{suffix}"[:max_len].rstrip(separator)
 
 
 def run_docker(

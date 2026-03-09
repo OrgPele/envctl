@@ -11513,7 +11513,7 @@ Implemented Bash-style failed-test summary artifact persistence for Python `test
 - `python/envctl_engine/action_command_orchestrator.py`
   - `run_test_action(...)` now persists per-project test summary artifacts after suite execution (both pass and fail paths).
   - Added `project_test_summaries` state metadata persistence via `RuntimeStateRepository.save_resume_state(...)` so dashboard can immediately render links on next refresh.
-  - Added artifact generation under repo-local `test-results/run_<timestamp>/<project>/`:
+  - Added artifact generation under runtime-scoped `/tmp` state storage at `<runtime_scope>/runs/<run_id>/test-results/run_<timestamp>/<project>/`:
     - `failed_tests_summary.txt`
     - `test_state.txt`
   - `failed_tests_summary.txt` contains only failed tests and extracted error snippets; for passing runs it writes `No failed tests.` (matching shell status contract behavior).
@@ -11550,7 +11550,7 @@ Implemented Bash-style failed-test summary artifact persistence for Python `test
   - `metadata.project_test_summaries`
 
 ### Risks/notes
-- Current artifact output is repo-local (`<repo>/test-results/...`) and intentionally project-scoped; this is compatible with dashboard lookup and shell-style directory semantics.
+- Current artifact output is runtime-scoped under the owning run directory (`<runtime_scope>/runs/<run_id>/test-results/...`); dashboard lookup remains path-driven, and older repo-local artifacts continue to work if state still points at them.
 - Multi-project test actions currently write one summary per selected project from the aggregated suite outcomes for that action invocation.
 
 ## 2026-03-02 — Textual-First Selector UX Cutover (No-Duplication + Planning Selector)

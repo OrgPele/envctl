@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 import threading
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
@@ -212,7 +213,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
-from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, psutil_available
+from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, PsutilProbeBackend, psutil_available
 from envctl_engine.shared.parsing import parse_float_or_none
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome, RequirementsOrchestrator
@@ -289,6 +290,8 @@ from envctl_engine.planning.worktree_domain import (
     _next_available_iteration as domain_next_available_iteration,
     _planning_keep_plan_enabled as domain_planning_keep_plan_enabled,
     _planning_menu_apply_key as domain_planning_menu_apply_key,
+    _planning_done_root as domain_planning_done_root,
+    _planning_root as domain_planning_root,
     _plan_selection_memory_path as domain_plan_selection_memory_path,
     _preferred_tree_root_for_feature as domain_preferred_tree_root_for_feature,
     _project_sort_key_for_feature as domain_project_sort_key_for_feature,
@@ -342,6 +345,8 @@ class PythonEngineRuntime:
     _decode_planning_menu_escape = staticmethod(domain_decode_planning_menu_escape)
     _planning_menu_apply_key = domain_planning_menu_apply_key
     _resolve_planning_selection_target = domain_resolve_planning_selection_target
+    _planning_root = domain_planning_root
+    _planning_done_root = domain_planning_done_root
     _plan_selection_memory_path = domain_plan_selection_memory_path
     _load_plan_selection_memory = domain_load_plan_selection_memory
     _save_plan_selection_memory = domain_save_plan_selection_memory
@@ -407,12 +412,19 @@ class PythonEngineRuntime:
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,
+            preferred_port_strategy=self.env.get(
+                "ENVCTL_PORT_PREFERRED_STRATEGY",
+                config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),
+            ),
+            scope_key=config.runtime_scope_id,
         )
         self.requirements = RequirementsOrchestrator()
         self.services = ServiceManager()
         self.events: list[dict[str, object]] = []
         self._emit_lock = threading.Lock()
         self._emit_listeners: list[Callable[[str, dict[str, object]], None]] = []
+        self._startup_warnings_lock = threading.Lock()
+        self._startup_warnings_by_project: dict[str, list[str]] = {}
         self._debug_hash_salt = uuid.uuid4().hex
         self._debug_recorder: DebugFlightRecorder | None = None
         self._active_command_id: str | None = None
@@ -542,7 +554,7 @@ class PythonEngineRuntime:
         mode: str,
         route: Route,
         run_id: str,
-    ) -> tuple[RequirementsResult, dict[str, object]]:
+    ) -> tuple[RequirementsResult, dict[str, object], list[str]]:
         return self.startup_orchestrator.start_project_context(
             context=context,
             mode=mode,
@@ -1307,6 +1319,26 @@ class PythonEngineRuntime:
 
     def _bind_debug_run_id(self, run_id: str | None) -> None:
         runtime_bind_debug_run_id(self, run_id)
+
+    def _reset_project_startup_warnings(self) -> None:
+        with self._startup_warnings_lock:
+            self._startup_warnings_by_project = {}
+
+    def _record_project_startup_warning(self, project: str, message: str) -> None:
+        project_name = str(project).strip()
+        warning_text = str(message).strip()
+        if not project_name or not warning_text:
+            return
+        with self._startup_warnings_lock:
+            self._startup_warnings_by_project.setdefault(project_name, []).append(warning_text)
+
+    def _consume_project_startup_warnings(self, project: str) -> list[str]:
+        project_name = str(project).strip()
+        if not project_name:
+            return []
+        with self._startup_warnings_lock:
+            warnings = list(self._startup_warnings_by_project.pop(project_name, []))
+        return warnings
 
     def _conflict_count(self, suffix: str) -> int:
         return runtime_conflict_count(self, suffix)

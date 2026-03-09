@@ -28,7 +28,7 @@ def _state_matches_selected_projects(orchestrator, *, runtime: Any, state: RunSt
     selected = {str(context.name).strip() for context in contexts if str(getattr(context, "name", "")).strip()}
     if not selected:
         return False
-    state_projects = orchestrator._state_project_names(runtime=runtime, state=state)
+    state_projects = _state_project_names(runtime=runtime, state=state)
     if not state_projects:
         return False
     return selected == state_projects
@@ -38,7 +38,7 @@ def _state_covers_selected_projects(orchestrator, *, runtime: Any, state: RunSta
     selected = {str(context.name).strip() for context in contexts if str(getattr(context, "name", "")).strip()}
     if not selected:
         return False
-    state_projects = orchestrator._state_project_names(runtime=runtime, state=state)
+    state_projects = _state_project_names(runtime=runtime, state=state)
     if not state_projects:
         return False
     return selected.issubset(state_projects)
@@ -68,7 +68,7 @@ def _tree_preselected_projects_from_state(orchestrator, *, runtime: Any, project
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
     preselected: list[str] = []
     seen: set[str] = set()
-    for name in sorted(orchestrator._state_project_names(runtime=runtime, state=state)):
+    for name in sorted(_state_project_names(runtime=runtime, state=state)):
         normalized = str(name).strip().lower()
         resolved = available.get(normalized)
         if not resolved:
@@ -96,7 +96,11 @@ def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts:
         )
         return []
 
-    preselected = orchestrator._tree_preselected_projects_from_state(runtime=rt, project_contexts=project_contexts)
+    preselected = _tree_preselected_projects_from_state(
+        orchestrator,
+        runtime=rt,
+        project_contexts=project_contexts,
+    )
     rt._emit(
         "trees.start.selector.prompt",
         discovered_count=len(project_contexts),

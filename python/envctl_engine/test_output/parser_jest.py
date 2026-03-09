@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import override
-from .parser_base import TestOutputParser, TestResult
+from .parser_base import TestOutputParser, TestResult, strip_ansi
 
 
 class JestOutputParser(TestOutputParser):
@@ -26,7 +26,7 @@ class JestOutputParser(TestOutputParser):
             line: Single line from Jest output.
         """
         # Strip ANSI escape codes
-        clean_line = self._strip_ansi(line)
+        clean_line = strip_ansi(line)
         self._lines.append(clean_line)
 
         # Check for file markers
@@ -67,18 +67,6 @@ class JestOutputParser(TestOutputParser):
         # Calculate total
         self.result.total = self.result.passed + self.result.failed + self.result.skipped
         return self.result
-
-    def _strip_ansi(self, text: str) -> str:
-        """Remove ANSI escape codes from text.
-
-        Args:
-            text: Text potentially containing ANSI codes.
-
-        Returns:
-            Text with ANSI codes removed.
-        """
-        ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        return ansi_escape.sub("", text)
 
     def _parse_pass_file(self, line: str) -> None:
         """Parse a PASS file line.
@@ -139,6 +127,7 @@ class JestOutputParser(TestOutputParser):
         # - "Test Files  2 passed (2)" (ignored for per-test metrics)
 
         # Extract counts
+        self.result.counts_detected = True
         passed_match = re.search(r"(\d+)\s+passed", line)
         if passed_match:
             self.result.passed = int(passed_match.group(1))

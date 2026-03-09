@@ -7,7 +7,7 @@ setup() {
 
 @test "requirements adapter base parity suite stays green" {
   [ -x "$PYTHON_BIN" ] || skip "project venv python not found"
-  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/test_requirements_adapter_base.py tests/python/test_requirements_adapters_real_contracts.py tests/python/test_requirements_orchestrator.py tests/python/test_requirements_retry.py' _ "$REPO_ROOT" "$PYTHON_BIN"
+  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/requirements/test_requirements_adapter_base.py tests/python/requirements/test_requirements_adapters_real_contracts.py tests/python/requirements/test_requirements_orchestrator.py tests/python/requirements/test_requirements_retry.py' _ "$REPO_ROOT" "$PYTHON_BIN"
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK"* ]]
 }

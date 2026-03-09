@@ -260,6 +260,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             payload.update(extra)
         return load_config(payload)
 
+    @staticmethod
+    def _planned_ports(engine: PythonEngineRuntime, project_name: str, *, index: int = 0) -> dict[str, PortPlan]:
+        return engine.port_planner.plan_project_stack(project_name, index=index)
+
     def test_debug_session_materialized_when_debug_mode_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -340,7 +344,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             engine.port_planner.availability_checker = lambda _port: True
-            lock_path = engine.port_planner.lock_dir / "8000.lock"
+            planned_backend_port = self._planned_ports(engine, "feature-a-1")["backend"].final
+            lock_path = engine.port_planner.lock_dir / f"{planned_backend_port}.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             lock_path.write_text(
                 json.dumps(
@@ -367,7 +372,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             reclaim_events = [event for event in engine.events if event.get("event") == "port.lock.reclaim"]
             self.assertTrue(reclaim_events)
             latest = reclaim_events[-1]
-            self.assertEqual(latest.get("port"), 8000)
+            self.assertEqual(latest.get("port"), planned_backend_port)
             self.assertEqual(latest.get("reclaimed_owner"), "old-worker")
             self.assertEqual(latest.get("reclaimed_session"), "old-session")
             self.assertEqual(latest.get("reclaimed_pid"), 999999)
@@ -612,8 +617,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine.port_planner.availability_checker = lambda _port: True
             fake_runner = _FakeProcessRunner()
             fake_runner.wait_for_port_result = True
-            fake_runner.wait_for_pid_port_sequences[8000] = [True, False]
-            fake_runner.wait_for_pid_port_sequences[9000] = [True, True]
+            plans = self._planned_ports(engine, "feature-a-1")
+            fake_runner.wait_for_pid_port_sequences[plans["backend"].final] = [True, False]
+            fake_runner.wait_for_pid_port_sequences[plans["frontend"].final] = [True, True]
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
@@ -650,8 +656,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine.port_planner.availability_checker = lambda _port: True
             fake_runner = _FakeProcessRunner()
             fake_runner.wait_for_port_result = True
-            fake_runner.wait_for_pid_port_sequences[8000] = [True, True, True]
-            fake_runner.wait_for_pid_port_sequences[9000] = [True, True, False]
+            plans = self._planned_ports(engine, "feature-a-1")
+            fake_runner.wait_for_pid_port_sequences[plans["backend"].final] = [True, True, True]
+            fake_runner.wait_for_pid_port_sequences[plans["frontend"].final] = [True, True, False]
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
@@ -682,7 +689,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
 
-    def test_backend_requirements_bootstrap_installs_project_venv_dependencies(self) -> None:
+    def test_backend_requirements_bootstrap_installs_project_venv_dependencies_without_running_migrations_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -706,6 +713,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
@@ -727,12 +735,12 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 )
             )
             alembic_calls = [call for call in fake_runner.run_calls if call[0][-3:] == ("alembic", "upgrade", "head")]
-            self.assertTrue(alembic_calls)
+            self.assertEqual(alembic_calls, [])
             bootstrap_envs = [env for env in fake_runner.run_envs if isinstance(env, dict)]
             self.assertTrue(
                 any(
                     env.get("DATABASE_URL")
-                    == "postgresql+asyncpg://svc_user:svc_pass@localhost:5432/svc_db"
+                    == f"postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db"
                     for env in bootstrap_envs
                 )
             )
@@ -760,6 +768,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
@@ -800,6 +809,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
@@ -898,13 +908,17 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             content = env_file.read_text(encoding="utf-8")
             self.assertIn("KEEP_ME=1", content)
-            self.assertIn("DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:5432/svc_db", content)
+            self.assertIn(
+                f"DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db",
+                content,
+            )
             self.assertIn("REDIS_URL=redis://legacy", content)
 
     def test_backend_service_start_env_includes_backend_env_file_values(self) -> None:
@@ -1072,8 +1086,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
-            expected_backend_url = "http://localhost:8000"
-            expected_api_url = "http://localhost:8000/api/v1"
+            plans = self._planned_ports(engine, "feature-a-1")
+            expected_backend_url = f"http://localhost:{plans['backend'].final}"
+            expected_api_url = f"http://localhost:{plans['backend'].final}/api/v1"
             synced = env_local.read_text(encoding="utf-8")
             self.assertIn(f"VITE_BACKEND_URL={expected_backend_url}", synced)
             self.assertIn(f"VITE_API_URL={expected_api_url}", synced)
@@ -1175,7 +1190,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIn(f"log_path: {log_path}", detail)
             self.assertIn('log: error: script "dev" exited with code 127', detail)
 
-    def test_backend_alembic_failure_is_soft_by_default(self) -> None:
+    def test_backend_migrations_are_skipped_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1188,7 +1203,6 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             engine.port_planner.availability_checker = lambda _port: True
             fake_runner = _FakeProcessRunner()
-            fake_runner.fail_alembic = True
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
@@ -1200,8 +1214,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             output = out.getvalue()
-            self.assertIn("Warning: backend migration step failed", output)
-            self.assertIn("backend log:", output)
+            self.assertNotIn("Warning: backend migration step failed", output)
+            self.assertFalse(any(call[0][-3:] == ("alembic", "upgrade", "head") for call in fake_runner.run_calls))
 
     def test_backend_alembic_missing_revision_warning_includes_actionable_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1214,6 +1228,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine.env["ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"] = "true"
             engine.port_planner.availability_checker = lambda _port: True
             fake_runner = _FakeProcessRunner()
             fake_runner.fail_alembic = True
@@ -1249,6 +1264,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 self._config(repo, runtime),
                 env={
                     "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "true",
+                    "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true",
                     "BACKEND_ENV_FILE_OVERRIDE": str(backend_dir / ".env"),
                 },
             )
@@ -1285,6 +1301,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 self._config(repo, runtime),
                 env={
                     "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "true",
+                    "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true",
                     "BACKEND_ENV_FILE_OVERRIDE": str(backend_dir / ".env"),
                 },
             )
@@ -1388,8 +1405,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertIn("probe timeout", out.getvalue())
+            plans = self._planned_ports(engine, "feature-a-1")
             self.assertTrue(
-                any(port == 5432 and timeout == 25.0 for port, timeout in fake_runner.wait_for_port_calls),
+                any(port == plans["db"].final and timeout == 25.0 for port, timeout in fake_runner.wait_for_port_calls),
                 msg=fake_runner.wait_for_port_calls,
             )
 
@@ -1579,8 +1597,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner = _FakeProcessRunner()
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
-            fake_runner.wait_for_port_overrides[9002] = False
-            fake_runner.wait_for_pid_port_overrides[9002] = True
+            plans = self._planned_ports(engine, "feature-a-1")
+            preferred_frontend = plans["frontend"].final
+            fake_runner.wait_for_port_overrides[preferred_frontend + 2] = False
+            fake_runner.wait_for_pid_port_overrides[preferred_frontend + 2] = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a"], env={})
 
@@ -1588,7 +1608,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             runtime_map = (runtime / "python-engine" / "runtime_map.json").read_text(encoding="utf-8")
-            self.assertIn('"frontend_port": 9002', runtime_map)
+            self.assertIn(f'"frontend_port": {preferred_frontend + 2}', runtime_map)
 
     def test_frontend_rebound_delta_reserves_busy_launch_ports_before_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1608,12 +1628,18 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     "ENVCTL_TEST_FRONTEND_REBOUND_DELTA": "200",
                 },
             )
-            blocked_launch_ports = {9200, 9201, 9202, 9203}
-            engine.port_planner.availability_checker = lambda port: port not in blocked_launch_ports
             fake_runner = _FakeProcessRunner()
             fake_runner.auto_track_listener_ports = True
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = False
+            preferred_frontend = self._planned_ports(engine, "feature-a-1")["frontend"].final
+            blocked_launch_ports = {
+                preferred_frontend + 200,
+                preferred_frontend + 201,
+                preferred_frontend + 202,
+                preferred_frontend + 203,
+            }
+            engine.port_planner.availability_checker = lambda port: port not in blocked_launch_ports
             fake_runner.fail_start_ports.update(blocked_launch_ports)
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
@@ -1627,9 +1653,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 if isinstance(env, dict) and isinstance(env.get("PORT"), str)
             }
             self.assertTrue(blocked_launch_ports.isdisjoint(started_ports), started_ports)
-            self.assertIn(9204, started_ports)
+            self.assertIn(preferred_frontend + 204, started_ports)
             runtime_map = (runtime / "python-engine" / "runtime_map.json").read_text(encoding="utf-8")
-            self.assertIn('"frontend_port": 9204', runtime_map)
+            self.assertIn(f'"frontend_port": {preferred_frontend + 204}', runtime_map)
 
     def test_frontend_actual_port_discovery_handles_auto_rebound_without_test_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1648,8 +1674,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner = _FakeProcessRunner()
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
-            fake_runner.wait_for_pid_port_overrides[9000] = False
-            fake_runner.find_pid_listener_port_overrides[9000] = 9004
+            plans = self._planned_ports(engine, "feature-a-1")
+            preferred_frontend = plans["frontend"].final
+            fake_runner.wait_for_pid_port_overrides[preferred_frontend] = False
+            fake_runner.find_pid_listener_port_overrides[preferred_frontend] = preferred_frontend + 4
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
@@ -1657,8 +1685,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             runtime_map = (runtime / "python-engine" / "runtime_map.json").read_text(encoding="utf-8")
-            self.assertIn('"frontend_port": 9004', runtime_map)
-            self.assertTrue(any(call[1] == 9000 for call in fake_runner.find_pid_listener_port_calls))
+            self.assertIn(f'"frontend_port": {preferred_frontend + 4}', runtime_map)
+            self.assertTrue(any(call[1] == preferred_frontend for call in fake_runner.find_pid_listener_port_calls))
 
     def test_main_requirement_toggles_are_respected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2581,8 +2609,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
-            (repo / "docs" / "planning" / "backend").mkdir(parents=True, exist_ok=True)
-            (repo / "docs" / "planning" / "backend" / "task.md").write_text("# task\n", encoding="utf-8")
+            (repo / "todo" / "plans" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "backend" / "task.md").write_text("# task\n", encoding="utf-8")
             (repo / "trees" / "backend_task" / "1").mkdir(parents=True, exist_ok=True)
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
@@ -2764,6 +2792,69 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(resume_mock.call_count, 1)
 
+    def test_plan_preserves_existing_run_and_starts_only_new_projects_when_selection_expands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-b" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            existing_service = ServiceRecord(
+                name="feature-a-1 Backend",
+                type="backend",
+                cwd=str(repo / "trees" / "feature-a" / "1"),
+                pid=1111,
+                requested_port=8000,
+                actual_port=8000,
+                status="running",
+            )
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={"feature-a-1 Backend": existing_service},
+                requirements={},
+            )
+
+            started_projects: list[str] = []
+
+            def fake_start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+                _ = mode, route, run_id
+                started_projects.append(context.name)
+                return (
+                    RequirementsResult(project=context.name, health="healthy"),
+                    {
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root),
+                            pid=2222,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    [],
+                )
+
+            route = parse_route(["--plan", "feature-a,feature-b", "--batch"], env={})
+            with (
+                patch.object(engine, "_try_load_existing_state", return_value=state),
+                patch.object(engine, "_reconcile_state_truth", return_value=[]),
+                patch.object(engine, "_resume", return_value=0) as resume_mock,
+                patch.object(engine, "_start_project_context", side_effect=fake_start_project_context),
+                patch.object(engine, "_write_artifacts") as write_artifacts_mock,
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(resume_mock.call_count, 0)
+            self.assertEqual(started_projects, ["feature-b-1"])
+            written_state = write_artifacts_mock.call_args.args[0]
+            self.assertIn("feature-a-1 Backend", written_state.services)
+            self.assertIn("feature-b-1 Backend", written_state.services)
+
     def test_plan_skips_auto_resume_when_selected_projects_do_not_match_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2883,7 +2974,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             route = parse_route(["--plan", "feature-a"], env={})
             with (
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0),
-                patch.object(engine, "_start_project_context", return_value=(requirements, services)),
+                patch.object(engine, "_start_project_context", return_value=(requirements, services, [])),
             ):
                 code = engine.dispatch(route)
 

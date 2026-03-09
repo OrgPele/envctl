@@ -11,6 +11,10 @@ import time
 import traceback
 from typing import Any, Callable, Mapping, Sequence, cast
 
+from envctl_engine.ui.capabilities import (
+    prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
+    textual_importable as _textual_importable,
+)
 from envctl_engine.ui.selector_model import (
     SelectorContext,
     SelectorItem,
@@ -27,15 +31,6 @@ class _RowRef:
     item: SelectorItem
     selected: bool = False
     visible: bool = True
-
-
-def _textual_importable() -> bool:
-    try:
-        __import__("textual")
-    except Exception:
-        return False
-    return True
-
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
     if not callable(emit):
@@ -60,6 +55,12 @@ def _selector_impl() -> str:
     if raw in {"textual", "textual_plan_style", "legacy"}:
         return "textual"
     return "textual"
+
+
+def _prompt_toolkit_selector_enabled(*, build_only: bool = False) -> bool:
+    if build_only:
+        return False
+    return _prompt_toolkit_selector_enabled_impl(os.environ)
 
 
 def _deep_debug_enabled(emit: Callable[..., None] | None) -> bool:
@@ -896,22 +897,6 @@ def _instrument_prompt_toolkit_posix_io(
             backend="prompt_toolkit",
             **_snapshot(),
         )
-
-
-def _prompt_toolkit_selector_enabled(*, build_only: bool) -> bool:
-    if build_only:
-        return False
-    backend_pref = str(os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", "")).strip().lower()
-    if backend_pref in {"textual", "tui"}:
-        return False
-    if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    raw = str(os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT", "")).strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return can_interactive_tty() and prompt_toolkit_available()
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return can_interactive_tty() and prompt_toolkit_available()
 
 
 def _selector_backend_decision(*, build_only: bool) -> tuple[bool, dict[str, object]]:

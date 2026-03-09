@@ -20,6 +20,10 @@ from envctl_engine.runtime.engine_runtime_startup_support import (
     load_auto_resume_state,
     tree_parallel_startup_config,
 )
+from envctl_engine.startup.startup_selection_support import (
+    _state_project_names as _state_project_names_impl,
+    _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
+)
 from envctl_engine.state import state_to_dict
 
 
@@ -60,11 +64,11 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
     running: set[str] = set()
     if mode == "trees":
         startup = getattr(runtime, "startup_orchestrator", None)
-        if startup is not None and hasattr(startup, "_tree_preselected_projects_from_state"):
-            preselected = set(startup._tree_preselected_projects_from_state(runtime=runtime, project_contexts=projects))
+        if startup is not None:
+            preselected = set(_tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects))
         state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
-        if state is not None and startup is not None and hasattr(startup, "_state_project_names"):
-            running = set(startup._state_project_names(runtime=runtime, state=state))
+        if state is not None:
+            running = set(_state_project_names_impl(runtime=runtime, state=state))
 
     payload = {
         "mode": mode,
@@ -115,11 +119,19 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"config_exists: {payload['config_exists']}")
     print(f"config_source: {payload['config_source']}")
     print(f"default_mode: {effective['default_mode']}")
+    print(f"main_startup_enabled: {effective['profiles']['main']['startup_enabled']}")
+    print(f"trees_startup_enabled: {effective['profiles']['trees']['startup_enabled']}")
     print(f"backend_dir: {effective['directories']['backend']}")
     print(f"frontend_dir: {effective['directories']['frontend']}")
     print(f"backend_port_base: {effective['ports']['backend']}")
     print(f"frontend_port_base: {effective['ports']['frontend']}")
     print(f"port_spacing: {effective['ports']['spacing']}")
+    preferred_strategy = (
+        runtime.env.get("ENVCTL_PORT_PREFERRED_STRATEGY")
+        or runtime.config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY")
+        or "project_slot"
+    )
+    print(f"preferred_port_strategy: {preferred_strategy}")
     return 0
 
 
@@ -227,7 +239,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         else:
             selection_info.update({"required": True, "reason": "interactive_plan_selector", "selected_projects": []})
     elif runtime_mode == "trees" and not getattr(route, "projects", None) and not getattr(route, "passthrough_args", None):
-        preselected = startup._tree_preselected_projects_from_state(runtime=runtime, project_contexts=projects)
+        preselected = _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
         selection_info.update({"required": True, "preselected_projects": preselected})
         if batch or not can_tty:
             selection_info.update(
@@ -285,11 +297,14 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         auto_resume["reason"] = "auto_resume_disabled"
 
     profile = runtime.config.profile_for_mode(runtime_mode)
-    enabled_dependencies = [
-        dependency_id
-        for dependency_id in sorted(profile.dependencies)
-        if profile.dependency_enabled(dependency_id)
-    ]
+    startup_enabled = runtime.config.startup_enabled_for_mode(runtime_mode)
+    enabled_dependencies = []
+    if startup_enabled:
+        enabled_dependencies = [
+            dependency_id
+            for dependency_id in sorted(profile.dependencies)
+            if profile.dependency_enabled(dependency_id)
+        ]
     parallel_trees_enabled, parallel_trees_workers = tree_parallel_startup_config(
         runtime,
         mode=runtime_mode,
@@ -303,6 +318,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         "interactive_tty": can_tty,
         "selection": selection_info,
         "auto_resume": auto_resume,
+        "startup_enabled": startup_enabled,
         "services": {
             "backend": runtime.config.service_enabled_for_mode(runtime_mode, "backend"),
             "frontend": runtime.config.service_enabled_for_mode(runtime_mode, "frontend"),
@@ -310,17 +326,22 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         "dependencies": enabled_dependencies,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
     }
+    if not startup_enabled:
+        payload["reason"] = "config_startup_disabled"
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
     print(f"command: {payload['command']}")
     print(f"mode: {payload['mode']}")
+    print(f"startup_enabled: {payload['startup_enabled']}")
     print(f"headless: {payload['headless']}")
     print(f"selected_projects: {', '.join(selection_info.get('selected_projects', [])) or 'none'}")
     print(f"auto_resume: {auto_resume['will_resume']} ({auto_resume['reason']})")
     deps = ", ".join(enabled_dependencies) or "none"
     print(f"dependencies: {deps}")
+    if payload.get("reason"):
+        print(f"reason: {payload['reason']}")
     if selection_info.get("message"):
         print(str(selection_info["message"]))
     return 0

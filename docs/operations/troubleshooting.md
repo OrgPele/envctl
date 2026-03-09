@@ -1,8 +1,45 @@
 # Troubleshooting
 
+This page is the fastest operational runbook when `envctl` is already behaving badly.
+
+If you are still onboarding, start with [Getting Started](../user/getting-started.md). If you only need short answers, use [FAQ](../user/faq.md).
+
+## Start With These Commands
+
+Run these before changing config or retrying random fixes:
+
+```bash
+envctl show-config --json
+envctl show-state --json
+envctl explain-startup --json
+envctl --doctor --json
+```
+
+That sequence answers four different questions:
+
+- which config is active
+- which saved state is active
+- what the next startup decision is
+- whether doctor sees migration, pointer, or runtime-health problems
+
 ## Could not resolve repository root
 - Confirm the path is a git repo root (`.git` dir or file).
 - Use `--repo /absolute/path` when running outside the repo tree.
+
+## Installed command is missing or wrong
+- Verify the install:
+  - `python -m pip show envctl`
+  - `pipx list`
+- Reinstall the package if needed:
+  - `pipx install .`
+  - `pipx ensurepath`
+  - `python -m pip install --user .`
+  - `python -m pip install .`
+- If `pipx` says it is using an unsupported Python version, point it at a supported one explicitly with `--python`.
+- `pipx` does not automatically reuse the Python from your activated `.venv`.
+- If you intentionally use the clone-compatibility wrapper, use:
+  - `./bin/envctl install`
+  - `./bin/envctl uninstall`
 
 ## Port collisions or stale reservations
 - Run `envctl --doctor`.
@@ -63,20 +100,22 @@ Spinner visibility quick checks:
   - Look for `spinner_disabled_reasons` and `missing_spinner_lifecycle_transition`.
 
 Textual backend quick checks:
-- Force Textual backend:
+- Force Textual dashboard:
   - `ENVCTL_UI_BACKEND=textual envctl --dashboard`
-- Use compatibility alias (maps to Textual, emits deprecation event):
+- Force legacy dashboard:
   - `ENVCTL_UI_BACKEND=legacy envctl --dashboard`
+- In `auto` mode, opt into the experimental Textual dashboard:
+  - `ENVCTL_UI_BACKEND=auto ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1 envctl --dashboard`
 - Force snapshot-only mode:
   - `ENVCTL_UI_BACKEND=non_interactive envctl --dashboard`
-- If Textual cannot run (non-TTY/missing dependency), runtime falls back to safe non-interactive snapshot mode and emits `ui.fallback.non_interactive`.
+- If the requested dashboard cannot run in a real TTY, runtime falls back to safe non-interactive snapshot mode and emits `ui.fallback.non_interactive`.
 
 Selector reliability quick checks:
 - Default selector engine is Textual plan-style:
   - `envctl`
 - Prompt-toolkit rollback path (for emergency terminal compatibility):
   - `ENVCTL_UI_SELECTOR_IMPL=planning_style envctl`
-- `legacy` remains a compatibility alias for Textual:
+- `legacy` remains a compatibility alias for the Textual selector:
   - `ENVCTL_UI_SELECTOR_IMPL=legacy envctl`
 - In deep reports, look for selector diagnostics:
   - `selector_input_inactive`
@@ -87,11 +126,14 @@ Selector reliability quick checks:
   - `docs/troubleshooting/service-launch-io-ownership.md`
 - Fresh launch path reproduction that bypasses resume/restore:
   - `envctl --plan --no-resume`
+- More complete user-facing runtime/debug guidance:
+  - `docs/user/python-engine-guide.md`
 
 ## Python runtime vs shell fallback
 - Default runtime is Python.
-- To force shell fallback temporarily: `ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume`.
+- To force the deprecated shell fallback temporarily: `ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume`.
 - Compare `run_state.json` and `runtime_map.json` artifacts between runs when debugging parity issues.
+- `debug-pack` and the modern debug-bundle flow are Python-runtime features, so switch back to Python mode before using them.
 
 ## Wrong services are starting
 - If `ENVCTL_SERVICE_<N>` is set, auto-discovery is disabled.
@@ -108,3 +150,13 @@ Check toggles:
 - Check `ENVCTL_PLANNING_DIR` in `.envctl`.
 - Verify files exist under that directory and are `.md` files.
 - Use `envctl --plan` interactively to confirm discovery.
+
+## If You Need to Escalate
+
+A good bug report bundle for maintainers usually includes:
+
+- `envctl show-config --json`
+- `envctl explain-startup --json`
+- `envctl --doctor --json`
+- `envctl --debug-report` for interactive or timing issues
+- the bundle path from `envctl --debug-last`

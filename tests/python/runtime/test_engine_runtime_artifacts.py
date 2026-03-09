@@ -157,7 +157,7 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             runtime_root = Path(tmpdir) / "runtime"
             legacy_root = Path(tmpdir) / "legacy"
             run_dir = Path(tmpdir) / "run"
-            ledger_path = repo_root / "docs" / "planning" / "refactoring" / "envctl-shell-ownership-ledger.json"
+            ledger_path = repo_root / "contracts" / "envctl-shell-ownership-ledger.json"
             ledger_path.parent.mkdir(parents=True, exist_ok=True)
             runtime_root.mkdir()
             run_dir.mkdir()

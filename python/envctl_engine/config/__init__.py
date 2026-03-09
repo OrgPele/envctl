@@ -17,7 +17,7 @@ DEFAULTS: dict[str, str] = {
     "ENVCTL_DEFAULT_MODE": "main",
     "BACKEND_DIR": "backend",
     "FRONTEND_DIR": "frontend",
-    "ENVCTL_PLANNING_DIR": "docs/planning",
+    "ENVCTL_PLANNING_DIR": "todo/plans",
     "TREES_DIR_NAME": "trees",
     "RUN_SH_RUNTIME_DIR": "/tmp/envctl-runtime",
     "BACKEND_PORT_BASE": "8000",
@@ -39,17 +39,20 @@ DEFAULTS: dict[str, str] = {
     "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
     "ENVCTL_REQUIREMENTS_STRICT": "true",
     "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
+    "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
     "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
     "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "0",
     "ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP": "0",
     "ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP": "0",
     "ENVCTL_SHELL_PRUNE_PHASE": "cutover",
+    "MAIN_STARTUP_ENABLE": "true",
     "MAIN_BACKEND_ENABLE": "true",
     "MAIN_FRONTEND_ENABLE": "true",
     "MAIN_POSTGRES_ENABLE": "true",
     "MAIN_REDIS_ENABLE": "true",
     "MAIN_SUPABASE_ENABLE": "false",
     "MAIN_N8N_ENABLE": "false",
+    "TREES_STARTUP_ENABLE": "true",
     "TREES_BACKEND_ENABLE": "true",
     "TREES_FRONTEND_ENABLE": "true",
     "TREES_POSTGRES_ENABLE": "true",
@@ -66,9 +69,11 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "FRONTEND_PORT_BASE",
     *dependency_port_keys(),
     "PORT_SPACING",
+    "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
     "MAIN_FRONTEND_ENABLE",
     *managed_enable_keys(),
+    "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
     "TREES_FRONTEND_ENABLE",
 )
@@ -76,12 +81,14 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
 
 @dataclass(slots=True, init=False)
 class StartupProfile:
+    startup_enable: bool
     backend_enable: bool
     frontend_enable: bool
     dependencies: dict[str, bool]
 
     def __init__(
         self,
+        startup_enable: bool,
         backend_enable: bool,
         frontend_enable: bool,
         postgres_enable: bool | None = None,
@@ -91,6 +98,7 @@ class StartupProfile:
         *,
         dependencies: dict[str, bool] | None = None,
     ) -> None:
+        self.startup_enable = bool(startup_enable)
         self.backend_enable = bool(backend_enable)
         self.frontend_enable = bool(frontend_enable)
         if dependencies is not None:
@@ -242,7 +250,12 @@ class EngineConfig:
     def profile_for_mode(self, mode: str) -> StartupProfile:
         return self.trees_profile if str(mode).strip().lower() == "trees" else self.main_profile
 
+    def startup_enabled_for_mode(self, mode: str) -> bool:
+        return self.profile_for_mode(mode).startup_enable
+
     def service_enabled_for_mode(self, mode: str, service_name: str) -> bool:
+        if not self.startup_enabled_for_mode(mode):
+            return False
         profile = self.profile_for_mode(mode)
         normalized = str(service_name).strip().lower()
         if normalized == "backend":
@@ -252,6 +265,8 @@ class EngineConfig:
         return False
 
     def requirement_enabled_for_mode(self, mode: str, requirement_name: str) -> bool:
+        if not self.startup_enabled_for_mode(mode):
+            return False
         profile = self.profile_for_mode(mode)
         return profile.dependency_enabled(str(requirement_name).strip().lower())
 
@@ -433,6 +448,7 @@ def _startup_profile_from_resolved(
             break
         dependencies[definition.id] = value
     return StartupProfile(
+        startup_enable=profile_bool(f"{prefix}_STARTUP_ENABLE", True),
         backend_enable=profile_bool(f"{prefix}_BACKEND_ENABLE", True),
         frontend_enable=profile_bool(f"{prefix}_FRONTEND_ENABLE", True),
         dependencies=dependencies,

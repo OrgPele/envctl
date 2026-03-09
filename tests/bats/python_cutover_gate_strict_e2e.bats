@@ -23,9 +23,9 @@ setup() {
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -59,7 +59,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -95,9 +95,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -131,7 +131,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -167,9 +167,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -203,7 +203,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -239,9 +239,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -275,7 +275,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -311,9 +311,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -347,7 +347,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -383,9 +383,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -419,7 +419,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 
@@ -456,9 +456,9 @@ JSON
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/parallel_trees_python_e2e.bats"
     printf "#!/usr/bin/env bats\n" > "$repo/tests/bats/python_engine_parity.bats"
 
-    mkdir -p "$repo/docs/planning/refactoring"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    mkdir -p "$repo/contracts"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -492,7 +492,7 @@ JSON
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
 
     git -C "$repo" add python/envctl_engine/__init__.py tests/python/test_stub.py tests/bats/parallel_trees_python_e2e.bats tests/bats/python_engine_parity.bats \
-      docs/planning/python_engine_parity_manifest.json docs/planning/refactoring/envctl-shell-ownership-ledger.json \
+      contracts/python_engine_parity_manifest.json contracts/envctl-shell-ownership-ledger.json \
       lib/engine/main.sh lib/engine/lib/demo.sh
     git -C "$repo" commit -m "init" >/dev/null
 

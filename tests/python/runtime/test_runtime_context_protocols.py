@@ -34,7 +34,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             self.assertIs(engine.runtime_context.port_allocator, engine.port_planner)
 
     def test_engine_runtime_avoids_dynamic_dependency_probes(self) -> None:
-        runtime_path = REPO_ROOT / "python/envctl_engine/engine_runtime.py"
+        runtime_path = REPO_ROOT / "python/envctl_engine/runtime/engine_runtime.py"
         raw = runtime_path.read_text(encoding="utf-8")
         self.assertNotIn("getattr(self.process_runner", raw)
         self.assertNotIn("getattr(self.port_planner", raw)
@@ -43,9 +43,9 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
 
     def test_orchestrators_route_runtime_dependencies_via_context(self) -> None:
         orchestrator_paths = [
-            REPO_ROOT / "python/envctl_engine/startup_orchestrator.py",
-            REPO_ROOT / "python/envctl_engine/resume_orchestrator.py",
-            REPO_ROOT / "python/envctl_engine/lifecycle_cleanup_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/startup/startup_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/startup/resume_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
         ]
         for orchestrator_path in orchestrator_paths:
             raw = orchestrator_path.read_text(encoding="utf-8")
