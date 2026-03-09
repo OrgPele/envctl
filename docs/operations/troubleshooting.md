@@ -26,6 +26,21 @@ That sequence answers four different questions:
 - Confirm the path is a git repo root (`.git` dir or file).
 - Use `--repo /absolute/path` when running outside the repo tree.
 
+## Installed command is missing or wrong
+- Verify the install:
+  - `python -m pip show envctl`
+  - `pipx list`
+- Reinstall the package if needed:
+  - `pipx install .`
+  - `pipx ensurepath`
+  - `python -m pip install --user .`
+  - `python -m pip install .`
+- If `pipx` says it is using an unsupported Python version, point it at a supported one explicitly with `--python`.
+- `pipx` does not automatically reuse the Python from your activated `.venv`.
+- If you intentionally use the clone-compatibility wrapper, use:
+  - `./bin/envctl install`
+  - `./bin/envctl uninstall`
+
 ## Port collisions or stale reservations
 - Run `envctl --doctor`.
 - Run `envctl --clear-port-state`.

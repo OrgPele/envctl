@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Iterable
 
 
-LEDGER_RELATIVE_PATH = Path("docs/planning/refactoring/envctl-shell-ownership-ledger.json")
-PARITY_MANIFEST_RELATIVE_PATH = Path("docs/planning/python_engine_parity_manifest.json")
+LEDGER_RELATIVE_PATH = Path("contracts/envctl-shell-ownership-ledger.json")
+PARITY_MANIFEST_RELATIVE_PATH = Path("contracts/python_engine_parity_manifest.json")
 ENGINE_MAIN_RELATIVE_PATH = Path("lib/engine/main.sh")
 
 LEDGER_ALLOWED_STATUSES: tuple[str, ...] = (

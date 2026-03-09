@@ -28,15 +28,16 @@ class ConfigWizardDomainTests(unittest.TestCase):
             repo = Path(tmpdir)
             (repo / ".git").mkdir(parents=True, exist_ok=True)
 
-            def fake_run_wizard(*, local_state, emit=None):  # noqa: ANN001
+            def fake_run_wizard(*, local_state, emit=None, default_wizard_type="simple"):  # noqa: ANN001
                 from envctl_engine.config.persistence import ManagedConfigValues, PortDefaults, save_local_config
                 from envctl_engine.config import StartupProfile
 
                 _ = emit
+                self.assertEqual(default_wizard_type, "simple")
                 values = ManagedConfigValues(
                     default_mode="main",
-                    main_profile=StartupProfile(True, True, True, True, False, False),
-                    trees_profile=StartupProfile(True, True, True, True, False, True),
+                    main_profile=StartupProfile(True, True, True, True, True, False, False),
+                    trees_profile=StartupProfile(True, True, True, True, True, False, True),
                     port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
                 )
                 save_result = save_local_config(local_state=local_state, values=values)
@@ -64,6 +65,25 @@ class ConfigWizardDomainTests(unittest.TestCase):
                 result = edit_local_config(base_dir=repo, env={})
             self.assertFalse(result.changed)
             self.assertEqual(result.message, "Configuration edit cancelled.")
+
+    def test_edit_local_config_uses_advanced_wizard_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+
+            def fake_run_wizard(*, local_state, emit=None, default_wizard_type="simple"):  # noqa: ANN001
+                _ = local_state, emit
+                self.assertEqual(default_wizard_type, "advanced")
+                return None
+
+            with (
+                patch("envctl_engine.config.wizard_domain._has_tty", return_value=True),
+                patch("envctl_engine.config.wizard_domain._textual_stack_available", return_value=True),
+                patch("envctl_engine.config.wizard_domain._run_wizard", side_effect=fake_run_wizard),
+            ):
+                result = edit_local_config(base_dir=repo, env={})
+
+            self.assertFalse(result.changed)
 
 
 if __name__ == "__main__":

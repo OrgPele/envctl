@@ -26,6 +26,10 @@ class _FakePopen:
         _ = timeout
         return self._returncode
 
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        _ = timeout
+        return self.stdout.getvalue(), ""
+
     def terminate(self) -> None:
         return None
 
@@ -192,6 +196,25 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
         printed = [str(call.args[0]) for call in print_mock.call_args_list if call.args]
         self.assertFalse(any("Command timed out" in line for line in printed), msg=printed)
         self.assertFalse(any(line.startswith("! ") for line in printed), msg=printed)
+
+    def test_run_streaming_passes_stdin_configuration_to_subprocess(self) -> None:
+        runner = ProcessRunner()
+        popen_calls: list[dict[str, object]] = []
+
+        def fake_popen(*args, **kwargs):  # noqa: ANN001
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return _FakePopen("line-1\n")
+
+        with (
+            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=False),
+            patch("envctl_engine.shared.process_runner.subprocess.Popen", side_effect=fake_popen),
+        ):
+            completed = runner.run_streaming(["echo", "hello"], callback=None, stdin=subprocess.DEVNULL)
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(len(popen_calls), 1)
+        self.assertIs(popen_calls[0]["kwargs"]["stdin"], subprocess.DEVNULL)
+        self.assertTrue(bool(popen_calls[0]["kwargs"]["start_new_session"]))
 
 
 if __name__ == "__main__":

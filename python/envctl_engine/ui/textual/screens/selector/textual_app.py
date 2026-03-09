@@ -38,6 +38,7 @@ def create_selector_app(
     mouse_enabled: bool,
     selector_id: str,
 ):
+    status_error_timeout_seconds = 3.0
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
@@ -84,6 +85,8 @@ def create_selector_app(
                 self._idle_snapshot_bucket = -1
                 self._last_driver_read_calls = -1
                 self._driver_idle_snapshot_bucket = -1
+                self._status_error_message = ""
+                self._status_error_timer: object | None = None
 
             def compose(self) -> ComposeResult:
                 filter_input = Input(placeholder="Filter targets...", id="selector-filter")
@@ -201,6 +204,8 @@ def create_selector_app(
             def _sync_status(self) -> None:
                 visible = sum(1 for row in self._rows if row.visible)
                 selected = sum(1 for row in self._rows if row.visible and row.selected)
+                if selected:
+                    self._clear_status_error()
                 focus_text = "focus: -"
                 focused_view_index = self._list().index
                 if (
@@ -216,7 +221,46 @@ def create_selector_app(
                     status += f" • key#{self._nav_event_counter}:{self._last_nav_key}"
                     if self._edge_hint:
                         status += f" • {self._edge_hint}"
-                self._status().update(status)
+                if self._status_error_message:
+                    status = self._status_error_message
+                status_widget = self._status()
+                status_widget.set_class(bool(self._status_error_message), "selector-status-error")
+                status_widget.update(status)
+
+            def _clear_status_error(self) -> None:
+                if not self._status_error_message:
+                    return
+                self._status_error_message = ""
+                timer = self._status_error_timer
+                if timer is not None:
+                    try:
+                        timer.stop()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                    self._status_error_timer = None
+                try:
+                    self._sync_status()
+                except Exception:
+                    pass
+
+            def _schedule_status_error_clear(self) -> None:
+                timer = self._status_error_timer
+                if timer is not None:
+                    try:
+                        timer.stop()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                self._status_error_timer = self.set_timer(status_error_timeout_seconds, self._clear_status_error)
+
+            def _touch_status_error_timeout(self) -> None:
+                if not self._status_error_message:
+                    return
+                self._schedule_status_error_clear()
+
+            def _show_status_error(self, message: str) -> None:
+                self._status_error_message = message.strip()
+                self._schedule_status_error_clear()
+                self._sync_status()
 
             def _sync_confirm_state(self) -> None:
                 run_button = self.query_one("#btn-run", Button)
@@ -421,12 +465,8 @@ def create_selector_app(
                 if self.query_one("#selector-filter", Input).has_focus:
                     self.action_focus_list(reason="submit_from_filter")
                 values = self._selected_values()
-                if multi and not values:
-                    focused_index = self._focused_model_index()
-                    if focused_index is not None:
-                        await self._select_model_index(focused_index)
-                        values = self._selected_values()
                 if not values:
+                    self._show_status_error("No items were selected. Press Space or click to select at least one.")
                     _emit(
                         emit,
                         "ui.selection.confirm",
@@ -544,6 +584,8 @@ def create_selector_app(
                     )
 
             async def on_event(self, event: object) -> None:
+                if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
+                    self._touch_status_error_timeout()
                 if not mouse_enabled and event.__class__.__name__.startswith("Mouse"):
                     stop = getattr(event, "stop", None)
                     if callable(stop):
@@ -591,6 +633,7 @@ def create_selector_app(
                 self._emit_focus(reason="focus_event")
 
             def on_unmount(self) -> None:
+                self._clear_status_error()
                 timer = self._key_snapshot_timer
                 if timer is not None:
                     try:

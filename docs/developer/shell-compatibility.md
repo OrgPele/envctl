@@ -35,7 +35,7 @@ Important files:
 - `lib/engine/main.sh`
 - `lib/engine/lib/**`
 - `python/envctl_engine/shell/**`
-- `docs/planning/refactoring/envctl-shell-ownership-ledger.json`
+- `contracts/envctl-shell-ownership-ledger.json`
 
 The Python runtime also still knows about shell compatibility through:
 
@@ -76,7 +76,7 @@ This is the correct pattern: clear capability boundaries, not fake parity.
 
 The shell ownership ledger lives in:
 
-- `docs/planning/refactoring/envctl-shell-ownership-ledger.json`
+- `contracts/envctl-shell-ownership-ledger.json`
 
 It exists so the project can answer:
 

@@ -108,7 +108,7 @@ class PrereqPolicyTests(unittest.TestCase):
 
             self.assertFalse(ok)
             self.assertIn("rich", str(reason))
-            self.assertIn("python/requirements.txt", str(reason))
+            self.assertIn("python -m pip install -e .", str(reason))
 
 
 if __name__ == "__main__":

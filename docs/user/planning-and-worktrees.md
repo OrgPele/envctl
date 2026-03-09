@@ -10,7 +10,7 @@ Planning commands read files from `ENVCTL_PLANNING_DIR`.
 Default:
 
 ```bash
-ENVCTL_PLANNING_DIR="docs/planning"
+ENVCTL_PLANNING_DIR="todo/plans"
 ```
 
 You can set:
@@ -60,8 +60,8 @@ Examples:
 
 ```bash
 envctl --plan backend/checkout
-envctl --plan docs/planning/backend/checkout.md
-envctl --plan /absolute/path/to/docs/planning/backend/checkout.md
+envctl --plan todo/plans/backend/checkout.md
+envctl --plan /absolute/path/to/todo/plans/backend/checkout.md
 ```
 
 This is useful when you want to run a narrow slice of a larger planning tree.
@@ -71,7 +71,7 @@ This is useful when you want to run a narrow slice of a larger planning tree.
 One practical pattern is:
 
 ```text
-docs/planning/
+todo/plans/
   backend/
     checkout.md
     pricing.md
@@ -79,6 +79,14 @@ docs/planning/
     checkout.md
   integrations/
     stripe-sync.md
+```
+
+When a plan’s selected count reaches `0`, envctl blasts the related worktree(s) and archives the plan into the sibling done root:
+
+```text
+todo/done/
+  backend/
+    checkout.md
 ```
 
 You do not need this exact structure, but a stable folder hierarchy makes selection and comparison much easier.

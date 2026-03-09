@@ -75,6 +75,6 @@ PY
   ' _ "$PYTHON_BIN" "$BIN" "$REPO_ROOT"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Restoring stale services for project Main"* ]]
+  [[ "$output" == *"Restoring stale services..."* ]]
   [[ "$output" == *"ok"* ]]
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -16,10 +17,144 @@ from envctl_engine.shell.release_gate import ShipabilityResult, evaluate_shipabi
 
 
 class ReleaseShipabilityGateTests(unittest.TestCase):
+    _PARITY_MANIFEST_PATH = "contracts/python_engine_parity_manifest.json"
+    _SHELL_LEDGER_PATH = "contracts/envctl-shell-ownership-ledger.json"
+    _REQUIRED_ENGINE_INIT = "python/envctl_engine/__init__.py"
+    _DEMO_MAIN_PATH = "lib/engine/main.sh"
+    _DEMO_MODULE_PATH = "lib/engine/lib/demo.sh"
+    _COMMAND_PARITY_TEST = "tests/python/test_engine_runtime_command_parity.py"
+    _COMPAT_SHIM_ALLOWLIST = ["lib/envctl.sh", "lib/engine/main.sh", "scripts/install.sh"]
+    _BASE_REQUIRED_PATHS = [
+        "python/envctl_engine",
+        _PARITY_MANIFEST_PATH,
+        _SHELL_LEDGER_PATH,
+    ]
+    _BASE_REQUIRED_SCOPES = ["python/envctl_engine", "contracts"]
+
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
         subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True)
         subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True, capture_output=True, text=True)
+
+    def _commit_paths(self, repo: Path, *paths: str, message: str = "init") -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), "add", *paths],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", message],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _write_required_engine_init(self, repo: Path) -> None:
+        required_dir = repo / "python" / "envctl_engine"
+        required_dir.mkdir(parents=True, exist_ok=True)
+        (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
+
+    def _write_parity_manifest(self, repo: Path) -> None:
+        parity_manifest = repo / self._PARITY_MANIFEST_PATH
+        parity_manifest.parent.mkdir(parents=True, exist_ok=True)
+        parity_manifest.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-02-25",
+                    "commands": {"doctor": "python_complete"},
+                    "modes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_shell_ownership_ledger(
+        self,
+        repo: Path,
+        *,
+        status: str,
+        evidence_tests: list[str],
+        include_command_mapping: bool = True,
+        command_mapping_evidence_tests: list[str] | None = None,
+    ) -> None:
+        ledger_path = repo / self._SHELL_LEDGER_PATH
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        command_mappings: list[dict[str, object]] = []
+        if include_command_mapping:
+            command_mappings.append(
+                {
+                    "command": "doctor",
+                    "python_owner_module": "python/envctl_engine/engine_runtime.py",
+                    "python_owner_symbol": "PythonEngineRuntime._doctor",
+                    "evidence_tests": list(
+                        command_mapping_evidence_tests
+                        or [self._COMMAND_PARITY_TEST]
+                    ),
+                }
+            )
+        ledger_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "generated_at": "2026-02-25T00:00:00Z",
+                    "entries": [
+                        {
+                            "shell_module": self._DEMO_MODULE_PATH,
+                            "shell_function": "demo_func",
+                            "python_owner_module": "python/envctl_engine/engine_runtime.py",
+                            "python_owner_symbol": "PythonEngineRuntime._doctor",
+                            "status": status,
+                            "evidence_tests": list(evidence_tests),
+                            "delete_wave": "wave-a",
+                            "notes": "test",
+                            "commands": [],
+                        }
+                    ],
+                    "command_mappings": command_mappings,
+                    "compat_shim_allowlist": list(self._COMPAT_SHIM_ALLOWLIST),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_demo_shell_files(self, repo: Path) -> None:
+        main_path = repo / self._DEMO_MAIN_PATH
+        main_path.parent.mkdir(parents=True, exist_ok=True)
+        main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
+        demo_module = repo / self._DEMO_MODULE_PATH
+        demo_module.parent.mkdir(parents=True, exist_ok=True)
+        demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
+
+    def _prepare_shell_contract_repo(
+        self,
+        repo: Path,
+        *,
+        status: str,
+        evidence_tests: list[str],
+        include_command_mapping: bool = True,
+        command_mapping_evidence_tests: list[str] | None = None,
+        extra_tracked_paths: list[str] | None = None,
+    ) -> None:
+        self._write_required_engine_init(repo)
+        self._write_parity_manifest(repo)
+        self._write_shell_ownership_ledger(
+            repo,
+            status=status,
+            evidence_tests=evidence_tests,
+            include_command_mapping=include_command_mapping,
+            command_mapping_evidence_tests=command_mapping_evidence_tests,
+        )
+        self._write_demo_shell_files(repo)
+        tracked_paths = [
+            self._REQUIRED_ENGINE_INIT,
+            self._PARITY_MANIFEST_PATH,
+            self._SHELL_LEDGER_PATH,
+            self._DEMO_MAIN_PATH,
+            self._DEMO_MODULE_PATH,
+        ]
+        tracked_paths.extend(extra_tracked_paths or [])
+        self._commit_paths(repo, *tracked_paths)
 
     def test_release_shipability_script_leaves_shell_budgets_undefined_when_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -114,75 +249,17 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="python_partial_keep_temporarily",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
+                include_command_mapping=False,
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"python_partial_keep_temporarily",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -196,80 +273,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="unmigrated",
+                evidence_tests=[],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"unmigrated",'
-                    '"evidence_tests":[] ,'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -285,80 +298,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="unmigrated",
+                evidence_tests=[],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"unmigrated",'
-                    '"evidence_tests":[],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -372,80 +321,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="python_partial_keep_temporarily",
+                evidence_tests=["tests/python/test_missing_evidence.py"],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"python_partial_keep_temporarily",'
-                    '"evidence_tests":["tests/python/test_missing_evidence.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -462,85 +347,21 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
-            )
-
             tests_dir = repo / "tests" / "python"
             tests_dir.mkdir(parents=True, exist_ok=True)
             (tests_dir / "test_engine_runtime_command_parity.py").write_text("x = 1\n", encoding="utf-8")
 
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"python_partial_keep_temporarily",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="python_partial_keep_temporarily",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
+                extra_tracked_paths=[self._COMMAND_PARITY_TEST],
             )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "tests/python/test_engine_runtime_command_parity.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -557,85 +378,21 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
-            )
-
             tests_dir = repo / "tests" / "python"
             tests_dir.mkdir(parents=True, exist_ok=True)
             (tests_dir / "test_engine_runtime_command_parity.py").write_text("x = 1\n", encoding="utf-8")
 
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"python_partial_keep_temporarily",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="python_partial_keep_temporarily",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
+                extra_tracked_paths=[self._COMMAND_PARITY_TEST],
             )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "tests/python/test_engine_runtime_command_parity.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -652,80 +409,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="python_partial_keep_temporarily",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"python_partial_keep_temporarily",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -739,80 +432,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="shell_intentional_keep",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"shell_intentional_keep",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -826,80 +455,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="shell_intentional_keep",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"shell_intentional_keep",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -917,80 +482,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="shell_intentional_keep",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"shell_intentional_keep",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -1008,80 +509,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="shell_intentional_keep",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    '{'
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"shell_intentional_keep",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    '}],'
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    '}],'
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    '}'
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -1099,80 +536,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
+            self._prepare_shell_contract_repo(
+                repo,
+                status="shell_intentional_keep",
+                evidence_tests=[self._COMMAND_PARITY_TEST],
             )
-
-            ledger_path = repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json"
-            ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            ledger_path.write_text(
-                (
-                    "{"
-                    '"version":1,'
-                    '"generated_at":"2026-02-25T00:00:00Z",'
-                    '"entries":[{'
-                    '"shell_module":"lib/engine/lib/demo.sh",'
-                    '"shell_function":"demo_func",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"status":"shell_intentional_keep",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"],'
-                    '"delete_wave":"wave-a",'
-                    '"notes":"test",'
-                    '"commands":[]'
-                    "}],"
-                    '"command_mappings":[{'
-                    '"command":"doctor",'
-                    '"python_owner_module":"python/envctl_engine/engine_runtime.py",'
-                    '"python_owner_symbol":"PythonEngineRuntime._doctor",'
-                    '"evidence_tests":["tests/python/test_engine_runtime_command_parity.py"]'
-                    "}],"
-                    '"compat_shim_allowlist":["lib/envctl.sh","lib/engine/main.sh","scripts/install.sh"]'
-                    "}"
-                ),
-                encoding="utf-8",
-            )
-
-            main_path = repo / "lib/engine/main.sh"
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            main_path.write_text('source "${LIB_DIR}/demo.sh"\n', encoding="utf-8")
-            demo_module = repo / "lib/engine/lib/demo.sh"
-            demo_module.parent.mkdir(parents=True, exist_ok=True)
-            demo_module.write_text("demo_func() { :; }\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                    "lib/engine/main.sh",
-                    "lib/engine/lib/demo.sh",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
             result = evaluate_shipability(
                 repo_root=repo,
-                required_paths=[
-                    "python/envctl_engine",
-                    "docs/planning/python_engine_parity_manifest.json",
-                    "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
-                ],
-                required_scopes=["python/envctl_engine", "docs/planning/refactoring"],
+                required_paths=self._BASE_REQUIRED_PATHS,
+                required_scopes=self._BASE_REQUIRED_SCOPES,
                 check_tests=False,
                 enforce_parity_sync=False,
                 enforce_shell_prune_contract=True,
@@ -1244,36 +617,14 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
 
-            required_dir = repo / "python" / "envctl_engine"
-            required_dir.mkdir(parents=True, exist_ok=True)
-            (required_dir / "__init__.py").write_text('"""ok"""\n', encoding="utf-8")
-
-            parity_manifest = repo / "docs/planning/python_engine_parity_manifest.json"
-            parity_manifest.parent.mkdir(parents=True, exist_ok=True)
-            parity_manifest.write_text(
-                '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
-                encoding="utf-8",
-            )
-
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "add",
-                    "python/envctl_engine/__init__.py",
-                    "docs/planning/python_engine_parity_manifest.json",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
+            self._write_required_engine_init(repo)
+            self._write_parity_manifest(repo)
+            self._commit_paths(repo, self._REQUIRED_ENGINE_INIT, self._PARITY_MANIFEST_PATH)
 
             with patch("envctl_engine.runtime.engine_runtime.PythonEngineRuntime.PARTIAL_COMMANDS", ("start",)):
                 result = evaluate_shipability(
                     repo_root=repo,
-                    required_paths=["python/envctl_engine", "docs/planning/python_engine_parity_manifest.json"],
+                    required_paths=["python/envctl_engine", self._PARITY_MANIFEST_PATH],
                     required_scopes=["python/envctl_engine", "docs/planning"],
                     check_tests=False,
                     enforce_parity_sync=True,

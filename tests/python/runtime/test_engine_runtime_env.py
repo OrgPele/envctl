@@ -14,6 +14,7 @@ if str(PYTHON_ROOT) not in sys.path:
 
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 from envctl_engine.runtime.engine_runtime_env import (  # noqa: E402
+    _route_is_implicit_start,
     effective_main_requirement_flags,
     main_requirements_mode,
     project_service_env,
@@ -81,6 +82,7 @@ class EngineRuntimeEnvTests(unittest.TestCase):
     def test_validate_mode_toggles_rejects_invalid_main_combo(self) -> None:
         runtime = SimpleNamespace(
             config=SimpleNamespace(
+                startup_enabled_for_mode=lambda mode: True,
                 postgres_main_enable=True,
                 redis_main_enable=True,
                 supabase_main_enable=True,
@@ -89,6 +91,67 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             validate_mode_toggles(runtime, "main")
+
+    def test_validate_mode_toggles_rejects_disabled_startup(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                startup_enabled_for_mode=lambda mode: mode != "main",
+                profile_for_mode=lambda mode: SimpleNamespace(
+                    startup_enable=mode != "main",
+                    backend_enable=True,
+                    frontend_enable=True,
+                    postgres_enable=True,
+                    redis_enable=True,
+                    supabase_enable=False,
+                    n8n_enable=False,
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "envctl runs are disabled for main"):
+            validate_mode_toggles(runtime, "main")
+
+    def test_validate_mode_toggles_allows_plan_when_runs_disabled(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                startup_enabled_for_mode=lambda mode: mode != "main",
+                profile_for_mode=lambda mode: SimpleNamespace(
+                    startup_enable=mode != "main",
+                    backend_enable=True,
+                    frontend_enable=True,
+                    postgres_enable=True,
+                    redis_enable=True,
+                    supabase_enable=False,
+                    n8n_enable=False,
+                ),
+            )
+        )
+
+        validate_mode_toggles(runtime, "main", route=parse_route(["--plan"], env={}))
+
+    def test_validate_mode_toggles_allows_implicit_start_when_runs_disabled(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                startup_enabled_for_mode=lambda mode: mode != "main",
+                profile_for_mode=lambda mode: SimpleNamespace(
+                    startup_enable=mode != "main",
+                    backend_enable=True,
+                    frontend_enable=True,
+                    postgres_enable=True,
+                    redis_enable=True,
+                    supabase_enable=False,
+                    n8n_enable=False,
+                ),
+            )
+        )
+
+        validate_mode_toggles(runtime, "main", route=parse_route(["--main"], env={}))
+
+    def test_route_is_implicit_start_distinguishes_bare_mode_from_explicit_start(self) -> None:
+        self.assertTrue(_route_is_implicit_start(parse_route(["--main"], env={})))
+        self.assertTrue(_route_is_implicit_start(parse_route([], env={})))
+        self.assertFalse(_route_is_implicit_start(parse_route(["start", "--main"], env={})))
+        self.assertFalse(_route_is_implicit_start(parse_route(["--command=start", "--main"], env={})))
 
     def test_project_service_env_builds_urls_and_log_overrides(self) -> None:
         runtime = SimpleNamespace(
@@ -129,7 +192,7 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["ENVCTL_PROJECT_NAME"], "Main")
         self.assertEqual(env["DB_HOST"], "db.local")
         self.assertEqual(env["DB_USER"], "alice")
-        self.assertIn("postgresql+asyncpg://alice:postgres@db.local:5432/postgres", env["DATABASE_URL"])
+        self.assertIn("postgresql+asyncpg://alice:supabase-db-password@db.local:5432/postgres", env["DATABASE_URL"])
         self.assertEqual(env["REDIS_URL"], "redis://localhost:6380/0")
         self.assertEqual(env["N8N_URL"], "http://localhost:5678")
         self.assertEqual(env["SUPABASE_URL"], "http://localhost:5432")
@@ -155,6 +218,7 @@ class EngineRuntimeEnvTests(unittest.TestCase):
 
     def test_service_and_requirement_enablement_follow_profiles(self) -> None:
         config = SimpleNamespace(
+            startup_enabled_for_mode=lambda mode: mode != "main",
             service_enabled_for_mode=lambda mode, service: {
                 ("main", "backend"): False,
                 ("main", "frontend"): True,
@@ -175,9 +239,10 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         runtime = SimpleNamespace(config=config)
 
         self.assertFalse(service_enabled_for_mode(runtime, "main", "backend"))
-        self.assertTrue(service_enabled_for_mode(runtime, "main", "frontend"))
+        self.assertFalse(service_enabled_for_mode(runtime, "main", "frontend"))
         self.assertTrue(requirement_enabled_for_mode(runtime, "trees", "supabase"))
         self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "postgres"))
+        self.assertFalse(requirement_enabled_for_mode(runtime, "main", "redis"))
 
 
 if __name__ == "__main__":

@@ -400,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="Repository root (default: current dir).")
     parser.add_argument(
         "--output",
-        default="docs/planning/refactoring/envctl-shell-ownership-ledger.json",
+        default="contracts/envctl-shell-ownership-ledger.json",
         help="Ledger output path relative to repo root.",
     )
     parser.add_argument("--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file.")

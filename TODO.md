@@ -16,3 +16,9 @@ List:
 7. add super extensive docs, please document both docs for devs and users, make docs for users super straight forward and friendly
 
 8. could you think of a wiser way to handle all the ports rather than the X amount of port bump? Maybe it is the best solution, I am not sure - I just want you to think deep if it's the case or not
+
+9. fix selection colour
+
+11. move ./test-results/ to the /tmp directory where all the states and everything else is stored
+
+12. fix --plan selection

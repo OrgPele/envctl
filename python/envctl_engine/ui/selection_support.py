@@ -35,6 +35,15 @@ def interactive_selection_allowed(
 def project_names_from_state(runtime: Any, state: RunState) -> list[object]:
     names: list[str] = []
     seen: set[str] = set()
+    for project in state.requirements:
+        project_name = str(project).strip()
+        if not project_name:
+            continue
+        lowered = project_name.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        names.append(project_name)
     for name in state.services:
         project = runtime._project_name_from_service(name)  # type: ignore[attr-defined]
         if not project:
@@ -44,6 +53,17 @@ def project_names_from_state(runtime: Any, state: RunState) -> list[object]:
             continue
         seen.add(lowered)
         names.append(project)
+    metadata_roots = state.metadata.get("project_roots")
+    if isinstance(metadata_roots, dict):
+        for project in metadata_roots:
+            project_name = str(project).strip()
+            if not project_name:
+                continue
+            lowered = project_name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            names.append(project_name)
     return [SimpleProject(name) for name in names]
 
 

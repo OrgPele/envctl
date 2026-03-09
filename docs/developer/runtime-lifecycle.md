@@ -47,7 +47,7 @@ Important env exports set before the engine starts include:
 Current behavior:
 
 - Python is the default path
-- Python requires 3.12
+- Python requires 3.12 through 3.14
 - shell fallback is only taken when Python mode is not selected or when explicitly forced
 
 Important behavior to remember:
@@ -206,6 +206,7 @@ This split matters for:
 - headless safety
 - exit code expectations
 - test setup cost
+- keeping `show-config` and `explain-startup` aligned with startup-blocking config such as per-mode startup disablement
 
 Inside the operational side, there is another important split:
 

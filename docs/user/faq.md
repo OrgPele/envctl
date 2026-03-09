@@ -4,7 +4,20 @@
 
 No.
 
-Install `envctl` once from this repository so the launcher is on your `PATH`, then use it against any target repo:
+Install `envctl` once so the launcher is on your `PATH` in every shell, then use it against any target repo:
+
+```bash
+pipx install .
+pipx ensurepath
+```
+
+or:
+
+```bash
+python -m pip install --user .
+```
+
+Then use it against any target repo:
 
 ```bash
 envctl --repo /absolute/path/to/project --resume

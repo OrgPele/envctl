@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="Repository root (default: current dir).")
     parser.add_argument(
         "--output",
-        default="docs/planning/python_engine_parity_manifest.json",
+        default="contracts/python_engine_parity_manifest.json",
         help="Manifest output path relative to repo root.",
     )
     parser.add_argument("--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file.")

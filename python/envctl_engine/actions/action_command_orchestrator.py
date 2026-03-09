@@ -653,7 +653,11 @@ class ActionCommandOrchestrator:
         if not project_roots:
             return
 
-        run_dir = self._new_test_results_run_dir(rt.config.base_dir)  # type: ignore[attr-defined]
+        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
+        if state is None:
+            return
+
+        run_dir = self._new_test_results_run_dir(state.run_id)  # type: ignore[attr-defined]
         summaries: dict[str, dict[str, object]] = {}
         for project_name, project_root in project_roots.items():
             summaries[project_name] = self._write_failed_tests_summary(
@@ -662,10 +666,6 @@ class ActionCommandOrchestrator:
                 project_root=project_root,
                 outcomes=outcomes,
             )
-
-        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
-        if state is None:
-            return
 
         existing = state.metadata.get("project_test_summaries")
         metadata = dict(existing) if isinstance(existing, dict) else {}
@@ -686,8 +686,8 @@ class ActionCommandOrchestrator:
             run_dir=str(run_dir),
         )
 
-    def _new_test_results_run_dir(self, base_dir: Path) -> Path:
-        results_root = base_dir / "test-results"
+    def _new_test_results_run_dir(self, run_id: str) -> Path:
+        results_root = self.runtime.state_repository.test_results_dir_path(run_id)  # type: ignore[attr-defined]
         results_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
         candidate = results_root / stamp
@@ -830,7 +830,7 @@ class ActionCommandOrchestrator:
         if source == "frontend_package_test":
             return "Frontend (package test)"
         if source == "root_unittest":
-            return "Backend (unittest)"
+            return "Repository tests (unittest)"
         if source == "package_test":
             return "Repository package test"
         if source == "configured":
@@ -878,6 +878,7 @@ class ActionCommandOrchestrator:
                 returncode = int(item.get("returncode", 1))
                 parsed = item.get("parsed")
                 parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
+                counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
                 passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
                 failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
                 skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
@@ -885,7 +886,7 @@ class ActionCommandOrchestrator:
                 duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
 
                 icon = self._colorize("✓", fg="green", bold=True) if returncode == 0 else self._colorize("✗", fg="red", bold=True)
-                if parsed_total > 0:
+                if counts_detected:
                     total_passed += passed
                     total_failed += failed
                     total_skipped += skipped

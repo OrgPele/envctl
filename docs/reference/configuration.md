@@ -11,6 +11,7 @@ Use `.envctl` for orchestration behavior.
 Use `.env` for app runtime variables and secrets.
 
 The Python runtime expects a repo-local `.envctl` for normal operational commands.
+That is true regardless of whether `envctl` was installed with `pip`, `pipx`, or the clone-compatibility wrapper.
 
 - `envctl config` opens the interactive config editor/bootstrap flow.
 - `envctl show-config --json` prints the effective managed config without mutating anything.
@@ -20,8 +21,10 @@ The Python runtime expects a repo-local `.envctl` for normal operational command
 
 The Python config layer now has canonical managed keys such as:
 
+- `MAIN_STARTUP_ENABLE`
 - `MAIN_BACKEND_ENABLE`
 - `MAIN_POSTGRES_ENABLE`
+- `TREES_STARTUP_ENABLE`
 - `TREES_REDIS_ENABLE`
 - `TREES_N8N_ENABLE`
 
@@ -39,7 +42,7 @@ The Textual config wizard writes the canonical managed keys.
 | --- | --- | --- |
 | `ENVCTL_SKIP_DEFAULT_INFRASTRUCTURE` | `false` | Global skip for built-in PostgreSQL and Redis startup. |
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
-| `ENVCTL_PLANNING_DIR` | `docs/planning` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. |
+| `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
 | `ENVCTL_ENGINE_PYTHON_V1` | `true` (launcher default) | Enables Python runtime path in `lib/engine/main.sh`. |
 | `ENVCTL_ENGINE_SHELL_FALLBACK` | `false` | Forces the deprecated legacy shell runtime during migration/cutover. Use only as an explicit compatibility fallback. |
@@ -120,13 +123,16 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 ## Service Discovery
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RUN_BACKEND` | `true` | Enable backend auto-discovery. |
-| `BACKEND_DIR_NAME` | `backend` | Preferred backend directory name. |
+| `MAIN_STARTUP_ENABLE` | `true` | Master switch for whether Main mode auto-starts anything at all. |
+| `TREES_STARTUP_ENABLE` | `true` | Master switch for whether Trees mode auto-starts anything at all. |
+| `MAIN_BACKEND_ENABLE` | `true` | Enable backend startup in Main mode when startup is enabled. |
+| `TREES_BACKEND_ENABLE` | `true` | Enable backend startup in Trees mode when startup is enabled. |
+| `MAIN_FRONTEND_ENABLE` | `true` | Enable frontend startup in Main mode when startup is enabled. |
+| `TREES_FRONTEND_ENABLE` | `true` | Enable frontend startup in Trees mode when startup is enabled. |
+| `BACKEND_DIR` | `backend` | Preferred backend directory name. |
 | `BACKEND_PORT_BASE` | `8000` | Backend base port for allocation. |
-| `RUN_FRONTEND` | `true` | Enable frontend auto-discovery. |
-| `FRONTEND_DIR_NAME` | `frontend` | Preferred frontend directory name. |
+| `FRONTEND_DIR` | `frontend` | Preferred frontend directory name. |
 | `FRONTEND_PORT_BASE` | `9000` | Frontend base port for allocation. |
-| `ENVCTL_SERVICE_<N>` | empty | Explicit service list; disables auto-discovery when set. |
 
 ## Optional Hooks (`.envctl.sh`)
 Use hooks only for advanced custom orchestration.

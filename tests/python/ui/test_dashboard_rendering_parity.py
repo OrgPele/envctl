@@ -117,15 +117,91 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertEqual(calls["count"], 2)
 
+    def test_dashboard_shows_only_configured_service_rows_when_no_services_are_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {
+                        "feature-a-1": str(repo),
+                    },
+                    "dashboard_configured_service_types": ["backend"],
+                    "dashboard_runs_disabled": True,
+                    "dashboard_banner": "envctl runs are disabled for trees; planning and action commands remain available.",
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("feature-a-1", output)
+            self.assertIn("Configured Services:", output)
+            self.assertIn("services: 1 configured | 0 running | 1 not running | 0 issues", output)
+            self.assertIn("Backend: not running [Configured]", output)
+            self.assertNotIn("Backend: n/a [Unknown]", output)
+            self.assertNotIn("workspace backend:", output)
+            self.assertNotIn("Frontend:", output)
+
+    def test_dashboard_does_not_render_workspace_rows_for_running_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    ),
+                    "feature-a-1 Frontend": ServiceRecord(
+                        name="feature-a-1 Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9000,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {"feature-a-1": str(repo)}},
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertNotIn("workspace backend:", output)
+            self.assertNotIn("workspace frontend:", output)
+
     def test_dashboard_renders_project_test_summary_link_with_passed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
-            summary = repo / "test-results" / "run_20260302_180000" / "Main" / "failed_tests_summary.txt"
-            summary.parent.mkdir(parents=True, exist_ok=True)
-            summary.write_text("# Generated at: now\nNo failed tests.\n", encoding="utf-8")
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            summary = engine.runtime_root / "runs" / "run-1" / "test-results" / "run_20260302_180000" / "Main" / "failed_tests_summary.txt"
+            summary.parent.mkdir(parents=True, exist_ok=True)
+            summary.write_text("# Generated at: now\nNo failed tests.\n", encoding="utf-8")
 
             state = RunState(
                 run_id="run-1",
@@ -171,11 +247,11 @@ class DashboardRenderingParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
-            summary = repo / "test-results" / "run_20260302_180001" / "Main" / "failed_tests_summary.txt"
-            summary.parent.mkdir(parents=True, exist_ok=True)
-            summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            summary = engine.runtime_root / "runs" / "run-1" / "test-results" / "run_20260302_180001" / "Main" / "failed_tests_summary.txt"
+            summary.parent.mkdir(parents=True, exist_ok=True)
+            summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
 
             state = RunState(
                 run_id="run-1",

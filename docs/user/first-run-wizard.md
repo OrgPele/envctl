@@ -1,6 +1,6 @@
 # First-Run Wizard
 
-This guide explains the startup wizard that appears the first time you run `envctl` in a repository without a local `.envctl`.
+This guide explains the run-configuration wizard that appears the first time you run `envctl` in a repository without a local `.envctl`.
 
 For most users, this wizard is the right way to get started. It is faster and safer than hand-writing config from scratch.
 
@@ -18,7 +18,7 @@ If there is no interactive TTY, `envctl` fails with a clear message instead of g
 
 ## What the Wizard Does
 
-The wizard writes a managed startup config to the repo-local `.envctl`.
+The wizard writes a managed run config to the repo-local `.envctl`.
 
 It is designed to:
 
@@ -27,20 +27,38 @@ It is designed to:
 - validate values before saving
 - keep running services unchanged until your next start or restart
 
-On save, `envctl` also tries to add `.envctl` to `.git/info/exclude` so your local orchestration config stays untracked.
+On save, `envctl` also tries to add `.envctl` and `trees/` to the repo `.gitignore` so local orchestration config and generated worktrees stay untracked.
 
 ## The Actual Steps
 
-The current wizard flow in code is:
+The wizard now has two flows:
+
+### Simple Wizard
+
+Used by default during first-run bootstrap.
 
 1. `Welcome / Source`
-2. `Default Mode`
-3. `Main Startup Profile`
-4. `Trees Startup Profile`
-5. `Port Defaults`
+2. `Wizard Type`
+3. `Default Mode`
+4. `Main Run Preset`
+5. `Trees Run Preset`
 6. `Review / Save`
 
-That means the wizard is not a generic form. It is opinionated around how `envctl` is actually used.
+### Advanced Wizard
+
+Used by default when you open `envctl config` to edit an existing `.envctl`.
+
+1. `Welcome / Source`
+2. `Wizard Type`
+3. `Default Mode`
+4. `Run Enablement`
+5. `Main Run Settings`
+6. `Trees Run Settings`
+7. `Directories`
+8. `Ports`
+9. `Review / Save`
+
+That means the wizard is still opinionated around how `envctl` is actually used, but the first-run path is now shorter.
 
 ## Step 1: Welcome / Source
 
@@ -53,9 +71,20 @@ The first screen tells you:
 
 If you are migrating from older repo config, this screen is where `envctl` makes that prefill behavior explicit.
 
-## Step 2: Default Mode
+## Step 2: Wizard Type
 
-You choose the default startup mode:
+You choose between:
+
+- `Simple`
+- `Advanced`
+
+Simple is the onboarding path.
+
+Advanced exposes run enablement, the full per-mode run profile, directory configuration, and port configuration.
+
+## Step 3: Default Mode
+
+You choose the default run mode:
 
 - `Main`
 - `Trees`
@@ -66,36 +95,63 @@ Use `Trees` when your normal workflow is worktree-heavy and comparison-oriented.
 
 This setting controls what happens when you run `envctl` without explicitly passing a mode flag.
 
-## Step 3: Main Startup Profile
+## Step 4: Main Run Preset or Run Enablement
 
-This screen toggles what `envctl` should start in main mode.
+In the simple wizard, main mode is configured by preset:
 
-Current toggle categories come directly from the runtime:
+- `Standard`: envctl runs enabled, backend on, frontend on, dependency defaults for main mode
+- `Apps Only`: envctl runs enabled, backend on, frontend on, built-in dependencies off
+- `Disabled`: envctl runs disabled for main mode
 
-- backend
-- frontend
-- PostgreSQL
-- Redis
-- Supabase
-- n8n
+In the advanced wizard, this step is separate and only controls whether each mode is enabled for `envctl` runs:
 
-Use this screen to decide what a normal repo-root run should bring up by default.
+- `Main: Enabled for envctl runs`
+- `Trees: Enabled for envctl runs`
 
-## Step 4: Trees Startup Profile
+The detailed backend, frontend, and dependency toggles come later.
 
-This is the same idea as the main profile, but for worktree runs.
+In the simple wizard, step 5 is `Trees Run Preset`.
+
+In the advanced wizard, step 5 is `Main Run Settings`.
+
+Trees mode works the same way as main mode in the simple flow, but it is configured independently.
+
+In the advanced wizard, the next screen is `Main Run Settings`, which exposes:
+
+- `Backend`
+- `Frontend`
+- built-in dependency toggles
+
+Those toggles define what main mode should run when envctl runs are enabled.
+
+## Step 6: Trees Run Settings
+
+The advanced `Trees Run Settings` screen works the same way as main mode, but it is configured independently.
 
 This matters because many teams want different defaults in tree mode than in main mode. For example:
 
 - lighter main-mode defaults for local work
 - fuller tree-mode defaults for side-by-side comparison
 
-## Step 5: Port Defaults
+When envctl runs are disabled in the earlier `Run Enablement` step, these detailed toggles stay editable so you can stage future settings without enabling the mode yet.
 
-This screen lets you set:
+## Step 7: Directories
+
+This step appears only in the advanced wizard.
+
+This screen only shows the directories that matter for components currently enabled for envctl runs:
 
 - backend directory
 - frontend directory
+
+If you disabled frontend everywhere, you will not be prompted for a frontend directory.
+
+## Step 8: Ports
+
+This step appears only in the advanced wizard.
+
+This screen only shows the port fields that matter for components currently enabled for envctl runs:
+
 - backend base port
 - frontend base port
 - dependency base ports
@@ -105,14 +161,14 @@ The wizard validates this step before letting you continue.
 
 In practice, this is where you fix most first-run conflicts if your repo does not use the common `backend` / `frontend` layout or standard ports.
 
-## Step 6: Review / Save
+## Step 9: Review / Save
 
 The final screen shows the managed config block that will be written.
 
 It also reminds you that:
 
 - CLI and environment overrides still apply above the file
-- `.envctl` will be ignored through `.git/info/exclude` when possible
+- `.envctl` and `trees/` will be added to `.gitignore` when possible
 
 This is the last chance to confirm the exact saved values before the file is written.
 
@@ -123,10 +179,23 @@ The wizard and save path currently enforce a few important rules:
 - default mode must be `main` or `trees`
 - backend and frontend directory names must not be empty
 - ports must be positive integers
-- each mode must enable at least one component
+- each mode enabled for envctl runs must enable at least one component
 - a single mode cannot enable both PostgreSQL and Supabase at the same time
 
 If save is blocked, the status line in the wizard tells you what to fix.
+
+## Disabled Modes
+
+Each mode now has a master switch for envctl runs:
+
+- `MAIN_STARTUP_ENABLE`
+- `TREES_STARTUP_ENABLE`
+
+If a mode is disabled:
+
+- `show-config --json` still reports its saved detailed settings
+- `explain-startup --json` reports `startup_enabled: false`
+- `start`, `resume`, and `restart` for that mode are blocked until you re-enable that mode for envctl runs
 
 ## Best Practice
 

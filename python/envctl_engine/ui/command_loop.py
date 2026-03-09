@@ -65,6 +65,7 @@ def run_dashboard_command_loop(
     first_dashboard_render = True
     try:
         while True:
+            hidden_commands = _dashboard_hidden_commands(current_state)
             if not minimal_dashboard:
                 refreshed = rt._try_load_existing_state(
                     mode=current_state.mode,
@@ -72,18 +73,34 @@ def run_dashboard_command_loop(
                 )
                 if refreshed is not None:
                     current_state = refreshed
+                    hidden_commands = _dashboard_hidden_commands(current_state)
                 print("")
                 rt._print_dashboard_snapshot(current_state)
                 print(f"{magenta}Commands:{reset} (q)uit")
-                print(
-                    f"  {magenta}Lifecycle:{reset} (s)top | (r)estart | stop-all | blast-all"
-                )
-                print(
-                    f"  {magenta}Actions:{reset} (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate"
-                )
-                print(
-                    f"  {magenta}Inspect:{reset} (l)ogs | (x) clear-logs | (h)ealth | (e)rrors | confi(g)"
-                )
+                lifecycle_commands = [("(s)top", "stop"), ("(r)estart", "restart"), ("stop-all", "stop-all"), ("blast-all", "blast-all")]
+                visible_lifecycle = [label for label, command in lifecycle_commands if command not in hidden_commands]
+                if visible_lifecycle:
+                    print(f"  {magenta}Lifecycle:{reset} " + " | ".join(visible_lifecycle))
+                action_commands = [
+                    ("(t)est", "test"),
+                    ("(p)r", "pr"),
+                    ("(c)ommit", "commit"),
+                    ("(a)nalyze", "analyze"),
+                    ("(m)igrate", "migrate"),
+                ]
+                visible_actions = [label for label, command in action_commands if command not in hidden_commands]
+                if visible_actions:
+                    print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
+                inspect_commands = [
+                    ("(l)ogs", "logs"),
+                    ("(x) clear-logs", "clear-logs"),
+                    ("(h)ealth", "health"),
+                    ("(e)rrors", "errors"),
+                    ("confi(g)", "config"),
+                ]
+                visible_inspect = [label for label, command in inspect_commands if command not in hidden_commands]
+                if visible_inspect:
+                    print(f"  {magenta}Inspect:{reset} " + " | ".join(visible_inspect))
             else:
                 print("")
                 print(f"{cyan}Minimal interactive mode (debug). Type commands or q to quit.{reset}")
@@ -244,6 +261,14 @@ def _call_or_default_can_interactive_tty(candidate: Callable[[], bool] | None) -
     from .dashboard.terminal_ui import RuntimeTerminalUI
 
     return RuntimeTerminalUI._can_interactive_tty()
+
+
+def _dashboard_hidden_commands(state: RunState) -> set[str]:
+    raw = state.metadata.get("dashboard_hidden_commands")
+    hidden = {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+    if not state.services:
+        hidden.add("migrate")
+    return hidden
 
 
 def _restore_terminal_on_loop_exit(runtime: object) -> None:

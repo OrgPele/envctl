@@ -395,6 +395,39 @@ class StateRepositoryContractTests(unittest.TestCase):
         raw = runtime_path.read_text(encoding="utf-8")
         self.assertNotIn("def _write_legacy_runtime_compat_files(", raw)
 
+    def test_aggressive_purge_removes_runtime_scoped_test_results_with_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            runtime_root = runtime_dir / "scope"
+            legacy_root = runtime_dir / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+
+            run_state = RunState(run_id="run-1", mode="main", metadata={"repo_scope_id": "repo-123"})
+            repo.save_resume_state(
+                state=run_state,
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {"projection": {}},
+            )
+
+            test_summary = repo.test_results_dir_path("run-1", "run_20260309_100000") / "Main" / "failed_tests_summary.txt"
+            test_summary.parent.mkdir(parents=True, exist_ok=True)
+            test_summary.write_text("No failed tests.\n", encoding="utf-8")
+
+            repo.purge(aggressive=False)
+            self.assertTrue(test_summary.is_file())
+
+            repo.purge(aggressive=True)
+            self.assertFalse(repo.run_dir_path("run-1").exists())
+            self.assertFalse(test_summary.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

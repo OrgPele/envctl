@@ -17,6 +17,7 @@ class TestResult:
     skipped: int = 0
     total: int = 0
     duration: float = 0.0
+    counts_detected: bool = False
     failed_tests: list[str] = field(default_factory=list)
     error_details: dict[str, str] = field(default_factory=dict)
     coverage_path: str | None = None

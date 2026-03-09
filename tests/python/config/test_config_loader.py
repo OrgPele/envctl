@@ -64,6 +64,7 @@ class ConfigLoaderTests(unittest.TestCase):
                 "\n".join(
                     [
                         "ENVCTL_DEFAULT_MODE=trees",
+                        "MAIN_STARTUP_ENABLE=false",
                         "MAIN_BACKEND_ENABLE=false",
                         "MAIN_FRONTEND_ENABLE=true",
                         "MAIN_POSTGRES_ENABLE=false",
@@ -87,6 +88,7 @@ class ConfigLoaderTests(unittest.TestCase):
             config = load_config({"RUN_REPO_ROOT": str(repo)})
 
             self.assertEqual(config.default_mode, "trees")
+            self.assertFalse(config.main_profile.startup_enable)
             self.assertFalse(config.main_profile.backend_enable)
             self.assertTrue(config.main_profile.supabase_enable)
             self.assertFalse(config.trees_profile.frontend_enable)
@@ -98,6 +100,8 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertTrue(config.n8n_main_enable)
             self.assertTrue(config.redis_enable)
             self.assertTrue(config.n8n_enable)
+            self.assertFalse(config.startup_enabled_for_mode("main"))
+            self.assertTrue(config.startup_enabled_for_mode("trees"))
 
     def test_load_config_reads_backend_and_frontend_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

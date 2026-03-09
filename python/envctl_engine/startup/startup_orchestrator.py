@@ -9,6 +9,7 @@ from typing import Any
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
+from envctl_engine.runtime.engine_runtime_env import _route_is_implicit_start
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.startup_progress import (
@@ -65,13 +66,19 @@ class StartupOrchestrator:
 
     def execute(self, route: Route) -> int:
         rt: Any = self.runtime
-        port_allocator = self._port_allocator(rt)
+        port_allocator = _port_allocator_impl(rt)
         requested_command = route.command
         startup_started_at = time.monotonic()
         startup_event_index = len(getattr(rt, "events", []))
         debug_plan_snapshot = snapshot_enabled(getattr(rt, "env", {}))
         preserved_services: dict[str, Any] = {}
         preserved_requirements: dict[str, RequirementsResult] = {}
+        initial_runtime_mode = rt._effective_start_mode(route)
+        try:
+            rt._validate_mode_toggles(initial_runtime_mode, route=route)
+        except RuntimeError as exc:
+            print(str(exc))
+            return 1
         if route.command == "restart":
             restart_lookup_mode = rt._effective_start_mode(route)
             resumed = rt._try_load_existing_state(mode=restart_lookup_mode)
@@ -84,11 +91,11 @@ class StartupOrchestrator:
                 )
                 resumed = None
             if resumed is not None:
-                selected_services = self._restart_selected_services(state=resumed, route=route)
-                target_projects = self._restart_target_projects(state=resumed, route=route, runtime=rt)
+                selected_services = _restart_selected_services_impl(state=resumed, route=route)
+                target_projects = _restart_target_projects_impl(state=resumed, route=route, runtime=rt)
                 include_requirements = self._restart_include_requirements(route)
                 if include_requirements and not target_projects:
-                    target_projects = self._restart_target_projects_for_selected_services(
+                    target_projects = _restart_target_projects_for_selected_services_impl(
                         selected_services=selected_services,
                         state=resumed,
                         runtime=rt,
@@ -179,12 +186,9 @@ class StartupOrchestrator:
                 )
 
         runtime_mode = rt._effective_start_mode(route)
-        try:
-            rt._validate_mode_toggles(runtime_mode, route=route)
-        except RuntimeError as exc:
-            print(str(exc))
-            return 1
-
+        reset_startup_warnings = getattr(rt, "_reset_project_startup_warnings", None)
+        if callable(reset_startup_warnings):
+            reset_startup_warnings()
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "startup.phase",
@@ -257,6 +261,37 @@ class StartupOrchestrator:
                 print("No projects discovered for selected mode.")
             return 1
 
+        selected_project_contexts = list(project_contexts)
+        project_contexts_to_start = list(selected_project_contexts)
+        restored_project_names: list[str] = []
+
+        mode_runs_enabled = (
+            rt.config.startup_enabled_for_mode(runtime_mode)
+            if hasattr(rt.config, "startup_enabled_for_mode")
+            else True
+        )
+        allow_disabled_dashboard = not mode_runs_enabled and (
+            route.command == "plan" or _route_is_implicit_start(route)
+        )
+        if allow_disabled_dashboard:
+            run_state = self._build_planning_dashboard_state(
+                route=route,
+                runtime_mode=runtime_mode,
+                run_id=run_id,
+                project_contexts=selected_project_contexts,
+            )
+            artifacts_started = time.monotonic()
+            rt._write_artifacts(run_state, selected_project_contexts, errors=[])
+            emit_phase("artifacts_write", artifacts_started, status="ok")
+            enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
+            if route.command == "plan":
+                print(f"Planning mode complete; skipping service startup because envctl runs are disabled for {runtime_mode}.")
+            elif not enter_interactive_dashboard:
+                print(f"envctl runs are disabled for {runtime_mode}; opening dashboard without starting services.")
+            if enter_interactive_dashboard:
+                return rt._run_interactive_dashboard_loop(run_state)
+            return 0
+
         debug_orch_groups: set[str] = set()
         if requested_command == "plan":
             raw_orch_group = str(getattr(rt, "env", {}).get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
@@ -265,15 +300,39 @@ class StartupOrchestrator:
                 for token in raw_orch_group.replace("+", ",").split(",")
                 if token.strip()
             }
-        if requested_command != "restart" and rt._auto_resume_start_enabled(route):
+        if requested_command != "restart" and mode_runs_enabled and rt._auto_resume_start_enabled(route):
             auto_resume_started = time.monotonic()
             existing_state = rt._load_auto_resume_state(runtime_mode)
             if existing_state is not None:
-                exact_match = self._state_matches_selected_projects(runtime=rt, state=existing_state, contexts=project_contexts)
+                selected_project_names = {
+                    str(context.name).strip()
+                    for context in selected_project_contexts
+                    if str(getattr(context, "name", "")).strip()
+                }
+                state_project_names = _state_project_names_impl(runtime=rt, state=existing_state)
+                exact_match = _state_matches_selected_projects_impl(
+                    self,
+                    runtime=rt,
+                    state=existing_state,
+                    contexts=selected_project_contexts,
+                )
                 subset_match = (
                     not exact_match
                     and runtime_mode == "trees"
-                    and self._state_covers_selected_projects(runtime=rt, state=existing_state, contexts=project_contexts)
+                    and _state_covers_selected_projects_impl(
+                        self,
+                        runtime=rt,
+                        state=existing_state,
+                        contexts=selected_project_contexts,
+                    )
+                )
+                expand_match = (
+                    not exact_match
+                    and not subset_match
+                    and runtime_mode == "trees"
+                    and route.command == "plan"
+                    and bool(state_project_names)
+                    and state_project_names.issubset(selected_project_names)
                 )
                 if exact_match or subset_match:
                     emit_phase(
@@ -281,8 +340,8 @@ class StartupOrchestrator:
                         auto_resume_started,
                         status="resume",
                         match_mode="exact" if exact_match else "subset",
-                        state_project_count=len(self._state_project_names(runtime=rt, state=existing_state)),
-                        selected_project_count=len(project_contexts),
+                        state_project_count=len(state_project_names),
+                        selected_project_count=len(selected_project_contexts),
                     )
                     rt._emit(
                         "state.auto_resume",
@@ -290,7 +349,7 @@ class StartupOrchestrator:
                         mode=runtime_mode,
                         command=route.command,
                         match_mode="exact" if exact_match else "subset",
-                        selected_projects=sorted({context.name for context in project_contexts}),
+                        selected_projects=sorted(selected_project_names),
                     )
                     resume_route = Route(
                         command="resume",
@@ -304,22 +363,74 @@ class StartupOrchestrator:
                         },
                     )
                     return rt._resume(resume_route)
-                emit_phase(
-                    "auto_resume_evaluate",
-                    auto_resume_started,
-                    status="skipped",
-                    reason="project_selection_mismatch",
-                    state_project_count=len(self._state_project_names(runtime=rt, state=existing_state)),
-                    selected_project_count=len(project_contexts),
-                )
-                rt._emit(
-                    "state.auto_resume.skipped",
-                    reason="project_selection_mismatch",
-                    state_projects=sorted(self._state_project_names(runtime=rt, state=existing_state)),
-                    selected_projects=sorted({context.name for context in project_contexts}),
-                    mode=runtime_mode,
-                    command=route.command,
-                )
+                if expand_match:
+                    missing_services = rt._reconcile_state_truth(existing_state)
+                    if not missing_services:
+                        restored_project_names = sorted(state_project_names)
+                        preserved_services = dict(existing_state.services)
+                        preserved_requirements = dict(existing_state.requirements)
+                        project_contexts_to_start = [
+                            context
+                            for context in selected_project_contexts
+                            if str(context.name).strip() not in state_project_names
+                        ]
+                        emit_phase(
+                            "auto_resume_evaluate",
+                            auto_resume_started,
+                            status="reuse_existing",
+                            match_mode="superset",
+                            state_project_count=len(state_project_names),
+                            selected_project_count=len(selected_project_contexts),
+                            new_project_count=len(project_contexts_to_start),
+                        )
+                        rt._emit(
+                            "state.auto_resume",
+                            run_id=existing_state.run_id,
+                            mode=runtime_mode,
+                            command=route.command,
+                            match_mode="superset",
+                            selected_projects=sorted(selected_project_names),
+                            restored_projects=restored_project_names,
+                            new_projects=[context.name for context in project_contexts_to_start],
+                        )
+                        existing_state = None
+                    else:
+                        emit_phase(
+                            "auto_resume_evaluate",
+                            auto_resume_started,
+                            status="skipped",
+                            reason="stale_existing_state",
+                            state_project_count=len(state_project_names),
+                            selected_project_count=len(selected_project_contexts),
+                            missing_service_count=len(missing_services),
+                        )
+                        rt._emit(
+                            "state.auto_resume.skipped",
+                            reason="stale_existing_state",
+                            missing_services=missing_services,
+                            state_projects=sorted(state_project_names),
+                            selected_projects=sorted(selected_project_names),
+                            mode=runtime_mode,
+                            command=route.command,
+                        )
+                        existing_state = None
+                if existing_state is not None:
+                    emit_phase(
+                        "auto_resume_evaluate",
+                        auto_resume_started,
+                        status="skipped",
+                        reason="project_selection_mismatch",
+                        state_project_count=len(state_project_names),
+                        selected_project_count=len(selected_project_contexts),
+                    )
+                    rt._emit(
+                        "state.auto_resume.skipped",
+                        reason="project_selection_mismatch",
+                        state_projects=sorted(state_project_names),
+                        selected_projects=sorted(selected_project_names),
+                        mode=runtime_mode,
+                        command=route.command,
+                    )
             else:
                 emit_phase("auto_resume_evaluate", auto_resume_started, status="none")
 
@@ -342,7 +453,7 @@ class StartupOrchestrator:
         requirements: dict[str, RequirementsResult] = {}
         started_contexts: list[Any] = []
         errors: list[str] = []
-        spinner_message = f"Starting {len(project_contexts)} project(s)..."
+        spinner_message = f"Starting {len(project_contexts_to_start)} project(s)..."
         spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
         use_startup_spinner = spinner_policy.enabled and not self._suppress_progress_output(route)
         emit_spinner_policy(
@@ -353,13 +464,13 @@ class StartupOrchestrator:
         parallel_enabled, parallel_workers = rt._tree_parallel_startup_config(
             mode=runtime_mode,
             route=route,
-            project_count=len(project_contexts),
+            project_count=len(project_contexts_to_start),
         )
         rt._emit(
             "startup.execution",
             mode="parallel" if parallel_enabled else "sequential",
             workers=parallel_workers,
-            projects=[context.name for context in project_contexts],
+            projects=[context.name for context in project_contexts_to_start],
         )
         prewarm_started = time.monotonic()
         self._maybe_prewarm_docker(route=route, mode=runtime_mode)
@@ -384,11 +495,11 @@ class StartupOrchestrator:
         use_project_spinner_group = (
             parallel_enabled
             and use_startup_spinner
-            and len(project_contexts) > 1
+            and len(selected_project_contexts) > 1
             and str(getattr(spinner_policy, "backend", "")) == "rich"
         )
         project_spinner_group = _ProjectSpinnerGroup(
-            projects=[context.name for context in project_contexts],
+            projects=[context.name for context in selected_project_contexts],
             enabled=use_project_spinner_group,
             policy=spinner_policy,
             emit=getattr(rt, "_emit", None),
@@ -416,8 +527,11 @@ class StartupOrchestrator:
                 route_for_execution.flags["_spinner_update_project"] = project_spinner_group.update_project
             try:
                 with group_context:
+                    if use_project_spinner_group and restored_project_names:
+                        for project_name in restored_project_names:
+                            project_spinner_group.mark_success(project_name, "restored")
                     if parallel_enabled:
-                        completed: dict[str, tuple[RequirementsResult, dict[str, Any]]] = {}
+                        completed: dict[str, tuple[RequirementsResult, dict[str, Any], list[str]]] = {}
                         failures: list[str] = []
                         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
                             future_map = {
@@ -428,16 +542,16 @@ class StartupOrchestrator:
                                     route=route_for_execution,
                                     run_id=run_id,
                                 ): context
-                                for context in project_contexts
+                                for context in project_contexts_to_start
                             }
                             for future in concurrent.futures.as_completed(future_map):
                                 context = future_map[future]
                                 try:
-                                    req_result, project_services = future.result()
-                                    completed[context.name] = (req_result, project_services)
+                                    req_result, project_services, project_warnings = future.result()
+                                    completed[context.name] = (req_result, project_services, project_warnings)
                                     if use_single_spinner:
-                                        done = len(completed)
-                                        progress_message = f"Started {done}/{len(project_contexts)} project(s)..."
+                                        done = len(restored_project_names) + len(completed)
+                                        progress_message = f"Started {done}/{len(selected_project_contexts)} project(s)..."
                                         active_spinner.update(progress_message)
                                         rt._emit(  # type: ignore[attr-defined]
                                             "ui.spinner.lifecycle",
@@ -449,26 +563,32 @@ class StartupOrchestrator:
                                     if use_project_spinner_group:
                                         project_spinner_group.mark_success(
                                             context.name,
-                                            f"startup completed ({self._project_ports_text(context)})",
+                                            f"startup completed ({_project_ports_text_impl(context)})",
                                         )
+                                    self._render_project_startup_warnings(
+                                        context=context,
+                                        warnings=project_warnings,
+                                        route=route_for_execution,
+                                        project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                                    )
                                 except RuntimeError as exc:
                                     failures.append(str(exc))
                                     rt._emit("startup.project.failed", project=context.name, error=str(exc))
                                     if use_project_spinner_group:
                                         project_spinner_group.mark_failure(context.name, str(exc))
-                        for context in project_contexts:
+                        for context in project_contexts_to_start:
                             entry = completed.get(context.name)
                             if entry is None:
                                 continue
-                            req_result, project_services = entry
+                            req_result, project_services, _project_warnings = entry
                             requirements[context.name] = req_result
                             services.update(project_services)
                             started_contexts.append(context)
                         if failures:
                             raise RuntimeError("; ".join(failures))
                     else:
-                        for context in project_contexts:
-                            req_result, project_services = rt._start_project_context(
+                        for context in project_contexts_to_start:
+                            req_result, project_services, project_warnings = rt._start_project_context(
                                 context=context,
                                 mode=runtime_mode,
                                 route=route_for_execution,
@@ -477,6 +597,12 @@ class StartupOrchestrator:
                             requirements[context.name] = req_result
                             services.update(project_services)
                             started_contexts.append(context)
+                            self._render_project_startup_warnings(
+                                context=context,
+                                warnings=project_warnings,
+                                route=route_for_execution,
+                                project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                            )
             except RuntimeError as exc:
                 if use_single_spinner:
                     active_spinner.fail("Startup failed")
@@ -512,7 +638,7 @@ class StartupOrchestrator:
                         "command": route.command,
                         "failed": True,
                         "repo_scope_id": rt.config.runtime_scope_id,
-                        "project_roots": {context.name: str(context.root) for context in project_contexts},
+                        "project_roots": {context.name: str(context.root) for context in selected_project_contexts},
                     },
                 )
                 failed_run_dir = rt._run_dir_path(run_id)
@@ -525,7 +651,7 @@ class StartupOrchestrator:
                     "shell_prune_report": str(failed_run_dir / "shell_prune_report.json"),
                 }
                 artifacts_started = time.monotonic()
-                rt._write_artifacts(run_state, started_contexts, errors=errors)
+                rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
                 emit_phase("artifacts_write", artifacts_started, status="error")
                 print(error)
                 return 1
@@ -558,7 +684,7 @@ class StartupOrchestrator:
             metadata={
                 "command": route.command,
                 "repo_scope_id": rt.config.runtime_scope_id,
-                "project_roots": {context.name: str(context.root) for context in project_contexts},
+                "project_roots": {context.name: str(context.root) for context in selected_project_contexts},
             },
         )
         run_dir = rt._run_dir_path(run_id)
@@ -602,15 +728,15 @@ class StartupOrchestrator:
                 rt._terminate_started_services(services)
                 port_allocator.release_session()
                 artifacts_started = time.monotonic()
-                rt._write_artifacts(run_state, project_contexts, errors=errors)
+                rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
                 emit_phase("artifacts_write", artifacts_started, status="error")
                 print(error)
                 return 1
 
         artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, project_contexts, errors=errors)
+        rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
         emit_phase("artifacts_write", artifacts_started, status="ok")
-        if self._requirements_timing_enabled(route) and not self._suppress_timing_output(route):
+        if _requirements_timing_enabled_impl(self, route) and not self._suppress_timing_output(route):
             rt._emit(
                 "startup.debug_tty_group",
                 component="startup_orchestrator",
@@ -619,8 +745,9 @@ class StartupOrchestrator:
                 enabled=True,
                 detail="startup_branch",
             )
-            self._print_startup_summary(
-                project_contexts=project_contexts,
+            print_startup_summary_impl(
+                self,
+                project_contexts=selected_project_contexts,
                 start_event_index=startup_event_index,
                 startup_started_at=startup_started_at,
             )
@@ -633,13 +760,13 @@ class StartupOrchestrator:
                 enabled=False,
                 detail="startup_branch",
             )
-        if self._startup_breakdown_enabled(route):
+        if _startup_breakdown_enabled_impl(self, route):
             rt._emit(
                 "startup.breakdown",
                 command=requested_command,
                 mode=runtime_mode,
-                project_count=len(project_contexts),
-                projects=[context.name for context in project_contexts],
+                project_count=len(selected_project_contexts),
+                projects=[context.name for context in selected_project_contexts],
                 total_ms=round((time.monotonic() - startup_started_at) * 1000.0, 2),
             )
         rt._emit(
@@ -652,7 +779,7 @@ class StartupOrchestrator:
         )
         if not self._suppress_progress_output(route):
             if not use_project_spinner_group:
-                rt._print_summary(run_state, project_contexts)
+                rt._print_summary(run_state, selected_project_contexts)
         else:
             rt._emit("ui.status", message="Startup complete; refreshing dashboard...")  # type: ignore[attr-defined]
         emit_snapshot(
@@ -667,29 +794,95 @@ class StartupOrchestrator:
             return rt._run_interactive_dashboard_loop(run_state)
         return 0
 
-    @staticmethod
-    def _project_ports_text(context: Any) -> str:
-        return _project_ports_text_impl(context)
+    def _build_planning_dashboard_state(
+        self,
+        *,
+        route: Route,
+        runtime_mode: str,
+        run_id: str,
+        project_contexts: list[Any],
+    ) -> RunState:
+        rt: Any = self.runtime
+        run_state = RunState(
+            run_id=run_id,
+            mode=runtime_mode,
+            services={},
+            requirements={},
+            pointers={},
+            metadata={
+                "command": route.command,
+                "repo_scope_id": rt.config.runtime_scope_id,
+                "project_roots": {context.name: str(context.root) for context in project_contexts},
+                "dashboard_configured_service_types": self._configured_service_types_for_mode(runtime_mode),
+                "dashboard_hidden_commands": [
+                    "stop",
+                    "restart",
+                    "stop-all",
+                    "blast-all",
+                    "logs",
+                    "clear-logs",
+                    "health",
+                    "errors",
+                ],
+                "dashboard_runs_disabled": True,
+                "dashboard_banner": f"envctl runs are disabled for {runtime_mode}; planning and action commands remain available.",
+            },
+        )
+        run_dir = rt._run_dir_path(run_id)
+        run_state.pointers = {
+            "run_state": str(run_dir / "run_state.json"),
+            "runtime_map": str(run_dir / "runtime_map.json"),
+            "ports_manifest": str(run_dir / "ports_manifest.json"),
+            "error_report": str(run_dir / "error_report.json"),
+            "events": str(run_dir / "events.jsonl"),
+            "shell_prune_report": str(run_dir / "shell_prune_report.json"),
+        }
+        return run_state
 
-    @staticmethod
-    def _state_project_names(*, runtime: Any, state: RunState) -> set[str]:
-        return _state_project_names_impl(runtime=runtime, state=state)
+    def _configured_service_types_for_mode(self, runtime_mode: str) -> list[str]:
+        rt: Any = self.runtime
+        if hasattr(rt.config, "profile_for_mode"):
+            profile = rt.config.profile_for_mode(runtime_mode)
+            configured: list[str] = []
+            if bool(getattr(profile, "backend_enable", False)):
+                configured.append("backend")
+            if bool(getattr(profile, "frontend_enable", False)):
+                configured.append("frontend")
+            return configured
+        return [
+            service_name
+            for service_name, enabled in (
+                ("backend", rt.config.service_enabled_for_mode(runtime_mode, "backend")),
+                ("frontend", rt.config.service_enabled_for_mode(runtime_mode, "frontend")),
+            )
+            if enabled
+        ]
 
-    def _state_matches_selected_projects(self, *, runtime: Any, state: RunState, contexts: list[Any]) -> bool:
-        return _state_matches_selected_projects_impl(self, runtime=runtime, state=state, contexts=contexts)
-
-    def _state_covers_selected_projects(self, *, runtime: Any, state: RunState, contexts: list[Any]) -> bool:
-        return _state_covers_selected_projects_impl(self, runtime=runtime, state=state, contexts=contexts)
-
-    @staticmethod
-    def _route_explicit_trees_mode(route: Route) -> bool:
-        return _route_explicit_trees_mode_impl(route)
+    def _render_project_startup_warnings(
+        self,
+        *,
+        context: Any,
+        warnings: list[str],
+        route: Route,
+        project_spinner_group: Any | None,
+    ) -> None:
+        warning_lines = [str(line).strip() for line in warnings if str(line).strip()]
+        if not warning_lines:
+            return
+        rt: Any = self.runtime
+        if project_spinner_group is not None and hasattr(project_spinner_group, "print_detail"):
+            for line in warning_lines:
+                project_spinner_group.print_detail(context.name, line)
+            return
+        if self._suppress_progress_output(route):
+            for line in warning_lines:
+                rt._emit("ui.status", message=line)  # type: ignore[attr-defined]
+            return
+        for line in warning_lines:
+            print(line)
 
     def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
         return _trees_start_selection_required_impl(self, route=route, runtime_mode=runtime_mode)
-
-    def _tree_preselected_projects_from_state(self, *, runtime: Any, project_contexts: list[Any]) -> list[str]:
-        return _tree_preselected_projects_from_state_impl(self, runtime=runtime, project_contexts=project_contexts)
 
     def _select_start_tree_projects(self, *, route: Route, project_contexts: list[Any]) -> list[Any]:
         return _select_start_tree_projects_impl(self, route=route, project_contexts=project_contexts)
@@ -698,22 +891,6 @@ class StartupOrchestrator:
     def _restart_include_requirements(route: Route) -> bool:
         return _restart_include_requirements_impl(route)
 
-    @staticmethod
-    def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
-        return _restart_selected_services_impl(state=state, route=route)
-
-    @staticmethod
-    def _restart_target_projects(*, state: RunState, route: Route, runtime: Any) -> set[str]:
-        return _restart_target_projects_impl(state=state, route=route, runtime=runtime)
-
-    @staticmethod
-    def _restart_target_projects_for_selected_services(*, selected_services: set[str], state: RunState, runtime: Any) -> set[str]:
-        return _restart_target_projects_for_selected_services_impl(selected_services=selected_services, state=state, runtime=runtime)
-
-    @staticmethod
-    def _project_name_from_service_name(name: str) -> str | None:
-        return _project_name_from_service_name_impl(name)
-
     def start_project_context(
         self,
         *,
@@ -721,7 +898,7 @@ class StartupOrchestrator:
         mode: str,
         route: Route,
         run_id: str,
-    ) -> tuple[RequirementsResult, dict[str, Any]]:
+    ) -> tuple[RequirementsResult, dict[str, Any], list[str]]:
         return start_project_context_impl(self, context=context, mode=mode, route=route, run_id=run_id)
 
     def _requirements_for_restart_context(
@@ -763,37 +940,8 @@ class StartupOrchestrator:
     def _requirements_timing_enabled(self, route: Route | None) -> bool:
         return _requirements_timing_enabled_impl(self, route)
 
-    def _docker_prewarm_enabled(self, route: Route | None) -> bool:
-        return _docker_prewarm_enabled_impl(self, route)
-
-    def _docker_prewarm_timeout_seconds(self, route: Route | None) -> int:
-        return _docker_prewarm_timeout_seconds_impl(self, route)
-
-    def _prewarm_requires_startup_requirements(self, *, mode: str, route: Route | None) -> bool:
-        return _prewarm_requires_startup_requirements_impl(self, mode=mode, route=route)
-
     def _maybe_prewarm_docker(self, *, route: Route | None, mode: str) -> None:
         return _maybe_prewarm_docker_impl(self, route=route, mode=mode)
-
-    def _startup_breakdown_enabled(self, route: Route | None) -> bool:
-        return _startup_breakdown_enabled_impl(self, route)
-
-    def _print_startup_summary(
-        self,
-        *,
-        project_contexts: list[Any],
-        start_event_index: int,
-        startup_started_at: float,
-    ) -> None:
-        return print_startup_summary_impl(
-            self,
-            project_contexts=project_contexts,
-            start_event_index=start_event_index,
-            startup_started_at=startup_started_at,
-        )
-
-    def _service_attach_parallel_enabled(self, *, route: Route | None, selected_service_types: set[str]) -> bool:
-        return _service_attach_parallel_enabled_impl(self, route=route, selected_service_types=selected_service_types)
 
     def start_project_services(
         self,
@@ -813,10 +961,6 @@ class StartupOrchestrator:
         default_service_types: set[str] | None = None,
     ) -> set[str]:
         return _restart_service_types_for_project_impl(route=route, project_name=project_name, default_service_types=default_service_types)
-
-    @staticmethod
-    def _port_allocator(runtime: Any) -> Any:
-        return _port_allocator_impl(runtime)
 
     @staticmethod
     def _process_runtime(runtime: Any) -> Any:

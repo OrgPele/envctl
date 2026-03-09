@@ -33,6 +33,7 @@ class BaseProjectSpinnerGroup:
         self._stream = sys.stderr
         self._lock = threading.Lock()
         self._progress: Any = None
+        self._console: Any = None
         self._tasks: dict[str, Any] = {}
         self._last_line_by_project: dict[str, str] = {}
 
@@ -68,6 +69,7 @@ class BaseProjectSpinnerGroup:
                 no_color=not colors_enabled(self._env, stream=self._stream, interactive_tty=True),
                 force_terminal=self._stream.isatty(),
             )
+            self._console = console
             self._progress = progress_cls(
                 _PerTaskSpinnerColumn(spinner_name=self._style, finished_text=" "),
                 text_column_cls("{task.description}"),
@@ -92,6 +94,7 @@ class BaseProjectSpinnerGroup:
                 except Exception:
                     pass
                 self._progress = None
+                self._console = None
             self._emit_lifecycle("stop")
         return False
 
@@ -187,3 +190,22 @@ class BaseProjectSpinnerGroup:
                 self._progress.stop_task(task_id)
             except Exception:
                 return
+
+    def print_detail(self, project: str, message: str) -> None:
+        project_name = str(project).strip()
+        detail = str(message).strip()
+        if not project_name or not detail:
+            return
+        self._emit_lifecycle("detail", detail, project=project_name)
+        with self._lock:
+            console = self._console
+        if console is not None:
+            try:
+                console.print(f"  {detail}")
+                return
+            except Exception:
+                pass
+        try:
+            print(f"  {detail}", file=self._stream)
+        except Exception:
+            return

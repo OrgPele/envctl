@@ -7,91 +7,64 @@
 # Core
 # ==========================================
 
-# Global kill switch for default built-in infrastructure.
-# When true, PostgreSQL + Redis startup is skipped.
-ENVCTL_SKIP_DEFAULT_INFRASTRUCTURE=false
-
 # Default startup mode when no mode flag is passed.
 # Allowed: main | trees
-ENVCTL_DEFAULT_MODE="main"
+ENVCTL_DEFAULT_MODE=main
 
 # Planning root directory for --plan / --sequential-plan / --planning-prs.
-# Can be repo-relative (recommended) or absolute.
-ENVCTL_PLANNING_DIR="docs/planning"
+ENVCTL_PLANNING_DIR=docs/planning
 
 # ==========================================
-# Database (PostgreSQL / Supabase)
+# Service discovery and ports
 # ==========================================
 
-# Canonical Python-runtime toggles.
-# Main mode uses the repo root environment.
-# Trees mode applies to plan/worktree environments.
-MAIN_POSTGRES_ENABLE=true
-TREES_POSTGRES_ENABLE=true
+# Repo-relative directories used for backend/frontend auto-discovery.
+BACKEND_DIR=backend
+FRONTEND_DIR=frontend
+
+# Base ports used for the main project slot.
+BACKEND_PORT_BASE=8000
+FRONTEND_PORT_BASE=9000
+
+# Spacing between project slots in trees mode.
+PORT_SPACING=20
+
+# ==========================================
+# Dependency base ports
+# ==========================================
+
 DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=postgres
-
-# Supabase mode (opt-in). Supabase includes its own PostgreSQL stack.
-# Use this when you want Supabase services instead of plain PostgreSQL.
-MAIN_SUPABASE_ENABLE=false
-TREES_SUPABASE_ENABLE=false
-
-# ==========================================
-# Redis
-# ==========================================
-
-# Canonical per-mode Redis toggles.
-MAIN_REDIS_ENABLE=true
-TREES_REDIS_ENABLE=true
-
-# Redis base port.
 REDIS_PORT=6379
-
-# ==========================================
-# n8n
-# ==========================================
-
-# Canonical per-mode n8n toggles.
-MAIN_N8N_ENABLE=false
-TREES_N8N_ENABLE=true
-
-# n8n base port.
 N8N_PORT_BASE=5678
 
 # ==========================================
-# Backend Auto-Discovery
+# Main mode startup profile
 # ==========================================
 
-# Used only when no explicit ENVCTL_SERVICE_<N> entries are defined.
-BACKEND_DIR_NAME="backend"
-RUN_BACKEND=true
-BACKEND_PORT_BASE=8000
+# Master switch for whether main mode auto-starts anything at all.
+MAIN_STARTUP_ENABLE=true
+MAIN_BACKEND_ENABLE=true
+MAIN_FRONTEND_ENABLE=true
+MAIN_POSTGRES_ENABLE=true
+MAIN_REDIS_ENABLE=true
+MAIN_SUPABASE_ENABLE=false
+MAIN_N8N_ENABLE=false
 
 # ==========================================
-# Frontend Auto-Discovery
+# Trees mode startup profile
 # ==========================================
 
-# Used only when no explicit ENVCTL_SERVICE_<N> entries are defined.
-FRONTEND_DIR_NAME="frontend"
-RUN_FRONTEND=true
-FRONTEND_PORT_BASE=9000
+# Master switch for whether trees mode auto-starts anything at all.
+TREES_STARTUP_ENABLE=true
+TREES_BACKEND_ENABLE=true
+TREES_FRONTEND_ENABLE=true
+TREES_POSTGRES_ENABLE=true
+TREES_REDIS_ENABLE=true
+TREES_SUPABASE_ENABLE=false
+TREES_N8N_ENABLE=true
 
-# ==========================================
-# Explicit Services
-# ==========================================
-
-# If any ENVCTL_SERVICE_<N> entry is defined, backend/frontend auto-discovery
-# is disabled and only the declared services are started.
-#
-# Format:
-#   "DisplayName | DirectoryPath | ServiceType | Port | BackendPort | LogDirectory"
-#
-# ServiceType: backend | frontend
-#
-# Backend services
-# ENVCTL_SERVICE_1="API Server | backend  | backend  | 8000 |      | logs/api"
-#
-# Frontend services
-# ENVCTL_SERVICE_2="Web App    | frontend | frontend | 3000 | 8000 | logs/web"
+# Notes:
+# - `.envctl` is the canonical repo-local config file.
+# - The interactive `envctl config` wizard writes these canonical managed keys.
+# - If a mode has `*_STARTUP_ENABLE=false`, `start`, `resume`, and `restart`
+#   for that mode are blocked until you re-enable startup.

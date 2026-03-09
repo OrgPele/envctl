@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import nullcontext
+import inspect
+from pathlib import Path
 import sys
 import threading
 import time
@@ -9,6 +11,33 @@ from typing import Any, Callable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.symbols import format_duration
+
+
+def _render_command(command: list[str]) -> str:
+    return " ".join(str(part) for part in command)
+
+
+def _summarize_failure_output(*, stdout: object, stderr: object, returncode: int) -> str:
+    chunks: list[str] = []
+    for raw in (stderr, stdout):
+        if not isinstance(raw, str):
+            continue
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if stripped:
+                chunks.append(stripped)
+        if chunks:
+            break
+    if not chunks:
+        return f"exit:{returncode}"
+    snippet = " | ".join(chunks[:3])
+    if len(chunks) > 3:
+        snippet += f" | +{len(chunks) - 3} more lines"
+    return snippet
+
+
+def _format_live_progress_status(label: str, current: int, total: int) -> str:
+    return f"Running {label}... {current}/{total} tests complete"
 
 
 def run_test_action(
@@ -201,6 +230,22 @@ def run_test_action(
                 suite_text = orchestrator._colorize(started_label, fg="cyan", bold=True)
                 state_text = orchestrator._colorize("started", fg="blue")
                 print(f"  - {index_text} {suite_text} {state_text}")
+                command_text = orchestrator._colorize(_render_command([*spec.command, *args]), fg="gray")
+                cwd_text = orchestrator._colorize(str(Path(spec.cwd).resolve()), fg="gray")
+                print(f"      command: {command_text}")
+                print(f"      cwd: {cwd_text}")
+        progress_status: dict[str, tuple[int, int] | None] = {"last": None}
+
+        def emit_live_progress(current: int, total: int) -> None:
+            if total <= 0:
+                return
+            snapshot = (current, total)
+            if progress_status["last"] == snapshot:
+                return
+            progress_status["last"] = snapshot
+            live_label = f"{project_name} / {suite_label}" if multi_project else suite_label
+            orchestrator._emit_status(_format_live_progress_status(live_label, current, total))
+
         if parallel:
             with progress_lock:
                 progress_state["queued"] = max(0, int(progress_state["queued"]) - 1)
@@ -248,14 +293,25 @@ def run_test_action(
 
         completed = runner.run_tests(
             command,
-            cwd=spec.cwd,
-            env=env,
-            timeout=300.0,
+            **(
+                {
+                    "cwd": spec.cwd,
+                    "env": env,
+                    "timeout": 300.0,
+                    **(
+                        {"progress_callback": emit_live_progress}
+                        if interactive_command
+                        and "progress_callback" in inspect.signature(runner.run_tests).parameters
+                        else {}
+                    ),
+                }
+            ),
         )
         parsed = runner.last_result
         if parsed is not None:
+            counts_detected = bool(getattr(parsed, "counts_detected", False))
             if not (interactive_command and parallel and multi_project):
-                if parsed.total > 0:
+                if counts_detected:
                     orchestrator._emit_status(
                         f"{project_name} / {spec.source} summary: "
                         f"{parsed.passed} passed, {parsed.failed} failed, {parsed.skipped} skipped"
@@ -280,7 +336,8 @@ def run_test_action(
             suite_status = "passed" if completed.returncode == 0 else "failed"
             finished_label = f"{project_name} / {suite_label}" if multi_project else suite_label
             counts_suffix = ""
-            if parsed is not None and parsed.total > 0:
+            counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
+            if parsed is not None and counts_detected:
                 counts_suffix = f" • {parsed.passed} passed, {parsed.failed} failed, {parsed.skipped} skipped"
             icon = orchestrator._colorize("✓", fg="green", bold=True) if completed.returncode == 0 else orchestrator._colorize("✗", fg="red", bold=True)
             index_text = orchestrator._colorize(f"[{index}/{len(execution_specs)}]", fg="yellow")
@@ -294,6 +351,17 @@ def run_test_action(
                 f"  - {icon} {index_text} {suite_text} {status_text} "
                 f"({format_duration(duration_ms / 1000.0)}){counts_suffix}"
             )
+            if completed.returncode != 0:
+                failure_excerpt = _summarize_failure_output(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                    returncode=int(getattr(completed, "returncode", 1)),
+                )
+                print(f"      failure: {orchestrator._colorize(failure_excerpt, fg='red')}")
+            elif parsed is not None and not counts_detected:
+                print(
+                    "      note: test command completed, but envctl could not extract test counts from the output."
+                )
         suite_outcomes.append(
             {
                 "suite": spec.source,
@@ -342,7 +410,11 @@ def run_test_action(
                     emit_parallel_progress_status(phase="completed", execution=execution)
 
         if completed.returncode != 0:
-            error = (completed.stderr or completed.stdout or f"exit:{completed.returncode}").strip()
+            error = _summarize_failure_output(
+                stdout=getattr(completed, "stdout", ""),
+                stderr=getattr(completed, "stderr", ""),
+                returncode=int(getattr(completed, "returncode", 1)),
+            )
             return 1, error
         return 0, ""
 

@@ -36,7 +36,7 @@ class ShellOwnershipLedgerTests(unittest.TestCase):
         self.assertEqual(result.missing_python_complete_commands, [])
 
     def test_repository_ledger_matches_generator_for_command_mappings(self) -> None:
-        ledger_path = REPO_ROOT / "docs" / "planning" / "refactoring" / "envctl-shell-ownership-ledger.json"
+        ledger_path = REPO_ROOT / "contracts" / "envctl-shell-ownership-ledger.json"
         payload = json.loads(ledger_path.read_text(encoding="utf-8"))
         completed = subprocess.run(
             [

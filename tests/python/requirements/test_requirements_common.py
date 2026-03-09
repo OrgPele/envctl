@@ -10,7 +10,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from envctl_engine.requirements.common import container_host_port
+from envctl_engine.requirements.common import build_container_name, container_host_port
 
 
 class _Runner:
@@ -33,6 +33,29 @@ class _Runner:
 
 
 class RequirementsCommonTests(unittest.TestCase):
+    def test_build_container_name_preserves_digest_for_long_names(self) -> None:
+        root = Path("/tmp/repo-a")
+        name = build_container_name(
+            prefix="envctl-supabase",
+            project_root=root,
+            project_name="implementations_hebrew_rtl_full_app_localization_100_percent_gap_closure-1",
+        )
+        self.assertLessEqual(len(name), 63)
+        self.assertRegex(name, r"-[0-9a-f]{8}$")
+
+    def test_build_container_name_distinguishes_long_similar_names(self) -> None:
+        name_a = build_container_name(
+            prefix="envctl-supabase",
+            project_root=Path("/tmp/repo-a"),
+            project_name="implementations_hebrew_rtl_full_app_localization_plan-1",
+        )
+        name_b = build_container_name(
+            prefix="envctl-supabase",
+            project_root=Path("/tmp/repo-b"),
+            project_name="implementations_hebrew_rtl_full_app_localization_100_percent_gap_closure-1",
+        )
+        self.assertNotEqual(name_a, name_b)
+
     def test_container_host_port_uses_inspect_fallback_for_stopped_container(self) -> None:
         runner = _Runner()
         mapped_port, error = container_host_port(

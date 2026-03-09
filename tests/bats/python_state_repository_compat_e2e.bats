@@ -7,7 +7,7 @@ setup() {
 
 @test "state repository compatibility contract stays green" {
   [ -x "$PYTHON_BIN" ] || skip "project venv python not found"
-  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/test_state_repository_contract.py tests/python/test_state_shell_compatibility.py' _ "$REPO_ROOT" "$PYTHON_BIN"
+  run bash -lc 'PYTHONPATH="$1/python" "$2" -m unittest tests/python/state/test_state_repository_contract.py tests/python/state/test_state_shell_compatibility.py' _ "$REPO_ROOT" "$PYTHON_BIN"
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK"* ]]
 }

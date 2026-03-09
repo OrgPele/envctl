@@ -96,6 +96,7 @@ class PytestOutputParser(TestOutputParser):
         duration_match = re.search(r"(\d+\.\d+)s", line)
         if duration_match:
             self.result.duration = float(duration_match.group(1))
+        self.result.counts_detected = True
 
         # Extract counts
         passed_match = re.search(r"(\d+)\s+passed", line)

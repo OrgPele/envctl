@@ -10,6 +10,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.startup.startup_selection_support import _port_allocator as _port_allocator_impl
 
 
 def format_requirements_progress_message(*, active: set[str], pending: set[str]) -> str:
@@ -31,7 +32,7 @@ def start_project_context(orchestrator,
     mode: str,
     route: Route,
     run_id: str,
-) -> tuple[RequirementsResult, dict[str, Any]]:
+) -> tuple[RequirementsResult, dict[str, Any], list[str]]:
     rt: Any = orchestrator.runtime
     orchestrator._report_progress(route, f"Starting project {context.name}...", project=context.name)
     rt._reserve_project_ports(context)  # type: ignore[attr-defined]
@@ -68,7 +69,9 @@ def start_project_context(orchestrator,
         f"backend={context.ports['backend'].final} frontend={context.ports['frontend'].final}",
         project=context.name,
     )
-    return requirements, project_services
+    consume_warnings = getattr(rt, "_consume_project_startup_warnings", None)
+    project_warnings = consume_warnings(context.name) if callable(consume_warnings) else []
+    return requirements, project_services, list(project_warnings)
 
 
 def _synthetic_requirements_result(rt: Any, *, context: Any, mode: str, route: Route | None) -> RequirementsResult:
@@ -253,9 +256,9 @@ def start_requirements_for_project(orchestrator,
     route: Route | None = None,
 ) -> RequirementsResult:
     rt: Any = orchestrator.runtime
-    port_allocator = orchestrator._port_allocator(rt)
+    port_allocator = _port_allocator_impl(rt)
     failures: list[str] = []
-    timing_enabled = orchestrator._requirements_timing_enabled(route)
+    timing_enabled = _requirements_timing_enabled(orchestrator, route)
     requirements_started = time.monotonic()
     component_timings_ms: dict[str, float] = {}
     definitions = dependency_definitions()
@@ -469,16 +472,16 @@ def _prewarm_requires_startup_requirements(orchestrator, *, mode: str, route: Ro
 
 def _maybe_prewarm_docker(orchestrator, *, route: Route | None, mode: str) -> None:
     rt: Any = orchestrator.runtime
-    if not orchestrator._docker_prewarm_enabled(route):
+    if not _docker_prewarm_enabled(orchestrator, route):
         rt._emit("requirements.docker_prewarm", used=False, reason="disabled")
         return
-    if not orchestrator._prewarm_requires_startup_requirements(mode=mode, route=route):
+    if not _prewarm_requires_startup_requirements(orchestrator, mode=mode, route=route):
         rt._emit("requirements.docker_prewarm", used=False, reason="no_enabled_requirements")
         return
     if not rt._command_exists("docker"):  # type: ignore[attr-defined]
         rt._emit("requirements.docker_prewarm", used=False, reason="docker_missing")
         return
-    timeout_s = orchestrator._docker_prewarm_timeout_seconds(route)
+    timeout_s = _docker_prewarm_timeout_seconds(orchestrator, route)
     started = time.monotonic()
     result = rt.process_runner.run(["docker", "ps"], timeout=float(timeout_s))  # type: ignore[attr-defined]
     duration_ms = round((time.monotonic() - started) * 1000.0, 2)
@@ -526,7 +529,7 @@ def start_project_services(orchestrator,
     route: Route | None = None,
 ) -> dict[str, Any]:
     rt: Any = orchestrator.runtime
-    port_allocator = orchestrator._port_allocator(rt)
+    port_allocator = _port_allocator_impl(rt)
     process_runtime = orchestrator._process_runtime(rt)
     effective_mode = str(route.mode if route is not None else "main").strip().lower() or "main"
     backend_plan = context.ports["backend"]
@@ -653,6 +656,30 @@ def start_project_services(orchestrator,
     def reserve_next(port: int) -> int:
         return port_allocator.reserve_next(port, owner=f"{context.name}:services")  # type: ignore[attr-defined]
 
+    def start_process(
+        command: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        log_path: Path,
+    ):
+        start_background = getattr(process_runtime, "start_background", None)
+        if callable(start_background):
+            return start_background(
+                command,
+                cwd=cwd,
+                env=env,
+                stdout_path=log_path,
+                stderr_path=log_path,
+            )
+        return process_runtime.start(  # type: ignore[attr-defined]
+            command,
+            cwd=cwd,
+            env=env,
+            stdout_path=log_path,
+            stderr_path=log_path,
+        )
+
     def start_backend(port: int) -> tuple[bool, str | None, int | None]:
         remaining = rt._conflict_remaining.get("backend", 0)  # type: ignore[attr-defined]
         if remaining > 0:
@@ -673,12 +700,11 @@ def start_project_services(orchestrator,
             duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
         )
         launch_started = time.monotonic()
-        process = process_runtime.start_background(  # type: ignore[attr-defined]
+        process = start_process(
             command,
             cwd=backend_cwd,
             env=rt._command_env(port=port, extra=backend_env_extra),  # type: ignore[attr-defined]
-            stdout_path=backend_log_path,
-            stderr_path=backend_log_path,
+            log_path=backend_log_path,
         )
         rt._emit(  # type: ignore[attr-defined]
             "service.attach.phase",
@@ -716,12 +742,11 @@ def start_project_services(orchestrator,
             duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
         )
         launch_started = time.monotonic()
-        process = process_runtime.start_background(  # type: ignore[attr-defined]
+        process = start_process(
             command,
             cwd=frontend_cwd,
             env=rt._command_env(port=launch_port, extra=frontend_env_extra),  # type: ignore[attr-defined]
-            stdout_path=frontend_log_path,
-            stderr_path=frontend_log_path,
+            log_path=frontend_log_path,
         )
         rt._emit(  # type: ignore[attr-defined]
             "service.attach.phase",
@@ -856,7 +881,8 @@ def start_project_services(orchestrator,
             error=(error or "").strip() or None,
         )
 
-    attach_parallel = orchestrator._service_attach_parallel_enabled(
+    attach_parallel = _service_attach_parallel_enabled(
+        orchestrator,
         route=route,
         selected_service_types=selected_service_types,
     )
@@ -886,7 +912,8 @@ def start_project_services(orchestrator,
             synthetic=False,
         )
 
-    attach_parallel = orchestrator._service_attach_parallel_enabled(
+    attach_parallel = _service_attach_parallel_enabled(
+        orchestrator,
         route=route,
         selected_service_types=selected_service_types,
     )
@@ -896,7 +923,7 @@ def start_project_services(orchestrator,
         mode="parallel" if attach_parallel else "sequential",
         selected_service_types=sorted(selected_service_types),
     )
-    if orchestrator._requirements_timing_enabled(route) and not orchestrator._suppress_timing_output(route):
+    if _requirements_timing_enabled(orchestrator, route) and not orchestrator._suppress_timing_output(route):
         print(
             "Service attach execution for "
             f"{context.name}: "
@@ -963,7 +990,7 @@ def start_project_services(orchestrator,
             "start_project_with_attach": attach_duration_ms,
         },
     )
-    if orchestrator._requirements_timing_enabled(route) and not orchestrator._suppress_timing_output(route):
+    if _requirements_timing_enabled(orchestrator, route) and not orchestrator._suppress_timing_output(route):
         timing_parts: list[str] = []
         if "backend" in selected_service_types:
             timing_parts.append(f"prepare_backend_runtime={prepare_backend_duration_ms:.1f}ms")

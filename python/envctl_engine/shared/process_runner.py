@@ -82,6 +82,7 @@ class ProcessRunner:
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        stdin: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = list(cmd)
         process: subprocess.Popen[str] | None = None
@@ -93,6 +94,7 @@ class ProcessRunner:
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=stdin,
                 start_new_session=True,
             )
             stdout, stderr = process.communicate(timeout=timeout)
@@ -147,6 +149,8 @@ class ProcessRunner:
         timeout: float | None = None,
         callback: Callable[[str], None] | None = None,
         show_spinner: bool = True,
+        echo_output: bool = True,
+        stdin: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run command with real-time streaming output and optional callback.
         
@@ -178,6 +182,8 @@ class ProcessRunner:
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
+                    stdin=stdin,
+                    start_new_session=True,
                 )
 
                 if process.stdout is None:
@@ -220,8 +226,10 @@ class ProcessRunner:
                             callback(line_stripped)
                         except Exception:
                             pass
-                        print(line_stripped)
+                        if echo_output:
+                            print(line_stripped)
 
+                process.stdout.close()
                 returncode = process.wait()
                 if enabled:
                     if returncode == 0:

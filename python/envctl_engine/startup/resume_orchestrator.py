@@ -44,7 +44,7 @@ class ResumeOrchestrator:
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
-        state_repository = self._state_repository(rt)
+        state_repository = _state_repository_impl(rt)
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "resume.phase",
@@ -208,53 +208,6 @@ class ResumeOrchestrator:
             project_spinner_group_cls=_ResumeProjectSpinnerGroup,
         )
 
-    @staticmethod
-    def _round_ms(value_seconds: float) -> float:
-        return _round_ms_impl(value_seconds)
-
-    @staticmethod
-    def _format_project_timing_line(project: str, steps: Mapping[str, float], total_ms: float) -> str:
-        return _format_project_timing_line_impl(project, steps, total_ms)
-
-    def _restore_parallel_config(
-        self,
-        *,
-        route: Route | None,
-        mode: str,
-        project_count: int,
-    ) -> tuple[bool, int]:
-        return _restore_parallel_config_impl(self, route=route, mode=mode, project_count=project_count)
-
-    def _restore_timing_enabled(self, route: Route | None) -> bool:
-        return _restore_timing_enabled_impl(self, route)
-
-    def _requirements_reuse_decision(
-        self,
-        rt: Any,
-        *,
-        project: str,
-        requirements: RequirementsResult | None,
-        project_root: Path | None = None,
-    ) -> tuple[bool, str]:
-        return _requirements_reuse_decision_impl(
-            self,
-            rt,
-            project=project,
-            requirements=requirements,
-            project_root=project_root,
-        )
-
-    def _resume_terminate_aggressive(self, rt: Any) -> bool:
-        return _resume_terminate_aggressive_impl(self, rt)
-
-    def _reserve_application_service_ports(
-        self,
-        rt: Any,
-        context: object,
-        port_allocator: _PortAllocatorProtocol,
-    ) -> None:
-        return _reserve_application_service_ports_impl(self, rt, context, port_allocator)
-
     def context_for_project(self, state: RunState, project: str) -> object | None:
         return context_for_project_impl(self, state, project)
 
@@ -263,11 +216,3 @@ class ResumeOrchestrator:
 
     def apply_ports_to_context(self, context: object, state: RunState) -> None:
         return apply_ports_to_context_impl(self, context, state)
-
-    @staticmethod
-    def _state_repository(runtime: object) -> _StateRepositoryProtocol:
-        return _state_repository_impl(runtime)
-
-    @staticmethod
-    def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
-        return _port_allocator_impl(runtime)

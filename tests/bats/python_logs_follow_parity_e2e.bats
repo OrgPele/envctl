@@ -11,17 +11,19 @@ setup() {
 
   run bash -lc '
     set -euo pipefail
+    unset ENVCTL_CONFIG_FILE ENVCTL_DEFAULT_MODE ENVCTL_ENGINE_PYTHON_V1 ENVCTL_ENGINE_SHELL_FALLBACK ENVCTL_FORCE_BATCH RUN_REPO_ROOT RUN_SH_RUNTIME_DIR PYTHONPATH PYTHON_BIN
     repo_tmp=$(mktemp -d)
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     log_path="$repo_tmp/backend.log"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" > "$repo/.envctl"
     printf "old-line\n\033[31mnew-line\033[0m plain\n" > "$log_path"
 
     RUN_REPO_ROOT="$repo" RUN_SH_RUNTIME_DIR="$runtime" LOG_PATH="$log_path" PYTHONPATH="$3/python" "$1" - <<'\''PY'\''
 from envctl_engine.config import load_config
-from envctl_engine.engine_runtime import PythonEngineRuntime
-from envctl_engine.models import RunState, ServiceRecord
+from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state import dump_state
 import os
 
@@ -68,17 +70,19 @@ PY
 
   run bash -lc '
     set -euo pipefail
+    unset ENVCTL_CONFIG_FILE ENVCTL_DEFAULT_MODE ENVCTL_ENGINE_PYTHON_V1 ENVCTL_ENGINE_SHELL_FALLBACK ENVCTL_FORCE_BATCH RUN_REPO_ROOT RUN_SH_RUNTIME_DIR PYTHONPATH PYTHON_BIN
     repo_tmp=$(mktemp -d)
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     log_path="$repo_tmp/backend.log"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" > "$repo/.envctl"
     printf "boot\n" > "$log_path"
 
     RUN_REPO_ROOT="$repo" RUN_SH_RUNTIME_DIR="$runtime" LOG_PATH="$log_path" PYTHONPATH="$3/python" "$1" - <<'\''PY'\''
 from envctl_engine.config import load_config
-from envctl_engine.engine_runtime import PythonEngineRuntime
-from envctl_engine.models import RunState, ServiceRecord
+from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state import dump_state
 import os
 

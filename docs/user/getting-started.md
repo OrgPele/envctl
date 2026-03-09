@@ -12,32 +12,67 @@ What this guide optimizes for:
 
 ## 1. Install
 
-From this repository:
+Recommended install paths if you want `envctl` available in every shell:
 
 ```bash
-./bin/envctl install
+# Preferred: isolated user-level CLI on your PATH
+pipx install .
+pipx ensurepath
 ```
 
-Optional:
+```bash
+# Current-user install
+python -m pip install --user .
+```
 
 ```bash
-envctl install --shell-file ~/.zshrc
-envctl install --shell-file ~/.bashrc
-envctl install --dry-run
+# System-managed install if that is how you manage Python CLIs
+python -m pip install .
+```
+
+```bash
+# VCS install from Git
+pipx install "git+https://github.com/kfiramar/envctl.git"
+python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
 ```
 
 Uninstall:
 
 ```bash
-envctl uninstall
-envctl uninstall --shell-file ~/.zshrc
+python -m pip uninstall envctl
+pipx uninstall envctl
 ```
 
 What this install flow does:
 
-- keeps `envctl` available as a global command on your machine
+- installs `envctl` as a normal command-line tool
+- makes `envctl` available across shells once your user PATH is set up
 - leaves your target repositories separate from the `envctl` source repository
 - gives you one consistent command surface across repos
+
+Important Python note:
+
+- `envctl` currently supports Python 3.12 through 3.14
+- `pipx` uses its own default interpreter, not your currently activated virtualenv
+- if `pipx` defaults to an unsupported Python, install with `--python <supported-python>`
+
+Contributor note:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+```
+
+Use editable install when you are developing `envctl` itself. That is not the primary end-user install story.
+
+Repo-clone compatibility still exists if you explicitly want the old shell-wrapper flow:
+
+```bash
+./bin/envctl install
+./bin/envctl uninstall
+```
+
+Treat that wrapper flow as compatibility-only. The primary story is the package-installed `envctl` command on your PATH.
 
 ## 2. Verify the Command Works
 
@@ -46,7 +81,7 @@ envctl --help
 envctl doctor --repo /absolute/path/to/repo
 ```
 
-If `envctl --help` works and launcher doctor can resolve a repo, the command is installed correctly.
+If `envctl --help` works and `envctl doctor --repo ...` can resolve a target repo, the command is installed correctly.
 
 ## 3. Repository Detection
 
@@ -62,14 +97,16 @@ Best default: let `envctl` create the repo-local `.envctl` for you.
 
 If `.envctl` is missing and you run a normal operational command in an interactive terminal, `envctl` opens a guided setup wizard automatically.
 
-The wizard currently walks through:
+The wizard now opens in the simple flow for first-run bootstrap:
 
 1. where `.envctl` will be written and which source is being used for prefill
-2. your default startup mode (`main` or `trees`)
-3. what should start in main mode
-4. what should start in trees mode
-5. directories and base ports
+2. whether you want the simple or advanced wizard
+3. your default run mode (`main` or `trees`)
+4. a run preset for main mode
+5. a run preset for trees mode
 6. review and save
+
+The advanced flow adds a separate run-enable step for `main` and `trees`, followed by backend/frontend toggles, dependency toggles, a directories screen, and a ports screen. The directories and ports screens only show fields for components currently enabled for envctl runs.
 
 That flow is described in more detail in [First-Run Wizard](first-run-wizard.md).
 
@@ -103,8 +140,9 @@ Important behavior from the current wizard/save path:
 
 - legacy config can be used as prefill, but `.envctl` is the canonical saved file
 - save validation blocks invalid port values or empty directories
+- each mode can now be disabled entirely with `MAIN_STARTUP_ENABLE=false` or `TREES_STARTUP_ENABLE=false`
 - save does not change already-running services until the next start or restart
-- `envctl` tries to add `.envctl` to `.git/info/exclude` on save
+- `envctl` tries to add `.envctl` and `trees/` to `.gitignore` on save
 
 Default startup mode is `main`. To change default startup to tree mode manually:
 
@@ -159,15 +197,15 @@ envctl --main --no-resume
 
 Start from planning files and run `--plan` first.
 
-1. Put plan files under `ENVCTL_PLANNING_DIR` (default: `docs/planning`).
+1. Put plan files under `ENVCTL_PLANNING_DIR` (default: `todo/plans`).
 2. Run `envctl --plan` to create/start worktrees from those plans.
 3. Use dashboard, logs, and tests to inspect and compare results.
 
 Example:
 
 ```bash
-mkdir -p docs/planning/backend
-cat > docs/planning/backend/checkout.md <<'PLAN'
+mkdir -p todo/plans/backend
+cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
 PLAN
 

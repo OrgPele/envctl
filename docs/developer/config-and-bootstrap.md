@@ -98,6 +98,11 @@ It centers around:
 - `port_defaults`
 - backend and frontend directory names
 
+Each `StartupProfile` now includes both:
+
+- a startup master switch
+- detailed service/dependency toggles
+
 That is the main developer-facing contract for config editing.
 
 ## Managed Block Semantics
@@ -119,6 +124,7 @@ If you change persistence behavior, verify round-tripping rather than only check
 
 The code now prefers canonical Python-era keys such as:
 
+- `MAIN_STARTUP_ENABLE`
 - `MAIN_POSTGRES_ENABLE`
 - `TREES_REDIS_ENABLE`
 - `MAIN_N8N_ENABLE`
@@ -198,6 +204,8 @@ These functions:
 Important design detail:
 
 - bootstrap and edit share the same wizard stack, but they are not the same policy decision
+- bootstrap defaults to the simple wizard flow
+- edit defaults to the advanced wizard flow
 
 Bootstrap failure is fatal for operational commands. Edit cancellation is not.
 
@@ -227,7 +235,8 @@ Validation in `config/persistence.py` currently enforces:
 - `default_mode` is `main` or `trees`
 - backend/frontend directory names are non-empty
 - port values are positive integers
-- profile booleans and dependency toggles are coherent enough to save
+- modes with startup enabled must still enable at least one component
+- postgres and supabase cannot both be enabled in the same mode
 
 If you add a setting with real invariants, validation should usually happen here rather than only in wizard UI code.
 

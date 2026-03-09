@@ -309,7 +309,7 @@ def select_planning_counts_textual(
 
         def _sync_run_state(self) -> None:
             run_button = self.query_one("#btn-run", Button)
-            run_button.disabled = not any(row.count > 0 for row in self._rows)
+            run_button.disabled = not any((row.count > 0) or (row.existing > 0) for row in self._rows)
 
         @staticmethod
         def _default_count(row: _PlanningRow) -> int:
@@ -380,14 +380,15 @@ def select_planning_counts_textual(
                 self.action_focus_filter()
 
         def _result(self) -> dict[str, int]:
-            return {
-                row.plan_file: int(row.count)
-                for row in self._rows
-                if row.count > 0
-            }
+            has_existing = any(row.existing > 0 for row in self._rows)
+            if has_existing:
+                return {row.plan_file: int(row.count) for row in self._rows}
+            return {row.plan_file: int(row.count) for row in self._rows if row.count > 0}
 
         def action_submit(self) -> None:
             result = self._result()
+            if not result and not any(row.existing > 0 for row in self._rows):
+                return
             _emit(emit, "ui.selection.confirm", selected_count=len(result), screen="planning_selector")
             self.exit(result)
 

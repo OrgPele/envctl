@@ -626,7 +626,7 @@ class TerminalSession:
             self._emit_backend("fallback")
             return text
         _restore_stdin_terminal_sane(emit=self._emit)
-        force_basic = self._prefer_basic_input or _force_basic_input_backend(self.env) or _prompt_toolkit_disabled(self.env)
+        force_basic = self._prefer_basic_input or _force_basic_input_backend(self.env) or prompt_toolkit_disabled(self.env)
         if force_basic:
             text = _read_command_line_basic(
                 prompt,

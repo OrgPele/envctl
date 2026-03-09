@@ -44,8 +44,10 @@ class ValidationResult:
 
 
 _BOOLEAN_KEYS = {
+    "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
     "MAIN_FRONTEND_ENABLE",
+    "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
     "TREES_FRONTEND_ENABLE",
     *managed_enable_keys(),
@@ -73,6 +75,7 @@ def managed_values_from_mapping(values: dict[str, str]) -> ManagedConfigValues:
         port_spacing=max(parse_int(values.get("PORT_SPACING"), 20), 1),
     )
     main_profile = StartupProfile(
+        startup_enable=_parse_bool_value(values.get("MAIN_STARTUP_ENABLE"), True),
         backend_enable=_parse_bool_value(values.get("MAIN_BACKEND_ENABLE"), True),
         frontend_enable=_parse_bool_value(values.get("MAIN_FRONTEND_ENABLE"), True),
         dependencies={
@@ -81,6 +84,7 @@ def managed_values_from_mapping(values: dict[str, str]) -> ManagedConfigValues:
         },
     )
     trees_profile = StartupProfile(
+        startup_enable=_parse_bool_value(values.get("TREES_STARTUP_ENABLE"), True),
         backend_enable=_parse_bool_value(values.get("TREES_BACKEND_ENABLE"), True),
         frontend_enable=_parse_bool_value(values.get("TREES_FRONTEND_ENABLE"), True),
         dependencies={
@@ -106,8 +110,10 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
         "PORT_SPACING": str(values.port_defaults.port_spacing),
+        "MAIN_STARTUP_ENABLE": _bool_text(values.main_profile.startup_enable),
         "MAIN_BACKEND_ENABLE": _bool_text(values.main_profile.backend_enable),
         "MAIN_FRONTEND_ENABLE": _bool_text(values.main_profile.frontend_enable),
+        "TREES_STARTUP_ENABLE": _bool_text(values.trees_profile.startup_enable),
         "TREES_BACKEND_ENABLE": _bool_text(values.trees_profile.backend_enable),
         "TREES_FRONTEND_ENABLE": _bool_text(values.trees_profile.frontend_enable),
     }
@@ -140,6 +146,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
         },
         "profiles": {
             "main": {
+                "startup_enabled": values.main_profile.startup_enable,
                 "backend": values.main_profile.backend_enable,
                 "frontend": values.main_profile.frontend_enable,
                 "dependencies": {
@@ -148,6 +155,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 },
             },
             "trees": {
+                "startup_enabled": values.trees_profile.startup_enable,
                 "backend": values.trees_profile.backend_enable,
                 "frontend": values.trees_profile.frontend_enable,
                 "dependencies": {
@@ -208,6 +216,8 @@ def managed_values_from_payload(
             profile = profiles.get(mode)
             if not isinstance(profile, dict):
                 continue
+            if profile.get("startup_enabled") is not None:
+                mapping[f"{mode.upper()}_STARTUP_ENABLE"] = _bool_text(bool(profile["startup_enabled"]))
             if profile.get("backend") is not None:
                 mapping[f"{mode.upper()}_BACKEND_ENABLE"] = _bool_text(bool(profile["backend"]))
             if profile.get("frontend") is not None:
@@ -250,20 +260,101 @@ def validate_managed_values(values: ManagedConfigValues) -> ValidationResult:
 
 def render_managed_block(values: ManagedConfigValues) -> str:
     rendered = managed_values_to_mapping(values)
+    defaults = managed_values_to_mapping(managed_values_from_mapping({}))
     lines = [CONFIG_MANAGED_BLOCK_START]
-    ordered_keys = ["ENVCTL_DEFAULT_MODE", "BACKEND_DIR", "FRONTEND_DIR", "BACKEND_PORT_BASE", "FRONTEND_PORT_BASE"]
-    ordered_keys.extend(key for key in MANAGED_CONFIG_KEYS if key in {"DB_PORT", "REDIS_PORT", "N8N_PORT_BASE"})
-    ordered_keys.append("PORT_SPACING")
-    ordered_keys.extend(["MAIN_BACKEND_ENABLE", "MAIN_FRONTEND_ENABLE"])
-    ordered_keys.extend(definition.enable_keys_for_mode("main")[0] for definition in dependency_definitions())
-    ordered_keys.extend(["TREES_BACKEND_ENABLE", "TREES_FRONTEND_ENABLE"])
-    ordered_keys.extend(definition.enable_keys_for_mode("trees")[0] for definition in dependency_definitions())
-    for index, key in enumerate(ordered_keys):
-        if index in {1, 7, 13}:
+    section_groups = _managed_block_sections(values=values, rendered=rendered, defaults=defaults)
+    wrote_any = False
+    for section in section_groups:
+        if not section:
+            continue
+        if wrote_any:
             lines.append("")
-        lines.append(f"{key}={rendered[key]}")
+        for key in section:
+            lines.append(f"{key}={rendered[key]}")
+        wrote_any = True
     lines.append(CONFIG_MANAGED_BLOCK_END)
     return "\n".join(lines) + "\n"
+
+
+def _managed_block_sections(
+    *,
+    values: ManagedConfigValues,
+    rendered: dict[str, str],
+    defaults: dict[str, str],
+) -> list[list[str]]:
+    def append_once(keys: list[str], key: str) -> None:
+        if key not in keys:
+            keys.append(key)
+
+    sections: list[list[str]] = []
+    sections.append(["ENVCTL_DEFAULT_MODE"])
+
+    directory_keys: list[str] = []
+    if _component_enabled_any(values, "backend") and rendered["BACKEND_DIR"] != defaults["BACKEND_DIR"]:
+        append_once(directory_keys, "BACKEND_DIR")
+    if _component_enabled_any(values, "frontend") and rendered["FRONTEND_DIR"] != defaults["FRONTEND_DIR"]:
+        append_once(directory_keys, "FRONTEND_DIR")
+    sections.append(directory_keys)
+
+    port_keys: list[str] = []
+    if _component_enabled_any(values, "backend") and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
+        append_once(port_keys, "BACKEND_PORT_BASE")
+    if _component_enabled_any(values, "frontend") and rendered["FRONTEND_PORT_BASE"] != defaults["FRONTEND_PORT_BASE"]:
+        append_once(port_keys, "FRONTEND_PORT_BASE")
+    for definition in dependency_definitions():
+        if not _dependency_enabled_any(values, definition.id):
+            continue
+        for resource in definition.resources:
+            key = resource.config_port_keys[0]
+            if rendered[key] != defaults[key]:
+                append_once(port_keys, key)
+    if port_keys and rendered["PORT_SPACING"] != defaults["PORT_SPACING"]:
+        append_once(port_keys, "PORT_SPACING")
+    sections.append(port_keys)
+
+    main_keys = _profile_keys_for_mode(mode="main", values=values, rendered=rendered, defaults=defaults)
+    trees_keys = _profile_keys_for_mode(mode="trees", values=values, rendered=rendered, defaults=defaults)
+    sections.append(main_keys)
+    sections.append(trees_keys)
+    return sections
+
+
+def _profile_keys_for_mode(
+    *,
+    mode: str,
+    values: ManagedConfigValues,
+    rendered: dict[str, str],
+    defaults: dict[str, str],
+) -> list[str]:
+    prefix = mode.upper()
+    keys: list[str] = []
+    for key in (
+        f"{prefix}_STARTUP_ENABLE",
+        f"{prefix}_BACKEND_ENABLE",
+        f"{prefix}_FRONTEND_ENABLE",
+    ):
+        if rendered[key] != defaults[key]:
+            keys.append(key)
+    for definition in dependency_definitions():
+        key = definition.enable_keys_for_mode(mode)[0]
+        if rendered[key] != defaults[key]:
+            keys.append(key)
+    return keys
+
+
+def _component_enabled_any(values: ManagedConfigValues, component: str) -> bool:
+    if component == "backend":
+        return bool(values.main_profile.backend_enable or values.trees_profile.backend_enable)
+    if component == "frontend":
+        return bool(values.main_profile.frontend_enable or values.trees_profile.frontend_enable)
+    return False
+
+
+def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> bool:
+    return bool(
+        values.main_profile.dependency_enabled(dependency_id)
+        or values.trees_profile.dependency_enabled(dependency_id)
+    )
 
 
 def merge_managed_block(existing_text: str, block_text: str) -> str:
@@ -307,21 +398,39 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
 
 
 def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
+    warnings: list[str] = []
+    gitignore_updated = False
+    exclude_updated = False
+    try:
+        gitignore_updated = _ensure_ignore_patterns(
+            Path(base_dir) / ".gitignore",
+            (CONFIG_PRIMARY_FILENAME, "trees/"),
+        )
+    except OSError as exc:
+        warnings.append(f"Could not update .gitignore: {exc}")
+
     exclude_path = Path(base_dir) / ".git" / "info" / "exclude"
     try:
         exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-        lines = [line.strip() for line in existing.splitlines()]
-        if CONFIG_PRIMARY_FILENAME in lines:
-            return False, None
-        updated = existing.rstrip("\n")
-        if updated:
-            updated += "\n"
-        updated += CONFIG_PRIMARY_FILENAME + "\n"
-        _atomic_write(exclude_path, updated)
-        return True, None
+        exclude_updated = _ensure_ignore_patterns(exclude_path, (CONFIG_PRIMARY_FILENAME,))
     except OSError as exc:
-        return False, f"Could not update .git/info/exclude: {exc}"
+        warnings.append(f"Could not update .git/info/exclude: {exc}")
+    warning_text = "; ".join(warnings) if warnings else None
+    return gitignore_updated or exclude_updated, warning_text
+
+
+def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = [line.strip() for line in existing.splitlines()]
+    missing = [pattern for pattern in patterns if pattern not in lines]
+    if not missing:
+        return False
+    updated = existing.rstrip("\n")
+    if updated:
+        updated += "\n"
+    updated += "\n".join(missing) + "\n"
+    _atomic_write(path, updated)
+    return True
 
 
 def config_review_text(*, path: Path, values: ManagedConfigValues, source_label: str, ignore_warning: str | None = None) -> str:
@@ -354,7 +463,7 @@ def _validate_profile(profile: StartupProfile, *, mode: str, errors: list[str]) 
         profile.supabase_enable,
         profile.n8n_enable,
     ]
-    if not any(enabled):
+    if profile.startup_enable and not any(enabled):
         errors.append(f"{mode} must enable at least one component.")
     if profile.postgres_enable and profile.supabase_enable:
         errors.append(f"{mode} cannot enable both postgres and supabase.")

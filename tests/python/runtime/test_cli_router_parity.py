@@ -20,6 +20,7 @@ class CliRouterParityTests(unittest.TestCase):
             "--doctor": "doctor",
             "--dashboard": "dashboard",
             "--config": "config",
+            "--init": "config",
             "--logs": "logs",
             "--clear-logs": "clear-logs",
             "--health": "health",

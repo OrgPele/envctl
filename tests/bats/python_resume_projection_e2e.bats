@@ -15,6 +15,7 @@ setup() {
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git" "$repo/trees/feature-a-1"
+    printf "ENVCTL_DEFAULT_MODE=trees\n" >"$repo/.envctl"
 
     ENVCTL_REQUIREMENTS_STRICT=false \
     ENVCTL_BACKEND_START_CMD="$1 -m http.server {port} --bind 127.0.0.1" \
@@ -27,7 +28,7 @@ setup() {
     ENVCTL_REQUIREMENTS_STRICT=false \
     ENVCTL_BACKEND_START_CMD="$1 -m http.server {port} --bind 127.0.0.1" \
     ENVCTL_FRONTEND_START_CMD="$1 -m http.server {port} --bind 127.0.0.1" \
-    RUN_SH_RUNTIME_DIR="$runtime" PYTHON_BIN="$1" "$2" --repo "$repo" restart >/tmp/envctl_restart.out
+    RUN_SH_RUNTIME_DIR="$runtime" PYTHON_BIN="$1" "$2" --repo "$repo" restart feature-a-1 >/tmp/envctl_restart.out
 
     RUNTIME_DIR="$runtime" PYTHONPATH="$3/python" "$1" - <<"PY"
 import json

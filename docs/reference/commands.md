@@ -1,19 +1,41 @@
 # Commands
 
-## Launcher Commands
+## Installation
 
-```text
-envctl [--repo <path>] [engine args...]
-envctl doctor [--repo <path>]
-envctl install [--shell-file <path>] [--dry-run]
-envctl uninstall [--shell-file <path>] [--dry-run]
-envctl --help
+Primary install paths:
+
+```bash
+pipx install .
+pipx ensurepath
+python -m pip install --user .
+python -m pip install .
+python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
 ```
 
-Launcher note:
+Primary uninstall paths:
 
-- `envctl doctor --repo ...` is a launcher-level check. It verifies repo-root resolution and engine reachability.
-- `envctl --doctor` is the Python runtime diagnostic command for the current repo.
+```bash
+python -m pip uninstall envctl
+pipx uninstall envctl
+```
+
+## Clone-Compatibility Wrapper
+
+If you are running from a clone of the `envctl` repository and explicitly want the old PATH-editing wrapper flow, use:
+
+```text
+./bin/envctl [--repo <path>] [engine args...]
+./bin/envctl doctor [--repo <path>]
+./bin/envctl install [--shell-file <path>] [--dry-run]
+./bin/envctl uninstall [--shell-file <path>] [--dry-run]
+./bin/envctl --help
+```
+
+Compatibility note:
+
+- `./bin/envctl install` and `./bin/envctl uninstall` are clone-only compatibility commands.
+- The preferred package-installed `envctl` command should already be on your PATH in every shell.
+- `envctl doctor --repo ...` works from the installed command and is the preferred verification path.
 
 ## Runtime Inspection
 

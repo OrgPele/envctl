@@ -54,8 +54,8 @@ envctl --main --no-resume
 Use this when you want multiple implementations running side by side.
 
 ```bash
-mkdir -p docs/planning/backend
-cat > docs/planning/backend/checkout.md <<'PLAN'
+mkdir -p todo/plans/backend
+cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
 PLAN
 

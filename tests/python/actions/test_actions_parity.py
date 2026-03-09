@@ -124,6 +124,112 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(any("Executing configured test command" in message for message in status_messages))
             self.assertTrue(any("Test command finished" in message for message in status_messages))
 
+    def test_interactive_root_unittest_action_prints_resolved_command_and_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(
+                returncode=0,
+                stdout="..\n----------------------------------------------------------------------\nRan 2 tests in 0.003s\n\nOK\n",
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("command: ", rendered)
+            self.assertIn("-m unittest discover -s tests -p test_*.py", rendered)
+            self.assertIn(f"cwd: {tree_root.resolve()}", rendered)
+            self.assertIn("2 passed, 0 failed, 0 skipped", rendered)
+            self.assertIn("Repository tests (unittest)", rendered)
+
+    def test_interactive_test_action_emits_live_progress_status_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            class _ProgressRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = SimpleNamespace(
+                        counts_detected=True,
+                        passed=3,
+                        failed=0,
+                        skipped=0,
+                        errors=0,
+                        total=3,
+                    )
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None, progress_callback=None):  # noqa: ANN001
+                    _ = command, cwd, env, timeout
+                    if callable(progress_callback):
+                        progress_callback(1, 3)
+                        progress_callback(3, 3)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            status_messages = [
+                str(event.get("message", ""))
+                for event in engine.events
+                if event.get("event") == "ui.status"
+            ]
+            self.assertTrue(any("1/3 tests complete" in message for message in status_messages))
+            self.assertTrue(any("3/3 tests complete" in message for message in status_messages))
+
+    def test_interactive_test_action_prints_failure_excerpt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(
+                returncode=1,
+                stdout="E\nFAILED (errors=1)\n",
+                stderr="ImportError: cannot import name 'x' from 'y'\n",
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("failure: ", rendered)
+            self.assertIn("ImportError: cannot import name 'x' from 'y'", rendered)
+
     def test_action_commands_require_explicit_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -542,12 +648,18 @@ class ActionsParityTests(unittest.TestCase):
             summary_path = project_entry.get("summary_path")
             self.assertIsInstance(summary_path, str)
             assert isinstance(summary_path, str)
+            expected_root = engine.runtime_root / "runs" / state.run_id / "test-results"
             self.assertTrue(summary_path.endswith("failed_tests_summary.txt"))
             self.assertTrue(Path(summary_path).is_file())
+            self.assertTrue(Path(summary_path).is_relative_to(expected_root))
             summary_text = Path(summary_path).read_text(encoding="utf-8")
             self.assertIn("backend/tests/test_auth.py::test_signup_regression", summary_text)
             self.assertIn("AssertionError: expected 201, got 500", summary_text)
             self.assertEqual(project_entry.get("status"), "failed")
+            results_root = refreshed.metadata.get("project_test_results_root")
+            self.assertEqual(results_root, str(Path(summary_path).parent.parent))
+            self.assertTrue(Path(str(results_root)).is_relative_to(expected_root))
+            self.assertFalse((repo / "test-results").exists())
 
             dashboard_out = StringIO()
             with redirect_stdout(dashboard_out):
@@ -633,9 +745,51 @@ class ActionsParityTests(unittest.TestCase):
             summary_path = project_entry.get("summary_path")
             self.assertIsInstance(summary_path, str)
             assert isinstance(summary_path, str)
+            expected_root = engine.runtime_root / "runs" / state.run_id / "test-results"
+            self.assertTrue(Path(summary_path).is_relative_to(expected_root))
             text = Path(summary_path).read_text(encoding="utf-8")
             self.assertIn("No failed tests.", text)
             self.assertEqual(project_entry.get("status"), "passed")
+            self.assertEqual(
+                refreshed.metadata.get("project_test_results_root"),
+                str(Path(summary_path).parent.parent),
+            )
+            self.assertFalse((repo / "test-results").exists())
+
+    def test_test_action_skips_summary_artifacts_when_no_run_state_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult(
+                        passed=3,
+                        failed=0,
+                        skipped=0,
+                        total=3,
+                        failed_tests=[],
+                        error_details={},
+                    )
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertFalse((repo / "test-results").exists())
+            self.assertFalse((engine.runtime_root / "runs").exists())
 
     def test_test_action_uses_python_native_fallback_when_repo_has_tests_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -654,7 +808,12 @@ class ActionsParityTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue(
-                any("-m" in call[0] and "unittest" in call[0] and "discover" in call[0] for call in fake_runner.run_calls),
+                any(
+                    "-m" in call[0]
+                    and "envctl_engine.test_output.unittest_runner" in call[0]
+                    and "discover" in call[0]
+                    for call in fake_runner.run_calls
+                ),
                 msg=fake_runner.run_calls,
             )
 
@@ -665,7 +824,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
@@ -699,7 +858,7 @@ class ActionsParityTests(unittest.TestCase):
             )
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
 
@@ -720,7 +879,7 @@ class ActionsParityTests(unittest.TestCase):
             )
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
@@ -737,7 +896,8 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(fake_runner.run_calls, msg="expected test command execution")
             command = fake_runner.run_calls[0][0]
             self.assertEqual(command[:3], ("/usr/bin/python3", "-m", "pytest"))
-            self.assertTrue(str(command[3]).endswith("/backend/tests"), msg=command)
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", command)
+            self.assertTrue(any(str(part).endswith("/backend/tests") for part in command), msg=command)
 
     def test_default_test_command_uses_package_manager_test_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -763,7 +923,7 @@ class ActionsParityTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -796,7 +956,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -831,7 +991,8 @@ class ActionsParityTests(unittest.TestCase):
                 if len(command) >= 4 and command[:3] == ("/usr/bin/python3", "-m", "pytest")
             ]
             self.assertEqual(len(pytest_commands), 1)
-            self.assertTrue(str(pytest_commands[0][3]).endswith("/backend/tests"))
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", pytest_commands[0])
+            self.assertTrue(any(str(part).endswith("/backend/tests") for part in pytest_commands[0]))
             self.assertIn(repo.resolve(), cwd_set)
             self.assertIn((repo / "frontend").resolve(), cwd_set)
 
@@ -843,7 +1004,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -912,7 +1073,7 @@ class ActionsParityTests(unittest.TestCase):
             for tree in (tree_a, tree_b):
                 (tree / "backend" / "tests").mkdir(parents=True, exist_ok=True)
                 (tree / "backend" / "pyproject.toml").write_text(
-                    "[project]\nname='backend'\nversion='0.1.0'\n",
+                    "[project]\nname='backend'\nversion='1.0.0'\n",
                     encoding="utf-8",
                 )
                 (tree / "frontend").mkdir(parents=True, exist_ok=True)
@@ -990,7 +1151,7 @@ class ActionsParityTests(unittest.TestCase):
             for tree in (tree_a, tree_b):
                 (tree / "backend" / "tests").mkdir(parents=True, exist_ok=True)
                 (tree / "backend" / "pyproject.toml").write_text(
-                    "[project]\nname='backend'\nversion='0.1.0'\n",
+                    "[project]\nname='backend'\nversion='1.0.0'\n",
                     encoding="utf-8",
                 )
                 (tree / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1057,7 +1218,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1106,7 +1267,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1187,7 +1348,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1268,7 +1429,7 @@ class ActionsParityTests(unittest.TestCase):
             for tree in (tree_a, tree_b):
                 (tree / "backend" / "tests").mkdir(parents=True, exist_ok=True)
                 (tree / "backend" / "pyproject.toml").write_text(
-                    "[project]\nname='backend'\nversion='0.1.0'\n",
+                    "[project]\nname='backend'\nversion='1.0.0'\n",
                     encoding="utf-8",
                 )
                 (tree / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1312,7 +1473,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1356,7 +1517,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1428,7 +1589,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1487,7 +1648,7 @@ class ActionsParityTests(unittest.TestCase):
             for tree in (tree_a, tree_b):
                 (tree / "backend" / "tests").mkdir(parents=True, exist_ok=True)
                 (tree / "backend" / "pyproject.toml").write_text(
-                    "[project]\nname='backend'\nversion='0.1.0'\n",
+                    "[project]\nname='backend'\nversion='1.0.0'\n",
                     encoding="utf-8",
                 )
 
@@ -1580,7 +1741,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1621,7 +1782,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1652,7 +1813,8 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
             only_cmd, only_cwd = fake_runner.run_calls[0]
             self.assertEqual(only_cmd[:3], ("/usr/bin/python3", "-m", "pytest"))
-            self.assertTrue(str(only_cmd[3]).endswith("/backend/tests"))
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", only_cmd)
+            self.assertTrue(any(str(part).endswith("/backend/tests") for part in only_cmd))
             self.assertEqual(Path(only_cwd).resolve(), repo.resolve())
 
     def test_test_action_services_frontend_only_runs_frontend_only(self) -> None:
@@ -1663,7 +1825,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)
@@ -1705,7 +1867,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / "pyproject.toml").write_text(
-                "[project]\nname='backend'\nversion='0.1.0'\n",
+                "[project]\nname='backend'\nversion='1.0.0'\n",
                 encoding="utf-8",
             )
             (repo / "frontend").mkdir(parents=True, exist_ok=True)

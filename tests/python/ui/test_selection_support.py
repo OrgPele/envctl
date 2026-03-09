@@ -72,6 +72,18 @@ class SelectionSupportTests(unittest.TestCase):
         names = project_names_from_state(runtime, _state())
         self.assertEqual([project.name for project in names], ["Main", "Admin"])
 
+    def test_project_names_from_state_falls_back_to_metadata_project_roots(self) -> None:
+        runtime = SimpleNamespace(_project_name_from_service=lambda _name: "")
+        state = RunState(
+            run_id="run-plan",
+            mode="trees",
+            metadata={"project_roots": {"feature-a-1": "/tmp/a", "feature-b-1": "/tmp/b"}},
+        )
+
+        names = project_names_from_state(runtime, state)
+
+        self.assertEqual([project.name for project in names], ["feature-a-1", "feature-b-1"])
+
     def test_services_from_selection_handles_all_projects_and_services(self) -> None:
         runtime = SimpleNamespace(_project_name_from_service=lambda name: name.split()[0])
         state = _state()

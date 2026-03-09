@@ -15,6 +15,7 @@ setup() {
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
 
     mkdir -p "$repo/bin"
     cat >"$repo/bin/start_service.sh" <<'"'"'SH'"'"'
@@ -97,6 +98,7 @@ PY
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
 
     mkdir -p "$repo/bin"
     cat >"$repo/bin/start_service.sh" <<'"'"'SH'"'"'
@@ -178,6 +180,7 @@ PY
     repo="$repo_tmp/repo"
     runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git"
+    printf "ENVCTL_DEFAULT_MODE=main\n" >"$repo/.envctl"
 
     mkdir -p "$repo/bin"
     cat >"$repo/bin/start_service.sh" <<'"'"'SH'"'"'

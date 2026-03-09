@@ -9,8 +9,12 @@ The Python engine is the primary runtime. A legacy Bash/shell engine still exist
 ## Quick Start
 
 ```bash
-# 1) Install envctl on your PATH
-./bin/envctl install
+# 1) Install envctl once so it is available in every shell
+pipx install .
+pipx ensurepath
+
+# Or install for the current user
+python -m pip install --user .
 
 # 2) Go to a target repo
 cd /path/to/your-project
@@ -20,13 +24,22 @@ cd /path/to/your-project
 envctl --main
 
 # 3b) Or create a plan and start a worktree-driven run
-mkdir -p docs/planning/backend
-cat > docs/planning/backend/checkout.md <<'PLAN'
+mkdir -p todo/plans/backend
+cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
 PLAN
 
 envctl --plan
 ```
+
+Repo-clone compatibility still exists:
+
+```bash
+./bin/envctl install
+./bin/envctl uninstall
+```
+
+That wrapper path is now compatibility-only. The primary install story is a user- or system-level package install so `envctl` is on your `PATH` in every shell.
 
 ## What envctl Is For
 
@@ -73,7 +86,7 @@ Developer docs:
 
 Project docs:
 
-- [Planning and Roadmaps](docs/planning/README.md)
+- [Planning and Roadmaps](todo/plans/README.md)
 - [Changelog](docs/changelog/main_changelog.md)
 - [License](docs/license.md)
 
@@ -90,8 +103,8 @@ Example:
 
 ```bash
 # if ENVCTL_PLANNING_DIR is default:
-mkdir -p docs/planning/backend
-cat > docs/planning/backend/checkout.md <<'PLAN'
+mkdir -p todo/plans/backend
+cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
 PLAN
 
@@ -102,7 +115,7 @@ envctl --plan
 Use `.envctl.example` as a starting point:
 
 - `ENVCTL_DEFAULT_MODE` controls startup default when no mode flag is passed (`main` or `trees`, default: `main`).
-- `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `docs/planning`).
+- `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `todo/plans`).
 - Infra toggles support global/main/tree scopes for PostgreSQL/Supabase, Redis, and n8n.
 - `ENVCTL_ENGINE_SHELL_FALLBACK=true` still forces the deprecated legacy shell engine when you need an explicit compatibility escape hatch.
 

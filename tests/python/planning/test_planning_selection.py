@@ -23,7 +23,7 @@ from envctl_engine.planning import (
 class PlanningSelectionTests(unittest.TestCase):
     def test_list_planning_files_excludes_done_readme_and_plan_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            planning_dir = Path(tmpdir) / "docs" / "planning"
+            planning_dir = Path(tmpdir) / "todo" / "plans"
             (planning_dir / "backend").mkdir(parents=True, exist_ok=True)
             (planning_dir / "Done" / "backend").mkdir(parents=True, exist_ok=True)
             (planning_dir / "done" / "frontend").mkdir(parents=True, exist_ok=True)
@@ -55,6 +55,22 @@ class PlanningSelectionTests(unittest.TestCase):
             )
 
             self.assertEqual(counts, OrderedDict([("backend/task.md", 3)]))
+
+    def test_resolve_planning_files_accepts_configured_default_relative_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            planning_dir = repo / "todo" / "plans"
+            planning_dir.mkdir(parents=True, exist_ok=True)
+            available = ["backend/task.md"]
+
+            counts = resolve_planning_files(
+                selection_raw="todo/plans/backend/task",
+                planning_files=available,
+                base_dir=repo,
+                planning_dir=planning_dir,
+            )
+
+            self.assertEqual(counts, OrderedDict([("backend/task.md", 1)]))
 
     def test_select_projects_for_plan_files_respects_requested_count(self) -> None:
         projects = [

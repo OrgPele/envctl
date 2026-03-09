@@ -449,7 +449,7 @@ This means doctor changes are high leverage and high risk.
 If you change doctor inputs or gate semantics:
 
 - update tests in `tests/python/runtime/` and `tests/python/debug/`
-- update `docs/planning/python_engine_parity_manifest.json` or related ledgers if the gate contract changes
+- update `contracts/python_engine_parity_manifest.json` or related ledgers if the gate contract changes
 - update user-facing diagnostics docs
 
 ## Shell Migration Contract
@@ -460,8 +460,8 @@ Main files:
 
 - `shell/shell_prune.py`
 - `shell/release_gate.py`
-- `docs/planning/refactoring/envctl-shell-ownership-ledger.json`
-- `docs/planning/python_engine_parity_manifest.json`
+- `contracts/envctl-shell-ownership-ledger.json`
+- `contracts/python_engine_parity_manifest.json`
 
 Practical meaning:
 

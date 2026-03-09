@@ -25,7 +25,7 @@ PY
   ' _ "$ENGINE_MAIN"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"python-invoked:-m envctl_engine.cli --help"* ]]
+  [[ "$output" == *"python-invoked:-m envctl_engine.runtime.cli --help"* ]]
 }
 
 @test "engine defaults to shell flow when Python mode is disabled" {

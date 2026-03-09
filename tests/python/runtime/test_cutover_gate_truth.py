@@ -39,14 +39,14 @@ class CutoverGateTruthTests(unittest.TestCase):
             "#!/usr/bin/env bats\n", encoding="utf-8"
         )
 
-        manifest = repo / "docs" / "planning" / "python_engine_parity_manifest.json"
+        manifest = repo / "contracts" / "python_engine_parity_manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text(
             '{"generated_at":"2026-02-25","commands":{"doctor":"python_complete"},"modes":{}}',
             encoding="utf-8",
         )
 
-        ledger = repo / "docs" / "planning" / "refactoring" / "envctl-shell-ownership-ledger.json"
+        ledger = repo / "contracts" / "envctl-shell-ownership-ledger.json"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger_payload = {
             "version": 1,
@@ -93,8 +93,8 @@ class CutoverGateTruthTests(unittest.TestCase):
                 "tests/python/test_stub.py",
                 "tests/bats/parallel_trees_python_e2e.bats",
                 "tests/bats/python_engine_parity.bats",
-                "docs/planning/python_engine_parity_manifest.json",
-                "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
+                "contracts/python_engine_parity_manifest.json",
+                "contracts/envctl-shell-ownership-ledger.json",
                 "lib/engine/main.sh",
                 "lib/engine/lib/demo.sh",
             ],

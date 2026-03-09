@@ -13,10 +13,22 @@ setup() {
     set -euo pipefail
     repo_tmp=$(mktemp -d)
     repo="$repo_tmp/repo"
-    runtime="$repo_tmp/runtime"
+   runtime="$repo_tmp/runtime"
     mkdir -p "$repo/.git"
-    mkdir -p "$repo/docs/planning/implementations"
-    printf "# task\n" > "$repo/docs/planning/implementations/task.md"
+    mkdir -p "$repo/todo/plans/implementations"
+    printf "# task\n" > "$repo/todo/plans/implementations/task.md"
+    cat >"$repo/.envctl" <<'"'"'EOF'"'"'
+# >>> envctl managed startup config >>>
+ENVCTL_DEFAULT_MODE=trees
+
+MAIN_STARTUP_ENABLE=false
+MAIN_BACKEND_ENABLE=true
+MAIN_FRONTEND_ENABLE=false
+TREES_STARTUP_ENABLE=false
+TREES_BACKEND_ENABLE=true
+TREES_FRONTEND_ENABLE=false
+# <<< envctl managed startup config <<<
+EOF
 
     mkdir -p "$repo/bin"
     cat >"$repo/bin/start_service.sh" <<'"'"'SH'"'"'

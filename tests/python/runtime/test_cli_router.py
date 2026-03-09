@@ -55,6 +55,10 @@ class CliRouterTests(unittest.TestCase):
         route = parse_route(["--list-trees"], env={})
         self.assertEqual(route.command, "list-trees")
 
+    def test_init_alias_routes_to_config_command(self) -> None:
+        route = parse_route(["--init"], env={})
+        self.assertEqual(route.command, "config")
+
 
 if __name__ == "__main__":
     unittest.main()

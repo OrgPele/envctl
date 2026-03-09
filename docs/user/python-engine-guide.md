@@ -37,10 +37,10 @@ Behavior on first run:
 What the wizard actually covers:
 
 1. welcome and source
-2. default mode
-3. main startup profile
-4. trees startup profile
-5. port defaults
+2. wizard type (`simple` or `advanced`)
+3. default mode
+4. per-mode startup presets in the simple flow, or per-mode startup settings in the advanced flow
+5. port defaults in the advanced flow
 6. review and save
 
 Use [First-Run Wizard](first-run-wizard.md) if you want the guided setup story in detail.
@@ -62,7 +62,7 @@ Notes:
 
 - `.envctl` is for orchestration settings, not app secrets.
 - Legacy config files such as `.envctl.sh` can still prefill the new config flow.
-- The Python config layer now has canonical managed keys like `MAIN_POSTGRES_ENABLE` and `TREES_REDIS_ENABLE`, but older compatibility aliases such as `POSTGRES_MAIN_ENABLE` and `REDIS_MAIN_ENABLE` are still accepted.
+- The Python config layer now has canonical managed keys like `MAIN_STARTUP_ENABLE`, `MAIN_POSTGRES_ENABLE`, and `TREES_REDIS_ENABLE`, but older compatibility aliases such as `POSTGRES_MAIN_ENABLE` and `REDIS_MAIN_ENABLE` are still accepted where relevant.
 
 ## Startup Modes
 
@@ -113,6 +113,7 @@ What each one is for:
 `explain-startup` is especially useful because it tells you:
 
 - selected mode
+- whether startup is enabled for that mode
 - whether interactive selection is required
 - whether auto-resume would happen
 - which services and built-in dependencies are enabled
@@ -177,7 +178,7 @@ Useful behavior to know:
 
 There are two different "doctor" surfaces:
 
-- `envctl doctor --repo /path`: launcher-level check that confirms repo and engine resolution.
+- `envctl doctor --repo /path`: installed-command verification for a target repo.
 - `envctl --doctor`: Python runtime diagnostics for the current repo and scope.
 
 The runtime doctor surfaces:
@@ -194,13 +195,22 @@ The runtime doctor surfaces:
 Examples:
 
 ```bash
-# Launcher-level
+# Installed-command verification
 envctl doctor --repo /absolute/path/to/repo
 
 # Runtime-level
 envctl --doctor
 envctl --doctor --json
 ```
+
+If you are explicitly using the clone-compatibility wrapper from an envctl source checkout, `./bin/envctl doctor --repo ...` remains available too.
+
+Recommended install expectation:
+
+- end users install `envctl` once with `pipx install ...` or `python -m pip install --user ...`
+- supported Python versions are 3.12 through 3.14
+- the `envctl` command should then be available in every shell
+- editable virtualenv installs are mainly for contributors working on `envctl` itself
 
 The runtime doctor is also where cutover gates show up. In practice, that means it will tell you whether:
 
@@ -211,102 +221,36 @@ The runtime doctor is also where cutover gates show up. In practice, that means 
 
 If you are trying to understand why the repo is still considered migration-gated, `envctl --doctor --json` is the command to start with.
 
-## Debug Flight Recorder Workflow
+## User-Level Debug Workflow
 
-The debug workflow is now centered on the Debug Flight Recorder (DFR).
-
-Recommended workflow for interactive or startup issues:
+For most users, the right debug workflow is short:
 
 ```bash
-# 1. Capture one session
+envctl show-config --json
+envctl show-state --json
+envctl explain-startup --json
+envctl --doctor --json
+```
+
+If the issue is interactive, timing-related, or hard to reproduce:
+
+```bash
 ENVCTL_DEBUG_UI_MODE=deep envctl
-
-# 2. Reproduce once, then exit
-
-# 3. Package the session
-envctl --debug-pack
-
-# 4. Print a summarized diagnosis
 envctl --debug-report
-
-# 5. Print the last bundle path again later
 envctl --debug-last
 ```
 
-What `deep` mode adds:
+That is usually enough to answer:
 
-- more UI/input events
-- selector throughput diagnostics
-- startup timing decomposition
-- enough evidence to build `timeline.jsonl`, `command_index.json`, and anomaly summaries
+- what config is active
+- what startup decision `envctl` is making
+- what state was saved
+- whether doctor already sees pointer, gate, or runtime-health problems
+- where the latest debug bundle lives if deeper analysis is needed
 
-Privacy defaults:
+For deeper runbooks, use [Troubleshooting](../operations/troubleshooting.md).
 
-- command content is hashed instead of stored verbatim
-- text payloads are scrubbed
-- printable raw input capture stays disabled unless you explicitly opt in
-
-Key environment controls:
-
-- `ENVCTL_DEBUG_UI_MODE=off|standard|deep`
-- `ENVCTL_DEBUG_AUTO_PACK=off|crash|anomaly|always`
-- `ENVCTL_DEBUG_UI_BUNDLE_STRICT=true|false`
-- `ENVCTL_DEBUG_UI_CAPTURE_PRINTABLE=true|false`
-- `ENVCTL_DEBUG_UI_MAX_EVENTS=<n>`
-- `ENVCTL_DEBUG_UI_RING_BYTES=<n>`
-- `ENVCTL_DEBUG_UI_SAMPLE_RATE=<n>`
-
-Useful bundle selectors:
-
-```bash
-envctl --debug-pack --session-id session-...
-envctl --debug-pack --run-id run-...
-envctl --debug-pack --scope-id repo-...
-envctl --debug-pack --output-dir /tmp/envctl-bundles
-envctl --debug-pack --debug-ui-include-doctor
-```
-
-Bundle contents usually include:
-
-- `events.debug.jsonl`
-- `events.runtime.redacted.jsonl`
-- `timeline.jsonl`
-- `anomalies.jsonl`
-- `command_index.json`
-- `diagnostics.json`
-- `bundle_contract.json`
-- `manifest.json`
-- `summary.md`
-
-For local offline analysis:
-
-```bash
-python3 scripts/analyze_debug_bundle.py /path/to/envctl-debug-bundle-....tar.gz
-```
-
-## Reading `debug-report`
-
-`envctl --debug-report` first packages a bundle, then summarizes it.
-
-The highest-signal fields are:
-
-- `probable_root_causes`
-- `next_data_needed`
-- `spinner_disabled_reasons`
-- `missing_spinner_lifecycle_transition`
-- `startup_breakdown`
-- `slowest_components`
-- `resume_skip_reasons`
-- `requirements_stage_hotspots`
-- `service_bootstrap_hotspots`
-- `service_attach_hotspots`
-
-Interpretation tips:
-
-- If `next_data_needed` is non-empty, capture again with `ENVCTL_DEBUG_UI_MODE=deep`.
-- If `startup_breakdown.unknown_ratio` is high, the runtime still needs more timing coverage for that failure.
-- If `spinner_disabled_reasons` contains only policy or TTY reasons, there may not be a spinner bug at all.
-- If `resume_skip_reasons` is populated, the problem may be in resume eligibility rather than startup itself.
+For the full internal debug architecture and bundle model, use [Debug and Diagnostics](../developer/debug-and-diagnostics.md).
 
 ## Interactive UI Behavior
 

@@ -44,7 +44,7 @@ def restore_missing(
     project_spinner_group_cls: type[_ResumeProjectSpinnerGroup] = _ResumeProjectSpinnerGroup,
 ) -> list[str]:
     rt = orchestrator.runtime
-    port_allocator = orchestrator._port_allocator(rt)
+    port_allocator = _port_allocator(rt)
     projects_to_restore: set[str] = set()
     for service_name in missing_services:
         project = rt._project_name_from_service(service_name)  # type: ignore[attr-defined]
@@ -58,7 +58,7 @@ def restore_missing(
         return []
 
     errors: list[str] = []
-    timing_enabled = orchestrator._restore_timing_enabled(route)
+    timing_enabled = _restore_timing_enabled(orchestrator, route)
     total_started = time.monotonic()
     project_totals_ms: dict[str, float] = {}
     timing_lines: list[str] = []
@@ -71,7 +71,8 @@ def restore_missing(
         context={"component": "resume.restore", "op_id": "resume.restore"},
     )
     use_spinner = spinner_enabled_fn(getattr(rt, "env", {}))
-    parallel_enabled, parallel_workers = orchestrator._restore_parallel_config(
+    parallel_enabled, parallel_workers = _restore_parallel_config(
+        orchestrator,
         route=route,
         mode=state.mode,
         project_count=total_projects,
@@ -171,7 +172,7 @@ def restore_missing(
             **extra: object,
         ) -> None:
             if duration_ms is None:
-                duration_ms = orchestrator._round_ms(time.monotonic() - project_started)
+                duration_ms = _round_ms(time.monotonic() - project_started)
             step_durations_ms[step] = duration_ms
             rt._emit(  # type: ignore[attr-defined]
                 "resume.restore.step",
@@ -193,14 +194,14 @@ def restore_missing(
             mark_step(
                 "resolve_context",
                 status="error",
-                duration_ms=orchestrator._round_ms(time.monotonic() - context_started),
+                duration_ms=_round_ms(time.monotonic() - context_started),
                 context_found=False,
             )
             if use_project_spinner_group:
                 project_spinner_group.mark_failure(project, f"{prefix} Context not found")
             elif use_single_spinner:
                 active_spinner.update(f"{prefix} Context not found for {project}")
-            project_total = orchestrator._round_ms(time.monotonic() - project_started)
+            project_total = _round_ms(time.monotonic() - project_started)
             rt._emit(  # type: ignore[attr-defined]
                 "resume.restore.project_timing",
                 run_id=state.run_id,
@@ -218,7 +219,7 @@ def restore_missing(
             }
         mark_step(
             "resolve_context",
-            duration_ms=orchestrator._round_ms(time.monotonic() - context_started),
+            duration_ms=_round_ms(time.monotonic() - context_started),
             context_found=True,
         )
         project_service_names = [
@@ -233,7 +234,8 @@ def restore_missing(
         }
         original_requirements = state.requirements.get(project)
         context_root = getattr(context, "root", None)
-        requirements_reused, requirements_reuse_reason = orchestrator._requirements_reuse_decision(
+        requirements_reused, requirements_reuse_reason = _requirements_reuse_decision(
+            orchestrator,
             rt,
             project=project,
             requirements=original_requirements,
@@ -253,7 +255,7 @@ def restore_missing(
             active_spinner.update(f"{prefix} Stopping stale services for {project}...")
         stop_started = time.monotonic()
         terminated_count = 0
-        aggressive_terminate = orchestrator._resume_terminate_aggressive(rt)
+        aggressive_terminate = _resume_terminate_aggressive(orchestrator, rt)
         for service in original_services.values():
             terminated = rt._terminate_service_record(  # type: ignore[attr-defined]
                 service,
@@ -267,7 +269,7 @@ def restore_missing(
                     port_allocator.release(port)  # type: ignore[attr-defined]
         mark_step(
             "stop_stale_services",
-            duration_ms=orchestrator._round_ms(time.monotonic() - stop_started),
+            duration_ms=_round_ms(time.monotonic() - stop_started),
             stale_service_count=len(project_service_names),
             terminated_count=terminated_count,
             aggressive=aggressive_terminate,
@@ -286,7 +288,7 @@ def restore_missing(
             rt._release_requirement_ports(existing_requirements)  # type: ignore[attr-defined]
             mark_step(
                 "release_requirement_ports",
-                duration_ms=orchestrator._round_ms(time.monotonic() - release_started),
+                duration_ms=_round_ms(time.monotonic() - release_started),
             )
 
         try:
@@ -296,12 +298,12 @@ def restore_missing(
                 active_spinner.update(f"{prefix} Reserving service ports for {project}...")
             reserve_started = time.monotonic()
             if requirements_reused:
-                orchestrator._reserve_application_service_ports(rt, context, port_allocator)
+                _reserve_application_service_ports(orchestrator, rt, context, port_allocator)
             else:
                 rt._reserve_project_ports(context)  # type: ignore[attr-defined]
             mark_step(
                 "reserve_ports",
-                duration_ms=orchestrator._round_ms(time.monotonic() - reserve_started),
+                duration_ms=_round_ms(time.monotonic() - reserve_started),
             )
 
             if requirements_reused and requirements_for_services is not None:
@@ -343,7 +345,7 @@ def restore_missing(
                 requirements = rt._start_requirements_for_project(context, mode=state.mode, route=project_route_for_startup)  # type: ignore[attr-defined]
                 mark_step(
                     "start_requirements",
-                    duration_ms=orchestrator._round_ms(time.monotonic() - requirements_started),
+                    duration_ms=_round_ms(time.monotonic() - requirements_started),
                 )
                 if not rt._requirements_ready(requirements):  # type: ignore[attr-defined]
                     error_message = (
@@ -354,7 +356,7 @@ def restore_missing(
                         project_spinner_group.mark_failure(project, f"{prefix} Requirements unavailable")
                     elif use_single_spinner:
                         active_spinner.update(f"{prefix} Requirements unavailable for {project}")
-                    project_total = orchestrator._round_ms(time.monotonic() - project_started)
+                    project_total = _round_ms(time.monotonic() - project_started)
                     rt._emit(  # type: ignore[attr-defined]
                         "resume.restore.project_timing",
                         run_id=state.run_id,
@@ -384,14 +386,14 @@ def restore_missing(
             )
             mark_step(
                 "start_services",
-                duration_ms=orchestrator._round_ms(time.monotonic() - services_started),
+                duration_ms=_round_ms(time.monotonic() - services_started),
                 restored_service_count=len(project_services),
             )
             if use_project_spinner_group:
                 project_spinner_group.mark_success(project, f"{prefix} restored")
             elif use_single_spinner:
                 active_spinner.update(f"{prefix} {project} restored")
-            project_total = orchestrator._round_ms(time.monotonic() - project_started)
+            project_total = _round_ms(time.monotonic() - project_started)
             rt._emit(  # type: ignore[attr-defined]
                 "resume.restore.project_timing",
                 run_id=state.run_id,
@@ -415,7 +417,7 @@ def restore_missing(
                 project_spinner_group.mark_failure(project, f"{prefix} Restore failed: {exc}")
             elif use_single_spinner:
                 active_spinner.update(f"{prefix} Restore failed for {project}: {exc}")
-            project_total = orchestrator._round_ms(time.monotonic() - project_started)
+            project_total = _round_ms(time.monotonic() - project_started)
             rt._emit(  # type: ignore[attr-defined]
                 "resume.restore.project_timing",
                 run_id=state.run_id,
@@ -466,7 +468,7 @@ def restore_missing(
                 steps = result.get("steps")
                 step_map = steps if isinstance(steps, dict) else {}
                 if timing_enabled:
-                    timing_lines.append(orchestrator._format_project_timing_line(project, step_map, project_total))
+                    timing_lines.append(_format_project_timing_line(project, step_map, project_total))
 
                 error_message = str(result.get("error") or "").strip()
                 if error_message:
@@ -509,7 +511,7 @@ def restore_missing(
                 )
     if use_single_spinner:
         rt._emit("ui.spinner.lifecycle", component="resume.restore", op_id="resume.restore", state="stop")  # type: ignore[attr-defined]
-    total_ms = orchestrator._round_ms(time.monotonic() - total_started)
+    total_ms = _round_ms(time.monotonic() - total_started)
     slowest_project = ""
     slowest_ms = 0.0
     if project_totals_ms:

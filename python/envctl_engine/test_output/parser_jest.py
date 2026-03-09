@@ -127,6 +127,7 @@ class JestOutputParser(TestOutputParser):
         # - "Test Files  2 passed (2)" (ignored for per-test metrics)
 
         # Extract counts
+        self.result.counts_detected = True
         passed_match = re.search(r"(\d+)\s+passed", line)
         if passed_match:
             self.result.passed = int(passed_match.group(1))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import inspect
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -12,6 +13,8 @@ from .colors import TerminalColors
 from .parser_base import TestOutputParser, TestResult
 from .parser_jest import JestOutputParser
 from .parser_pytest import PytestOutputParser
+from .progress_markers import parse_progress_marker, strip_progress_markers
+from .parser_unittest import UnittestOutputParser
 from .summary import TestSummaryFormatter
 class TestRunner:
     """Orchestrates test execution with rich output, spinner, and real-time parsing."""
@@ -51,6 +54,7 @@ class TestRunner:
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run tests with streaming output and real-time parsing.
 
@@ -71,12 +75,18 @@ class TestRunner:
         parser = self._get_parser(test_type)
 
         # Run with streaming output
-        completed = self._run_with_streaming(
+        instrumented_command, instrumented_env = self._instrument_command(
             command,
-            cwd=cwd,
+            test_type=test_type,
             env=env,
+        )
+        completed = self._run_with_streaming(
+            instrumented_command,
+            cwd=cwd,
+            env=instrumented_env,
             timeout=timeout,
             parser=parser,
+            progress_callback=progress_callback,
         )
 
         # Print summary
@@ -129,7 +139,7 @@ class TestRunner:
         if test_type == "jest":
             return JestOutputParser()
         if test_type == "unittest":
-            return PytestOutputParser()  # Reuse pytest parser for unittest
+            return UnittestOutputParser()
         return PytestOutputParser()
 
     def _run_with_streaming(
@@ -140,6 +150,7 @@ class TestRunner:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         parser: TestOutputParser,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run command with streaming output and real-time parsing.
 
@@ -154,8 +165,17 @@ class TestRunner:
             CompletedProcess with aggregated output.
         """
 
+        streamed_parse = False
+
         def parse_callback(line: str) -> None:
             """Parse line and emit events."""
+            nonlocal streamed_parse
+            progress = parse_progress_marker(line)
+            if progress is not None:
+                if progress_callback is not None:
+                    progress_callback(progress.current, progress.total)
+                return
+            streamed_parse = True
             parser.parse_line(line)
             if self.emit_callback:
                 self.emit_callback("test.output.line", {"line": line})
@@ -164,40 +184,123 @@ class TestRunner:
         if callable(run_streaming):
             parameters = inspect.signature(run_streaming).parameters
             supports_show_spinner = "show_spinner" in parameters
+            supports_echo_output = "echo_output" in parameters
+            kwargs: dict[str, Any] = {
+                "cwd": cwd,
+                "env": env,
+                "timeout": timeout,
+                "callback": parse_callback,
+            }
             if supports_show_spinner:
-                completed = run_streaming(
-                    command,
-                    cwd=cwd,
-                    env=env,
-                    timeout=timeout,
-                    callback=parse_callback if self.verbose else None,
-                    show_spinner=False,
-                )
-            else:
-                completed = run_streaming(
-                    command,
-                    cwd=cwd,
-                    env=env,
-                    timeout=timeout,
-                    callback=parse_callback if self.verbose else None,
-                )
+                kwargs["show_spinner"] = False
+            if supports_echo_output:
+                kwargs["echo_output"] = self.verbose
+            if "stdin" in parameters:
+                kwargs["stdin"] = subprocess.DEVNULL
+            completed = run_streaming(command, **kwargs)
         else:
-            completed = self.runtime.process_runner.run(
-                command,
-                cwd=cwd,
-                env=env,
-                timeout=timeout,
-            )
-            if self.verbose:
-                stdout_text = str(getattr(completed, "stdout", "") or "")
-                for line in stdout_text.splitlines():
-                    parse_callback(line)
+            run_parameters = inspect.signature(self.runtime.process_runner.run).parameters
+            run_kwargs: dict[str, Any] = {
+                "cwd": cwd,
+                "env": env,
+                "timeout": timeout,
+            }
+            if "stdin" in run_parameters:
+                run_kwargs["stdin"] = subprocess.DEVNULL
+            completed = self.runtime.process_runner.run(command, **run_kwargs)
+            stdout_text = str(getattr(completed, "stdout", "") or "")
+            for line in stdout_text.splitlines():
+                parse_callback(line)
 
-        # Finalize parser with full output if not verbose
-        if not self.verbose:
-            parser.parse_output(completed.stdout)
+        clean_stdout = self._strip_progress_markers(str(getattr(completed, "stdout", "") or ""))
+        clean_stderr = self._strip_progress_markers(str(getattr(completed, "stderr", "") or ""))
 
-        return completed
+        if streamed_parse:
+            parser.finalize()
+        else:
+            parser.parse_output(clean_stdout)
+
+        return subprocess.CompletedProcess(
+            args=list(command),
+            returncode=int(getattr(completed, "returncode", 1)),
+            stdout=clean_stdout,
+            stderr=clean_stderr,
+        )
+
+    def _instrument_command(
+        self,
+        command: Sequence[str],
+        *,
+        test_type: str,
+        env: Mapping[str, str] | None,
+    ) -> tuple[list[str], dict[str, str] | None]:
+        instrumented_env = self._ensure_helper_pythonpath(env)
+        command_list = [str(part) for part in command]
+        if test_type == "pytest":
+            return self._instrument_pytest_command(command_list), instrumented_env
+        if test_type == "unittest":
+            instrumented = self._instrument_unittest_command(command_list)
+            return instrumented, instrumented_env
+        return command_list, instrumented_env
+
+    @staticmethod
+    def _strip_progress_markers(output: str) -> str:
+        if not output:
+            return ""
+        lines: list[str] = []
+        for raw_line in output.splitlines():
+            cleaned = strip_progress_markers(raw_line).strip()
+            if cleaned:
+                lines.append(cleaned)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _instrument_pytest_command(command: list[str]) -> list[str]:
+        if not command:
+            return command
+        if "-p" in command and "envctl_engine.test_output.pytest_progress_plugin" in command:
+            return command
+        if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
+            return [
+                *command[:3],
+                "-p",
+                "envctl_engine.test_output.pytest_progress_plugin",
+                *command[3:],
+            ]
+        if Path(command[0]).name.startswith("pytest") or command[0] == "pytest":
+            return [
+                command[0],
+                "-p",
+                "envctl_engine.test_output.pytest_progress_plugin",
+                *command[1:],
+            ]
+        return command
+
+    @staticmethod
+    def _instrument_unittest_command(command: list[str]) -> list[str]:
+        if len(command) >= 5 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
+            return [
+                command[0],
+                "-m",
+                "envctl_engine.test_output.unittest_runner",
+                *command[3:],
+            ]
+        return command
+
+    @staticmethod
+    def _ensure_helper_pythonpath(env: Mapping[str, str] | None) -> dict[str, str] | None:
+        python_root = str(Path(__file__).resolve().parents[2])
+        env_map = dict(os.environ)
+        if env is not None:
+            env_map.update(dict(env))
+        existing = env_map.get("PYTHONPATH", "")
+        if existing:
+            parts = [part for part in existing.split(os.pathsep) if part]
+            if python_root not in parts:
+                env_map["PYTHONPATH"] = os.pathsep.join([python_root, *parts])
+        else:
+            env_map["PYTHONPATH"] = python_root
+        return env_map
 
     def _print_header(self, command: Sequence[str]) -> None:
         """Print colored banner header.

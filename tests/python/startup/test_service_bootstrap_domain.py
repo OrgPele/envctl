@@ -30,7 +30,7 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
     def test_backend_dependency_install_not_required_when_state_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)
-            (backend / "requirements.txt").write_text("fastapi==0.1.0\n", encoding="utf-8")
+            (backend / "requirements.txt").write_text("fastapi==1.0.0\n", encoding="utf-8")
             (backend / "venv").mkdir()
 
             required, _reason, state = _backend_dependency_install_required(
@@ -53,7 +53,7 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)
             requirements = backend / "requirements.txt"
-            requirements.write_text("fastapi==0.1.0\n", encoding="utf-8")
+            requirements.write_text("fastapi==1.0.0\n", encoding="utf-8")
             (backend / "venv").mkdir()
 
             _required, _reason, state = _backend_dependency_install_required(
@@ -74,7 +74,7 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
     def test_backend_dependency_install_required_when_environment_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)
-            (backend / "requirements.txt").write_text("fastapi==0.1.0\n", encoding="utf-8")
+            (backend / "requirements.txt").write_text("fastapi==1.0.0\n", encoding="utf-8")
 
             required, reason, _state = _backend_dependency_install_required(
                 backend_cwd=backend,

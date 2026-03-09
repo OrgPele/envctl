@@ -68,6 +68,7 @@ def create_prompt_toolkit_tty_io(*, stack: ExitStack) -> tuple[object, object, s
 def run_prompt_toolkit_list_selector(
     config: PromptToolkitListConfig,
 ) -> PromptToolkitListResult | None:
+    status_error_timeout_seconds = 3.0
     rows = [item for item in config.options if bool(getattr(item, "enabled", True))]
     if not rows:
         return PromptToolkitListResult(values=[], cancelled=False)
@@ -89,6 +90,7 @@ def run_prompt_toolkit_list_selector(
     cyan = "" if no_color else "\033[36m"
     magenta = "" if no_color else "\033[35m"
     green = "" if no_color else "\033[32m"
+    red = "" if no_color else "\033[31m"
 
     def _emit_event(event: str, **payload: object) -> None:
         if callable(config.emit_event):
@@ -124,6 +126,8 @@ def run_prompt_toolkit_list_selector(
     unhandled_counts: dict[str, int] = {}
     key_events_total = 0
     io_probe: Callable[[], dict[str, object]] | None = None
+    status_error = ""
+    status_error_deadline = 0.0
 
     _emit_event(
         "ui.screen.enter",
@@ -151,10 +155,16 @@ def run_prompt_toolkit_list_selector(
         return f"{label} ({badge})"
 
     def _frame() -> ANSI:
+        nonlocal status_error, status_error_deadline
+        if status_error and status_error_deadline > 0.0 and time.monotonic() >= status_error_deadline:
+            status_error = ""
+            status_error_deadline = 0.0
         lines = [f"{bold}{cyan}{config.prompt}{reset}"]
         lines.append(
             f"{dim}{config.help_text_multi if config.multi else config.help_text_single}{reset}"
         )
+        if status_error:
+            lines.append(f"{bold}{red}{status_error}{reset}")
         lines.append("")
         last_section = ""
         for index, item in enumerate(rows):
@@ -168,9 +178,11 @@ def run_prompt_toolkit_list_selector(
         return ANSI("\n".join(lines))
 
     def _emit_key(key: str, before: int, after: int, *, handled: bool) -> None:
-        nonlocal key_events_total
+        nonlocal key_events_total, status_error_deadline
         key_counts[key] = int(key_counts.get(key, 0)) + 1
         key_events_total += 1
+        if status_error:
+            status_error_deadline = time.monotonic() + status_error_timeout_seconds
         target = handled_counts if handled else unhandled_counts
         target[key] = int(target.get(key, 0)) + 1
         _emit_debug(
@@ -184,8 +196,10 @@ def run_prompt_toolkit_list_selector(
         )
 
     def _toggle_current(key_name: str, event: object) -> None:
-        nonlocal selected_indexes
+        nonlocal selected_indexes, status_error, status_error_deadline
         before = cursor
+        status_error = ""
+        status_error_deadline = 0.0
         if config.multi:
             if cursor in selected_indexes:
                 selected_indexes.remove(cursor)
@@ -211,8 +225,30 @@ def run_prompt_toolkit_list_selector(
         event.app.invalidate()  # type: ignore[attr-defined]
 
     def _submit(event: object) -> None:
-        nonlocal selected_indexes
+        nonlocal selected_indexes, status_error, status_error_deadline
+        if config.multi and not selected_indexes:
+            status_error = "No items were selected. Press Space or click to select at least one."
+            status_error_deadline = time.monotonic() + status_error_timeout_seconds
+            _emit_event(
+                "ui.selection.confirm",
+                prompt=config.prompt,
+                multi=config.multi,
+                selected_count=0,
+                blocked=True,
+            )
+            _emit_debug(
+                "ui.selector.submit",
+                selector_id=config.selector_id,
+                selected_count=0,
+                blocked=True,
+                cancelled=False,
+                cause=config.confirm_cause,
+            )
+            event.app.invalidate()  # type: ignore[attr-defined]
+            return
         if not selected_indexes:
+            status_error = ""
+            status_error_deadline = 0.0
             selected_indexes = {cursor}
             _emit_event("ui.selection.toggle", token=str(rows[cursor].token), selected=True)
         values = [str(rows[index].token) for index in sorted(selected_indexes)]
@@ -269,6 +305,7 @@ def run_prompt_toolkit_list_selector(
             full_screen=True,
             input=ptk_input,
             output=ptk_output,
+            refresh_interval=0.25,
         )
         selector_timeout_ms_raw = str(os.environ.get("ENVCTL_UI_SELECTOR_TIMEOUT_MS", "")).strip()
         selector_ttimeout_ms_raw = str(os.environ.get("ENVCTL_UI_SELECTOR_TTIMEOUT_MS", "")).strip()
@@ -412,4 +449,9 @@ def run_prompt_toolkit_list_selector(
 
     if isinstance(result, PromptToolkitListResult):
         return result
+    if hasattr(result, "values") and hasattr(result, "cancelled"):
+        return PromptToolkitListResult(
+            values=getattr(result, "values"),
+            cancelled=bool(getattr(result, "cancelled")),
+        )
     return PromptToolkitListResult(values=None, cancelled=True)

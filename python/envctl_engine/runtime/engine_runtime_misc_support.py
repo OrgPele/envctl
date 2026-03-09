@@ -41,7 +41,13 @@ def build_process_probe_backend(runtime: Any) -> ProbeBackend:
     if not isinstance(runtime.process_runner, ProcessRunner):
         return ShellProbeBackend(runtime.process_runner)
     if probe_psutil_enabled(runtime) and psutil_available():
-        return PsutilProbeBackend()
+        try:
+            from envctl_engine.runtime import engine_runtime as engine_runtime_module
+
+            backend_cls = getattr(engine_runtime_module, "PsutilProbeBackend", PsutilProbeBackend)
+        except Exception:
+            backend_cls = PsutilProbeBackend
+        return backend_cls()
     return ShellProbeBackend(runtime.process_runner)
 
 
@@ -216,4 +222,30 @@ def listener_truth_enforced(runtime: Any) -> bool:
 
 
 def requirement_enabled(runtime: Any, service_name: str, *, mode: str, route: Route | None = None) -> bool:
-    return runtime._requirement_enabled_for_mode(mode, service_name, route=route)
+    resolver = getattr(runtime, "_requirement_enabled_for_mode", None)
+    if callable(resolver):
+        return bool(resolver(mode, service_name, route=route))
+
+    normalized_mode = str(mode).strip().lower()
+    normalized_service = str(service_name).strip().lower()
+    if normalized_mode == "main":
+        flags_resolver = getattr(runtime, "_effective_main_requirement_flags", None)
+        if callable(flags_resolver):
+            flags = flags_resolver(route)
+            if normalized_service == "postgres":
+                return bool(flags.get("postgres_main_enable"))
+            if normalized_service == "redis":
+                return bool(flags.get("redis_main_enable"))
+            if normalized_service == "supabase":
+                return bool(flags.get("supabase_main_enable"))
+            if normalized_service == "n8n":
+                return bool(flags.get("n8n_main_enable"))
+
+    config = getattr(runtime, "config", None)
+    if config is None:
+        return False
+    if normalized_service == "redis":
+        return bool(getattr(config, "redis_enable", False))
+    if normalized_service == "n8n":
+        return bool(getattr(config, "n8n_enable", False))
+    return False

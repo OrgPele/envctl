@@ -266,8 +266,6 @@ def _normalize_selection_token(*, token: str, base_dir: Path, planning_dir: Path
         normalized = normalized[len(planning_dir_norm) + 1 :]
     if normalized.startswith(f"{base_dir_norm}/"):
         normalized = normalized[len(base_dir_norm) + 1 :]
-    if normalized.startswith("docs/planning/"):
-        normalized = normalized[len("docs/planning/") :]
 
     planning_rel = ""
     try:

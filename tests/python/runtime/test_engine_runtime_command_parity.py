@@ -760,17 +760,18 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         route = parse_route(["start"], env={})
         expected_requirements = SimpleNamespace(project="feature-a-1")
         expected_services = {"feature-a-1 Backend": object()}
+        expected_warnings = ["Warning: backend migration step failed; continuing without migration (...)"]
 
         def fake_start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
             self.assertEqual(getattr(context, "name", ""), "feature-a-1")
             self.assertEqual(mode, "trees")
             self.assertEqual(route.command, "start")
             self.assertEqual(run_id, "run-42")
-            return expected_requirements, expected_services
+            return expected_requirements, expected_services, expected_warnings
 
         runtime.startup_orchestrator.start_project_context = fake_start_project_context  # type: ignore[assignment]
 
-        requirements, services = runtime._start_project_context(
+        requirements, services, warnings = runtime._start_project_context(
             context=context,  # type: ignore[arg-type]
             mode="trees",
             route=route,
@@ -779,6 +780,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
 
         self.assertIs(requirements, expected_requirements)
         self.assertIs(services, expected_services)
+        self.assertEqual(warnings, expected_warnings)
 
     def test_start_requirements_for_project_method_delegates_to_startup_orchestrator(self) -> None:
         runtime = self._runtime()
@@ -827,7 +829,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIs(services, expected)
 
     def test_parity_manifest_marks_operational_actions_complete(self) -> None:
-        manifest_path = REPO_ROOT / "docs" / "planning" / "python_engine_parity_manifest.json"
+        manifest_path = REPO_ROOT / "contracts" / "python_engine_parity_manifest.json"
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         for command in ("test", "delete-worktree", "blast-worktree", "pr", "commit", "analyze", "migrate"):
             self.assertEqual(payload["commands"][command], "python_complete", msg=command)
@@ -886,7 +888,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("Non-interactive: --headless (preferred), --batch (compatibility alias)", lines[3])
 
     def test_generated_parity_manifest_matches_repository_file(self) -> None:
-        manifest_path = REPO_ROOT / "docs" / "planning" / "python_engine_parity_manifest.json"
+        manifest_path = REPO_ROOT / "contracts" / "python_engine_parity_manifest.json"
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         generated_at = str(payload["generated_at"])
         completed = subprocess.run(
@@ -1004,7 +1006,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.addCleanup(tmpdir.cleanup)
         repo = Path(tmpdir.name) / "repo"
         (repo / ".git").mkdir(parents=True, exist_ok=True)
-        (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\nBACKEND_DIR=api\n")
+        (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\nBACKEND_DIR=api\nMAIN_STARTUP_ENABLE=false\n")
         config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
         runtime = PythonEngineRuntime(config, env={})
 
@@ -1015,6 +1017,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["effective"]["default_mode"], "trees")
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
+        self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
 
     def test_runtime_uses_legacy_spacing_strategy_when_requested(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1053,6 +1056,8 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--show-config"], env={}))
         self.assertEqual(code, 0)
         self.assertIn("preferred_port_strategy: legacy_spacing", buffer.getvalue())
+        self.assertIn("main_startup_enabled: True", buffer.getvalue())
+        self.assertIn("trees_startup_enabled: True", buffer.getvalue())
 
     def test_show_state_json_reports_missing_state(self) -> None:
         runtime = self._runtime()
@@ -1089,6 +1094,31 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["headless"])
         self.assertEqual(payload["selection"]["reason"], "headless_tree_start_requires_explicit_selection")
+
+    def test_explain_startup_json_reports_disabled_startup(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "MAIN_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["mode"], "main")
+        self.assertEqual(payload["startup_enabled"], False)
+        self.assertEqual(payload["reason"], "config_startup_disabled")
+        self.assertEqual(payload["dependencies"], [])
+        self.assertEqual(payload["services"], {"backend": False, "frontend": False})
 
 if __name__ == "__main__":
     unittest.main()

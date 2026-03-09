@@ -29,7 +29,7 @@ class ShellPruneContractTests(unittest.TestCase):
 
     def _write_manifest(self, repo: Path, *, commands: dict[str, str]) -> None:
         _write_json(
-            repo / "docs/planning/python_engine_parity_manifest.json",
+            repo / "contracts/python_engine_parity_manifest.json",
             {
                 "generated_at": "2026-02-25",
                 "commands": commands,
@@ -50,7 +50,7 @@ class ShellPruneContractTests(unittest.TestCase):
         command_mappings: list[dict[str, object]] | None = None,
     ) -> None:
         _write_json(
-            repo / "docs/planning/refactoring/envctl-shell-ownership-ledger.json",
+            repo / "contracts/envctl-shell-ownership-ledger.json",
             {
                 "version": 1,
                 "generated_at": "2026-02-25T00:00:00Z",

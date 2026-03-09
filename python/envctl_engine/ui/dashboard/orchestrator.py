@@ -131,6 +131,11 @@ class DashboardOrchestrator:
             runtime_any._print_dashboard_snapshot(state)
             return True, state
 
+        hidden_commands = self._dashboard_hidden_commands(state)
+        if route.command in hidden_commands:
+            print(f"Command '{route.command}' is not available in this dashboard because envctl runs are disabled for this mode.")
+            return True, state
+
         code = runtime_any.dispatch(route)
         runtime_any._emit(
             "ui.command.dispatch.result",
@@ -230,6 +235,14 @@ class DashboardOrchestrator:
     @staticmethod
     def _dashboard_owned_project_selection_commands() -> set[str]:
         return {"pr", "commit", "analyze", "migrate", "blast-worktree"}
+
+    @staticmethod
+    def _dashboard_hidden_commands(state: RunState) -> set[str]:
+        raw = state.metadata.get("dashboard_hidden_commands")
+        hidden = {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+        if not state.services:
+            hidden.add("migrate")
+        return hidden
 
     def _apply_project_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
@@ -400,4 +413,3 @@ class DashboardOrchestrator:
     @staticmethod
     def _tokens_set_mode(tokens: list[str]) -> bool:
         return tokens_set_mode(tokens)
-

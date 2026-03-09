@@ -15,6 +15,7 @@ from envctl_engine.ui.selection_support import (
     project_names_from_state,
     services_from_selection,
 )
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -841,4 +842,3 @@ class LifecycleCleanupOrchestrator:
         if candidate is None:
             raise RuntimeError("process runtime dependency is not configured")
         return cast(_ProcessRuntimeProtocol, candidate)
-

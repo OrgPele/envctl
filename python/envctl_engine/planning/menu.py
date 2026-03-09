@@ -84,8 +84,13 @@ class PlanningSelectionMenu:
                     existing_counts=existing_counts,
                 )
                 if action == "submit":
+                    has_existing = any(int(existing_counts.get(plan_file, 0)) > 0 for plan_file in planning_files)
                     return PlanningMenuResult(
-                        selected_counts={plan_file: count for plan_file, count in selected_counts.items() if count > 0}
+                        selected_counts=(
+                            dict(selected_counts)
+                            if has_existing
+                            else {plan_file: count for plan_file, count in selected_counts.items() if count > 0}
+                        )
                     )
                 if action == "cancel":
                     return PlanningMenuResult(selected_counts={}, cancelled=True)
@@ -143,13 +148,18 @@ class PlanningSelectionMenu:
                 existing_counts=existing_counts,
             )
             if action == "submit":
+                has_existing = any(int(existing_counts.get(plan_file, 0)) > 0 for plan_file in planning_files)
                 event.app.exit(
                     result=PlanningMenuResult(
-                        selected_counts={
-                            plan_file: count
-                            for plan_file, count in selected_counts.items()
-                            if count > 0
-                        }
+                        selected_counts=(
+                            dict(selected_counts)
+                            if has_existing
+                            else {
+                                plan_file: count
+                                for plan_file, count in selected_counts.items()
+                                if count > 0
+                            }
+                        )
                     )
                 )
                 return

@@ -4,11 +4,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-python_engine_version_is_312() {
+python_engine_version_is_supported() {
     local py_bin=$1
     "$py_bin" - <<'PY' >/dev/null 2>&1
 import sys
-sys.exit(0 if (sys.version_info.major, sys.version_info.minor) == (3, 12) else 1)
+major, minor = sys.version_info[:2]
+sys.exit(0 if major == 3 and 12 <= minor <= 14 else 1)
 PY
 }
 
@@ -22,30 +23,42 @@ python_engine_select_bin() {
         return 1
     fi
     if [ -n "${PYTHON_BIN:-}" ]; then
-        if command -v "${PYTHON_BIN}" >/dev/null 2>&1 && python_engine_version_is_312 "${PYTHON_BIN}"; then
+        if command -v "${PYTHON_BIN}" >/dev/null 2>&1 && python_engine_version_is_supported "${PYTHON_BIN}"; then
             printf '%s\n' "${PYTHON_BIN}"
             return 0
         fi
-        echo "PYTHON_BIN must resolve to Python 3.12: ${PYTHON_BIN}" >&2
+        echo "PYTHON_BIN must resolve to Python 3.12-3.14: ${PYTHON_BIN}" >&2
         return 1
     fi
 
     local envctl_root=""
     envctl_root="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
     local repo_venv_python="${envctl_root}/.venv/bin/python"
-    if [ -x "${repo_venv_python}" ] && python_engine_version_is_312 "${repo_venv_python}"; then
+    if [ -x "${repo_venv_python}" ] && python_engine_version_is_supported "${repo_venv_python}"; then
         printf '%s\n' "${repo_venv_python}"
         return 0
     fi
-    if command -v python3.12 >/dev/null 2>&1 && python_engine_version_is_312 python3.12; then
+    if command -v python3.14 >/dev/null 2>&1 && python_engine_version_is_supported python3.14; then
+        echo "python3.14"
+        return 0
+    fi
+    if command -v python3.13 >/dev/null 2>&1 && python_engine_version_is_supported python3.13; then
+        echo "python3.13"
+        return 0
+    fi
+    if command -v python3.12 >/dev/null 2>&1 && python_engine_version_is_supported python3.12; then
         echo "python3.12"
         return 0
     fi
-    if command -v python3 >/dev/null 2>&1 && python_engine_version_is_312 python3; then
+    if command -v python3 >/dev/null 2>&1 && python_engine_version_is_supported python3; then
         echo "python3"
         return 0
     fi
-    echo "Python 3.12 is required for ENVCTL_ENGINE_PYTHON_V1=true" >&2
+    if command -v python >/dev/null 2>&1 && python_engine_version_is_supported python; then
+        echo "python"
+        return 0
+    fi
+    echo "Python 3.12-3.14 is required for ENVCTL_ENGINE_PYTHON_V1=true" >&2
     return 1
 }
 
@@ -124,7 +137,7 @@ exec_shell_engine() {
 
 if [ "${ENVCTL_ENGINE_PYTHON_V1:-false}" = true ]; then
     if ! exec_python_engine_if_enabled "$@"; then
-        echo "Python engine failed to start. Ensure Python 3.12 is available." >&2
+        echo "Python engine failed to start. Ensure Python 3.12-3.14 is available." >&2
         exit 2
     fi
 fi

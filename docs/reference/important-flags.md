@@ -6,6 +6,7 @@ These are the highest-value flags for daily use.
 | Flag | Purpose |
 | --- | --- |
 | `--resume` | Resume previous runtime state and session mapping quickly. |
+| `--repo <path>` | Resolve and operate on a repo from outside that repo tree. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
 | `--main` | Run main mode only (skip trees). |
@@ -95,6 +96,11 @@ Engine note: Python runtime is default. `ENVCTL_ENGINE_SHELL_FALLBACK=true` stil
 
 ## Planning Path Config
 Use `ENVCTL_PLANNING_DIR` in `.envctl` to change where planning files are read from.
-Default is `docs/planning`.
+Default is `todo/plans`.
+
+When a plan is scaled to zero through `envctl --plan`, envctl blasts the related worktree(s) and archives the plan into a sibling `done` root. Example:
+
+- active: `todo/plans/backend/checkout.md`
+- archived: `todo/done/backend/checkout.md`
 
 For fuller operational guidance, see [Python Engine Guide](../user/python-engine-guide.md).

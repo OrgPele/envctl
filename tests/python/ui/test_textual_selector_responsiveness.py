@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -13,9 +14,24 @@ if str(PYTHON_ROOT) not in sys.path:
 
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.screens import selector
+from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTOR_CSS
 
 
 class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    def test_selector_css_uses_distinct_non_warning_hover_and_selected_states(self) -> None:
+        self.assertIn(".selector-row-unselected.-highlight", SELECTOR_CSS)
+        self.assertIn(".selector-row-selected {", SELECTOR_CSS)
+        self.assertIn(".selector-row-selected.-highlight", SELECTOR_CSS)
+        self.assertIn("ListItem.-highlight", SELECTOR_CSS)
+        self.assertIn("background: $accent 18%;", SELECTOR_CSS)
+        self.assertIn("background: $success 22%;", SELECTOR_CSS)
+        self.assertIn("background: $accent 36%;", SELECTOR_CSS)
+        self.assertIn("background: $accent 8%;", SELECTOR_CSS)
+        self.assertNotIn("background: $warning 18%;", SELECTOR_CSS)
+        self.assertNotIn("background: $warning 14%;", SELECTOR_CSS)
+        self.assertIn("border-left: wide $accent;", SELECTOR_CSS)
+        self.assertIn("border-left: wide $success;", SELECTOR_CSS)
+
     async def test_arrow_navigation_moves_single_row_per_keypress(self) -> None:
         options = [
             SelectorItem(
@@ -309,7 +325,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["beta"])
 
-    async def test_enter_from_empty_filter_submits_focused_row(self) -> None:
+    async def test_enter_from_empty_filter_does_not_submit_without_selection(self) -> None:
         options = [
             SelectorItem(
                 id="service:alpha",
@@ -337,7 +353,22 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.click("#selector-filter")
             await pilot.press("enter")
-        self.assertEqual(app.return_value, ["alpha"])
+            await pilot.pause()
+            self.assertIsNone(app.return_value)
+            self.assertFalse(app._rows[0].selected)  # type: ignore[attr-defined]
+            self.assertFalse(app._rows[1].selected)  # type: ignore[attr-defined]
+            status = app.query_one("#selector-status")
+            self.assertEqual(
+                str(status.render()),
+                "No items were selected. Press Space or click to select at least one.",
+            )
+            self.assertIn("selector-status-error", status.classes)
+            await asyncio.sleep(3.2)
+            await pilot.pause()
+            self.assertNotIn("selector-status-error", status.classes)
+            self.assertIn("0 selected", str(status.render()))
+            await pilot.press("escape")
+        self.assertIsNone(app.return_value)
 
     async def test_space_toggles_even_when_filter_has_focus(self) -> None:
         options = [

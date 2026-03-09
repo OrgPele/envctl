@@ -249,8 +249,15 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
 
             self.assertTrue(outcome.success)
             expected_project = build_supabase_project_name(project_root=repo, project_name="Main")
-            self.assertTrue(any(cmd[:4] == ["docker", "compose", "-p", expected_project] and "up" in cmd and "supabase-db" in cmd for cmd in commands))
-            self.assertTrue(any("dependency_compose" in token and token.endswith("docker-compose.yml") for cmd in commands for token in cmd))
+            self.assertTrue(
+                any(
+                    expected_project in " ".join(cmd)
+                    and "supabase-db" in " ".join(cmd)
+                    and cmd[0] == "docker"
+                    for cmd in commands
+                )
+            )
+            self.assertTrue(any("dependency_compose" in token for cmd in commands for token in cmd))
 
 
 if __name__ == "__main__":

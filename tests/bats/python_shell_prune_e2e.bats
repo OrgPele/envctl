@@ -50,11 +50,11 @@ setup() {
     set -euo pipefail
     tmp=$(mktemp -d)
     repo="$tmp/repo"
-    mkdir -p "$repo/lib/engine/lib" "$repo/docs/planning/refactoring" "$repo/docs/planning"
+    mkdir -p "$repo/lib/engine/lib" "$repo/contracts"
     printf "source \"\${LIB_DIR}/demo.sh\"\n" > "$repo/lib/engine/main.sh"
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -101,11 +101,11 @@ JSON
     set -euo pipefail
     tmp=$(mktemp -d)
     repo="$tmp/repo"
-    mkdir -p "$repo/lib/engine/lib" "$repo/docs/planning/refactoring" "$repo/docs/planning"
+    mkdir -p "$repo/lib/engine/lib" "$repo/contracts"
     printf "source \"\${LIB_DIR}/demo.sh\"\n" > "$repo/lib/engine/main.sh"
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -154,11 +154,11 @@ JSON
     set -euo pipefail
     tmp=$(mktemp -d)
     repo="$tmp/repo"
-    mkdir -p "$repo/lib/engine/lib" "$repo/docs/planning/refactoring" "$repo/docs/planning"
+    mkdir -p "$repo/lib/engine/lib" "$repo/contracts"
     printf "source \"\${LIB_DIR}/demo.sh\"\n" > "$repo/lib/engine/main.sh"
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
@@ -205,11 +205,11 @@ JSON
     set -euo pipefail
     tmp=$(mktemp -d)
     repo="$tmp/repo"
-    mkdir -p "$repo/lib/engine/lib" "$repo/docs/planning/refactoring" "$repo/docs/planning"
+    mkdir -p "$repo/lib/engine/lib" "$repo/contracts"
     printf "source \"\${LIB_DIR}/demo.sh\"\n" > "$repo/lib/engine/main.sh"
     printf "demo_func() { :; }\n" > "$repo/lib/engine/lib/demo.sh"
-    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/docs/planning/python_engine_parity_manifest.json"
-    cat > "$repo/docs/planning/refactoring/envctl-shell-ownership-ledger.json" <<"JSON"
+    printf "{\"generated_at\":\"2026-02-25\",\"commands\":{\"doctor\":\"python_complete\"},\"modes\":{}}" > "$repo/contracts/python_engine_parity_manifest.json"
+    cat > "$repo/contracts/envctl-shell-ownership-ledger.json" <<"JSON"
 {
   "version": 1,
   "generated_at": "2026-02-25T00:00:00Z",
