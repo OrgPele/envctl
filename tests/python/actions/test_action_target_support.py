@@ -97,7 +97,7 @@ class ActionTargetSupportTests(unittest.TestCase):
 
             code = execute_targeted_action(
                 targets=[target],
-                command_name="analyze",
+                command_name="review",
                 interactive_command=False,
                 resolve_command=lambda _context: ActionCommandResolution(command=["echo", "ok"], cwd=Path(tmpdir)),
                 build_env=lambda _context: {},
@@ -108,8 +108,8 @@ class ActionTargetSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn("report written", printed)
-            self.assertIn("analyze action succeeded for Main.", printed)
-            self.assertIn("analyze succeeded for Main", emitted)
+            self.assertIn("review action succeeded for Main.", printed)
+            self.assertIn("review succeeded for Main", emitted)
 
 
 if __name__ == "__main__":

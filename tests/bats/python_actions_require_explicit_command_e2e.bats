@@ -6,7 +6,7 @@ setup() {
   PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
 }
 
-@test "python pr/commit/analyze use native defaults when no command is configured" {
+@test "python pr/commit/review use native defaults when no command is configured" {
   [ -x "$PYTHON_BIN" ] || skip "project venv python not found"
 
   run bash -lc '
@@ -31,21 +31,21 @@ setup() {
     commit_rc=$?
     RUN_SH_RUNTIME_DIR="$runtime" \
     PYTHON_BIN="$1" \
-    "$2" --repo "$repo" --trees analyze --project feature-a-1 >"$repo_tmp/analyze.out" 2>&1
-    analyze_rc=$?
+    "$2" --repo "$repo" --trees review --project feature-a-1 >"$repo_tmp/review.out" 2>&1
+    review_rc=$?
     set -e
 
     cat "$repo_tmp/pr.out"
     cat "$repo_tmp/commit.out"
-    cat "$repo_tmp/analyze.out"
+    cat "$repo_tmp/review.out"
 
     [ "$pr_rc" -eq 0 ] || exit 1
     [ "$commit_rc" -eq 0 ] || exit 1
-    [ "$analyze_rc" -eq 0 ] || exit 1
+    [ "$review_rc" -eq 0 ] || exit 1
 
     grep -q "pr action succeeded" "$repo_tmp/pr.out" || exit 1
     grep -q "commit action succeeded" "$repo_tmp/commit.out" || exit 1
-    grep -q "analyze action succeeded" "$repo_tmp/analyze.out" || exit 1
+    grep -q "review action succeeded" "$repo_tmp/review.out" || exit 1
     echo "ok"
   ' _ "$PYTHON_BIN" "$BIN"
 

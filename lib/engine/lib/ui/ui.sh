@@ -770,12 +770,12 @@ ui_interactive_handle_command() {
             run_command "commit" "$selected"
             return $?
             ;;
-        a|analyze)
+        a|v|analyze|review)
             local selected
-            selected=$(select_project_target "Analyze changes for") || return 3
+            selected=$(select_project_target "Review changes for") || return 3
             selected=$(trim "$selected")
             [ -n "$selected" ] || return 3
-            run_command "analyze" "$selected"
+            run_command "review" "$selected"
             return $?
             ;;
         m|migrate|migration|migrations)

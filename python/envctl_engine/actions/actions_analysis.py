@@ -6,11 +6,11 @@ from pathlib import Path
 from envctl_engine.actions.action_utils import detect_repo_python
 
 
-def default_analyze_command(base_dir: Path) -> list[str] | None:
+def default_review_command(base_dir: Path) -> list[str] | None:
     python_bin = detect_repo_python(base_dir)
     if python_bin is None:
         return None
-    return [python_bin, "-m", "envctl_engine.actions.actions_cli", "analyze"]
+    return [python_bin, "-m", "envctl_engine.actions.actions_cli", "review"]
 
 
 @dataclass(slots=True)

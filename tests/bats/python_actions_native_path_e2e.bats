@@ -34,8 +34,8 @@ setup() {
     out_commit=$(PYTHONPATH="$1/python" "$BIN" --repo "$repo" --trees commit --project feature-a-1 2>&1)
     echo "$out_commit" | grep -q "commit action succeeded" || exit 1
 
-    out_analyze=$(PYTHONPATH="$1/python" "$BIN" --repo "$repo" --trees analyze --project feature-a-1 2>&1)
-    echo "$out_analyze" | grep -q "analyze action succeeded" || exit 1
+    out_review=$(PYTHONPATH="$1/python" "$BIN" --repo "$repo" --trees review --project feature-a-1 2>&1)
+    echo "$out_review" | grep -q "review action succeeded" || exit 1
 
     echo "ok"
   ' _ "$REPO_ROOT" "$PYTHON_BIN"

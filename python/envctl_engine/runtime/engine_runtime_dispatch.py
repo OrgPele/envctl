@@ -35,7 +35,7 @@ def dispatch_command(runtime: Any, route: object) -> int:
         return runtime._config(route)
     if command in {"logs", "clear-logs", "health", "errors"}:
         return runtime.state_action_orchestrator.execute(route)
-    if command in {"test", "delete-worktree", "blast-worktree", "pr", "commit", "analyze", "migrate"}:
+    if command in {"test", "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate"}:
         return runtime.action_command_orchestrator.execute(route)
     if command in {"restart", "plan", "start"}:
         return runtime.startup_orchestrator.execute(route)

@@ -40,7 +40,7 @@ DEFAULT_CASES: tuple[Case, ...] = (
     Case("cmd_resume", ("--resume",)),
     Case("cmd_restart", ("restart",)),
     Case("cmd_health", ("health",)),
-    Case("cmd_analyze", ("analyze",)),
+    Case("cmd_review", ("review",)),
     Case("cmd_migrate", ("migrate",)),
     Case("cmd_list_commands", ("--list-commands",)),
     Case("cmd_list_targets", ("--list-targets",)),

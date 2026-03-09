@@ -83,7 +83,7 @@ class TargetSelectorTests(unittest.TestCase):
             return_value=TargetSelection(cancelled=True),
         ):
             selection = selector.select_project_targets(
-                prompt="Analyze changes for",
+                prompt="Review changes for",
                 projects=projects,
                 allow_all=True,
                 allow_untested=False,

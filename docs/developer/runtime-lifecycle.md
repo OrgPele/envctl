@@ -162,7 +162,7 @@ Current dispatch families are:
 - startup/resume commands
 - dashboard and config commands
 - state actions such as logs/health/errors
-- project actions such as test/pr/commit/analyze/migrate
+- project actions such as test/pr/commit/review/migrate
 
 This matters because each family has different assumptions about:
 

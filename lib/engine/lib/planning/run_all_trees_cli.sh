@@ -24,7 +24,7 @@ Commands:
   test, tests                  Run tests against targets (implies --skip-startup)
   logs                         Tail logs for targets (implies --skip-startup)
   health                       Check health of running services (implies --skip-startup)
-  analyze                      Analyze changes for targets (implies --skip-startup)
+  review                       Review changes for targets (implies --skip-startup)
   migrate                      Run migrations for targets (implies --skip-startup)
   pr, prs                      Create PRs for targets (implies --skip-startup)
   commit                       Commit targeted project directories (implies --skip-startup)
@@ -91,7 +91,8 @@ Options:
   --list-targets               Print available targets and exit
   --list-trees                 Print available tree targets and exit
   --set KEY=VALUE              Apply config value in headless config mode (repeatable)
-  --analyze-mode <single|grouped>  Analysis mode for analyze command
+  --review-mode <single|grouped>   Review mode for review command
+  --analyze-mode <single|grouped>  Legacy alias for --review-mode
   --fast                       Enable fast startup caches
   --refresh-cache              Force full scan and refresh fast caches
   --parallel-trees             Enable parallel tree startup workers
@@ -488,8 +489,8 @@ run_all_trees_cli_parse_args() {
                 run_sh_command_resume=true
                 shift
                 ;;
-            analyze|--analyze)
-                run_sh_command="analyze"
+            review|--review|analyze|--analyze)
+                run_sh_command="review"
                 run_sh_command_only=true
                 run_sh_command_resume=true
                 shift

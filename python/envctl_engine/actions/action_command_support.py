@@ -64,6 +64,9 @@ def build_action_env(
     process_env: Mapping[str, str],
     runtime_env: Mapping[str, str],
     repo_root: Path,
+    runtime_root: Path | None,
+    run_id: str | None,
+    tree_diffs_root: Path | None,
     command_name: str,
     targets: list[object],
     route: Route | None,
@@ -85,6 +88,12 @@ def build_action_env(
         str(getattr(context, "name")) for context in targets if hasattr(context, "name")
     )
     env["ENVCTL_ACTION_REPO_ROOT"] = str(repo_root)
+    if runtime_root is not None:
+        env["ENVCTL_ACTION_RUNTIME_ROOT"] = str(runtime_root)
+    if run_id:
+        env["ENVCTL_ACTION_RUN_ID"] = run_id
+    if tree_diffs_root is not None:
+        env["ENVCTL_ACTION_TREE_DIFFS_ROOT"] = str(tree_diffs_root)
     if target is not None:
         env["ENVCTL_ACTION_PROJECT"] = str(getattr(target, "name"))
         env["ENVCTL_ACTION_PROJECT_ROOT"] = str(getattr(target, "root"))

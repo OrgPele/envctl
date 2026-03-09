@@ -33,8 +33,9 @@ class TextualDashboardRenderingSafetyTests(unittest.TestCase):
         self.assertIn("Lifecycle:", text)
         self.assertIn("Actions:", text)
         self.assertIn("Inspect:", text)
-        self.assertIn("stop-all", text)
-        self.assertIn("blast-all", text)
+        self.assertNotIn("stop-all", text)
+        self.assertNotIn("blast-all", text)
+        self.assertNotIn("confi(g)", text)
 
     def test_normalize_dashboard_command_maps_shortcuts(self) -> None:
         self.assertEqual(_normalize_dashboard_command("r"), "restart")

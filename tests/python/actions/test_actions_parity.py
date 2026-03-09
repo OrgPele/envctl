@@ -85,7 +85,7 @@ class ActionsParityTests(unittest.TestCase):
             fake_runner = _FakeRunner(returncode=0)
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            commands = ("test", "pr", "commit", "analyze", "migrate")
+            commands = ("test", "pr", "commit", "review", "migrate")
             for command in commands:
                 route = parse_route([command, "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
@@ -256,7 +256,7 @@ class ActionsParityTests(unittest.TestCase):
             expected_messages = {
                 "pr": "No PR target selected.",
                 "commit": "No commit target selected.",
-                "analyze": "No analysis target selected.",
+                "review": "No review target selected.",
                 "migrate": "No migration target selected.",
             }
             for command, expected in expected_messages.items():
@@ -290,6 +290,33 @@ class ActionsParityTests(unittest.TestCase):
                 extra=None,
             )
             self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
+
+    def test_action_env_exposes_runtime_scoped_tree_diffs_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(
+                ["review", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "review",
+                [target],
+                route=route,
+                target=target,
+                extra=None,
+            )
+
+            expected_root = engine.state_repository.tree_diffs_dir_path(None)
+            self.assertEqual(env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT"), str(expected_root))
+            self.assertEqual(env.get("ENVCTL_ACTION_RUNTIME_ROOT"), str(engine.state_repository.runtime_root))
 
     def test_action_explicit_main_mode_does_not_fallback_to_tree_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -369,14 +396,14 @@ class ActionsParityTests(unittest.TestCase):
             fake_runner = _FakeRunner(returncode=0)
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            for command in ("pr", "commit", "analyze"):
+            for command in ("pr", "commit", "review"):
                 route = parse_route([command, "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
                 self.assertEqual(code, 0, msg=command)
 
             self.assertTrue(any(("envctl_engine.actions.actions_cli" in call[0]) or ("envctl_engine.actions.actions_cli" in call[0]) for call in fake_runner.run_calls))
 
-    def test_interactive_analyze_prints_action_output_details(self) -> None:
+    def test_interactive_review_prints_action_output_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -386,12 +413,12 @@ class ActionsParityTests(unittest.TestCase):
 
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
-                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Analysis summary written: /tmp/analysis.md'"},
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Review summary written: /tmp/review.md'"},
             )
-            fake_runner = _FakeRunner(returncode=0, stdout="Analysis summary written: /tmp/analysis.md\n")
+            fake_runner = _FakeRunner(returncode=0, stdout="Review summary written: /tmp/review.md\n")
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            route = parse_route(["analyze", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
             out = StringIO()
             with redirect_stdout(out):
@@ -399,7 +426,7 @@ class ActionsParityTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             rendered = out.getvalue()
-            self.assertIn("Analysis summary written: /tmp/analysis.md", rendered)
+            self.assertIn("Review summary written: /tmp/review.md", rendered)
 
     def test_interactive_pr_reports_existing_pr_status_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -433,7 +460,7 @@ class ActionsParityTests(unittest.TestCase):
             ]
             self.assertTrue(any(existing_line in message for message in status_messages), msg=status_messages)
 
-    def test_analyze_action_extra_env_maps_project_scoped_backend_service_to_backend_scope(self) -> None:
+    def test_review_action_extra_env_maps_project_scoped_backend_service_to_backend_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -441,7 +468,7 @@ class ActionsParityTests(unittest.TestCase):
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             route = parse_route(
-                ["analyze", "--service", "Main Backend"],
+                ["review", "--service", "Main Backend"],
                 env={"ENVCTL_DEFAULT_MODE": "main"},
             )
 
@@ -464,7 +491,7 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_utils.shutil.which",
                 side_effect=lambda name: "/usr/bin/python3" if name in {"python3", "python"} else None,
             ):
-                for command in ("pr", "commit", "analyze"):
+                for command in ("pr", "commit", "review"):
                     route = parse_route([command, "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                     code = engine.dispatch(route)
                     self.assertEqual(code, 0, msg=command)

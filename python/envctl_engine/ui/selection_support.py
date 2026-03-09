@@ -96,7 +96,7 @@ def no_target_selected_message(
         "logs": "log",
         "clear-logs": "log",
         "pr": "PR",
-        "analyze": "analysis",
+        "review": "review",
         "migrate": "migration",
         "blast-worktree": "worktree",
     }

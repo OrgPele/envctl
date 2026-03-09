@@ -28,7 +28,8 @@ class CliRouterParityTests(unittest.TestCase):
             "--test": "test",
             "--pr": "pr",
             "--commit": "commit",
-            "--analyze": "analyze",
+            "--review": "review",
+            "--analyze": "review",
             "--migrate": "migrate",
             "--restart": "restart",
             "--stop-all": "stop-all",
@@ -61,8 +62,8 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.command, "commit")
         self.assertEqual(route.flags.get("commit_message"), "ship it")
 
-        route = parse_route(["analyze", "--analyze-mode=grouped"], env={})
-        self.assertEqual(route.command, "analyze")
+        route = parse_route(["review", "--review-mode=grouped"], env={})
+        self.assertEqual(route.command, "review")
         self.assertEqual(route.flags.get("analyze_mode"), "grouped")
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))

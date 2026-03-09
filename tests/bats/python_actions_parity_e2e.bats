@@ -24,7 +24,7 @@ setup() {
     export ENVCTL_ACTION_ANALYZE_CMD=true
     export ENVCTL_ACTION_MIGRATE_CMD=true
 
-    for cmd in test pr commit analyze migrate; do
+    for cmd in test pr commit review migrate; do
       set +e
       out=$("$2" --repo "$repo" --trees "$cmd" --project feature-a-1 2>&1)
       rc=$?

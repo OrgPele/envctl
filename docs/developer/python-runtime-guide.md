@@ -181,7 +181,7 @@ Main families today:
 - startup/resume: `start`, `plan`, `restart`, `resume`
 - dashboard/config: `dashboard`, `config`
 - state actions: `logs`, `clear-logs`, `health`, `errors`
-- project actions: `test`, `pr`, `commit`, `analyze`, `migrate`, worktree actions
+- project actions: `test`, `pr`, `commit`, `review`, `migrate`, worktree actions
 
 Relevant orchestrators:
 

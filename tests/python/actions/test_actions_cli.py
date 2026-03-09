@@ -254,6 +254,7 @@ class ActionsCliTests(unittest.TestCase):
     def test_analyze_action_prefers_repo_helper_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "runs" / "run-123" / "tree-diffs").resolve()
             project_root = repo_root / "trees" / "feature-a" / "1"
             sibling_root = repo_root / "trees" / "feature-a" / "2"
             helper = repo_root / "utils" / "analyze-tree-changes.sh"
@@ -269,9 +270,31 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
                 command = [str(token) for token in args]
                 calls.append(command)
+                output_dir_arg = next(arg for arg in command if arg.startswith("output-dir="))
+                output_dir = Path(output_dir_arg.split("=", 1)[1])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "summary.md").write_text("# Summary\n", encoding="utf-8")
+                (output_dir / "all.md").write_text("# Full\n", encoding="utf-8")
+                (output_dir / "prompt.md").write_text("# Prompt\n", encoding="utf-8")
+                (output_dir / "summary_short.txt").write_text(
+                    "Tree Changes Analysis Summary\n"
+                    "============================\n"
+                    "Base branch: dev\n"
+                    "Trees analyzed: 1\n",
+                    encoding="utf-8",
+                )
                 return subprocess.CompletedProcess(args=command, returncode=0, stdout="analysis ok\n", stderr="")
 
             with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_ACTION_RUN_ID": "run-123",
+                    },
+                    clear=False,
+                ),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -281,15 +304,30 @@ class ActionsCliTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertEqual(code, 0)
-            self.assertIn("analysis ok", output)
+            self.assertIn("Review Ready: feature-a-1", output)
+            self.assertIn("Output directory", output)
+            self.assertIn("Summary file", output)
+            self.assertIn("Full review bundle", output)
+            self.assertIn("Trees analyzed: 1", output)
+            self.assertNotIn("analysis ok", output)
+            self.assertNotIn("/private/tmp/", output)
             self.assertTrue(calls, msg="expected helper invocation")
             self.assertEqual(calls[0][0], str(helper.resolve()))
             self.assertIn("trees=1", calls[0])
             self.assertIn("approach=optimal", calls[0])
+            output_dir_arg = next(arg for arg in calls[0] if arg.startswith("output-dir="))
+            self.assertTrue(output_dir_arg.startswith(f"output-dir={runtime_root}/analysis_feature-a-1_"))
+            written_dir = Path(output_dir_arg.split("=", 1)[1])
+            self.assertTrue((written_dir / "summary.md").is_file())
+            self.assertTrue((written_dir / "all.md").is_file())
+            self.assertFalse((written_dir / "prompt.md").exists())
+            self.assertFalse((written_dir / "summary_short.txt").exists())
+            self.assertFalse((repo_root / "tree-diffs").exists())
 
     def test_analyze_action_falls_back_when_helper_is_not_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
             project_root = repo_root / "trees" / "feature-a" / "1"
             helper = repo_root / "utils" / "analyze-tree-changes.sh"
             helper.parent.mkdir(parents=True, exist_ok=True)
@@ -305,6 +343,14 @@ class ActionsCliTests(unittest.TestCase):
                 return ""
 
             with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                    },
+                    clear=False,
+                ),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run") as run_mock,
@@ -315,7 +361,19 @@ class ActionsCliTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertEqual(code, 0)
-            self.assertIn("Analysis summary written:", output)
+            self.assertIn("Review Ready: feature-a-1", output)
+            self.assertIn("Summary file", output)
+            self.assertIn("Full review bundle", output)
+            self.assertIn("Output directory", output)
+            written_path = next(
+                Path(line.strip())
+                for line in output.splitlines()
+                if line.strip().endswith(".md")
+            )
+            self.assertTrue(written_path.is_file())
+            self.assertTrue(written_path.resolve().is_relative_to(runtime_root))
+            self.assertFalse((repo_root / "review").exists())
+            self.assertFalse((repo_root / "tree-diffs").exists())
             run_mock.assert_not_called()
 
 

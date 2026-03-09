@@ -36,7 +36,7 @@
     "blast-worktree": "python_complete",
     "pr": "python_complete",
     "commit": "python_complete",
-    "analyze": "python_complete",
+    "review": "python_complete",
     "migrate": "python_complete",
     "list-commands": "python_complete",
     "list-targets": "python_complete",

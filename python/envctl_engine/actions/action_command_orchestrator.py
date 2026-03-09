@@ -9,7 +9,7 @@ import subprocess
 import sys
 from typing import Any, Callable, Mapping
 
-from envctl_engine.actions.actions_analysis import default_analyze_command, default_migrate_command
+from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
 from envctl_engine.actions.action_command_support import (
     build_action_env,
@@ -65,7 +65,7 @@ class ActionCommandOrchestrator:
             "test": self.run_test_action,
             "pr": self.run_pr_action,
             "commit": self.run_commit_action,
-            "analyze": self.run_analyze_action,
+            "review": self.run_review_action,
             "migrate": self.run_migrate_action,
         }
         handler = handler_map.get(route.command)
@@ -272,14 +272,14 @@ class ActionCommandOrchestrator:
             extra_env=self.action_extra_env(route),
         )
 
-    def run_analyze_action(self, route: Route, targets: list[object]) -> int:
+    def run_review_action(self, route: Route, targets: list[object]) -> int:
         rt = self.runtime
         return self.run_project_action(
             route,
             targets,
-            command_name="analyze",
+            command_name="review",
             env_key="ENVCTL_ACTION_ANALYZE_CMD",
-            default_command=default_analyze_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_command=default_review_command(rt.config.base_dir),  # type: ignore[attr-defined]
             default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
             default_append_project_path=False,
             extra_env=self.action_extra_env(route),
@@ -464,10 +464,19 @@ class ActionCommandOrchestrator:
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
         rt = self.runtime
+        state = rt._try_load_existing_state(  # type: ignore[attr-defined]
+            mode=getattr(route, "mode", None),
+            strict_mode_match=False,
+        )
+        run_id = getattr(state, "run_id", None)
+        tree_diffs_root = rt.state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
         return build_action_env(
             process_env=os.environ,
             runtime_env=rt.env,  # type: ignore[arg-type,attr-defined]
             repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+            runtime_root=rt.state_repository.runtime_root,  # type: ignore[attr-defined]
+            run_id=run_id,
+            tree_diffs_root=tree_diffs_root,
             command_name=command_name,
             targets=targets,
             route=route,

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 from pathlib import Path
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Mapping
 
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.color_policy import colors_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,10 +150,10 @@ def run_pr_action(context: ActionProjectContext) -> int:
     return 0
 
 
-def run_analyze_action(context: ActionProjectContext) -> int:
+def run_review_action(context: ActionProjectContext) -> int:
     git_root = resolve_git_root(context.project_root, context.repo_root)
     if shutil.which("git") is None:
-        print("git is required for analyze action")
+        print("git is required for review action")
         return 1
 
     mode = _resolve_analyze_mode(context)
@@ -169,15 +172,15 @@ def run_analyze_action(context: ActionProjectContext) -> int:
 
     diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
     status = _git_output(git_root, ["status", "--porcelain"]).strip()
-    output_path = _summary_output_path(
-        context.repo_root,
-        "analysis",
-        f"analysis_{sanitize_label(context.project_name)}_{mode}",
+    output_path = _tree_diffs_output_path(
+        context,
+        "review",
+        f"review_{sanitize_label(context.project_name)}_{mode}",
     )
     _write_markdown_lines(
         output_path,
         [
-            f"# Analysis Summary: {context.project_name}",
+            f"# Review Summary: {context.project_name}",
             "",
             f"Mode: {mode}",
             f"Scope: {scope}",
@@ -190,7 +193,16 @@ def run_analyze_action(context: ActionProjectContext) -> int:
             "",
         ],
     )
-    print(f"Analysis summary written: {output_path}")
+    _print_review_completion(
+        context,
+        mode=mode,
+        scope=scope,
+        output_dir=output_path.parent,
+        summary_path=output_path,
+        all_in_one_path=output_path,
+        stats=[],
+        tree_count=1,
+    )
     return 0
 
 
@@ -360,10 +372,14 @@ def _run_analyze_helper(
         return 1
 
     approach = "combine" if mode == "grouped" and len(iterations) > 1 else "optimal"
+    output_dir = _tree_diffs_root(context) / (
+        f"analysis_{sanitize_label(context.project_name)}_{sanitize_label(scope)}_{mode}_"
+        f"{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}"
+    )
     args = [
         f"trees={','.join(iterations)}",
         f"approach={approach}",
-        f"output-dir=tree-diffs/analysis_{sanitize_label(context.project_name)}_{sanitize_label(scope)}_{mode}_{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}",
+        "output-dir=" + str(output_dir),
     ]
     if scope != "all":
         args.append(f"scope={scope}")
@@ -383,7 +399,26 @@ def _run_analyze_helper(
         capture_output=True,
         check=False,
     )
-    _print_process_output(result)
+    if result.returncode == 0:
+        short_summary_path = output_dir / "summary_short.txt"
+        stats = _parse_review_stats(short_summary_path)
+        _prune_review_output_dir(output_dir, keep_names={"summary.md", "all.md"})
+        _print_review_completion(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_dir,
+            summary_path=_first_existing_path(output_dir / "summary.md", output_dir / "all.md"),
+            all_in_one_path=output_dir / "all.md",
+            stats=stats,
+            tree_count=len(iterations),
+        )
+    else:
+        _print_review_failure(
+            context,
+            output_dir=output_dir,
+            result=result,
+        )
     return result.returncode
 
 
@@ -404,6 +439,31 @@ def _file_has_text(path: Path) -> bool:
 
 def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: str | None = None) -> Path:
     output_dir = repo_root / directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
+    if label:
+        return output_dir / f"{prefix}_{sanitize_label(label)}_{timestamp}.md"
+    return output_dir / f"{prefix}_{timestamp}.md"
+
+
+def _tree_diffs_root(context: ActionProjectContext) -> Path:
+    explicit = str(context.env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT", "")).strip()
+    if explicit:
+        root = Path(explicit).expanduser()
+    else:
+        repo_hash = hashlib.sha256(str(context.repo_root.resolve()).encode("utf-8")).hexdigest()[:12]
+        root = Path(tempfile.gettempdir()) / "envctl-tree-diffs" / repo_hash
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _tree_diffs_output_path(
+    context: ActionProjectContext,
+    directory: str,
+    prefix: str,
+    label: str | None = None,
+) -> Path:
+    output_dir = _tree_diffs_root(context) / directory
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     if label:
@@ -438,6 +498,136 @@ def _print_process_output(result: subprocess.CompletedProcess[str]) -> None:
         print(stdout)
     if result.returncode != 0 and stderr:
         print(stderr)
+
+
+def _first_existing_path(*paths: Path) -> Path:
+    for path in paths:
+        if path.is_file():
+            return path
+    return paths[0]
+
+
+def _print_review_completion(
+    context: ActionProjectContext,
+    *,
+    mode: str,
+    scope: str,
+    output_dir: Path,
+    summary_path: Path,
+    all_in_one_path: Path,
+    stats: list[tuple[str, str]],
+    tree_count: int,
+) -> None:
+    color = _review_colorizer(context)
+    print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
+    print(f"  Mode: {mode}")
+    print(f"  Scope: {scope}")
+    print(f"  Trees: {tree_count}")
+    print()
+    print(color("  Output directory", fg="blue", bold=True))
+    print(f"    {_display_path(output_dir)}")
+    print(color("  Summary file", fg="blue", bold=True))
+    print(f"    {_display_path(summary_path)}")
+    print(color("  Full review bundle", fg="blue", bold=True))
+    print(f"    {_display_path(all_in_one_path)}")
+    if stats:
+        print()
+        print(color("  Quick stats", fg="green", bold=True))
+        for label, value in stats:
+            print(f"    {label}: {value}")
+
+    print()
+    print(color("  Next steps", fg="green", bold=True))
+    print("    1. Start with the summary file.")
+    print("    2. Open the full review when you need the complete context.")
+
+
+def _print_review_failure(
+    context: ActionProjectContext,
+    *,
+    output_dir: Path,
+    result: subprocess.CompletedProcess[str],
+) -> None:
+    color = _review_colorizer(context)
+    print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
+    print(color("  Output directory", fg="blue", bold=True))
+    print(f"    {_display_path(output_dir)}")
+    stderr = str(result.stderr or "").strip()
+    stdout = str(result.stdout or "").strip()
+    details = stderr or stdout or f"exit:{result.returncode}"
+    print(f"  Details: {details}")
+
+
+def _parse_review_stats(summary_short_path: Path | None) -> list[tuple[str, str]]:
+    if summary_short_path is None or not summary_short_path.is_file():
+        return []
+    wanted = {
+        "Trees analyzed": "Trees analyzed",
+        "Base branch": "Base branch",
+        "Trees with changes": "Trees with changes",
+        "Trees with no changes": "Trees with no changes",
+    }
+    rows: list[tuple[str, str]] = []
+    try:
+        for raw in summary_short_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if ":" not in line:
+                continue
+            key, value = [part.strip() for part in line.split(":", 1)]
+            if key in wanted and value:
+                rows.append((wanted[key], value))
+    except OSError:
+        return []
+    return rows
+
+
+def _prune_review_output_dir(output_dir: Path, *, keep_names: set[str]) -> None:
+    for child in list(output_dir.iterdir()):
+        if child.name in keep_names:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+            continue
+        try:
+            child.unlink()
+        except OSError:
+            continue
+
+
+def _review_colorizer(context: ActionProjectContext):
+    enabled = colors_enabled(context.env, stream=sys.stdout, interactive_tty=context.interactive)
+
+    def colorize(text: str, *, fg: str | None = None, bold: bool = False) -> str:
+        if not enabled:
+            return text
+        palette = {
+            "red": "31",
+            "green": "32",
+            "yellow": "33",
+            "blue": "34",
+            "magenta": "35",
+            "cyan": "36",
+            "gray": "90",
+        }
+        codes: list[str] = []
+        if bold:
+            codes.append("1")
+        if fg is not None and fg in palette:
+            codes.append(palette[fg])
+        if not codes:
+            return text
+        return f"\x1b[{';'.join(codes)}m{text}\x1b[0m"
+
+    return colorize
+
+
+def _display_path(path: Path) -> str:
+    text = str(path)
+    if text == "/private/tmp":
+        return "/tmp"
+    if text.startswith("/private/tmp/"):
+        return "/tmp/" + text[len("/private/tmp/") :]
+    return text
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:

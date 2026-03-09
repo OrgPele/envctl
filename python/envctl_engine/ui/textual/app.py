@@ -43,9 +43,9 @@ def _to_renderable(value: str) -> object:
 def _dashboard_commands_help() -> str:
     return (
         "Commands: (q)uit\n"
-        "  Lifecycle: (s)top | (r)estart | stop-all | blast-all\n"
+        "  Lifecycle: (s)top | (r)estart\n"
         "  Actions: (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate\n"
-        "  Inspect: (l)ogs | (h)ealth | (e)rrors | confi(g)"
+        "  Inspect: (l)ogs | (h)ealth | (e)rrors"
     )
 
 

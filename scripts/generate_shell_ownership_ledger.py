@@ -36,7 +36,7 @@ def _owner_for_command(command: str) -> tuple[str, str, list[str]]:
         "blast-worktree": ("python/envctl_engine/actions_worktree.py", "delete_worktree_path", ["tests/python/test_actions_parity.py"]),
         "pr": ("python/envctl_engine/actions_git.py", "default_pr_command", ["tests/python/test_actions_parity.py"]),
         "commit": ("python/envctl_engine/actions_git.py", "default_commit_command", ["tests/python/test_actions_parity.py"]),
-        "analyze": ("python/envctl_engine/actions_analysis.py", "default_analyze_command", ["tests/python/test_actions_parity.py"]),
+        "review": ("python/envctl_engine/actions_analysis.py", "default_review_command", ["tests/python/test_actions_parity.py"]),
         "migrate": ("python/envctl_engine/actions_analysis.py", "default_migrate_command", ["tests/python/test_actions_parity.py"]),
         "list-commands": ("python/envctl_engine/command_router.py", "list_supported_commands", ["tests/python/test_cli_router_parity.py"]),
         "list-targets": (runtime_module, "PythonEngineRuntime._discover_projects", ["tests/python/test_discovery_topology.py"]),
@@ -83,7 +83,7 @@ _ENTRY_OWNER_BY_MODULE: dict[str, tuple[str, str]] = {
     ),
     "lib/engine/lib/analysis.sh": (
         "python/envctl_engine/actions_analysis.py",
-        "default_analyze_command",
+        "default_review_command",
     ),
     "lib/engine/lib/cli.sh": (
         "python/envctl_engine/command_router.py",
@@ -111,7 +111,7 @@ _ENTRY_OWNER_BY_MODULE: dict[str, tuple[str, str]] = {
     ),
     "lib/engine/lib/deploy_production_helpers.sh": (
         "python/envctl_engine/actions_analysis.py",
-        "default_analyze_command",
+        "default_review_command",
     ),
     "lib/engine/lib/docker.sh": (
         "python/envctl_engine/lifecycle_cleanup_orchestrator.py",

@@ -125,6 +125,7 @@ VALUE_FLAGS = {
     "--commit-message",
     "--commit-message-file",
     "--analyze-mode",
+    "--review-mode",
     "--logs-tail",
     "--logs-duration",
     "--parallel-trees-max",
@@ -290,9 +291,13 @@ _COMMAND_ALIAS_PAIRS = (
     ("--commit", "commit"),
     ("commit", "commit"),
     ("c", "commit"),
-    ("--analyze", "analyze"),
-    ("analyze", "analyze"),
-    ("a", "analyze"),
+    ("--review", "review"),
+    ("review", "review"),
+    ("reviews", "review"),
+    ("v", "review"),
+    ("--analyze", "review"),
+    ("analyze", "review"),
+    ("a", "review"),
     ("--migrate", "migrate"),
     ("migrate", "migrate"),
     ("migration", "migrate"),
@@ -328,7 +333,7 @@ SUPPORTED_COMMANDS = sorted(
         "blast-worktree",
         "pr",
         "commit",
-        "analyze",
+        "review",
         "migrate",
         "list-commands",
         "list-targets",
@@ -531,7 +536,7 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
                     "blast-worktree",
                     "pr",
                     "commit",
-                    "analyze",
+                    "review",
                     "migrate",
                 }:
                     state.flags["skip_startup"] = True
@@ -561,7 +566,7 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
                     "blast-worktree",
                     "pr",
                     "commit",
-                    "analyze",
+                    "review",
                     "migrate",
                 }:
                     state.flags["skip_startup"] = True
@@ -617,7 +622,7 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                     "blast-worktree",
                     "pr",
                     "commit",
-                    "analyze",
+                    "review",
                     "migrate",
                 }:
                     state.flags["skip_startup"] = True
@@ -932,6 +937,7 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--commit-message": "commit_message",
         "--commit-message-file": "commit_message_file",
         "--analyze-mode": "analyze_mode",
+        "--review-mode": "analyze_mode",
         "--logs-tail": "logs_tail",
         "--logs-duration": "logs_duration",
         "--parallel-trees-max": "parallel_trees_max",

@@ -178,7 +178,7 @@ def _parse_initial_route(argv: Sequence[str], env_map: Mapping[str, str]) -> Rou
 
 def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
     if route.command in {
-        "analyze",
+        "review",
         "blast-all",
         "blast-worktree",
         "commit",
