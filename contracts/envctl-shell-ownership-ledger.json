@@ -1,12 +1,12 @@
 {
   "command_mappings": [
     {
-      "command": "analyze",
+      "command": "review",
       "evidence_tests": [
         "tests/python/test_actions_parity.py"
       ],
       "python_owner_module": "python/envctl_engine/actions_analysis.py",
-      "python_owner_symbol": "default_analyze_command"
+      "python_owner_symbol": "default_review_command"
     },
     {
       "command": "blast-all",

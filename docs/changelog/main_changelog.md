@@ -1,3 +1,27 @@
+## 2026-03-09 - Review tree-diffs moved into runtime `/tmp` scope
+
+### Scope
+Moved review/tree-diff artifacts out of the repo and into the runtime-scoped `/tmp` tree, matching the earlier `test-results` relocation.
+
+### Key behavior changes
+- `python/envctl_engine/state/repository.py`
+  - Added `tree_diffs_dir_path(...)` as the canonical runtime-scoped artifact resolver for review outputs.
+- `python/envctl_engine/actions/action_command_support.py`
+  - Action subprocess env now exports runtime-scoped review artifact metadata, including `ENVCTL_ACTION_TREE_DIFFS_ROOT`.
+- `python/envctl_engine/actions/action_command_orchestrator.py`
+  - Review actions now derive their artifact root from the active run when available, and otherwise use the scoped runtime root instead of the repo.
+- `python/envctl_engine/actions/project_action_domain.py`
+  - Built-in review summaries now write under runtime-scoped `tree-diffs/review/...`.
+  - Helper-driven review runs now pass an absolute runtime-scoped `output-dir=` instead of repo-local `tree-diffs/...`.
+- Tests updated:
+  - `tests/python/actions/test_actions_cli.py`
+  - `tests/python/actions/test_actions_parity.py`
+  - `tests/python/state/test_state_repository_contract.py`
+
+### Verification
+- `./.venv/bin/python -m unittest tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.state.test_state_repository_contract`
+  - expected to confirm review outputs resolve under `/tmp` and no repo-local `tree-diffs` directory is created.
+
 ## 2026-03-04 - Target selector default switched to Textual plan-style UI (prompt-toolkit rollback retained)
 
 ### Scope
@@ -12937,6 +12961,107 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 - Config/env/migrations:
   - No new config/env keys.
   - No data/state migrations.
+
+## 2026-03-09 - Rename `analyze` command to `review` across the app
+
+- Scope:
+  - Promoted `review` to the canonical user-facing command for change-summary workflows and kept `analyze` as a legacy compatibility alias.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/command_router.py`
+    - Added `review` / `--review` / `v` as first-class command aliases.
+    - Re-routed legacy `analyze` / `--analyze` / `a` to canonical command `review`.
+    - Added `--review-mode` as the primary user-facing flag while keeping `--analyze-mode` as a legacy alias that still binds to the existing internal `analyze_mode` route flag.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/command_aliases.py`
+    - Dashboard interactive aliases now normalize both `a` and `v` to `review`.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/command_loop.py`
+    - Dashboard action menu now renders `re(v)iew` instead of `(a)nalyze`.
+    - Spinner/status text now says `Preparing review...`.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/dashboard/orchestrator.py`
+    - Interactive project-target prompt now says `Review changes for`.
+    - Dashboard command handling treats `review` as the canonical action family.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/action_command_orchestrator.py`
+    - Canonical project action dispatch now routes `review` through the review action path.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/actions_analysis.py`
+    - Renamed the default Python-native command resolver to `default_review_command(...)`.
+    - The native helper now launches `envctl_engine.actions.actions_cli review`.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/actions_cli.py`
+    - Direct action CLI now accepts both `review` and legacy `analyze`, both routing to the same implementation.
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/project_action_domain.py`
+    - Built-in fallback output is now `Review Summary`.
+    - Generated summary files now write under `review/...` with `review_<project>_<mode>` naming.
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/actions/actions.sh`
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/ui/ui.sh`
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/planning/run_all_trees_cli.sh`
+    - Legacy shell/help surfaces now advertise `review` as the primary command while still accepting `analyze` as a compatibility alias.
+  - `/Users/kfiramar/projects/envctl/contracts/python_engine_parity_manifest.json`
+  - `/Users/kfiramar/projects/envctl/contracts/envctl-shell-ownership-ledger.json`
+  - `/Users/kfiramar/projects/envctl/scripts/generate_python_engine_parity_manifest.py`
+  - `/Users/kfiramar/projects/envctl/scripts/generate_shell_ownership_ledger.py`
+  - `/Users/kfiramar/projects/envctl/scripts/audit_command_router_vs_shell.py`
+    - Updated repo contract/generator surfaces so Python/shell parity and ownership tracking now use `review` as the canonical command name.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/command_router.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_dispatch.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/cli.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/command_aliases.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/command_loop.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/dashboard/orchestrator.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/selection_support.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/action_command_orchestrator.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/actions_analysis.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/actions_cli.py`
+  - `/Users/kfiramar/projects/envctl/python/envctl_engine/actions/project_action_domain.py`
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/actions/actions.sh`
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/ui/ui.sh`
+  - `/Users/kfiramar/projects/envctl/lib/engine/lib/planning/run_all_trees_cli.sh`
+  - `/Users/kfiramar/projects/envctl/contracts/python_engine_parity_manifest.json`
+  - `/Users/kfiramar/projects/envctl/contracts/envctl-shell-ownership-ledger.json`
+  - `/Users/kfiramar/projects/envctl/scripts/generate_python_engine_parity_manifest.py`
+  - `/Users/kfiramar/projects/envctl/scripts/generate_shell_ownership_ledger.py`
+  - `/Users/kfiramar/projects/envctl/scripts/audit_command_router_vs_shell.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/runtime/test_cli_router_parity.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/runtime/test_command_router_contract.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/runtime/test_engine_runtime_command_parity.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/runtime/test_command_dispatch_matrix.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/actions/test_actions_parity.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/actions/test_action_target_support.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/actions/test_actions_cli.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/ui/test_target_selector.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/ui/test_terminal_ui_dashboard_loop.py`
+  - `/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_dashboard_rendering_safety.py`
+  - `/Users/kfiramar/projects/envctl/tests/bats/python_actions_parity_e2e.bats`
+  - `/Users/kfiramar/projects/envctl/tests/bats/python_actions_require_explicit_command_e2e.bats`
+  - `/Users/kfiramar/projects/envctl/tests/bats/python_actions_native_path_e2e.bats`
+  - `/Users/kfiramar/projects/envctl/tests/bats/python_command_partial_guardrails_e2e.bats`
+  - `/Users/kfiramar/projects/envctl/tests/bats/python_command_alias_parity_e2e.bats`
+  - `/Users/kfiramar/projects/envctl/docs/developer/python-runtime-guide.md`
+  - `/Users/kfiramar/projects/envctl/docs/developer/command-surface.md`
+  - `/Users/kfiramar/projects/envctl/docs/developer/runtime-lifecycle.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m unittest tests.python.runtime.test_cli_router_parity tests.python.runtime.test_command_router_contract tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_command_dispatch_matrix tests.python.actions.test_actions_parity tests.python.actions.test_action_target_support tests.python.actions.test_actions_cli tests.python.ui.test_dashboard_orchestrator_restart_selector tests.python.ui.test_target_selector`
+    - Result: pass (`162 tests`).
+  - `./.venv/bin/python -m unittest tests.python.ui.test_terminal_ui_dashboard_loop tests.python.ui.test_textual_dashboard_rendering_safety tests.python.runtime.test_command_dispatch_matrix tests.python.runtime.test_cli_router_parity tests.python.runtime.test_command_router_contract tests.python.runtime.test_engine_runtime_command_parity tests.python.actions.test_actions_parity tests.python.actions.test_action_target_support tests.python.actions.test_actions_cli tests.python.ui.test_dashboard_orchestrator_restart_selector tests.python.ui.test_target_selector`
+    - Result: pass (`181 tests`).
+  - `bats tests/bats/python_actions_parity_e2e.bats tests/bats/python_actions_require_explicit_command_e2e.bats tests/bats/python_actions_native_path_e2e.bats tests/bats/python_command_partial_guardrails_e2e.bats tests/bats/python_command_alias_parity_e2e.bats`
+    - Result: pass (`5/5` lanes).
+
+- Config/env/migrations:
+  - New preferred flag alias: `--review-mode`.
+  - Legacy aliases still supported intentionally:
+    - `analyze`
+    - `--analyze`
+    - `--analyze-mode`
+    - dashboard shortcut `a`
+  - No config schema changes.
+  - No data/state migrations.
+
+- Risks/notes:
+  - Internal helper/script names such as `analyze-tree-changes.sh`, `_run_analyze_action(...)`, and `analyze_mode` were left in place where changing them was unnecessary for the user-facing command rename. The command surface is now `review`, but those compatibility-oriented internals still exist by design.
 
 ## 2026-03-03 - Fix flashing between suite rows and command-loop spinner during interactive tests
 

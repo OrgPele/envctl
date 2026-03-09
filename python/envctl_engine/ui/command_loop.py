@@ -77,7 +77,7 @@ def run_dashboard_command_loop(
                 print("")
                 rt._print_dashboard_snapshot(current_state)
                 print(f"{magenta}Commands:{reset} (q)uit")
-                lifecycle_commands = [("(s)top", "stop"), ("(r)estart", "restart"), ("stop-all", "stop-all"), ("blast-all", "blast-all")]
+                lifecycle_commands = [("(s)top", "stop"), ("(r)estart", "restart")]
                 visible_lifecycle = [label for label, command in lifecycle_commands if command not in hidden_commands]
                 if visible_lifecycle:
                     print(f"  {magenta}Lifecycle:{reset} " + " | ".join(visible_lifecycle))
@@ -85,7 +85,7 @@ def run_dashboard_command_loop(
                     ("(t)est", "test"),
                     ("(p)r", "pr"),
                     ("(c)ommit", "commit"),
-                    ("(a)nalyze", "analyze"),
+                    ("re(v)iew", "review"),
                     ("(m)igrate", "migrate"),
                 ]
                 visible_actions = [label for label, command in action_commands if command not in hidden_commands]
@@ -96,7 +96,6 @@ def run_dashboard_command_loop(
                     ("(x) clear-logs", "clear-logs"),
                     ("(h)ealth", "health"),
                     ("(e)rrors", "errors"),
-                    ("confi(g)", "config"),
                 ]
                 visible_inspect = [label for label, command in inspect_commands if command not in hidden_commands]
                 if visible_inspect:
@@ -314,7 +313,7 @@ def _command_supports_spinner(command: str) -> bool:
         "test",
         "pr",
         "commit",
-        "analyze",
+        "review",
         "migrate",
         "config",
         "logs",
@@ -334,7 +333,7 @@ def _command_spinner_message(command: str | None) -> str:
         "test": "Preparing tests...",
         "pr": "Preparing pull request workflow...",
         "commit": "Preparing commit workflow...",
-        "analyze": "Preparing analysis...",
+        "review": "Preparing review...",
         "migrate": "Preparing migrations...",
         "config": "Opening configuration...",
         "logs": "Loading logs...",

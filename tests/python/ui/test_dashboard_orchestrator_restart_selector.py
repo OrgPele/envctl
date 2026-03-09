@@ -400,7 +400,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        for raw, expected in (("p", "pr"), ("c", "commit"), ("a", "analyze"), ("migrations", "migrate")):
+        for raw, expected in (("p", "pr"), ("c", "commit"), ("a", "review"), ("migrations", "migrate")):
             with self.subTest(raw=raw):
                 runtime.last_dispatched_route = None
                 should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
@@ -442,7 +442,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         expected_prompts = {
             "p": "Create PR for",
             "c": "Commit changes for",
-            "a": "Analyze changes for",
+            "a": "Review changes for",
             "m": "Run migrations for",
         }
         for raw, prompt in expected_prompts.items():

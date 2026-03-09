@@ -19,28 +19,26 @@ python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
 # 2) Go to a target repo
 cd /path/to/your-project
 
-# 3) Start envctl in the target repo
-#    If .envctl is missing, envctl opens the guided setup wizard
+# 3a) Start the main repo environment
+#     Use this when you want one repo-local environment.
+#     If .envctl is missing, envctl opens the guided setup wizard.
 envctl --main
-```
-
-That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you.
-
-To reopen the wizard later:
-
-```bash
-envctl config
-```
-
-To work with plan-driven trees:
-
-```bash
+# 3b) Or work from plans and let envctl manage worktrees for you
+#     Use this when you want parallel implementations side by side.
 mkdir -p todo/plans/backend
 cat > todo/plans/backend/checkout.md <<'PLAN'
 # Checkout Implementation Plan
 PLAN
 
 envctl --plan
+```
+
+That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven trees.
+
+To reopen the wizard later:
+
+```bash
+envctl config
 ```
 
 Repo-clone compatibility still exists:

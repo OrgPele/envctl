@@ -31,7 +31,7 @@ check_action_error() {
 check_action_error test "$1" "$2"
 check_action_error pr "$1" "$2"
 check_action_error commit "$1" "$2"
-check_action_error analyze "$1" "$2"
+check_action_error review "$1" "$2"
 check_action_error migrate "$1" "$2"
 check_action_error delete-worktree "$1" "$2"
 

@@ -1034,7 +1034,7 @@ class PythonEngineRuntime:
         return self.action_command_orchestrator.run_commit_action(route, targets)
 
     def _run_analyze_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_analyze_action(route, targets)
+        return self.action_command_orchestrator.run_review_action(route, targets)
 
     def _run_migrate_action(self, route: Route, targets: list[ProjectContext]) -> int:
         return self.action_command_orchestrator.run_migrate_action(route, targets)

@@ -235,10 +235,10 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn("(q)uit", rendered)
         self.assertNotIn("Lifecycle:", rendered)
         self.assertIn("Actions:", rendered)
-        self.assertIn("Inspect:", rendered)
+        self.assertNotIn("Inspect:", rendered)
         self.assertNotIn("(m)igrate", rendered)
         self.assertNotIn("(l)ogs", rendered)
-        self.assertIn("confi(g)", rendered)
+        self.assertNotIn("confi(g)", rendered)
 
     def test_dashboard_loop_marks_spinner_failed_from_action_finish_event(self) -> None:
         state = RunState(run_id="run-4", mode="trees")

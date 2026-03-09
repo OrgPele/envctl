@@ -6,9 +6,9 @@ from pathlib import Path
 
 from envctl_engine.actions.project_action_domain import (
     ActionProjectContext,
-    run_analyze_action as _domain_run_analyze_action,
     run_commit_action as _domain_run_commit_action,
     run_pr_action as _domain_run_pr_action,
+    run_review_action as _domain_run_review_action,
 )
 
 
@@ -38,8 +38,8 @@ def main(argv: list[str] | None = None) -> int:
         return _domain_run_pr_action(context)
     if command == "commit":
         return _domain_run_commit_action(context)
-    if command == "analyze":
-        return _domain_run_analyze_action(context)
+    if command in {"review", "analyze"}:
+        return _domain_run_review_action(context)
 
     print(f"Unsupported action command: {command}")
     return 1
@@ -60,7 +60,7 @@ def _run_pr_action(project_root: Path, repo_root: Path, project_name: str) -> in
 # Compatibility wrappers retained for direct tests.
 def _run_analyze_action(project_root: Path, repo_root: Path, project_name: str) -> int:
     context = _build_context(repo_root=Path(repo_root), project_root=Path(project_root), project_name=project_name)
-    return _domain_run_analyze_action(context)
+    return _domain_run_review_action(context)
 
 
 if __name__ == "__main__":

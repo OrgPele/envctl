@@ -428,6 +428,27 @@ class StateRepositoryContractTests(unittest.TestCase):
             self.assertFalse(repo.run_dir_path("run-1").exists())
             self.assertFalse(test_summary.exists())
 
+    def test_tree_diffs_dir_path_scopes_to_run_and_runtime_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            runtime_root = runtime_dir / "scope"
+            legacy_root = runtime_dir / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+
+            self.assertEqual(repo.tree_diffs_dir_path(), runtime_root / "tree-diffs")
+            self.assertEqual(
+                repo.tree_diffs_dir_path("run-1", "review"),
+                runtime_root / "runs" / "run-1" / "tree-diffs" / "review",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

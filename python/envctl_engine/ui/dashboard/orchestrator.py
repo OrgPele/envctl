@@ -143,7 +143,7 @@ class DashboardOrchestrator:
             command=route.command,
             code=code,
         )
-        if code != 0 and route.command not in {"test", "pr", "commit", "analyze", "migrate"}:
+        if code != 0 and route.command not in {"test", "pr", "commit", "review", "migrate"}:
             print(f"Command failed (exit {code}).")
 
         if route.command in {"stop-all", "blast-all"}:
@@ -227,14 +227,14 @@ class DashboardOrchestrator:
             "test",
             "pr",
             "commit",
-            "analyze",
+            "review",
             "migrate",
             "blast-worktree",
         }
 
     @staticmethod
     def _dashboard_owned_project_selection_commands() -> set[str]:
-        return {"pr", "commit", "analyze", "migrate", "blast-worktree"}
+        return {"pr", "commit", "review", "migrate", "blast-worktree"}
 
     @staticmethod
     def _dashboard_hidden_commands(state: RunState) -> set[str]:
@@ -293,7 +293,7 @@ class DashboardOrchestrator:
             "errors": "Errors for",
             "pr": "Create PR for",
             "commit": "Commit changes for",
-            "analyze": "Analyze changes for",
+            "review": "Review changes for",
             "migrate": "Run migrations for",
             "blast-worktree": "Blast and delete worktree for",
         }

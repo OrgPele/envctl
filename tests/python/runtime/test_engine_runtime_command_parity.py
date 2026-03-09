@@ -54,7 +54,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "--test",
             "--pr",
             "--commit",
-            "--analyze",
+            "--review",
             "--migrate",
             "--delete-worktree",
             "--blast-worktree",
@@ -831,7 +831,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
     def test_parity_manifest_marks_operational_actions_complete(self) -> None:
         manifest_path = REPO_ROOT / "contracts" / "python_engine_parity_manifest.json"
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for command in ("test", "delete-worktree", "blast-worktree", "pr", "commit", "analyze", "migrate"):
+        for command in ("test", "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate"):
             self.assertEqual(payload["commands"][command], "python_complete", msg=command)
 
     def test_list_commands_returns_all_supported_commands(self) -> None:
@@ -849,7 +849,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "plan", "start", "restart", "resume", "stop", "stop-all", "blast-all",
             "config",
             "dashboard", "doctor", "test", "logs", "clear-logs", "health", "errors",
-            "delete-worktree", "blast-worktree", "pr", "commit", "analyze", "migrate",
+            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate",
             "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
             "help", "debug-pack", "debug-report", "debug-last"
         }

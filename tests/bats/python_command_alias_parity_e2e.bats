@@ -43,7 +43,7 @@ setup() {
     run_cmd --test "$1" "$2"
     run_cmd --pr "$1" "$2"
     run_cmd --commit "$1" "$2"
-    run_cmd --analyze "$1" "$2"
+    run_cmd --review "$1" "$2"
     run_cmd --migrate "$1" "$2"
 
     [ ! -f "$runtime/python-engine/run_state.json" ]

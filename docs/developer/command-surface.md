@@ -166,7 +166,7 @@ Current high-level mapping:
 - startup/resume: `start`, `plan`, `restart`, `resume`
 - dashboard/config: `dashboard`, `config`
 - state actions: `logs`, `clear-logs`, `health`, `errors`
-- action commands: `test`, `pr`, `commit`, `analyze`, `migrate`
+- action commands: `test`, `pr`, `commit`, `review`, `migrate`
 
 If dispatch starts accumulating policy, the architecture is drifting in the wrong direction.
 

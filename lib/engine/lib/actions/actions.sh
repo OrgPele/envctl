@@ -44,7 +44,7 @@ blast-all
 test
 pr
 commit
-analyze
+review
 migrate
 logs
 clear-logs
@@ -1092,20 +1092,20 @@ run_command() {
             fi
             return 0
             ;;
-        a|analyze)
+        a|analyze|review)
             if [ ${#targets[@]} -eq 0 ]; then
-                echo -e "${RED}No analysis target selected.${NC}"
+                echo -e "${RED}No review target selected.${NC}"
                 return 1
             fi
             local selection="${targets[0]}"
             if [ ${#targets[@]} -gt 1 ]; then
-                echo -e "${YELLOW}Multiple analysis targets provided; using ${selection}.${NC}"
+                echo -e "${YELLOW}Multiple review targets provided; using ${selection}.${NC}"
             fi
             resolve_analysis_selection "$selection"
             local mode="${RUN_SH_COMMAND_ANALYZE_MODE:-}"
             if [ -z "$mode" ]; then
                 if analysis_selection_has_multiple_iterations && [ "${INTERACTIVE_MODE:-false}" = true ]; then
-                    mode=$(select_analyze_mode "Select analysis mode") || return 3
+                    mode=$(select_analyze_mode "Select review mode") || return 3
                     mode=$(actions_trim "$mode")
                 else
                     mode="single"

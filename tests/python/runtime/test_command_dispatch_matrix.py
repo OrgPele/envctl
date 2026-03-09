@@ -58,7 +58,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         expected_commands = {
             "plan", "start", "restart", "resume", "stop", "stop-all", "blast-all",
             "dashboard", "config", "doctor", "test", "logs", "clear-logs", "health", "errors",
-            "delete-worktree", "blast-worktree", "pr", "commit", "analyze", "migrate",
+            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate",
             "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
             "help", "debug-pack", "debug-report", "debug-last"
         }
@@ -109,7 +109,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "blast-worktree": "action_command_orchestrator",
             "pr": "action_command_orchestrator",
             "commit": "action_command_orchestrator",
-            "analyze": "action_command_orchestrator",
+            "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
             
             # Direct handlers in dispatch

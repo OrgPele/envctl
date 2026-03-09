@@ -22,3 +22,11 @@ List:
 11. move ./test-results/ to the /tmp directory where all the states and everything else is stored
 
 12. fix --plan selection
+
+--------- DONE -----------
+
+13. fix analyze output
+
+14. relocate tree diffs
+
+15. add relevant prompts to codex CLI

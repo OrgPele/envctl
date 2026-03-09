@@ -65,6 +65,15 @@ class RuntimeStateRepository:
             return root
         return root / stamp
 
+    def tree_diffs_dir_path(self, run_id: str | None = None, name: str | None = None) -> Path:
+        if run_id:
+            root = self.run_dir_path(run_id) / "tree-diffs"
+        else:
+            root = self.runtime_root / "tree-diffs"
+        if not name:
+            return root
+        return root / name
+
     def save_run(
         self,
         *,
