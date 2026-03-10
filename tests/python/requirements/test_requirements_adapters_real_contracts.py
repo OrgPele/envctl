@@ -5,14 +5,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container

@@ -254,11 +254,11 @@ Any change that makes `.envctl.sh` feel primary again is likely architectural dr
 
 Checklist:
 
-1. Update defaults in `config/__init__.py` if the setting has a default.
+1. Update shared profile defaults in `config/profile_defaults.py` if the setting affects default startup profiles or wizard presets. Update `config/__init__.py` only for non-profile config defaults.
 2. Extend `EngineConfig` if runtime code should consume it as typed state.
 3. Update managed persistence if the setting belongs in the saved `.envctl` contract.
 4. Update bootstrap/edit flows if the wizard or headless config command should expose it.
-5. Update `.envctl.example`.
+5. Update `docs/reference/.envctl.example`.
 6. Update user/reference docs and this guide if the behavior is part of the developer contract.
 
 ## Common Mistakes

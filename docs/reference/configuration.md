@@ -54,6 +54,7 @@ The Textual config wizard writes the canonical managed keys.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ENVCTL_SERVICE_ATTACH_PARALLEL` | `true` | Run backend+frontend service attach in parallel when both are selected. |
+| `ENVCTL_SERVICE_PREP_PARALLEL` | follows `ENVCTL_SERVICE_ATTACH_PARALLEL` | Override backend+frontend bootstrap prep parallelism independently from attach mode. |
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
 
@@ -94,8 +95,8 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MAIN_POSTGRES_ENABLE` | `true` | Canonical PostgreSQL toggle for Main mode. Compatibility alias: `POSTGRES_MAIN_ENABLE`. |
-| `TREES_POSTGRES_ENABLE` | `true` | Canonical PostgreSQL toggle for Trees mode. |
+| `MAIN_POSTGRES_ENABLE` | `false` | Canonical PostgreSQL toggle for Main mode. Compatibility alias: `POSTGRES_MAIN_ENABLE`. |
+| `TREES_POSTGRES_ENABLE` | `false` | Canonical PostgreSQL toggle for Trees mode. |
 | `DB_PORT` | `5432` | PostgreSQL base port. |
 | `DB_USER` | `postgres` | PostgreSQL user. |
 | `DB_PASSWORD` | `postgres` | PostgreSQL password. |
@@ -106,17 +107,17 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 ## Redis
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `REDIS_ENABLE` | `true` | Global compatibility toggle honored by both Main and Trees profiles. |
-| `MAIN_REDIS_ENABLE` | `true` | Canonical Redis toggle for Main mode. Compatibility alias: `REDIS_MAIN_ENABLE`. |
-| `TREES_REDIS_ENABLE` | `true` | Canonical Redis toggle for Trees mode. Compatibility alias path still honors `REDIS_ENABLE`. |
+| `REDIS_ENABLE` | `false` | Global compatibility toggle honored by both Main and Trees profiles. |
+| `MAIN_REDIS_ENABLE` | `false` | Canonical Redis toggle for Main mode. Compatibility alias: `REDIS_MAIN_ENABLE`. |
+| `TREES_REDIS_ENABLE` | `false` | Canonical Redis toggle for Trees mode. Compatibility alias path still honors `REDIS_ENABLE`. |
 | `REDIS_PORT` | `6379` | Redis base port. |
 
 ## n8n
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `N8N_ENABLE` | `true` | Global compatibility toggle honored by both Main and Trees profiles. |
+| `N8N_ENABLE` | `false` | Global compatibility toggle honored by both Main and Trees profiles. |
 | `MAIN_N8N_ENABLE` | `false` | Canonical n8n toggle for Main mode. Compatibility alias: `N8N_MAIN_ENABLE`. |
-| `TREES_N8N_ENABLE` | `true` | Canonical n8n toggle for Trees mode. Compatibility alias path still honors `N8N_ENABLE`. |
+| `TREES_N8N_ENABLE` | `false` | Canonical n8n toggle for Trees mode. Compatibility alias path still honors `N8N_ENABLE`. |
 | `N8N_PORT_BASE` | `5678` | n8n base port. |
 
 ## Service Discovery

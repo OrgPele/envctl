@@ -3,17 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
-from envctl_engine.config import LocalConfigState, PortDefaults, StartupProfile
+from envctl_engine.config import DEFAULTS, LocalConfigState, PortDefaults, StartupProfile, _parse_envctl_text
 from envctl_engine.config.persistence import (
     ManagedConfigValues,
     ensure_local_config_ignored,
+    managed_values_from_mapping,
+    managed_values_to_mapping,
     merge_managed_block,
     render_managed_block,
     save_local_config,
@@ -105,8 +103,8 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertIn("TREES_STARTUP_ENABLE=false", rendered)
         self.assertIn("MAIN_FRONTEND_ENABLE=false", rendered)
         self.assertIn("TREES_FRONTEND_ENABLE=false", rendered)
-        self.assertIn("MAIN_POSTGRES_ENABLE=false", rendered)
-        self.assertIn("TREES_POSTGRES_ENABLE=false", rendered)
+        self.assertNotIn("MAIN_POSTGRES_ENABLE=false", rendered)
+        self.assertNotIn("TREES_POSTGRES_ENABLE=false", rendered)
         self.assertNotIn("FRONTEND_DIR=frontend", rendered)
         self.assertNotIn("BACKEND_PORT_BASE=8000", rendered)
         self.assertNotIn("PORT_SPACING=20", rendered)
@@ -126,6 +124,28 @@ class ConfigPersistenceTests(unittest.TestCase):
         validation = validate_managed_values(values)
 
         self.assertTrue(validation.valid)
+
+    def test_empty_mapping_defaults_to_no_requirements_selected(self) -> None:
+        values = managed_values_from_mapping({})
+
+        self.assertFalse(values.main_profile.postgres_enable)
+        self.assertFalse(values.main_profile.redis_enable)
+        self.assertFalse(values.main_profile.supabase_enable)
+        self.assertFalse(values.main_profile.n8n_enable)
+        self.assertFalse(values.trees_profile.postgres_enable)
+        self.assertFalse(values.trees_profile.redis_enable)
+        self.assertFalse(values.trees_profile.supabase_enable)
+        self.assertFalse(values.trees_profile.n8n_enable)
+
+    def test_reference_envctl_example_matches_current_defaults(self) -> None:
+        example_path = REPO_ROOT / "docs" / "reference" / ".envctl.example"
+        example_values = _parse_envctl_text(example_path.read_text(encoding="utf-8"))
+        expected_managed = managed_values_from_mapping({})
+        expected_mapping = managed_values_to_mapping(expected_managed)
+
+        self.assertEqual(example_values["ENVCTL_PLANNING_DIR"], DEFAULTS["ENVCTL_PLANNING_DIR"])
+        for key, value in expected_mapping.items():
+            self.assertEqual(example_values.get(key), value, msg=key)
 
     def test_ignore_local_config_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

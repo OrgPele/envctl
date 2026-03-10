@@ -2,7 +2,7 @@
 
 > Historical investigation archive.
 > The `ENVCTL_DEBUG_PLAN_*` split-matrix commands documented here are no longer a supported debug surface and may no longer work.
-> For current debugging, use snapshots, doctor/debug bundles, `--debug-report`, and the permanent write-up in [service-launch-io-ownership.md](/Users/kfiramar/projects/envctl/docs/troubleshooting/service-launch-io-ownership.md).
+> For current debugging, use snapshots, doctor/debug bundles, `--debug-report`, and the permanent write-up in [service-launch-io-ownership.md](service-launch-io-ownership.md).
 
 ## Problem Statement
 There is a post-`--plan` interactive input bug in `envctl`.
@@ -24,10 +24,10 @@ The working assumption is that the bug is introduced somewhere in the **real pos
 
 ## Environment
 Repo:
-- `/Users/kfiramar/projects/envctl`
+- `<envctl checkout>`
 
 Target repo used for reproduction:
-- `/Users/kfiramar/projects/supportopia`
+- `/path/to/your/repo`
 
 Terminal / shell:
 - Apple Terminal on macOS
@@ -93,7 +93,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 This is good.
@@ -447,7 +447,7 @@ Strong conclusion:
 
 Confirmed fix in code:
 
-- [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L245)
+- [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L245)
   - `ProcessRunner.start(...)`
   - background service launches now use:
     - `stdin=subprocess.DEVNULL`
@@ -489,7 +489,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308125714-58669-d722`
 - result: good
@@ -505,7 +505,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308125733-59097-4b25`
 - result: bad
@@ -521,7 +521,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308125801-60248-7ee3`
 - result: good
@@ -540,7 +540,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308131342-70292-7cfc`
 - result: good in the bug sense
@@ -558,7 +558,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308131355-70727-fc1e`
 - result: bad
@@ -575,7 +575,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 - session: `session-20260308131418-71814-1a52`
 - result: good in the bug sense
@@ -632,7 +632,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### listener_probe
@@ -648,7 +648,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### attach_merge
@@ -664,7 +664,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Validation rule for those runs
@@ -676,17 +676,17 @@ If exactly one of those is bad, recurse into that one only.
 
 ## Where The Most Relevant Code Lives
 - startup orchestration:
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py`
+  - `python/envctl_engine/startup/startup_orchestrator.py`
 - startup execution / service launch path:
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py`
+  - `python/envctl_engine/startup/startup_execution_support.py`
 - service attach implementation:
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/service_manager.py`
+  - `python/envctl_engine/runtime/service_manager.py`
 - dashboard loop / command loop:
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/command_loop.py`
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/dashboard/orchestrator.py`
-  - `/Users/kfiramar/projects/envctl/python/envctl_engine/ui/backend.py`
+  - `python/envctl_engine/ui/command_loop.py`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py`
+  - `python/envctl_engine/ui/backend.py`
 - main investigation log:
-  - `/Users/kfiramar/projects/envctl/docs/troubleshooting/post-plan-dashboard-input-investigation.md`
+  - `docs/incidents/post-plan-dashboard-input-investigation.md`
 
 ---
 
@@ -744,16 +744,16 @@ That means the next split should recurse into `listener_probe`, not try to infer
 
 Verified directly in code before requesting any further manual runs:
 
-- `ENVCTL_DEBUG_PLAN_ATTACH_GROUP` is parsed for `--plan` in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L289).
+- `ENVCTL_DEBUG_PLAN_ATTACH_GROUP` is parsed for `--plan` in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L289).
 - It is only forwarded into `route.flags["_debug_attach_group"]` when:
   - `ENVCTL_DEBUG_PLAN_EXEC_GROUP=services`
   - `ENVCTL_DEBUG_PLAN_SERVICE_GROUP=launch_attach`
-  - see [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1378).
-- The service startup path re-validates that routed flag, emits `startup.debug_attach_group`, and records which one-of-three subgroup is active in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L597).
+  - see [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1378).
+- The service startup path re-validates that routed flag, emits `startup.debug_attach_group`, and records which one-of-three subgroup is active in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L597).
 - The actual `launch_attach` body then dispatches into three distinct branches:
-  - `process_start` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L978)
-  - `listener_probe` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L1023)
-  - `attach_merge` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L1070)
+  - `process_start` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L978)
+  - `listener_probe` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L1023)
+  - `attach_merge` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L1070)
 
 Trust rule for future manual runs:
 
@@ -786,23 +786,23 @@ The smallest honest 3-way split that now exists is:
 
 - `ENVCTL_DEBUG_PLAN_LISTENER_GROUP=pid_wait`
   - isolates `process_runner.wait_for_pid_port(...)`
-  - code boundary: [engine_runtime_service_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_service_truth.py#L69)
+  - code boundary: [engine_runtime_service_truth.py](../../python/envctl_engine/runtime/engine_runtime_service_truth.py#L69)
 - `ENVCTL_DEBUG_PLAN_LISTENER_GROUP=port_fallback`
   - isolates `wait_for_port(...)` fallback recovery when enabled
-  - same helper, later branch in [engine_runtime_service_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_service_truth.py#L84)
+  - same helper, later branch in [engine_runtime_service_truth.py](../../python/envctl_engine/runtime/engine_runtime_service_truth.py#L84)
 - `ENVCTL_DEBUG_PLAN_LISTENER_GROUP=rebound_discovery`
   - isolates `find_pid_listener_port(...)` rebound / actual-port discovery
-  - code boundary: [engine_runtime_service_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_service_truth.py#L133)
+  - code boundary: [engine_runtime_service_truth.py](../../python/envctl_engine/runtime/engine_runtime_service_truth.py#L133)
 
 Implementation notes:
 
-- routing is parsed in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L293)
+- routing is parsed in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L293)
 - it is forwarded only for:
   - `ENVCTL_DEBUG_PLAN_EXEC_GROUP=services`
   - `ENVCTL_DEBUG_PLAN_SERVICE_GROUP=launch_attach`
   - `ENVCTL_DEBUG_PLAN_ATTACH_GROUP=listener_probe`
-  - see [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1388)
-- execution emits `startup.debug_listener_group` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L626)
+  - see [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1388)
+- execution emits `startup.debug_listener_group` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L626)
 - restricted listener-group runs preserve dashboard entry by emitting `startup.debug_listener_group.synthetic_actual` if the narrowed subgroup alone does not detect a port
 
 ### Next 3 manual commands
@@ -822,7 +822,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `port_fallback`
@@ -840,7 +840,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `rebound_discovery`
@@ -858,7 +858,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Validation rule for those runs
@@ -904,25 +904,25 @@ So the bad path is now narrowed past the broader listener-probe family and into 
 
 ## 2026-03-08: Next honest split inside `pid_wait`
 
-`wait_for_pid_port(...)` in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L365) is a loop over three concrete checks:
+`wait_for_pid_port(...)` in [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L365) is a loop over three concrete checks:
 
 - `signal_gate`
-  - `os.kill(pid, 0)` liveness gate in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L261)
+  - `os.kill(pid, 0)` liveness gate in [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L261)
 - `pid_port_lsof`
-  - direct `lsof -a -p <pid> -iTCP:<port> -sTCP:LISTEN -t` in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L335)
+  - direct `lsof -a -p <pid> -iTCP:<port> -sTCP:LISTEN -t` in [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L335)
 - `tree_port_scan`
-  - `find_pid_listener_port(pid, port, max_delta=0)` which walks the process tree and runs broader listener scans in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L387)
+  - `find_pid_listener_port(pid, port, max_delta=0)` which walks the process tree and runs broader listener scans in [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L387)
 
 New routing surface:
 
 - `ENVCTL_DEBUG_PLAN_PID_WAIT_GROUP=signal_gate|pid_port_lsof|tree_port_scan`
-- parsed in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L297)
+- parsed in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L297)
 - forwarded only under:
   - `services`
   - `launch_attach`
   - `listener_probe`
   - `pid_wait`
-- execution emits `startup.debug_pid_wait_group` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L638)
+- execution emits `startup.debug_pid_wait_group` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L638)
 
 ### Next 3 manual commands
 
@@ -942,7 +942,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `pid_port_lsof`
@@ -961,7 +961,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `tree_port_scan`
@@ -980,7 +980,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Validation rule for those runs
@@ -998,8 +998,8 @@ The three `pid_wait` subgroup reruns were valid executions, but they were **not 
 
 Reason:
 
-- all three runs still passed through the shared post-start truth assertion in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L123)
-- that assertion calls `service_truth_status(...)` in [engine_runtime_service_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_service_truth.py#L160)
+- all three runs still passed through the shared post-start truth assertion in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L123)
+- that assertion calls `service_truth_status(...)` in [engine_runtime_service_truth.py](../../python/envctl_engine/runtime/engine_runtime_service_truth.py#L160)
 - `service_truth_status(...)` was still using the full, unfiltered truth path:
   - `wait_for_pid_port`
   - `port_fallback`
@@ -1033,21 +1033,21 @@ Added:
 
 Routing:
 
-- parsed in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L301)
-- forwarded for `services + launch_attach` in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1411)
-- emitted as `startup.debug_poststart_truth_group` in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L128)
+- parsed in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L301)
+- forwarded for `services + launch_attach` in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1411)
+- emitted as `startup.debug_poststart_truth_group` in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L128)
 
 Code boundaries inside the shared post-start truth pass:
 
 - `pid_wait`
   - `ProcessProbe.service_truth_status(...)` -> `wait_for_pid_port(...)`
-  - [process_probe.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_probe.py#L171)
+  - [process_probe.py](../../python/envctl_engine/shared/process_probe.py#L171)
 - `port_fallback`
   - `ProcessProbe._port_fallback_running(...)`
-  - [process_probe.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_probe.py#L280)
+  - [process_probe.py](../../python/envctl_engine/shared/process_probe.py#L280)
 - `truth_discovery`
   - `truth_discovery(service, port)` / discovered actual-port recovery
-  - [process_probe.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_probe.py#L221)
+  - [process_probe.py](../../python/envctl_engine/shared/process_probe.py#L221)
 
 ### Next 3 manual commands
 
@@ -1065,7 +1065,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `port_fallback`
@@ -1082,7 +1082,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `truth_discovery`
@@ -1099,7 +1099,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Validation rule for those runs
@@ -1134,8 +1134,8 @@ So the startup post-start truth split itself did isolate one bad subgroup:
 The `truth_discovery` startup run preserved the fully populated dashboard state, but the event log shows a later threaded truth-refresh pass after dashboard entry:
 
 - later `service.truth.check` events appear on `ThreadPoolExecutor-*` threads in `session-20260308140513-16937-c54f`
-- those later checks are emitted by `reconcile_state_truth(...)` in [engine_runtime_state_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_state_truth.py#L232)
-- that reconcile is triggered by dashboard snapshot rendering in [rendering.py](/Users/kfiramar/projects/envctl/python/envctl_engine/ui/dashboard/rendering.py#L16) through [engine_runtime_dashboard_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L32)
+- those later checks are emitted by `reconcile_state_truth(...)` in [engine_runtime_state_truth.py](../../python/envctl_engine/runtime/engine_runtime_state_truth.py#L232)
+- that reconcile is triggered by dashboard snapshot rendering in [rendering.py](../../python/envctl_engine/ui/dashboard/rendering.py#L16) through [engine_runtime_dashboard_truth.py](../../python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L32)
 
 This means the remaining bad path is no longer cleanly isolated to the startup post-start truth call alone.
 There is a later dashboard truth-refresh path that still runs after entry and can reintroduce the bad behavior.
@@ -1148,8 +1148,8 @@ Added:
 
 Implementation:
 
-- env parsed directly by [engine_runtime_dashboard_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L18)
-- emitted as `dashboard.debug_truth_group` in [engine_runtime_dashboard_truth.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L40)
+- env parsed directly by [engine_runtime_dashboard_truth.py](../../python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L18)
+- emitted as `dashboard.debug_truth_group` in [engine_runtime_dashboard_truth.py](../../python/envctl_engine/runtime/engine_runtime_dashboard_truth.py#L40)
 - applied only around dashboard-triggered `reconcile_state_truth(...)`
 - `service_truth_status(...)` now prefers this dashboard truth subgroup when set
 
@@ -1169,7 +1169,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `port_fallback`
@@ -1186,7 +1186,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `truth_discovery`
@@ -1203,7 +1203,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Validation rule for those runs
@@ -1242,7 +1242,7 @@ And the selector subprocess traces for all three sessions still showed the same 
 - received only `3` to `4` `Down` events, then idled until `Ctrl-C`
 
 This means the dashboard truth split is not the next trustworthy seam.
-The next honest split is the shared selector-wrapper path in [backend.py](/Users/kfiramar/projects/envctl/python/envctl_engine/ui/backend.py).
+The next honest split is the shared selector-wrapper path in [backend.py](../../python/envctl_engine/ui/backend.py).
 
 ## 2026-03-08: Added explicit selector-wrapper branch marker
 
@@ -1252,7 +1252,7 @@ Added:
 
 Implementation:
 
-- emitted in [backend.py](/Users/kfiramar/projects/envctl/python/envctl_engine/ui/backend.py#L284)
+- emitted in [backend.py](../../python/envctl_engine/ui/backend.py#L284)
 - records:
   - `selector_kind`
   - `group=default|dashboard|preflight|subprocess`
@@ -1268,7 +1268,7 @@ Use:
 
 - `ENVCTL_DEBUG_PLAN_TTY_COMMON_GROUP=dashboard|preflight|subprocess`
 
-Real code boundary meanings in [backend.py](/Users/kfiramar/projects/envctl/python/envctl_engine/ui/backend.py):
+Real code boundary meanings in [backend.py](../../python/envctl_engine/ui/backend.py):
 
 - `dashboard`
   - skip selector preflight
@@ -1298,7 +1298,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `preflight`
@@ -1315,7 +1315,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `subprocess`
@@ -1332,7 +1332,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule for the next three runs
@@ -1392,7 +1392,7 @@ The next honest seam is earlier:
 
 But to make that split trustworthy under the current `services -> launch_attach` isolation, all three branches must terminate through the same selector checkpoint.
 
-Implemented correction in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1039):
+Implemented correction in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1039):
 
 - `startup_direct` now forces `ENVCTL_DEBUG_PLAN_SELECTOR_GROUP=standalone_child`
 - `dashboard_direct` now forces `ENVCTL_DEBUG_PLAN_SELECTOR_GROUP=standalone_child`
@@ -1430,7 +1430,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `dashboard_direct`
@@ -1447,7 +1447,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `command_context`
@@ -1464,7 +1464,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule for the next three runs
@@ -1512,7 +1512,7 @@ So those three runs did not actually exercise the requested preselector branches
 
 ## 2026-03-08: Fixed preselector routing in the preentry tail
 
-The bug was in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1497):
+The bug was in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1497):
 
 - `_debug_run_post_preentry_tail(...)` ignored `ENVCTL_DEBUG_PLAN_PRESELECTOR_GROUP`
 
@@ -1544,7 +1544,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `dashboard_direct`
@@ -1561,7 +1561,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `command_context`
@@ -1578,7 +1578,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Updated trust rule
@@ -1667,7 +1667,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `listener_probe`
@@ -1685,7 +1685,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 #### `attach_merge`
@@ -1703,7 +1703,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule for those reruns
@@ -1852,7 +1852,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `port_fallback`
@@ -1871,7 +1871,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `rebound_discovery`
@@ -1890,7 +1890,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule
@@ -2023,7 +2023,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `pid_port_lsof`
@@ -2043,7 +2043,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `tree_port_scan`
@@ -2063,7 +2063,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule
@@ -2135,7 +2135,7 @@ The stronger conclusion is:
 - the contaminating work is in the shared `pid_wait` path before those three branches diverge
 - the previous leaf split was too late
 
-That shared code lives in `wait_for_pid_port(...)` in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py#L365):
+That shared code lives in `wait_for_pid_port(...)` in [process_runner.py](../../python/envctl_engine/shared/process_runner.py#L365):
 
 - common validation / group normalization
 - common polling loop / timeout cadence
@@ -2152,7 +2152,7 @@ The next honest seam is by service boundary inside the actual detection path:
 2. frontend pid-wait only
 3. both backend and frontend pid-wait
 
-This is a real code-boundary split in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L876) and [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L944), not an imaginary label.
+This is a real code-boundary split in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L876) and [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L944), not an imaginary label.
 
 ### Wiring added
 
@@ -2162,9 +2162,9 @@ New env:
 
 Routing / validation markers:
 
-- parse in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L301)
-- propagate in [startup_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_orchestrator.py#L1419)
-- emit in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py#L662)
+- parse in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L301)
+- propagate in [startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py#L1419)
+- emit in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py#L662)
 
 Non-selected service detection is synthesized with:
 
@@ -2191,7 +2191,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `frontend`
@@ -2211,7 +2211,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `both`
@@ -2231,7 +2231,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule
@@ -2369,7 +2369,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `backend + pid_port_lsof`
@@ -2390,7 +2390,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `backend + tree_port_scan`
@@ -2411,7 +2411,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule
@@ -2503,7 +2503,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `detect_call`
@@ -2524,7 +2524,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### `resolve_actual`
@@ -2545,7 +2545,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 ### Trust rule
@@ -2604,7 +2604,7 @@ And inside that path, the earlier `signal_gate|pid_port_lsof|tree_port_scan` lea
 
 ## Targeted validation patch
 
-A focused code change was applied in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py) so the shared probe subprocesses (`ps`/`lsof`) no longer inherit terminal stdin:
+A focused code change was applied in [process_runner.py](../../python/envctl_engine/shared/process_runner.py) so the shared probe subprocesses (`ps`/`lsof`) no longer inherit terminal stdin:
 
 - all narrowed probe-side `subprocess.run(...)` calls now pass `stdin=subprocess.DEVNULL`
 
@@ -2621,7 +2621,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 Interpretation:
@@ -2646,7 +2646,7 @@ So the shared probe helper subprocesses were **not** the practical culprit.
 
 The remaining shared terminal-attached path is the long-lived service child processes themselves.
 
-In [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py), `ProcessRunner.start(...)` now launches background service processes with:
+In [process_runner.py](../../python/envctl_engine/shared/process_runner.py), `ProcessRunner.start(...)` now launches background service processes with:
 
 - `stdin=subprocess.DEVNULL`
 
@@ -2661,7 +2661,7 @@ ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
 ENVCTL_UI_BASIC_INPUT_FD=0 \
-/Users/kfiramar/projects/envctl/bin/envctl --repo /Users/kfiramar/projects/supportopia --plan
+./bin/envctl --repo /path/to/your/repo --plan
 ```
 
 Interpretation:
@@ -2696,7 +2696,7 @@ Important note:
 
 File:
 
-- [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py)
+- [process_runner.py](../../python/envctl_engine/shared/process_runner.py)
 
 Change:
 

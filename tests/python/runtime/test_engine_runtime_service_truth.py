@@ -5,13 +5,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.runtime.engine_runtime_service_truth import (  # noqa: E402
     assert_project_services_post_start_truth,
     command_result_error_text,

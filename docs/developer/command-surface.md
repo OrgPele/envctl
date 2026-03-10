@@ -9,7 +9,7 @@ Use it when you are changing commands, aliases, flags, parser behavior, bootstra
 `envctl` has two command layers:
 
 1. launcher commands handled before the Python runtime starts
-2. runtime commands handled after `python -m envctl_engine.runtime.cli`
+2. runtime commands handled after `envctl_engine.runtime.cli:main`
 
 Launcher-owned examples:
 

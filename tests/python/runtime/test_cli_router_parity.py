@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-import sys
 import re
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.runtime import command_router
 from envctl_engine.runtime.command_router import RouteError, list_supported_flag_tokens, parse_route
 
@@ -321,22 +317,26 @@ class CliRouterParityTests(unittest.TestCase):
                 "test",
                 "--test-parallel",
                 "--service-parallel",
+                "--service-prep-parallel",
             ],
             env={"ENVCTL_DEFAULT_MODE": "trees"},
         )
         self.assertEqual(route.flags.get("test_parallel"), True)
         self.assertEqual(route.flags.get("service_parallel"), True)
+        self.assertEqual(route.flags.get("service_prep_parallel"), True)
 
         route = parse_route(
             [
                 "test",
                 "--test-sequential",
                 "--service-sequential",
+                "--service-prep-sequential",
             ],
             env={"ENVCTL_DEFAULT_MODE": "trees"},
         )
         self.assertEqual(route.flags.get("test_parallel"), False)
         self.assertEqual(route.flags.get("service_parallel"), False)
+        self.assertEqual(route.flags.get("service_prep_parallel"), False)
 
     def test_value_flags_reject_option_like_values(self) -> None:
         with self.assertRaises(RouteError):

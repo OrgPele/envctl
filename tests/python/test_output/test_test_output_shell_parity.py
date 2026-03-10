@@ -2,15 +2,11 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
-import sys
 import unittest
 from contextlib import redirect_stdout
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.test_output.parser_base import TestResult
 from envctl_engine.test_output.parser_jest import JestOutputParser
 from envctl_engine.test_output.parser_pytest import PytestOutputParser
@@ -172,7 +168,7 @@ FAILED tests/test_auth.py::test_auth - TypeError: boom
 
     def test_vitest_parser_extracts_counts_from_modern_vitest_summary(self) -> None:
         output = """
- RUN  v3.2.4 /Users/kfiramar/projects/supportopia/frontend
+ RUN  v3.2.4 /path/to/your/repo/frontend
 
  ✓ src/components/button.test.ts (12 tests) 250ms
  ✓ src/pages/home.test.tsx (31 tests) 410ms

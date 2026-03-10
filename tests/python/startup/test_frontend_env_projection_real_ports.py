@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.shared.services import frontend_env_for_project
 

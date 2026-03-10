@@ -66,7 +66,7 @@ def _run_case(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark envctl startup and inspection matrix.")
-    parser.add_argument("--envctl", default="/Users/kfiramar/projects/envctl/bin/envctl")
+    parser.add_argument("--envctl", default=str(Path(__file__).resolve().parents[1] / "bin" / "envctl"))
     parser.add_argument("--repo", required=True)
     parser.add_argument("--out", default="")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)

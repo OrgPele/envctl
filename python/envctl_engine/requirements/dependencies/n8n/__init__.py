@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.config.profile_defaults import dependency_default_enabled
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.n8n import start_n8n_container
 
@@ -22,7 +23,10 @@ DEFINITION = DependencyDefinition(
         "main": ("MAIN_N8N_ENABLE", "N8N_MAIN_ENABLE", "N8N_ENABLE"),
         "trees": ("TREES_N8N_ENABLE", "N8N_ENABLE"),
     },
-    default_enabled={"main": False, "trees": True},
+    default_enabled={
+        "main": dependency_default_enabled("n8n", "main"),
+        "trees": dependency_default_enabled("n8n", "trees"),
+    },
     env_projector=project_env,
     native_starter=start_n8n_container,
     health_label="n8n",

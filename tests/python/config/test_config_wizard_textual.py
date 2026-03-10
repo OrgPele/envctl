@@ -3,17 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.config import PortDefaults, StartupProfile, discover_local_config_state
 from envctl_engine.config.persistence import ManagedConfigValues
 from envctl_engine.ui.textual.screens.config_wizard import (
     _directory_validation_message,
+    _preset_for_profile,
+    _preset_profile,
     _visible_directory_fields,
     _visible_port_fields,
     run_config_wizard_textual,
@@ -111,6 +109,38 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 _directory_validation_message(repo, "Backend directory", ""),
                 "Backend directory must not be empty.",
             )
+
+    def test_apps_only_preset_disables_all_requirements(self) -> None:
+        profile = _preset_profile("main", "apps_only")
+
+        self.assertFalse(profile.postgres_enable)
+        self.assertFalse(profile.redis_enable)
+        self.assertFalse(profile.supabase_enable)
+        self.assertFalse(profile.n8n_enable)
+
+    def test_default_empty_profile_maps_to_apps_only_preset(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, False, False, False),
+            trees_profile=StartupProfile(True, True, True, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+        )
+
+        self.assertEqual(_preset_for_profile(values.main_profile, mode="main"), "apps_only")
+        self.assertEqual(_preset_for_profile(values.trees_profile, mode="trees"), "apps_only")
+
+    def test_standard_preset_keeps_requirement_stack_distinct_from_apps_only(self) -> None:
+        standard_main = _preset_profile("main", "standard")
+        standard_trees = _preset_profile("trees", "standard")
+
+        self.assertTrue(standard_main.postgres_enable)
+        self.assertTrue(standard_main.redis_enable)
+        self.assertFalse(standard_main.supabase_enable)
+        self.assertFalse(standard_main.n8n_enable)
+        self.assertTrue(standard_trees.postgres_enable)
+        self.assertTrue(standard_trees.redis_enable)
+        self.assertFalse(standard_trees.supabase_enable)
+        self.assertTrue(standard_trees.n8n_enable)
 
 
 if __name__ == "__main__":

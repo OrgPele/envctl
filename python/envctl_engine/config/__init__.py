@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping
 
+from envctl_engine.config.profile_defaults import default_profile_settings
 from envctl_engine.requirements.core import dependency_definitions, dependency_port_keys, managed_enable_keys
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 
@@ -13,48 +14,60 @@ CONFIG_MANAGED_BLOCK_END = "# <<< envctl managed startup config <<<"
 CONFIG_PRIMARY_FILENAME = ".envctl"
 LEGACY_CONFIG_FILENAMES = (".envctl.sh", ".supportopia-config")
 
-DEFAULTS: dict[str, str] = {
-    "ENVCTL_DEFAULT_MODE": "main",
-    "BACKEND_DIR": "backend",
-    "FRONTEND_DIR": "frontend",
-    "ENVCTL_PLANNING_DIR": "todo/plans",
-    "TREES_DIR_NAME": "trees",
-    "RUN_SH_RUNTIME_DIR": "/tmp/envctl-runtime",
-    "BACKEND_PORT_BASE": "8000",
-    "FRONTEND_PORT_BASE": "9000",
-    "PORT_SPACING": "20",
-    "DB_PORT": "5432",
-    "REDIS_PORT": "6379",
-    "N8N_PORT_BASE": "5678",
-    "POSTGRES_MAIN_ENABLE": "true",
-    "REDIS_ENABLE": "true",
-    "REDIS_MAIN_ENABLE": "true",
-    "SUPABASE_MAIN_ENABLE": "false",
-    "N8N_ENABLE": "true",
-    "N8N_MAIN_ENABLE": "false",
-    "ENVCTL_STRICT_N8N_BOOTSTRAP": "false",
-    "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
-    "ENVCTL_PLAN_STRICT_SELECTION": "false",
-    "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
-    "ENVCTL_REQUIREMENTS_STRICT": "true",
-    "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
-    "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
-    "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
-    "MAIN_STARTUP_ENABLE": "true",
-    "MAIN_BACKEND_ENABLE": "true",
-    "MAIN_FRONTEND_ENABLE": "true",
-    "MAIN_POSTGRES_ENABLE": "true",
-    "MAIN_REDIS_ENABLE": "true",
-    "MAIN_SUPABASE_ENABLE": "false",
-    "MAIN_N8N_ENABLE": "false",
-    "TREES_STARTUP_ENABLE": "true",
-    "TREES_BACKEND_ENABLE": "true",
-    "TREES_FRONTEND_ENABLE": "true",
-    "TREES_POSTGRES_ENABLE": "true",
-    "TREES_REDIS_ENABLE": "true",
-    "TREES_SUPABASE_ENABLE": "false",
-    "TREES_N8N_ENABLE": "true",
-}
+def _bool_text(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _build_defaults() -> dict[str, str]:
+    main_profile = default_profile_settings("main")
+    trees_profile = default_profile_settings("trees")
+    main_dependencies = dict(main_profile["dependencies"])
+    trees_dependencies = dict(trees_profile["dependencies"])
+    return {
+        "ENVCTL_DEFAULT_MODE": "main",
+        "BACKEND_DIR": "backend",
+        "FRONTEND_DIR": "frontend",
+        "ENVCTL_PLANNING_DIR": "todo/plans",
+        "TREES_DIR_NAME": "trees",
+        "RUN_SH_RUNTIME_DIR": "/tmp/envctl-runtime",
+        "BACKEND_PORT_BASE": "8000",
+        "FRONTEND_PORT_BASE": "9000",
+        "PORT_SPACING": "20",
+        "DB_PORT": "5432",
+        "REDIS_PORT": "6379",
+        "N8N_PORT_BASE": "5678",
+        "POSTGRES_MAIN_ENABLE": _bool_text(bool(main_dependencies["postgres"])),
+        "REDIS_ENABLE": _bool_text(bool(main_dependencies["redis"] or trees_dependencies["redis"])),
+        "REDIS_MAIN_ENABLE": _bool_text(bool(main_dependencies["redis"])),
+        "SUPABASE_MAIN_ENABLE": _bool_text(bool(main_dependencies["supabase"])),
+        "N8N_ENABLE": _bool_text(bool(main_dependencies["n8n"] or trees_dependencies["n8n"])),
+        "N8N_MAIN_ENABLE": _bool_text(bool(main_dependencies["n8n"])),
+        "ENVCTL_STRICT_N8N_BOOTSTRAP": "false",
+        "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
+        "ENVCTL_PLAN_STRICT_SELECTION": "false",
+        "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
+        "ENVCTL_REQUIREMENTS_STRICT": "true",
+        "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
+        "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
+        "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
+        "MAIN_STARTUP_ENABLE": _bool_text(bool(main_profile["startup_enable"])),
+        "MAIN_BACKEND_ENABLE": _bool_text(bool(main_profile["backend_enable"])),
+        "MAIN_FRONTEND_ENABLE": _bool_text(bool(main_profile["frontend_enable"])),
+        "MAIN_POSTGRES_ENABLE": _bool_text(bool(main_dependencies["postgres"])),
+        "MAIN_REDIS_ENABLE": _bool_text(bool(main_dependencies["redis"])),
+        "MAIN_SUPABASE_ENABLE": _bool_text(bool(main_dependencies["supabase"])),
+        "MAIN_N8N_ENABLE": _bool_text(bool(main_dependencies["n8n"])),
+        "TREES_STARTUP_ENABLE": _bool_text(bool(trees_profile["startup_enable"])),
+        "TREES_BACKEND_ENABLE": _bool_text(bool(trees_profile["backend_enable"])),
+        "TREES_FRONTEND_ENABLE": _bool_text(bool(trees_profile["frontend_enable"])),
+        "TREES_POSTGRES_ENABLE": _bool_text(bool(trees_dependencies["postgres"])),
+        "TREES_REDIS_ENABLE": _bool_text(bool(trees_dependencies["redis"])),
+        "TREES_SUPABASE_ENABLE": _bool_text(bool(trees_dependencies["supabase"])),
+        "TREES_N8N_ENABLE": _bool_text(bool(trees_dependencies["n8n"])),
+    }
+
+
+DEFAULTS: dict[str, str] = _build_defaults()
 
 MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_DEFAULT_MODE",

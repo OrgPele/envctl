@@ -16,9 +16,6 @@ import time
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder, DebugRecorderConfig
 from envctl_engine.ui import terminal_session as terminal_session_module
 from envctl_engine.ui.terminal_session import TerminalSession, _restore_stdin_terminal_sane

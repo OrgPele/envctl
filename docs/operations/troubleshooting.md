@@ -121,9 +121,9 @@ Selector reliability quick checks:
   - `selector_input_inactive`
   - `selector_input_low_throughput`
 - Long-running Apple Terminal key-throughput investigation notes:
-  - `docs/troubleshooting/interactive-selector-key-throughput-readme.md`
+  - `docs/incidents/interactive-selector-key-throughput-readme.md`
 - Permanent write-up of the post-plan dashboard input bug and fix:
-  - `docs/troubleshooting/service-launch-io-ownership.md`
+  - `docs/incidents/service-launch-io-ownership.md`
 - Fresh launch path reproduction that bypasses resume/restore:
   - `envctl --plan --no-resume`
 - More complete user-facing runtime/debug guidance:

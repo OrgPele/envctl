@@ -11,15 +11,16 @@ Start here when a run is already failing, slow, interactive in a bad way, or oth
 ## Most Common Starting Points
 
 - Generic runtime triage: [Troubleshooting](troubleshooting.md)
-- Interactive selector/dashboard issues: [Interactive Selector Key Throughput Investigation (Paused)](../troubleshooting/interactive-selector-key-throughput-readme.md)
-- Post-plan dashboard/input regressions: [Post-Plan Dashboard Input Handoff](../troubleshooting/post-plan-dashboard-input-handoff.md)
+- Interactive selector/dashboard issues: [Interactive Selector Key Throughput Investigation (Paused)](../incidents/interactive-selector-key-throughput-readme.md)
+- Post-plan dashboard/input regressions: [Post-Plan Dashboard Input Handoff](../incidents/post-plan-dashboard-input-handoff.md)
 
 ## Investigations and Incident Write-Ups
 
-- [Interactive Selector Key Throughput Investigation (Paused)](../troubleshooting/interactive-selector-key-throughput-readme.md)
-- [Service Launch IO Ownership](../troubleshooting/service-launch-io-ownership.md)
-- [Post-Plan Dashboard Input Handoff](../troubleshooting/post-plan-dashboard-input-handoff.md)
-- [Post-Plan Dashboard Input Investigation](../troubleshooting/post-plan-dashboard-input-investigation.md)
+- [Incident Index](../incidents/README.md)
+- [Interactive Selector Key Throughput Investigation (Paused)](../incidents/interactive-selector-key-throughput-readme.md)
+- [Service Launch IO Ownership](../incidents/service-launch-io-ownership.md)
+- [Post-Plan Dashboard Input Handoff](../incidents/post-plan-dashboard-input-handoff.md)
+- [Post-Plan Dashboard Input Investigation](../incidents/post-plan-dashboard-input-investigation.md)
 
 ## Related Sections
 

@@ -4,15 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import sys
 import importlib
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 config_module = importlib.import_module("envctl_engine.config")
 runtime_module = importlib.import_module("envctl_engine.runtime.engine_runtime")
 probe_module = importlib.import_module("envctl_engine.shared.process_probe")
