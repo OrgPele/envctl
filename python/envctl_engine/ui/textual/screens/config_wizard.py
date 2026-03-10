@@ -6,6 +6,7 @@ import re
 from typing import Callable
 
 from ....config import LocalConfigState, StartupProfile
+from ....config.profile_defaults import wizard_preset_settings
 from ....requirements.core import dependency_definitions
 from ....config.persistence import (
     ConfigSaveResult,
@@ -196,15 +197,12 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
 
 
 def _preset_profile(mode: str, preset: str) -> StartupProfile:
-    dependencies = {
-        definition.id: (False if preset == "apps_only" else definition.enabled_by_default(mode))
-        for definition in dependency_definitions()
-    }
+    settings = wizard_preset_settings(mode, preset)
     return StartupProfile(
-        startup_enable=preset != "disabled",
-        backend_enable=True,
-        frontend_enable=True,
-        dependencies=dependencies,
+        startup_enable=bool(settings["startup_enable"]),
+        backend_enable=bool(settings["backend_enable"]),
+        frontend_enable=bool(settings["frontend_enable"]),
+        dependencies=dict(settings["dependencies"]),
     )
 
 

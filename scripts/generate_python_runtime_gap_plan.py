@@ -6,11 +6,10 @@ import json
 from pathlib import Path
 import sys
 
-
-def _ensure_python_path(repo_root: Path) -> None:
-    python_root = repo_root / "python"
-    if str(python_root) not in sys.path:
-        sys.path.insert(0, str(python_root))
+try:
+    from scripts._bootstrap import ensure_python_root
+except ModuleNotFoundError:
+    from _bootstrap import ensure_python_root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()
-    _ensure_python_path(repo_root)
+    ensure_python_root(repo_root)
 
     from envctl_engine.runtime_feature_inventory import render_python_runtime_gap_closure_plan
 

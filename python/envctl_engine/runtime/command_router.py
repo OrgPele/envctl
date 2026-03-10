@@ -86,6 +86,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--parallel-trees",
     "--test-parallel",
     "--service-parallel",
+    "--service-prep-parallel",
     "--refresh-cache",
     "--fast",
     "--fast-startup",
@@ -164,6 +165,8 @@ SPECIAL_FLAGS = {
     "--no-test-parallel",
     "--service-sequential",
     "--no-service-parallel",
+    "--service-prep-sequential",
+    "--no-service-prep-parallel",
 }
 
 _ENV_ASSIGNMENT_KEYS = {
@@ -192,6 +195,9 @@ _ENV_ASSIGNMENT_KEYS = {
     "test-parallel",
     "TEST_PARALLEL",
     "ENVCTL_ACTION_TEST_PARALLEL",
+    "service-prep-parallel",
+    "SERVICE_PREP_PARALLEL",
+    "ENVCTL_SERVICE_PREP_PARALLEL",
     "test-parallel-max",
     "TEST_PARALLEL_MAX",
     "ENVCTL_ACTION_TEST_PARALLEL_MAX",
@@ -684,6 +690,8 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["test_parallel"] = False
     elif token in {"--service-sequential", "--no-service-parallel"}:
         flags["service_parallel"] = False
+    elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
+        flags["service_prep_parallel"] = False
     elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
         flags["seed_requirements_from_base"] = False
     elif token in {"fresh=true", "FRESH=true"}:
@@ -770,6 +778,12 @@ def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
             flags["service_parallel"] = True
         elif lowered in {"false", "0", "no", "off"}:
             flags["service_parallel"] = False
+        return
+    if key in {"service-prep-parallel", "SERVICE_PREP_PARALLEL", "ENVCTL_SERVICE_PREP_PARALLEL"}:
+        if lowered in {"true", "1", "yes", "on"}:
+            flags["service_prep_parallel"] = True
+        elif lowered in {"false", "0", "no", "off"}:
+            flags["service_prep_parallel"] = False
         return
     if key in {"frontend", "FRONTEND"}:
         if lowered in {"true", "1", "yes", "on"}:
@@ -863,6 +877,7 @@ def _boolean_flag_name(token: str) -> str:
         "--parallel-trees": "parallel_trees",
         "--test-parallel": "test_parallel",
         "--service-parallel": "service_parallel",
+        "--service-prep-parallel": "service_prep_parallel",
         "--refresh-cache": "refresh_cache",
         "--fast": "fast",
         "--fast-startup": "fast",

@@ -14,9 +14,6 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
@@ -53,12 +50,15 @@ class _FakeProcessRunner:
         self._alembic_async_mismatch_consumed = False
         self.start_log_line: str | None = None
         self.pid_running_result = True
+        self.docker_connect_error: str | None = None
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
         self.run_calls.append((tuple(cmd), str(cwd)))
         self.run_envs.append(dict(env) if env is not None else None)
         _ = env, timeout
         command = tuple(str(part) for part in cmd)
+        if self.docker_connect_error and command and command[0] == "docker":
+            return SimpleNamespace(returncode=1, stdout="", stderr=self.docker_connect_error)
         if len(command) >= 5 and command[0] == "git" and command[3] == "worktree" and command[4] == "add":
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
@@ -325,6 +325,34 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+
+    def test_startup_summarizes_docker_daemon_outage_for_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime, include_commands=False), env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.docker_connect_error = (
+                "failed to connect to the docker API at "
+                "unix:///Users/kfiramar/.docker/run/docker.sock; "
+                "check if the path is correct and if the daemon is running: "
+                "dial unix /Users/kfiramar/.docker/run/docker.sock: connect: no such file or directory"
+            )
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("Startup failed: Docker is not running or not reachable", rendered)
+            self.assertIn("/Users/kfiramar/.docker/run/docker.sock", rendered)
+            self.assertIn("retry envctl", rendered)
+            self.assertNotIn("FailureClass.HARD_START_FAILURE", rendered)
             self.assertEqual(fake_runner.start_calls, [])
             readiness_report_path = runtime / "python-engine" / "runtime_readiness_report.json"
             self.assertTrue(readiness_report_path.is_file())

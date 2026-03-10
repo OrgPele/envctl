@@ -48,11 +48,11 @@ Runtime note:
 
 - [Operations Index](operations/README.md)
 - [Troubleshooting](operations/troubleshooting.md)
-- [Interactive Selector Key Throughput Investigation (Paused)](troubleshooting/interactive-selector-key-throughput-readme.md)
+- [Incident Write-Ups](incidents/README.md)
 
 ## Planning, History, and Meta
 
 - [Planning and Roadmaps](planning/README.md)
 - [Python Engine Migration Ops](planning/refactoring/envctl-python-engine-migration-operations.md)
-- [Changelog](changelog/main_changelog.md)
+- [Changelog](changelog/README.md)
 - [License](license.md)

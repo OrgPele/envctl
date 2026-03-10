@@ -20,7 +20,7 @@ Current control flow:
 
 1. `bin/envctl`
 2. `envctl_engine.runtime.launcher_cli`
-3. `python -m envctl_engine.runtime.cli`
+3. `envctl_engine.runtime.cli:main`
 4. `envctl_engine.runtime.command_router.parse_route`
 5. `envctl_engine.runtime.engine_runtime.EngineRuntime`
 6. `envctl_engine.runtime.engine_runtime_dispatch.dispatch_command`
@@ -29,6 +29,7 @@ Current control flow:
 Key boundary decisions:
 
 - The launcher resolves repo root and prepares the Python runtime handoff.
+- Source checkouts should use `bin/envctl`; direct module execution from the repo root requires `PYTHONPATH=python`.
 - `runtime/cli.py` owns prereq checks, local config bootstrap policy, and exit code normalization.
 - `EngineRuntime` is the runtime facade that wires the domains together.
 - Orchestrators own behavior; helper modules own reusable policy and contract logic.

@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.requirements.n8n import start_n8n_with_retry
 from envctl_engine.requirements.postgres import start_postgres_with_retry
 from envctl_engine.requirements.redis import start_redis_with_retry

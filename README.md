@@ -89,7 +89,7 @@ Developer docs:
 Project docs:
 
 - [Planning and Roadmaps](todo/plans/README.md)
-- [Changelog](docs/changelog/main_changelog.md)
+- [Changelog](docs/changelog/README.md)
 - [License](docs/license.md)
 
 ## How to Use
@@ -120,7 +120,7 @@ envctl --plan
 
 - On first interactive use, the setup wizard creates it for you.
 - Later, run `envctl config` to reopen the wizard and edit it safely.
-- `.envctl.example` is now a reference file for managed keys and defaults, not the primary onboarding flow.
+- [`docs/reference/.envctl.example`](docs/reference/.envctl.example) is the reference file for managed keys and defaults, not the primary onboarding flow.
 
 Common settings:
 

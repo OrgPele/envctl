@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.config.profile_defaults import dependency_default_enabled
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.postgres import start_postgres_container
 
@@ -30,7 +31,10 @@ DEFINITION = DependencyDefinition(
         "main": ("MAIN_POSTGRES_ENABLE", "POSTGRES_MAIN_ENABLE"),
         "trees": ("TREES_POSTGRES_ENABLE",),
     },
-    default_enabled={"main": True, "trees": True},
+    default_enabled={
+        "main": dependency_default_enabled("postgres", "main"),
+        "trees": dependency_default_enabled("postgres", "trees"),
+    },
     env_projector=project_env,
     native_starter=start_postgres_container,
 )

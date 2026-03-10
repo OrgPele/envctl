@@ -5,14 +5,10 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 from envctl_engine.config import _default_port_value
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
 from envctl_engine.shared.services import project_name_from_service_name

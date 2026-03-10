@@ -46,7 +46,7 @@ Confirm the change is reflected in the right doc layer:
 
 ## Documentation Changes
 When behavior changes, update:
-- `.envctl.example`
+- `docs/reference/.envctl.example`
 - relevant file in `docs/`
 - root `README.md` (only if entrypoint/quick start changed)
 

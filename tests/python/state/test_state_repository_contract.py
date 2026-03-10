@@ -4,14 +4,10 @@ import importlib
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
 _models = importlib.import_module("envctl_engine.state.models")
 _state = importlib.import_module("envctl_engine.state")
 _state_repository = importlib.import_module("envctl_engine.state.repository")

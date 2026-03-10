@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.config.profile_defaults import dependency_default_enabled
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.redis import start_redis_container
 
@@ -22,7 +23,10 @@ DEFINITION = DependencyDefinition(
         "main": ("MAIN_REDIS_ENABLE", "REDIS_MAIN_ENABLE", "REDIS_ENABLE"),
         "trees": ("TREES_REDIS_ENABLE", "REDIS_ENABLE"),
     },
-    default_enabled={"main": True, "trees": True},
+    default_enabled={
+        "main": dependency_default_enabled("redis", "main"),
+        "trees": dependency_default_enabled("redis", "trees"),
+    },
     env_projector=project_env,
     native_starter=start_redis_container,
 )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 from pathlib import Path
+import re
 import threading
 import time
 
@@ -41,7 +42,7 @@ def start_project_context(
     rt._reserve_project_ports(context)
     requirements = requirements_for_restart_context(orchestrator, context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):
-        raise RuntimeError(f"Requirements unavailable for {context.name}: " + ", ".join(requirements.failures))
+        raise RuntimeError(_requirements_failure_message(context.name, requirements))
     orchestrator._report_progress(
         route,
         f"Requirements ready for {context.name}: "
@@ -70,6 +71,62 @@ def start_project_context(
         project=context.name,
     )
     return requirements, project_services, list(rt._consume_project_startup_warnings(context.name))
+
+
+_DOCKER_SOCKET_PATTERNS = (
+    re.compile(r"unix://(?P<path>[^\s;]+docker\.sock)"),
+    re.compile(r"dial unix (?P<path>[^\s:;]+docker\.sock)"),
+)
+
+
+def _requirements_failure_message(project_name: str, requirements: RequirementsResult) -> str:
+    failed_components: list[str] = []
+    docker_failed_components: list[str] = []
+    docker_socket_paths: list[str] = []
+    for definition in dependency_definitions():
+        component = requirements.component(definition.id)
+        if not bool(component.get("enabled", False)) or bool(component.get("success", False)):
+            continue
+        failed_components.append(definition.id)
+        error = str(component.get("error") or "")
+        if _docker_daemon_unavailable(error):
+            docker_failed_components.append(definition.id)
+            socket_path = _docker_socket_path(error)
+            if socket_path is not None:
+                docker_socket_paths.append(socket_path)
+    if failed_components and len(docker_failed_components) == len(failed_components):
+        services = ", ".join(docker_failed_components)
+        message = "Docker is not running or not reachable"
+        unique_paths = sorted({path for path in docker_socket_paths if path})
+        if len(unique_paths) == 1:
+            message += f" at {unique_paths[0]}"
+        message += ". Start Docker Desktop or your Docker daemon, wait for it to become ready, and retry envctl."
+        message += f" Blocked requirements for {project_name}: {services}."
+        return message
+    return f"Requirements unavailable for {project_name}: " + ", ".join(requirements.failures)
+
+
+def _docker_daemon_unavailable(error: str) -> bool:
+    normalized = error.strip().lower()
+    if not normalized:
+        return False
+    docker_markers = (
+        "failed to connect to the docker api",
+        "cannot connect to the docker daemon",
+        "is the docker daemon running",
+        "error during connect",
+    )
+    if not any(marker in normalized for marker in docker_markers):
+        return False
+    return "docker.sock" in normalized or "docker daemon" in normalized
+
+
+def _docker_socket_path(error: str) -> str | None:
+    for pattern in _DOCKER_SOCKET_PATTERNS:
+        match = pattern.search(error)
+        if match is not None:
+            return match.group("path")
+    return None
 
 
 def _component_port_summary(requirements: RequirementsResult, dependency_id: str) -> int | None:
@@ -289,9 +346,12 @@ def start_requirements_for_project(
     reserve_lock = threading.Lock()
     progress_state_lock = threading.Lock()
 
+    definition_ports = {
+        definition.id: context.ports[definition.resources[0].legacy_port_key] for definition in definitions
+    }
+
     def plan_for_dependency(dependency_id: str):
-        definition = next(defn for defn in definitions if defn.id == dependency_id)
-        return context.ports[definition.resources[0].legacy_port_key]
+        return definition_ports[dependency_id]
 
     setup_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_setup_infrastructure")
     if setup_hook.found and not setup_hook.success:
@@ -327,9 +387,11 @@ def start_requirements_for_project(
         with reserve_lock:
             return port_allocator.reserve_next(port, owner=f"{context.name}:requirements")
 
-    enabled_definitions = [
-        definition for definition in definitions if bool(rt._requirement_enabled(definition.id, mode=mode, route=route))
-    ]
+    enabled_lookup = {
+        definition.id: bool(rt._requirement_enabled(definition.id, mode=mode, route=route))
+        for definition in definitions
+    }
+    enabled_definitions = [definition for definition in definitions if enabled_lookup[definition.id]]
     pending_requirements = {definition.id for definition in enabled_definitions}
     active_requirements: set[str] = set()
 
@@ -351,19 +413,15 @@ def start_requirements_for_project(
             pending_requirements.discard(component)
             active_requirements.add(component)
             emit_requirements_progress()
-        enabled = bool(rt._requirement_enabled(component, mode=mode, route=route))
         try:
-            if enabled:
-                outcome = rt._start_requirement_component(
-                    context,
-                    component,
-                    plan,
-                    reserve_next,
-                    strict=strict,
-                    route=route,
-                )
-            else:
-                outcome = rt._skipped_requirement(component, plan)
+            outcome = rt._start_requirement_component(
+                context,
+                component,
+                plan,
+                reserve_next,
+                strict=strict,
+                route=route,
+            )
             duration_ms = round((time.monotonic() - component_started) * 1000.0, 2)
             component_timings_ms[component] = duration_ms
             rt._emit(
@@ -371,7 +429,7 @@ def start_requirements_for_project(
                 project=context.name,
                 requirement=component,
                 duration_ms=duration_ms,
-                enabled=enabled,
+                enabled=True,
                 success=bool(getattr(outcome, "success", False)),
                 retries=int(getattr(outcome, "retries", 0)),
                 final_port=getattr(outcome, "final_port", None),
@@ -384,6 +442,24 @@ def start_requirements_for_project(
                 emit_requirements_progress()
 
     emit_requirements_progress()
+    outcomes: dict[str, RequirementOutcome] = {}
+    for definition in definitions:
+        if definition.id in pending_requirements:
+            continue
+        outcome = rt._skipped_requirement(definition.id, plan_for_dependency(definition.id))
+        component_timings_ms[definition.id] = 0.0
+        rt._emit(
+            "requirements.timing.component",
+            project=context.name,
+            requirement=definition.id,
+            duration_ms=0.0,
+            enabled=False,
+            success=bool(getattr(outcome, "success", False)),
+            retries=int(getattr(outcome, "retries", 0)),
+            final_port=getattr(outcome, "final_port", None),
+            failure_class=str(getattr(outcome, "failure_class", "")),
+        )
+        outcomes[definition.id] = outcome
     raw_parallel = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL")
     parallel_enabled = parse_bool(raw_parallel, True) and len(enabled_definitions) > 1
     raw_workers = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX") or rt.config.raw.get(
@@ -406,11 +482,10 @@ def start_requirements_for_project(
             f"(workers={worker_count})"
         )
 
-    outcomes: dict[str, RequirementOutcome] = {}
     if parallel_enabled and worker_count > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_map: dict[concurrent.futures.Future[RequirementOutcome], str] = {}
-            for definition in definitions:
+            for definition in enabled_definitions:
                 strict = bool(definition.id == "n8n" and rt.config.strict_n8n_bootstrap)
                 future = executor.submit(
                     run_component, definition.id, plan_for_dependency(definition.id), strict=strict
@@ -420,7 +495,7 @@ def start_requirements_for_project(
                 definition_id = future_map[future]
                 outcomes[definition_id] = future.result()
     else:
-        for definition in definitions:
+        for definition in enabled_definitions:
             strict = bool(definition.id == "n8n" and rt.config.strict_n8n_bootstrap)
             outcomes[definition.id] = run_component(definition.id, plan_for_dependency(definition.id), strict=strict)
 
@@ -453,7 +528,7 @@ def start_requirements_for_project(
             "retries": outcome.retries,
             "success": outcome.success,
             "simulated": outcome.simulated,
-            "enabled": rt._requirement_enabled(definition.id, mode=mode, route=route),
+            "enabled": enabled_lookup[definition.id],
             "reason_code": outcome.reason_code,
             "failure_class": outcome.failure_class.value if getattr(outcome, "failure_class", None) else None,
             "error": outcome.error,
@@ -561,6 +636,26 @@ def _service_attach_parallel_enabled(
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _service_prep_parallel_enabled(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    route: Route | None,
+    selected_service_types: set[str],
+    attach_parallel: bool,
+) -> bool:
+    if selected_service_types != {"backend", "frontend"}:
+        return False
+    if route is not None:
+        route_value = route.flags.get("service_prep_parallel")
+        if isinstance(route_value, bool):
+            return route_value
+    rt = orchestrator.runtime
+    raw = rt.env.get("ENVCTL_SERVICE_PREP_PARALLEL") or rt.config.raw.get("ENVCTL_SERVICE_PREP_PARALLEL")
+    if str(raw).strip():
+        return parse_bool(raw, True)
+    return attach_parallel
+
+
 def start_project_services(
     orchestrator: StartupOrchestratorLike,
     context: ProjectContextLike,
@@ -644,8 +739,23 @@ def start_project_services(
         return {}
     service_started = time.monotonic()
     prepare_backend_duration_ms = 0.0
-    if "backend" in selected_service_types:
-        prepare_backend_started = time.monotonic()
+    prepare_frontend_duration_ms = 0.0
+    prepare_backend = "backend" in selected_service_types
+    prepare_frontend = "frontend" in selected_service_types
+    attach_parallel = _service_attach_parallel_enabled(
+        orchestrator,
+        route=route,
+        selected_service_types=selected_service_types,
+    )
+    prep_parallel = _service_prep_parallel_enabled(
+        orchestrator,
+        route=route,
+        selected_service_types=selected_service_types,
+        attach_parallel=attach_parallel,
+    )
+
+    def prepare_backend_runtime() -> float:
+        started = time.monotonic()
         rt._prepare_backend_runtime(
             context=context,
             backend_cwd=backend_cwd,
@@ -655,16 +765,10 @@ def start_project_services(
             backend_env_file=backend_env_file,
             backend_env_is_default=backend_env_is_default,
         )
-        prepare_backend_duration_ms = round((time.monotonic() - prepare_backend_started) * 1000.0, 2)
-        rt._emit(
-            "service.timing.component",
-            project=context.name,
-            component="prepare_backend_runtime",
-            duration_ms=prepare_backend_duration_ms,
-        )
-    prepare_frontend_duration_ms = 0.0
-    if "frontend" in selected_service_types:
-        prepare_frontend_started = time.monotonic()
+        return round((time.monotonic() - started) * 1000.0, 2)
+
+    def prepare_frontend_runtime() -> float:
+        started = time.monotonic()
         rt._prepare_frontend_runtime(
             context=context,
             frontend_cwd=frontend_cwd,
@@ -674,7 +778,33 @@ def start_project_services(
             backend_port=backend_plan.final,
             route=route,
         )
-        prepare_frontend_duration_ms = round((time.monotonic() - prepare_frontend_started) * 1000.0, 2)
+        return round((time.monotonic() - started) * 1000.0, 2)
+
+    if prepare_backend and prepare_frontend and prep_parallel:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_map: dict[concurrent.futures.Future[float], str] = {}
+            future_map[executor.submit(prepare_backend_runtime)] = "backend"
+            future_map[executor.submit(prepare_frontend_runtime)] = "frontend"
+            for future in concurrent.futures.as_completed(future_map):
+                prep = future_map[future]
+                duration = future.result()
+                if prep == "backend":
+                    prepare_backend_duration_ms = duration
+                else:
+                    prepare_frontend_duration_ms = duration
+    else:
+        if prepare_backend:
+            prepare_backend_duration_ms = prepare_backend_runtime()
+        if prepare_frontend:
+            prepare_frontend_duration_ms = prepare_frontend_runtime()
+    if prepare_backend:
+        rt._emit(
+            "service.timing.component",
+            project=context.name,
+            component="prepare_backend_runtime",
+            duration_ms=prepare_backend_duration_ms,
+        )
+    if prepare_frontend:
         rt._emit(
             "service.timing.component",
             project=context.name,
@@ -707,7 +837,16 @@ def start_project_services(
         env: dict[str, str],
         log_path: Path,
     ) -> object:
-        return process_runtime.start_background(
+        start_background = getattr(process_runtime, "start_background", None)
+        if callable(start_background):
+            return start_background(
+                command,
+                cwd=cwd,
+                env=env,
+                stdout_path=log_path,
+                stderr_path=log_path,
+            )
+        return process_runtime.start(
             command,
             cwd=cwd,
             env=env,
@@ -916,11 +1055,6 @@ def start_project_services(
             error=(error or "").strip() or None,
         )
 
-    attach_parallel = _service_attach_parallel_enabled(
-        orchestrator,
-        route=route,
-        selected_service_types=selected_service_types,
-    )
     attach_duration_ms = 0.0
     records: dict[str, ServiceRecord]
 
@@ -948,11 +1082,6 @@ def start_project_services(
             synthetic=False,
         )
 
-    attach_parallel = _service_attach_parallel_enabled(
-        orchestrator,
-        route=route,
-        selected_service_types=selected_service_types,
-    )
     rt._emit(  # type: ignore[attr-defined]
         "service.attach.execution",
         project=context.name,

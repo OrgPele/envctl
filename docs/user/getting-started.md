@@ -120,7 +120,7 @@ envctl --resume
 If you prefer to create the file yourself instead of using the wizard:
 
 ```bash
-cp .envctl.example /path/to/your-project/.envctl
+cp /path/to/envctl/docs/reference/.envctl.example /path/to/your-project/.envctl
 ```
 
 Recommended first check before editing anything:

@@ -10,7 +10,7 @@ The active execution path is:
 
 1. `bin/envctl`
 2. `envctl_engine.runtime.launcher_cli`
-3. `python -m envctl_engine.runtime.cli`
+3. `envctl_engine.runtime.cli:main`
 4. `envctl_engine.runtime.command_router.parse_route`
 5. `EngineRuntime`
 6. `engine_runtime_dispatch.dispatch_command`

@@ -5,12 +5,10 @@ import argparse
 import sys
 from pathlib import Path
 
-
-def _ensure_python_path() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    python_root = repo_root / "python"
-    if str(python_root) not in sys.path:
-        sys.path.insert(0, str(python_root))
+try:
+    from scripts._bootstrap import ensure_python_root, repo_root_from
+except ModuleNotFoundError:
+    from _bootstrap import ensure_python_root, repo_root_from
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.set_defaults(check_tests=False)
     args = parser.parse_args(argv)
 
-    _ensure_python_path()
+    ensure_python_root(repo_root_from(__file__))
     from envctl_engine.shell.release_gate import evaluate_shipability
 
     repo_root = Path(args.repo).resolve()

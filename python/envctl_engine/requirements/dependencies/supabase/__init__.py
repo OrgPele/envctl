@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.config.profile_defaults import dependency_default_enabled
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.supabase import start_supabase_stack
 
@@ -36,7 +37,10 @@ DEFINITION = DependencyDefinition(
         "main": ("MAIN_SUPABASE_ENABLE", "SUPABASE_MAIN_ENABLE"),
         "trees": ("TREES_SUPABASE_ENABLE",),
     },
-    default_enabled={"main": False, "trees": False},
+    default_enabled={
+        "main": dependency_default_enabled("supabase", "main"),
+        "trees": dependency_default_enabled("supabase", "trees"),
+    },
     env_projector=project_env,
     native_starter=start_supabase_stack,
 )

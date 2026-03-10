@@ -19,8 +19,8 @@ USAGE_TEXT = """Usage:
 Examples:
   envctl
   envctl --main
-  envctl --repo /Users/kfiramar/projects/my-project --resume
-  envctl doctor --repo /Users/kfiramar/projects/my-project
+  envctl --repo /path/to/your/repo --resume
+  envctl doctor --repo /path/to/your/repo
 """
 
 _BLOCK_START = "# >>> envctl PATH >>>"

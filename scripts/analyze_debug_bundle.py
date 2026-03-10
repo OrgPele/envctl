@@ -5,13 +5,15 @@ import argparse
 import json
 import tarfile
 from pathlib import Path
-import sys
 from typing import IO
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_ROOT = REPO_ROOT / "python"
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
+try:
+    from scripts._bootstrap import ensure_python_root, repo_root_from
+except ModuleNotFoundError:
+    from _bootstrap import ensure_python_root, repo_root_from
+
+REPO_ROOT = repo_root_from(__file__)
+PYTHON_ROOT = ensure_python_root(REPO_ROOT)
 
 from envctl_engine.debug.debug_bundle import summarize_debug_bundle
 

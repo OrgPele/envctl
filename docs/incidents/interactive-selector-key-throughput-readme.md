@@ -42,7 +42,7 @@ ENVCTL_UI_SELECTOR_FOCUS_REPORTING=0 \
 ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
-/Users/kfiramar/projects/envctl/bin/envctl
+./bin/envctl
 ```
 
 Repro steps:
@@ -252,13 +252,13 @@ Interpretation:
 ENVCTL_DEBUG_UI_MODE=deep \
 ENVCTL_DEBUG_SELECTOR_KEYS=1 \
 ENVCTL_DEBUG_SELECTOR_THREAD_STACK=1 \
-/Users/kfiramar/projects/envctl/bin/envctl
+./bin/envctl
 ```
 
 ### Bundle commands
 ```bash
-/Users/kfiramar/projects/envctl/bin/envctl --debug-pack --scope-id repo-b15e3f0c8257 --run-id <run_id>
-/Users/kfiramar/projects/envctl/bin/envctl --debug-report --scope-id repo-b15e3f0c8257 --run-id <run_id>
+./bin/envctl --debug-pack --scope-id repo-b15e3f0c8257 --run-id <run_id>
+./bin/envctl --debug-report --scope-id repo-b15e3f0c8257 --run-id <run_id>
 ```
 
 ### Quick local extraction snippets

@@ -103,6 +103,8 @@ In the simple wizard, main mode is configured by preset:
 - `Apps Only`: envctl runs enabled, backend on, frontend on, built-in dependencies off
 - `Disabled`: envctl runs disabled for main mode
 
+For a brand-new config, the wizard starts with no requirements selected by default.
+
 In the advanced wizard, this step is separate and only controls whether each mode is enabled for `envctl` runs:
 
 - `Main: Enabled for envctl runs`
@@ -225,7 +227,7 @@ You may want to skip the interactive wizard when:
 
 In those cases, use:
 
-- `.envctl.example` as a starting point
+- [`docs/reference/.envctl.example`](../reference/.envctl.example) as a starting point
 - `envctl config --stdin-json`
 - `envctl config --set KEY=VALUE`
 

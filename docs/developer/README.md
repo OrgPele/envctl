@@ -10,6 +10,7 @@ This section is for contributors working on the launcher, Python engine, runtime
 - [Command Surface and Routing](command-surface.md)
 - [UI and Interaction Architecture](ui-and-interaction.md)
 - [Runtime Lifecycle](runtime-lifecycle.md)
+- [Startup and Resume Deep Dive](startup-resume-deep-dive.md)
 - [State and Artifacts](state-and-artifacts.md)
 - [Debug and Diagnostics](debug-and-diagnostics.md)
 - [Testing and Validation](testing-and-validation.md)
@@ -25,6 +26,7 @@ This section is for contributors working on the launcher, Python engine, runtime
 - Working on persistence or projection: [State and Artifacts](state-and-artifacts.md)
 - Working on doctor, DFR, or debug bundles: [Debug and Diagnostics](debug-and-diagnostics.md)
 - Working on runtime cutover behavior: [Python Runtime Guide](python-runtime-guide.md)
+- Working on startup, resume, timing, or dependency/service bring-up: [Startup and Resume Deep Dive](startup-resume-deep-dive.md)
 - Preparing a non-trivial change: [Testing and Validation](testing-and-validation.md)
 
 ## Related Sections

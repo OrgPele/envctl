@@ -63,7 +63,7 @@ The key difference was whether the interactive controller was competing with new
 
 The concrete fault was in the background-service launch path:
 
-- [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py)
+- [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py)
   - `start_backend(...)`
   - `start_frontend(...)`
 - both launched service commands through the process runner
@@ -95,7 +95,7 @@ In practice, the bug only became obvious after the investigation stopped asking 
 
 The fix was to turn child-process launch into an explicit **launch-intent + I/O ownership** contract.
 
-Implemented in [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py):
+Implemented in [process_runner.py](../../python/envctl_engine/shared/process_runner.py):
 - `start_background(...)`
 - `run_probe(...)`
 - `start_interactive_child(...)`
@@ -111,7 +111,7 @@ Contract:
   - explicit opt-in path
   - may own controller input
 
-The real startup call sites were migrated in [startup_execution_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/startup/startup_execution_support.py):
+The real startup call sites were migrated in [startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py):
 - backend launch now uses `start_background(...)`
 - frontend launch now uses `start_background(...)`
 
@@ -133,10 +133,10 @@ Every child launch now emits a `process.launch` event with:
 - whether controller input ownership is allowed
 
 That data is now surfaced in:
-- [doctor_orchestrator.py](/Users/kfiramar/projects/envctl/python/envctl_engine/debug/doctor_orchestrator.py)
-- [debug_bundle_diagnostics.py](/Users/kfiramar/projects/envctl/python/envctl_engine/debug/debug_bundle_diagnostics.py)
-- [engine_runtime_debug_support.py](/Users/kfiramar/projects/envctl/python/envctl_engine/runtime/engine_runtime_debug_support.py)
-- [analyze_debug_bundle.py](/Users/kfiramar/projects/envctl/scripts/analyze_debug_bundle.py)
+- [doctor_orchestrator.py](../../python/envctl_engine/debug/doctor_orchestrator.py)
+- [debug_bundle_diagnostics.py](../../python/envctl_engine/debug/debug_bundle_diagnostics.py)
+- [engine_runtime_debug_support.py](../../python/envctl_engine/runtime/engine_runtime_debug_support.py)
+- [analyze_debug_bundle.py](../../scripts/analyze_debug_bundle.py)
 
 The permanent diagnosis model is:
 - background children must not own controller input
@@ -153,21 +153,21 @@ This bug class can happen anywhere a child process is launched while envctl is i
 ### Fixed high-risk path
 
 Fixed:
-- real backend/frontend service launches through [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py)
+- real backend/frontend service launches through [process_runner.py](../../python/envctl_engine/shared/process_runner.py)
 
 These were the actual culprit.
 
 ### Fixed probe path
 
 Fixed:
-- listener/probe helpers inside [process_runner.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/process_runner.py)
+- listener/probe helpers inside [process_runner.py](../../python/envctl_engine/shared/process_runner.py)
 
 These were not the final root cause, but they were the same bug class and are now locked down under `run_probe(...)`.
 
 ### Intentional interactive child
 
 Intentional and expected:
-- selector subprocess launch in [backend.py](/Users/kfiramar/projects/envctl/python/envctl_engine/ui/backend.py)
+- selector subprocess launch in [backend.py](../../python/envctl_engine/ui/backend.py)
 
 That subprocess is meant to read terminal input. It is not a background service. It is the correct class of child to own controller input while it is active.
 
@@ -176,7 +176,7 @@ This path should eventually be routed through the explicit `interactive_child` A
 ### Remaining same-class hardening candidate
 
 Still worth hardening:
-- `_compose_up_handoff(...)` in [supabase.py](/Users/kfiramar/projects/envctl/python/envctl_engine/requirements/supabase.py)
+- `_compose_up_handoff(...)` in [supabase.py](../../python/envctl_engine/requirements/supabase.py)
 
 That function still uses a raw `subprocess.Popen(...)` without an explicit `stdin=` override.
 
@@ -196,7 +196,7 @@ Why it is still worth fixing:
 Audited low-risk sites include:
 - short-lived `subprocess.run(..., capture_output=True)` calls in actions/shell helpers
 - terminal repair helpers that intentionally run `stty sane` against a specific fd
-- one-shot listener queries in [ports.py](/Users/kfiramar/projects/envctl/python/envctl_engine/shared/ports.py)
+- one-shot listener queries in [ports.py](../../python/envctl_engine/shared/ports.py)
 
 These are not currently expected to reproduce the same persistent post-plan dashboard bug because they do not remain alive as competing background readers during the interactive dashboard phase.
 
