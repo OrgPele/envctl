@@ -13,6 +13,8 @@ from pathlib import Path
 
 from collections.abc import Mapping
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from .adapter_base import env_bool, env_float, env_int, port_mismatch_policy, timeout_error
 from .common import (
     ContainerStartResult,
@@ -33,13 +35,18 @@ from ..shared.dependency_compose_assets import (
 )
 
 
-def start_supabase_with_retry(start, reserve_next, port: int, max_retries: int = 3) -> RetryResult:
+def start_supabase_with_retry(
+    start,
+    reserve_next,
+    port: int,
+    max_retries: int = 3,  # noqa: ANN001
+) -> RetryResult:
     return run_with_retry(initial_port=port, start=start, reserve_next=reserve_next, max_retries=max_retries)
 
 
 def start_supabase_stack(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     project_name: str,
     db_port: int,

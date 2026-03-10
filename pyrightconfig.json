@@ -1,0 +1,5 @@
+{
+  "include": ["python/envctl_engine"],
+  "extraPaths": ["python"],
+  "pythonVersion": "3.12"
+}

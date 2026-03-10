@@ -144,6 +144,10 @@ def _route_is_implicit_start(route: Route | None) -> bool:
     return True
 
 
+def route_is_implicit_start(route: Route | None) -> bool:
+    return _route_is_implicit_start(route)
+
+
 def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool:
     if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(mode):
         return False

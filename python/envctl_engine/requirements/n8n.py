@@ -4,6 +4,8 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from .adapter_base import (
     ContainerLifecycleTemplate,
     env_bool,
@@ -22,13 +24,18 @@ from .common import (
 )
 
 
-def start_n8n_with_retry(start, reserve_next, port: int, max_retries: int = 3) -> RetryResult:
+def start_n8n_with_retry(
+    start,
+    reserve_next,
+    port: int,
+    max_retries: int = 3,  # noqa: ANN001
+) -> RetryResult:
     return run_with_retry(initial_port=port, start=start, reserve_next=reserve_next, max_retries=max_retries)
 
 
 def start_n8n_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     project_name: str,
     port: int,
@@ -81,7 +88,7 @@ def start_n8n_container(
 
 def _create_n8n_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     container_name: str,
     port: int,
@@ -164,7 +171,7 @@ def _create_n8n_container(
 
 def _recover_n8n_start_timeout(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     port: int,
     timeout_seconds: float,
 ) -> bool:

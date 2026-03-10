@@ -3,14 +3,17 @@ from __future__ import annotations
 # pyright: reportUnusedFunction=false
 
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol, Sequence
+from typing import Protocol
 
+from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.runtime.command_resolution import CommandResolutionError
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.requirements.core import dependency_definition
 from envctl_engine.state.models import PortPlan
+from envctl_engine.shared.protocols import CommandResult, PortAllocator, ProcessRuntime
 from envctl_engine.shared.parsing import parse_bool, parse_float
 from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
@@ -29,10 +32,67 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
+class _RequirementsHelpers(Protocol):
+    def reason_code_for_failure(
+        self, service_name: str, failure_class: FailureClass, *, error: str | None = None
+    ) -> str: ...
+    def start_requirement(
+        self,
+        *,
+        service_name: str,
+        port: int,
+        start: Callable[[int], tuple[bool, str | None]],
+        reserve_next: Callable[[int], int],
+        max_retries: int = 3,
+        strict: bool = False,
+        max_bind_retries: int = 0,
+        on_retry: Callable[[str, int, int, int, FailureClass, str | None], None] | None = None,
+    ) -> RequirementOutcome: ...
+
+
+class _RequirementsConfig(Protocol):
+    raw: Mapping[str, str]
+    requirements_strict: bool
+
+
+class _RequirementsRuntime(Protocol):
+    env: Mapping[str, str]
+    config: _RequirementsConfig
+    process_runner: ProcessRuntime
+    port_planner: PortAllocator
+    requirements: _RequirementsHelpers
+    runtime_root: Path
+    _conflict_remaining: dict[str, int]
+
+    def _emit(self, event: str, **payload: object) -> None: ...
+    def _supabase_fingerprint_path(self, project_name: str) -> Path: ...
+    def _supabase_auto_reinit_enabled(self) -> bool: ...
+    def _supabase_reinit_required_message(self) -> str: ...
+    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None: ...
+    def _requirement_command_resolved(
+        self, *, service_name: str, port: int, project_root: Path
+    ) -> tuple[list[str], str]: ...
+    def _command_env(self, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]: ...
+    def _runtime_env_overrides(self, route: Route | None) -> dict[str, str]: ...
+    def _wait_for_requirement_listener(self, port: int) -> bool: ...
+    def _requirement_bind_max_retries(self) -> int: ...
+    def _requirement_listener_timeout_seconds(self) -> float: ...
+    def _command_override_value(self, key: str) -> str | None: ...
+    def _command_exists(self, command: str) -> bool: ...
+    def _start_requirement_with_native_adapter(
+        self,
+        *,
+        context: ProjectContextLike,
+        service_name: str,
+        port: int,
+        route: Route | None = None,
+    ) -> _NativeAdapterStartResult | None: ...
+
+
 class _CommandTimingRunnerProxy:
     """Proxy process runner that records command timing and return codes."""
 
-    def __init__(self, base_runner: object, *, sink: list[dict[str, object]]) -> None:
+    def __init__(self, base_runner: ProcessRuntime, *, sink: list[dict[str, object]]) -> None:
         self._base_runner = base_runner
         self._sink = sink
 
@@ -41,16 +101,16 @@ class _CommandTimingRunnerProxy:
         cmd: Sequence[str],
         *,
         cwd: str | Path | None = None,
-        env: dict[str, str] | None = None,
+        env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> object:
+    ) -> CommandResult:
         command = [str(part) for part in cmd]
         started = time.monotonic()
-        result = self._base_runner.run(cmd, cwd=cwd, env=env, timeout=timeout)  # type: ignore[attr-defined]
+        result = self._base_runner.run(cmd, cwd=cwd, env=env, timeout=timeout)
         duration_ms = round((time.monotonic() - started) * 1000.0, 2)
-        stderr = str(getattr(result, "stderr", "") or "")
-        stdout = str(getattr(result, "stdout", "") or "")
-        returncode = int(getattr(result, "returncode", 1))
+        stderr = str(result.stderr or "")
+        stdout = str(result.stdout or "")
+        returncode = int(result.returncode)
         timed_out = bool(returncode == 124 or "timed out" in stderr.lower() or "timed out" in stdout.lower())
         self._sink.append(
             {
@@ -83,7 +143,7 @@ class _NativeAdapterStartResult:
     container_name: str | None = None
 
 
-def _requirements_trace_enabled(self: Any, route: Route | None) -> bool:
+def _requirements_trace_enabled(self: _RequirementsRuntime, route: Route | None) -> bool:
     raw = self.env.get("ENVCTL_DEBUG_REQUIREMENTS_TRACE") or self.config.raw.get("ENVCTL_DEBUG_REQUIREMENTS_TRACE")
     if parse_bool(raw, False):
         return True
@@ -95,7 +155,7 @@ def _requirements_trace_enabled(self: Any, route: Route | None) -> bool:
     return mode in {"deep"}
 
 
-def _docker_command_timing_enabled(self: Any, route: Route | None) -> bool:
+def _docker_command_timing_enabled(self: _RequirementsRuntime, route: Route | None) -> bool:
     raw = self.env.get("ENVCTL_DEBUG_DOCKER_COMMAND_TIMING") or self.config.raw.get(
         "ENVCTL_DEBUG_DOCKER_COMMAND_TIMING"
     )
@@ -156,7 +216,7 @@ def _extract_probe_attempts(command_timings: list[dict[str, object]], *, service
 
 
 def _start_requirement_component(
-    self: Any,
+    self: _RequirementsRuntime,
     context: ProjectContextLike,
     name: str,
     plan: PortPlan,
@@ -356,7 +416,7 @@ def _wait_for_requirement_listener(self, port: int) -> bool:
     return bool(self.process_runner.wait_for_port(port, timeout=timeout))
 
 
-def _requirement_listener_timeout_seconds(self: Any) -> float:
+def _requirement_listener_timeout_seconds(self: _RequirementsRuntime) -> float:
     raw = self._command_override_value("ENVCTL_REQUIREMENT_LISTENER_TIMEOUT_SECONDS")
     parsed = parse_float(raw, 10.0)
     if parsed is None or parsed <= 0:
@@ -365,7 +425,7 @@ def _requirement_listener_timeout_seconds(self: Any) -> float:
 
 
 def _start_requirement_with_native_adapter(
-    self: Any,
+    self: _RequirementsRuntime,
     *,
     context: ProjectContextLike,
     service_name: str,
@@ -404,7 +464,7 @@ def _start_requirement_with_native_adapter(
         db_user = self._command_override_value("DB_USER") or "postgres"
         db_password = self._command_override_value("DB_PASSWORD") or "postgres"
         db_name = self._command_override_value("DB_NAME") or "postgres"
-        result = native_starter(
+        result: ContainerStartResult = native_starter(
             process_runner=process_runner,
             project_root=context.root,
             project_name=context.name,

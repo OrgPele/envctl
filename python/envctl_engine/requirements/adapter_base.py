@@ -5,6 +5,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from ..shared.env_access import float_from_env, int_from_env, str_from_env
 from ..shared.parsing import parse_bool
 from ..shared.reason_codes import (
@@ -92,7 +94,7 @@ class AdapterLifecycleEvent:
 class ContainerLifecycleTemplate:
     service_name: str
     container_name: str
-    process_runner: object
+    process_runner: ProcessRuntime
     project_root: Path
     env: Mapping[str, str] | None
     port: int

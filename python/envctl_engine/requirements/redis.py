@@ -4,6 +4,8 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from .adapter_base import (
     ContainerLifecycleTemplate,
     bind_safe_cleanup_enabled,
@@ -26,13 +28,18 @@ from .common import (
 )
 
 
-def start_redis_with_retry(start, reserve_next, port: int, max_retries: int = 3) -> RetryResult:
+def start_redis_with_retry(
+    start,
+    reserve_next,
+    port: int,
+    max_retries: int = 3,  # noqa: ANN001
+) -> RetryResult:
     return run_with_retry(initial_port=port, start=start, reserve_next=reserve_next, max_retries=max_retries)
 
 
 def start_redis_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     project_name: str,
     port: int,
@@ -133,7 +140,7 @@ def start_redis_container(
 
 def _probe_redis_readiness(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     container_name: str,
     project_root: Path,
     env: Mapping[str, str] | None,
@@ -161,7 +168,7 @@ def _probe_redis_readiness(
 
 def _create_redis_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     container_name: str,
     port: int,
