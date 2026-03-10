@@ -5,7 +5,7 @@ This documentation set is organized by audience and task rather than as one flat
 Runtime note:
 
 - The Python engine is the primary and documented runtime.
-- The legacy Bash/shell engine still exists behind `ENVCTL_ENGINE_SHELL_FALLBACK=true`, but it is deprecated and retained only as a compatibility fallback during cutover.
+- The supported runtime path is the Python runtime.
 
 ## Start Here
 

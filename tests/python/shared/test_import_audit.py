@@ -74,7 +74,6 @@ DEPRECATED_IMPORTS = {
     'envctl_engine.service_manager',
     'envctl_engine.services',
     'envctl_engine.shell_adapter',
-    'envctl_engine.shell_prune',
     'envctl_engine.startup_orchestrator',
     'envctl_engine.state_action_orchestrator',
     'envctl_engine.state_repository',

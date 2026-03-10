@@ -64,6 +64,77 @@ def _worktree_spinner_update(
     print(message)
 
 
+def _worktree_spinner_start(
+    self: Any,
+    *,
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+    message: str,
+) -> None:
+    if not enabled:
+        return
+    active_spinner.start()
+    self._emit(  # type: ignore[attr-defined]
+        "ui.spinner.lifecycle",
+        component="worktree_planning",
+        op_id=op_id,
+        state="start",
+        message=message,
+    )
+
+
+def _worktree_spinner_finish(
+    self: Any,
+    *,
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+    message: str,
+) -> None:
+    if not enabled:
+        return
+    active_spinner.succeed(message)
+    self._emit(  # type: ignore[attr-defined]
+        "ui.spinner.lifecycle",
+        component="worktree_planning",
+        op_id=op_id,
+        state="success",
+        message=message,
+    )
+
+
+def _worktree_spinner_fail(
+    self: Any,
+    *,
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+    message: str,
+) -> None:
+    if not enabled:
+        return
+    active_spinner.fail(message)
+    self._emit(  # type: ignore[attr-defined]
+        "ui.spinner.lifecycle",
+        component="worktree_planning",
+        op_id=op_id,
+        state="fail",
+        message=message,
+    )
+
+
+def _worktree_spinner_stop(self: Any, *, enabled: bool, op_id: str) -> None:
+    if not enabled:
+        return
+    self._emit(  # type: ignore[attr-defined]
+        "ui.spinner.lifecycle",
+        component="worktree_planning",
+        op_id=op_id,
+        state="stop",
+    )
+
+
 def _coerce_setup_entries(
     self: Any,
     *,
@@ -153,80 +224,41 @@ def _apply_setup_worktree_selection(
         enabled=enabled,
         start_immediately=False,
     ) as active_spinner:
-        if enabled:
-            active_spinner.start()
-            self._emit(  # type: ignore[attr-defined]
-                "ui.spinner.lifecycle",
-                component="worktree_planning",
-                op_id="worktree.setup",
-                state="start",
-                message="Setting up worktrees...",
-            )
+        _worktree_spinner_start(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id="worktree.setup",
+            message="Setting up worktrees...",
+        )
         try:
             for feature, count_raw in multi_entries:
-                count = parse_int(count_raw, -1)
-                if count < 1:
-                    raise RuntimeError(f"Invalid count for --setup-worktrees {feature}: {count_raw}")
-                setup_features.append(feature)
-                before = {name for name, _root in self._feature_project_candidates(projects=raw_projects, feature=feature)}
-                _worktree_spinner_update(
+                raw_projects, created_names = _apply_multi_setup_entry(
                     self,
+                    feature=feature,
+                    count_raw=count_raw,
+                    raw_projects=raw_projects,
                     enabled=enabled,
                     active_spinner=active_spinner,
                     op_id="worktree.setup",
-                    message=f"Setting up {count} worktree(s) for {feature}...",
                 )
-                create_error = self._create_feature_worktrees(
-                    feature=feature,
-                    count=count,
-                    plan_file=f"_setup/{feature}.md",
-                )
-                if create_error:
-                    raise RuntimeError(create_error)
-                raw_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-                candidates = self._feature_project_candidates(projects=raw_projects, feature=feature)
-                after = {name for name, _root in candidates}
-                created = after.difference(before)
-                if created:
-                    selected_names.update(created)
-                else:
-                    selected_names.update(after)
+                setup_features.append(feature)
+                selected_names.update(created_names)
 
             for feature, iteration_raw in single_entries:
-                if not iteration_raw.isdigit() or int(iteration_raw) < 1:
-                    raise RuntimeError(f"Invalid iteration for --setup-worktree {feature}: {iteration_raw}")
-                iteration = str(int(iteration_raw))
-                setup_features.append(feature)
-                feature_root = self._preferred_tree_root_for_feature(feature)
-                target_root = feature_root / iteration
-                _worktree_spinner_update(
+                raw_projects, selected_name = _apply_single_setup_entry(
                     self,
+                    feature=feature,
+                    iteration_raw=iteration_raw,
+                    raw_projects=raw_projects,
+                    setup_worktree_existing=setup_worktree_existing,
+                    setup_worktree_recreate=setup_worktree_recreate,
                     enabled=enabled,
                     active_spinner=active_spinner,
                     op_id="worktree.setup",
-                    message=f"Ensuring worktree {feature}/{iteration}...",
                 )
-                if target_root.exists():
-                    if setup_worktree_recreate:
-                        result = delete_worktree_path(
-                            repo_root=self.config.base_dir,
-                            trees_root=self._trees_root_for_worktree(target_root),
-                            worktree_root=target_root,
-                            process_runner=self.process_runner,
-                        )
-                        if not result.success:
-                            raise RuntimeError(result.message)
-                    elif not setup_worktree_existing:
-                        raise RuntimeError(
-                            f"Worktree {feature}/{iteration} already exists. "
-                            "Use --setup-worktree-existing or --setup-worktree-recreate."
-                        )
-                if not target_root.exists():
-                    create_error = self._create_single_worktree(feature=feature, iteration=iteration)
-                    if create_error:
-                        raise RuntimeError(create_error)
-                raw_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-                selected_names.add(f"{feature}-{iteration}")
+                setup_features.append(feature)
+                selected_names.add(selected_name)
 
             if include_list:
                 project_lookup = {name.lower(): name for name, _root in raw_projects}
@@ -259,49 +291,119 @@ def _apply_setup_worktree_selection(
 
             refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
             if not selected_names:
-                if enabled:
-                    active_spinner.succeed("Worktree setup completed")
-                    self._emit(  # type: ignore[attr-defined]
-                        "ui.spinner.lifecycle",
-                        component="worktree_planning",
-                        op_id="worktree.setup",
-                        state="success",
-                        message="Worktree setup completed",
-                    )
+                _worktree_spinner_finish(
+                    self,
+                    enabled=enabled,
+                    active_spinner=active_spinner,
+                    op_id="worktree.setup",
+                    message="Worktree setup completed",
+                )
                 return refreshed_contexts
             selected_lower = {name.lower() for name in selected_names}
             filtered = [context for context in refreshed_contexts if context.name.lower() in selected_lower]
             if not filtered:
                 raise RuntimeError("No worktrees selected to run.")
-            if enabled:
-                active_spinner.succeed("Worktree setup completed")
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
-                    op_id="worktree.setup",
-                    state="success",
-                    message="Worktree setup completed",
-                )
+            _worktree_spinner_finish(
+                self,
+                enabled=enabled,
+                active_spinner=active_spinner,
+                op_id="worktree.setup",
+                message="Worktree setup completed",
+            )
             return filtered
         except Exception:
-            if enabled:
-                active_spinner.fail("Worktree setup failed")
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
-                    op_id="worktree.setup",
-                    state="fail",
-                    message="Worktree setup failed",
-                )
+            _worktree_spinner_fail(
+                self,
+                enabled=enabled,
+                active_spinner=active_spinner,
+                op_id="worktree.setup",
+                message="Worktree setup failed",
+            )
             raise
         finally:
-            if enabled:
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
-                    op_id="worktree.setup",
-                    state="stop",
-                )
+            _worktree_spinner_stop(self, enabled=enabled, op_id="worktree.setup")
+
+
+def _apply_multi_setup_entry(
+    self: Any,
+    *,
+    feature: str,
+    count_raw: str,
+    raw_projects: list[tuple[str, Path]],
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+) -> tuple[list[tuple[str, Path]], set[str]]:
+    count = parse_int(count_raw, -1)
+    if count < 1:
+        raise RuntimeError(f"Invalid count for --setup-worktrees {feature}: {count_raw}")
+    before = {name for name, _root in self._feature_project_candidates(projects=raw_projects, feature=feature)}
+    _worktree_spinner_update(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
+        op_id=op_id,
+        message=f"Setting up {count} worktree(s) for {feature}...",
+    )
+    create_error = self._create_feature_worktrees(
+        feature=feature,
+        count=count,
+        plan_file=f"_setup/{feature}.md",
+    )
+    if create_error:
+        raise RuntimeError(create_error)
+    raw_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+    candidates = self._feature_project_candidates(projects=raw_projects, feature=feature)
+    after = {name for name, _root in candidates}
+    created = after.difference(before)
+    return raw_projects, (created or after)
+
+
+def _apply_single_setup_entry(
+    self: Any,
+    *,
+    feature: str,
+    iteration_raw: str,
+    raw_projects: list[tuple[str, Path]],
+    setup_worktree_existing: bool,
+    setup_worktree_recreate: bool,
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+) -> tuple[list[tuple[str, Path]], str]:
+    if not iteration_raw.isdigit() or int(iteration_raw) < 1:
+        raise RuntimeError(f"Invalid iteration for --setup-worktree {feature}: {iteration_raw}")
+    iteration = str(int(iteration_raw))
+    feature_root = self._preferred_tree_root_for_feature(feature)
+    target_root = feature_root / iteration
+    _worktree_spinner_update(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
+        op_id=op_id,
+        message=f"Ensuring worktree {feature}/{iteration}...",
+    )
+    if target_root.exists():
+        if setup_worktree_recreate:
+            result = delete_worktree_path(
+                repo_root=self.config.base_dir,
+                trees_root=self._trees_root_for_worktree(target_root),
+                worktree_root=target_root,
+                process_runner=self.process_runner,
+            )
+            if not result.success:
+                raise RuntimeError(result.message)
+        elif not setup_worktree_existing:
+            raise RuntimeError(
+                f"Worktree {feature}/{iteration} already exists. "
+                "Use --setup-worktree-existing or --setup-worktree-recreate."
+            )
+    if not target_root.exists():
+        create_error = self._create_single_worktree(feature=feature, iteration=iteration)
+        if create_error:
+            raise RuntimeError(create_error)
+    refreshed_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+    return refreshed_projects, f"{feature}-{iteration}"
 
 
 def _preferred_tree_root_for_feature(self, feature: str) -> Path:
@@ -706,98 +808,112 @@ def _sync_plan_worktrees_from_plan_counts(
         enabled=enabled,
         start_immediately=False,
     ) as active_spinner:
-        if enabled:
-            active_spinner.start()
-            self._emit(  # type: ignore[attr-defined]
-                "ui.spinner.lifecycle",
-                component="worktree_planning",
-                op_id="worktree.sync",
-                state="start",
-                message="Syncing planning worktrees...",
-            )
+        _worktree_spinner_start(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id="worktree.sync",
+            message="Syncing planning worktrees...",
+        )
         try:
             for plan_file, desired_raw in plan_counts.items():
-                desired = max(0, int(desired_raw))
-                feature = planning_feature_name(plan_file)
-                candidates = self._feature_project_candidates(projects=projects, feature=feature)
-                existing = len(candidates)
-
-                if desired > existing:
-                    create_count = desired - existing
-                    _worktree_spinner_update(
-                        self,
-                        enabled=enabled,
-                        active_spinner=active_spinner,
-                        op_id="worktree.sync",
-                        message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
-                    )
-                    create_error = self._create_feature_worktrees(
-                        feature=feature,
-                        count=create_count,
-                        plan_file=plan_file,
-                    )
-                    if create_error:
-                        return projects, create_error
-                    projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-                    candidates = self._feature_project_candidates(projects=projects, feature=feature)
-                    existing = len(candidates)
-
-                if desired < existing:
-                    remove_count = existing - desired
-                    _worktree_spinner_update(
-                        self,
-                        enabled=enabled,
-                        active_spinner=active_spinner,
-                        op_id="worktree.sync",
-                        message=(
-                            f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
-                            f"removing {remove_count} worktree(s)."
-                        ),
-                    )
-                    remove_error = self._delete_feature_worktrees(
-                        feature=feature,
-                        candidates=candidates,
-                        remove_count=remove_count,
-                    )
-                    if remove_error:
-                        return projects, remove_error
-                    print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
-                    projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-                    if desired == 0:
-                        self._cleanup_empty_feature_root(feature=feature)
-                        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-
-                if desired == 0 and existing > 0 and not keep_plan:
-                    self._move_plan_to_done(plan_file)
-            if enabled:
-                active_spinner.succeed("Planning worktree sync completed")
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
+                projects, sync_error = _sync_single_plan_worktree_target(
+                    self,
+                    plan_file=plan_file,
+                    desired_raw=desired_raw,
+                    projects=projects,
+                    keep_plan=keep_plan,
+                    enabled=enabled,
+                    active_spinner=active_spinner,
                     op_id="worktree.sync",
-                    state="success",
-                    message="Planning worktree sync completed",
                 )
+                if sync_error is not None:
+                    return projects, sync_error
+            _worktree_spinner_finish(
+                self,
+                enabled=enabled,
+                active_spinner=active_spinner,
+                op_id="worktree.sync",
+                message="Planning worktree sync completed",
+            )
             return projects, None
         except Exception:
-            if enabled:
-                active_spinner.fail("Planning worktree sync failed")
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
-                    op_id="worktree.sync",
-                    state="fail",
-                    message="Planning worktree sync failed",
-                )
+            _worktree_spinner_fail(
+                self,
+                enabled=enabled,
+                active_spinner=active_spinner,
+                op_id="worktree.sync",
+                message="Planning worktree sync failed",
+            )
             raise
         finally:
-            if enabled:
-                self._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="worktree_planning",
-                    op_id="worktree.sync",
-                    state="stop",
-                )
+            _worktree_spinner_stop(self, enabled=enabled, op_id="worktree.sync")
+
+
+def _sync_single_plan_worktree_target(
+    self: Any,
+    *,
+    plan_file: str,
+    desired_raw: int,
+    projects: list[tuple[str, Path]],
+    keep_plan: bool,
+    enabled: bool,
+    active_spinner: Any,
+    op_id: str,
+) -> tuple[list[tuple[str, Path]], str | None]:
+    desired = max(0, int(desired_raw))
+    feature = planning_feature_name(plan_file)
+    candidates = self._feature_project_candidates(projects=projects, feature=feature)
+    existing = len(candidates)
+
+    if desired > existing:
+        create_count = desired - existing
+        _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
+        )
+        create_error = self._create_feature_worktrees(
+            feature=feature,
+            count=create_count,
+            plan_file=plan_file,
+        )
+        if create_error:
+            return projects, create_error
+        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+        candidates = self._feature_project_candidates(projects=projects, feature=feature)
+        existing = len(candidates)
+
+    if desired < existing:
+        remove_count = existing - desired
+        _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=(
+                f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
+                f"removing {remove_count} worktree(s)."
+            ),
+        )
+        remove_error = self._delete_feature_worktrees(
+            feature=feature,
+            candidates=candidates,
+            remove_count=remove_count,
+        )
+        if remove_error:
+            return projects, remove_error
+        print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
+        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+        if desired == 0:
+            self._cleanup_empty_feature_root(feature=feature)
+            projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+
+    if desired == 0 and existing > 0 and not keep_plan:
+        self._move_plan_to_done(plan_file)
+    return projects, None
 
 
 def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file: str) -> str | None:

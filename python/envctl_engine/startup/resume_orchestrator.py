@@ -45,6 +45,10 @@ class ResumeOrchestrator:
     def execute(self, route: Route) -> int:
         rt = self.runtime
         state_repository = _state_repository_impl(rt)
+        hook_contract_issue = rt._startup_hook_contract_issue()  # type: ignore[attr-defined]
+        if hook_contract_issue:
+            print(hook_contract_issue)
+            return 1
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "resume.phase",
@@ -69,9 +73,9 @@ class ResumeOrchestrator:
             bind_debug_run_id(state.run_id)
 
         legacy_resume = bool(state.metadata.get("legacy_state"))
-        strict_resume = rt.config.runtime_truth_mode == "strict" or legacy_resume  # type: ignore[attr-defined]
-        if not rt._enforce_runtime_shell_budget_profile(scope="resume", strict_required=strict_resume):  # type: ignore[attr-defined]
-            print("Resume blocked: strict cutover shell budget profile is incomplete.")
+        strict_resume = rt.config.runtime_truth_mode == "strict"  # type: ignore[attr-defined]
+        if not rt._enforce_runtime_readiness_contract(scope="resume", strict_required=strict_resume):  # type: ignore[attr-defined]
+            print("Resume blocked: strict runtime readiness gate is incomplete.")
             return 1
 
         try:

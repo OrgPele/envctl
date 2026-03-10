@@ -76,6 +76,7 @@ def _read_line_from_fd(
             raise EOFError
         if data in {b"\n", b"\r"}:
             _consume_paired_line_ending(fd=fd, first=data, on_bytes=on_bytes)
+            _preserve_immediate_followup_input(fd=fd, on_bytes=on_bytes)
             break
         chunks.append(data)
     return b"".join(chunks).decode("utf-8", errors="ignore")
@@ -110,6 +111,7 @@ def _read_line_from_fd_graceful(
                 raise EOFError
             if data in {b"\n", b"\r"}:
                 _consume_paired_line_ending(fd=fd, first=data, on_bytes=on_bytes)
+                _preserve_immediate_followup_input(fd=fd, on_bytes=on_bytes)
                 if callable(write):
                     write("\n")
                 if callable(flush):
@@ -189,6 +191,39 @@ def _consume_paired_line_ending(
         on_bytes(data)
 
 
+def _preserve_immediate_followup_input(
+    *,
+    fd: int,
+    on_bytes: Callable[[bytes], None] | None = None,
+    timeout: float = 0.15,
+    max_bytes: int = 64,
+) -> None:
+    """Capture rapid post-Enter input so the next UI consumer can read it reliably."""
+    collected = bytearray()
+    deadline = time.monotonic() + max(0.0, timeout)
+    while len(collected) < max(1, max_bytes):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            ready, _, _ = select.select([fd], [], [], remaining)
+        except Exception:
+            break
+        if not ready:
+            break
+        try:
+            data = os.read(fd, 1)
+        except Exception:
+            break
+        if not data:
+            break
+        collected.extend(data)
+        if callable(on_bytes):
+            on_bytes(data)
+    if collected:
+        _append_pushback_byte(fd=fd, data=bytes(collected))
+
+
 def _read_byte(*, fd: int) -> bytes:
     queued = _PUSHBACK_BYTES.get(fd)
     if queued:
@@ -207,6 +242,28 @@ def _pushback_byte(*, fd: int, data: bytes) -> None:
         queued = bytearray()
         _PUSHBACK_BYTES[fd] = queued
     queued[:0] = data
+
+
+def _append_pushback_byte(*, fd: int, data: bytes) -> None:
+    if not data:
+        return
+    queued = _PUSHBACK_BYTES.get(fd)
+    if queued is None:
+        queued = bytearray()
+        _PUSHBACK_BYTES[fd] = queued
+    queued.extend(data)
+
+
+def consume_preserved_input() -> bytes:
+    if not _PUSHBACK_BYTES:
+        return b""
+    collected = bytearray()
+    for fd in sorted(_PUSHBACK_BYTES):
+        queued = _PUSHBACK_BYTES.get(fd)
+        if queued:
+            collected.extend(queued)
+    _PUSHBACK_BYTES.clear()
+    return bytes(collected)
 
 
 def _set_tty_character_mode(*, fd: int, original_state: list[Any]) -> bool:

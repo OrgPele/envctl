@@ -44,7 +44,7 @@ def _dashboard_commands_help() -> str:
     return (
         "Commands: (q)uit\n"
         "  Lifecycle: (s)top | (r)estart\n"
-        "  Actions: (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate\n"
+        "  Actions: (t)est | (p)r | (c)ommit | re(v)iew | (m)igrate\n"
         "  Inspect: (l)ogs | (h)ealth | (e)rrors"
     )
 

@@ -199,14 +199,14 @@ When adding a command, decide all of the following explicitly:
 
 If you do not answer those questions, the command contract will become ambiguous.
 
-## Shell Fallback Implications
+## Runtime Boundary
 
-The Python parser and dispatch surface are primary, but shell fallback still exists as a deprecated explicit path.
+The Python parser and dispatch surface are the supported command path.
 
 That affects command-surface work in two ways:
 
-- Python-only commands must fail clearly when shell fallback is forced
-- docs should not pretend fallback supports modern Python-only features
+- Python-only commands must fail clearly when runtime prerequisites are missing
+- docs should not pretend unsupported compatibility paths support modern Python-only features
 
 Example:
 
@@ -242,4 +242,4 @@ Checklist:
 - treating launcher and runtime commands as if they share the same prerequisites
 - changing parser behavior without re-checking bootstrap-safe command rules
 - burying CLI policy inside orchestrators
-- documenting shell fallback as if it were still a co-primary runtime
+- documenting unsupported compatibility paths as if they were still a co-primary runtime

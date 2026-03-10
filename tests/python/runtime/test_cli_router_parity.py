@@ -256,16 +256,17 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("key_debug"))
         self.assertEqual(route.passthrough_args[:4], ["feature-a", "feature-b", "feature-c", "feature-d"])
 
-    def test_python_parser_covers_shell_long_flag_surface(self) -> None:
-        shell_cli = (REPO_ROOT / "lib/engine/lib/run_all_trees_cli.sh").read_text(encoding="utf-8")
-        shell_flags = {
+    def test_python_parser_covers_documented_long_flag_surface(self) -> None:
+        docs = (REPO_ROOT / "docs" / "reference" / "important-flags.md").read_text(encoding="utf-8")
+        documented_flags = {
             token
-            for token in re.findall(r"--[a-z0-9][a-z0-9-]*", shell_cli)
+            for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs)
             if token.startswith("--")
         }
         parser_flags = set(list_supported_flag_tokens())
-        missing = sorted(shell_flags.difference(parser_flags))
-        self.assertEqual(missing, [], msg=f"missing shell-compatible flags: {missing}")
+        ignored = {"--help", "--repo"}
+        missing = sorted(documented_flags.difference(parser_flags).difference(ignored))
+        self.assertEqual(missing, [], msg=f"missing documented flags: {missing}")
 
     def test_frontend_test_runner_env_assignment_is_parsed(self) -> None:
         route = parse_route(["FRONTEND_TEST_RUNNER=vitest"], env={})

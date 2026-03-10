@@ -12,10 +12,6 @@ from envctl_engine.shared.parsing import parse_bool, parse_float
 
 
 def debug_pack(runtime: Any, route: Any) -> int:
-    if parse_bool(debug_env_value(runtime.env, "ENVCTL_ENGINE_SHELL_FALLBACK"), False):
-        print("debug-pack is only available in Python runtime. Disable shell fallback and retry.")
-        return 1
-
     scope_id_value = route.flags.get("scope_id")
     explicit_scope = isinstance(scope_id_value, str) and bool(scope_id_value.strip())
     scope_id = scope_id_value if isinstance(scope_id_value, str) else runtime.config.runtime_scope_id

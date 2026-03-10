@@ -12,10 +12,6 @@ def build_manifest(*, generated_at: str) -> dict[str, object]:
     return {
         "generated_at": generated_at,
         "engine_default": "python",
-        "fallback": {
-            "env_var": "ENVCTL_ENGINE_SHELL_FALLBACK",
-            "description": "Set true to force shell engine fallback during migration window",
-        },
         "modes": {
             "main": {
                 "start": "python_complete",

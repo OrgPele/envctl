@@ -265,10 +265,14 @@ def _restart_service_types_for_project(
 
 def _port_allocator(runtime: Any) -> Any:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "port_allocator", None)
-    return getattr(runtime, "port_planner", fallback)
+    candidate = getattr(runtime_context, "port_allocator", None)
+    if candidate is None:
+        candidate = getattr(runtime, "port_planner", None)
+    return candidate
 
 def _process_runtime(runtime: Any) -> Any:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "process_runtime", None)
-    return getattr(runtime, "process_runner", fallback)
+    candidate = getattr(runtime_context, "process_runtime", None)
+    if candidate is None:
+        candidate = getattr(runtime, "process_runner", None)
+    return candidate

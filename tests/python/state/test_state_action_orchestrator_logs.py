@@ -69,6 +69,16 @@ class _RuntimeStub:
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
+    def test_runtime_facade_routes_state_dependencies(self) -> None:
+        state = RunState(run_id="run-0", mode="main")
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        loaded = orchestrator.runtime.load_state(Route(command="health", mode="main"))
+
+        self.assertIs(loaded, state)
+        self.assertEqual(orchestrator.runtime.project_name_from_service("Main Backend"), "Main")
+
     def test_logs_selection_filters_services(self) -> None:
         state = RunState(
             run_id="run-1",

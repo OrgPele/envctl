@@ -71,8 +71,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--doctor"], env={}))
 
         self.assertEqual(code, 0)
-        self.assertTrue((runtime.runtime_root / "shell_ownership_snapshot.json").is_file())
-        self.assertTrue((runtime.runtime_root / "shell_prune_report.json").is_file())
+        self.assertTrue((runtime.runtime_root / "runtime_readiness_report.json").is_file())
         output = buffer.getvalue()
         self.assertIn("parity_status:", output)
         self.assertNotIn("partial_commands:", output)
@@ -86,22 +85,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("lock_health:", output)
         self.assertIn("pointer_status:", output)
         self.assertIn("synthetic_state_detected:", output)
-        self.assertIn("shell_migration_status:", output)
-        self.assertIn("shell_ledger_hash:", output)
-        self.assertIn("shell_unmigrated_count:", output)
-        self.assertIn("shell_unmigrated_actual:", output)
-        self.assertIn("shell_intentional_keep_count:", output)
-        self.assertIn("shell_intentional_keep_actual:", output)
-        self.assertIn("shell_unmigrated_budget:", output)
-        self.assertIn("shell_unmigrated_status:", output)
-        self.assertIn("shell_partial_keep_budget:", output)
-        self.assertIn("shell_partial_keep_status:", output)
-        self.assertIn("shell_intentional_keep_budget:", output)
-        self.assertIn("shell_intentional_keep_status:", output)
-        self.assertIn("shell_budget_profile_required:", output)
-        self.assertIn("shell_budget_profile_complete:", output)
-        self.assertIn("shell_intentional_keep_budget:", output)
-        self.assertIn("shell_intentional_keep_status:", output)
+        self.assertIn("runtime_readiness_status:", output)
+        self.assertIn("runtime_gap_report_path:", output)
+        self.assertIn("runtime_gap_blocking_count:", output)
         events_path = runtime.runtime_root / "events.jsonl"
         self.assertTrue(events_path.is_file())
         legacy_events_path = runtime.runtime_legacy_root / "events.jsonl"
@@ -194,7 +180,22 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         runtime._parity_manifest_is_complete = lambda: True  # type: ignore[assignment]
         runtime._try_load_existing_state = lambda mode=None: None  # type: ignore[assignment]
 
-        readiness = runtime._doctor_readiness_gates()
+        with patch(
+            "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
+            return_value=SimpleNamespace(
+                passed=True,
+                blocking_gap_count=0,
+                errors=[],
+                warnings=[],
+                report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
+                report_generated_at="2026-03-09T00:00:00Z",
+                report_sha256="gap123",
+                high_gap_count=0,
+                medium_gap_count=0,
+                low_gap_count=0,
+            ),
+        ):
+            readiness = runtime._doctor_readiness_gates()
 
         self.assertTrue(readiness["command_parity"])
         evaluate_events = [event for event in runtime.events if event.get("event") == "cutover.gate.evaluate"]
@@ -203,8 +204,8 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(event.get("command_parity"), True)
         self.assertEqual(event.get("synthetic_state"), False)
         self.assertEqual(event.get("state_compat_mode"), runtime.state_repository.compat_mode)
-        self.assertEqual(event.get("shell_budget_profile_required"), False)
-        self.assertEqual(event.get("shell_budget_profile_complete"), True)
+        self.assertEqual(event.get("runtime_readiness_contract_passed"), True)
+        self.assertEqual(event.get("runtime_readiness_blocking_gap_count"), 0)
 
     def test_doctor_reports_state_compat_mode_from_env(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -228,23 +229,34 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("state_compat_mode: scoped_only", output)
 
-    def test_doctor_readiness_emits_budget_profile_incomplete_in_strict_mode(self) -> None:
+    def test_doctor_readiness_records_runtime_readiness_failure_details(self) -> None:
         runtime = self._runtime()
         runtime._parity_manifest_is_complete = lambda: True  # type: ignore[assignment]
         runtime._try_load_existing_state = lambda mode=None: None  # type: ignore[assignment]
-        runtime.config.runtime_truth_mode = "strict"
-        runtime.env["ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED"] = "0"
-        runtime.env["ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP"] = "0"
-        runtime.env["ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP"] = ""
-        runtime.config.raw.pop("ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP", None)
 
-        runtime._doctor_readiness_gates()
+        with patch(
+            "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
+            return_value=SimpleNamespace(
+                passed=False,
+                blocking_gap_count=2,
+                errors=["blocking gap"],
+                warnings=[],
+                report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
+                report_generated_at="2026-03-09T00:00:00Z",
+                report_sha256="gap123",
+                high_gap_count=1,
+                medium_gap_count=1,
+                low_gap_count=0,
+            ),
+        ):
+            readiness = runtime._doctor_readiness_gates()
 
+        self.assertFalse(readiness["shipability"])
         evaluate_events = [event for event in runtime.events if event.get("event") == "cutover.gate.evaluate"]
         self.assertEqual(len(evaluate_events), 1)
         event = evaluate_events[0]
-        self.assertEqual(event.get("shell_budget_profile_required"), True)
-        self.assertEqual(event.get("shell_budget_profile_complete"), False)
+        self.assertEqual(event.get("runtime_readiness_contract_passed"), False)
+        self.assertEqual(event.get("runtime_readiness_blocking_gap_count"), 2)
 
     def test_doctor_readiness_emits_shipability_fail_reason_event(self) -> None:
         runtime = self._runtime()
@@ -252,6 +264,20 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         runtime._try_load_existing_state = lambda mode=None: None  # type: ignore[assignment]
 
         with patch(
+            "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
+            return_value=SimpleNamespace(
+                passed=True,
+                blocking_gap_count=0,
+                errors=[],
+                warnings=[],
+                report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
+                report_generated_at="2026-03-09T00:00:00Z",
+                report_sha256="gap123",
+                high_gap_count=0,
+                medium_gap_count=0,
+                low_gap_count=0,
+            ),
+        ), patch(
             "envctl_engine.runtime.engine_runtime.evaluate_shipability",
             return_value=SimpleNamespace(passed=False, errors=["strict gate failed"], warnings=[]),
         ):
@@ -263,138 +289,37 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             for event in runtime.events
             if event.get("event") == "cutover.gate.fail_reason" and event.get("gate") == "shipability"
         ]
-        self.assertEqual(len(fail_events), 1)
-        self.assertEqual(fail_events[0].get("reason"), "strict gate failed")
+        self.assertTrue(any(event.get("reason") == "strict gate failed" for event in fail_events))
 
-    def test_doctor_readiness_strict_mode_requires_complete_shell_budget_profile(self) -> None:
+    def test_doctor_readiness_passes_runtime_readiness_failures_through_shipability(self) -> None:
         runtime = self._runtime()
         runtime._parity_manifest_is_complete = lambda: True  # type: ignore[assignment]
         runtime._try_load_existing_state = lambda mode=None: None  # type: ignore[assignment]
-        runtime.config.runtime_truth_mode = "strict"
 
         with patch(
-            "envctl_engine.runtime.engine_runtime.evaluate_shipability",
-            return_value=SimpleNamespace(passed=False, errors=["shell_intentional_keep_budget_undefined"], warnings=[]),
-        ) as shipability_mock:
+            "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
+            return_value=SimpleNamespace(
+                passed=False,
+                blocking_gap_count=1,
+                errors=["runtime readiness blocked"],
+                warnings=[],
+                report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
+                report_generated_at="2026-03-09T00:00:00Z",
+                report_sha256="gap123",
+                high_gap_count=1,
+                medium_gap_count=0,
+                low_gap_count=0,
+            ),
+        ):
             readiness = runtime._doctor_readiness_gates()
 
         self.assertFalse(readiness["shipability"])
-        kwargs = shipability_mock.call_args.kwargs
-        self.assertEqual(kwargs.get("require_shell_budget_complete"), True)
-
-    def test_doctor_reports_shell_unmigrated_budget_fields_with_budget(self) -> None:
-        tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(tmpdir.cleanup)
-        repo = Path(tmpdir.name) / "repo"
-        (repo / ".git").mkdir(parents=True, exist_ok=True)
-        config = load_config(
-            {
-                "RUN_REPO_ROOT": str(repo),
-                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
-                "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "0",
-            }
-        )
-        runtime = PythonEngineRuntime(config, env={})
-
-        buffer = StringIO()
-        with redirect_stdout(buffer):
-            code = runtime.dispatch(parse_route(["--doctor"], env={}))
-
-        self.assertEqual(code, 0)
-        output = buffer.getvalue()
-        self.assertIn("shell_unmigrated_budget: 0", output)
-        self.assertIn("shell_unmigrated_actual:", output)
-        self.assertRegex(output, r"shell_unmigrated_status: (pass|fail)")
-        self.assertIn("shell_partial_keep_budget:", output)
-        self.assertIn("shell_partial_keep_actual:", output)
-
-    def test_doctor_strict_mode_marks_missing_intentional_keep_budget_as_fail(self) -> None:
-        tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(tmpdir.cleanup)
-        repo = Path(tmpdir.name) / "repo"
-        (repo / ".git").mkdir(parents=True, exist_ok=True)
-        config = load_config(
-            {
-                "RUN_REPO_ROOT": str(repo),
-                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
-                "ENVCTL_RUNTIME_TRUTH_MODE": "strict",
-                "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "0",
-                "ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP": "0",
-                "ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP": "",
-            }
-        )
-        runtime = PythonEngineRuntime(config, env={})
-
-        buffer = StringIO()
-        with redirect_stdout(buffer):
-            code = runtime.dispatch(parse_route(["--doctor"], env={}))
-
-        self.assertEqual(code, 0)
-        output = buffer.getvalue()
-        self.assertIn("shell_intentional_keep_budget: none", output)
-        self.assertIn("shell_intentional_keep_status: fail", output)
-        self.assertIn("shell_budget_profile_required: true", output)
-        self.assertIn("shell_budget_profile_complete: false", output)
-
-    def test_doctor_strict_mode_reports_incomplete_shell_budget_profile_when_omitted(self) -> None:
-        tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(tmpdir.cleanup)
-        repo = Path(tmpdir.name) / "repo"
-        (repo / ".git").mkdir(parents=True, exist_ok=True)
-        config = load_config(
-            {
-                "RUN_REPO_ROOT": str(repo),
-                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
-                "ENVCTL_RUNTIME_TRUTH_MODE": "strict",
-                "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "",
-                "ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP": "",
-                "ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP": "",
-            }
-        )
-        runtime = PythonEngineRuntime(config, env={})
-
-        buffer = StringIO()
-        with redirect_stdout(buffer):
-            code = runtime.dispatch(parse_route(["--doctor"], env={}))
-
-        self.assertEqual(code, 0)
-        output = buffer.getvalue()
-        self.assertIn("shell_unmigrated_budget: 0", output)
-        self.assertIn("shell_partial_keep_budget: 0", output)
-        self.assertIn("shell_intentional_keep_budget: 0", output)
-        self.assertIn("shell_budget_profile_required: true", output)
-        self.assertIn("shell_budget_profile_complete: false", output)
-        self.assertIn("shell_prune_phase: cutover", output)
-
-    def test_doctor_auto_mode_defaults_full_shell_budget_profile_when_omitted(self) -> None:
-        tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(tmpdir.cleanup)
-        repo = Path(tmpdir.name) / "repo"
-        (repo / ".git").mkdir(parents=True, exist_ok=True)
-        config = load_config(
-            {
-                "RUN_REPO_ROOT": str(repo),
-                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
-                "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
-                "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "",
-                "ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP": "",
-                "ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP": "",
-            }
-        )
-        runtime = PythonEngineRuntime(config, env={})
-
-        buffer = StringIO()
-        with redirect_stdout(buffer):
-            code = runtime.dispatch(parse_route(["--doctor"], env={}))
-
-        self.assertEqual(code, 0)
-        output = buffer.getvalue()
-        self.assertIn("shell_unmigrated_budget: 0", output)
-        self.assertIn("shell_partial_keep_budget: 0", output)
-        self.assertIn("shell_intentional_keep_budget: 0", output)
-        self.assertIn("shell_budget_profile_required: false", output)
-        self.assertIn("shell_budget_profile_complete: true", output)
-        self.assertIn("shell_prune_phase: cutover", output)
+        fail_events = [
+            event
+            for event in runtime.events
+            if event.get("event") == "cutover.gate.fail_reason" and event.get("gate") == "shipability"
+        ]
+        self.assertTrue(any(event.get("reason") == "runtime_readiness_contract_failed" for event in fail_events))
 
     def test_start_family_routes_to_start_path(self) -> None:
         runtime = self._runtime()
@@ -718,20 +643,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
 
         self.assertEqual(removed, expected)
 
-    def test_shell_prune_budget_profile_method_delegates_to_doctor_orchestrator(self) -> None:
-        runtime = self._runtime()
-        expected = (1, 2, 3, "strict-cutover")
-
-        def fake_profile():  # noqa: ANN202
-            return expected
-
-        runtime.doctor_orchestrator.shell_prune_budget_profile = fake_profile  # type: ignore[assignment]
-
-        profile = runtime._shell_prune_budget_profile()
-
-        self.assertEqual(profile, expected)
-
-    def test_enforce_runtime_shell_budget_profile_method_delegates_to_doctor_orchestrator(self) -> None:
+    def test_enforce_runtime_readiness_contract_method_delegates_to_doctor_orchestrator(self) -> None:
         runtime = self._runtime()
         seen: dict[str, object] = {}
 
@@ -740,9 +652,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             seen["strict_required"] = strict_required
             return False
 
-        runtime.doctor_orchestrator.enforce_runtime_shell_budget_profile = fake_enforce  # type: ignore[assignment]
+        runtime.doctor_orchestrator.enforce_runtime_readiness_contract = fake_enforce  # type: ignore[assignment]
 
-        passed = runtime._enforce_runtime_shell_budget_profile(scope="resume", strict_required=True)
+        passed = runtime._enforce_runtime_readiness_contract(scope="resume", strict_required=True)
 
         self.assertFalse(passed)
         self.assertEqual(seen, {"scope": "resume", "strict_required": True})
@@ -849,23 +761,21 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "plan", "start", "restart", "resume", "stop", "stop-all", "blast-all",
             "config",
             "dashboard", "doctor", "test", "logs", "clear-logs", "health", "errors",
-            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate",
+            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate", "migrate-hooks",
             "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
             "help", "debug-pack", "debug-report", "debug-last"
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 31, "Should have exactly 31 commands")
+        self.assertEqual(len(lines), 32, "Should have exactly 32 commands")
 
-    def test_shell_and_python_public_command_inventory_match(self) -> None:
-        shell_script = REPO_ROOT / "lib" / "engine" / "lib" / "actions.sh"
-        completed = subprocess.run(
-            ["bash", "-lc", f"source {shell_script!s} && list_commands"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        shell_commands = {line.strip() for line in completed.stdout.splitlines() if line.strip()}
-        self.assertEqual(shell_commands, set(list_supported_commands()))
+    def test_public_command_inventory_matches_supported_commands(self) -> None:
+        self.assertEqual(set(list_supported_commands()), {
+            "start", "plan", "resume", "dashboard", "config", "doctor", "migrate-hooks",
+            "debug-pack", "debug-report", "debug-last", "help", "list-commands",
+            "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
+            "test", "pr", "commit", "review", "migrate", "logs", "clear-logs", "health",
+            "errors", "delete-worktree", "blast-worktree", "stop", "restart", "stop-all", "blast-all",
+        })
 
     def test_help_output_lists_same_command_inventory(self) -> None:
         runtime = self._runtime()

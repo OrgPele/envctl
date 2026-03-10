@@ -12,7 +12,6 @@ This section is for contributors working on the launcher, Python engine, runtime
 - [Runtime Lifecycle](runtime-lifecycle.md)
 - [State and Artifacts](state-and-artifacts.md)
 - [Debug and Diagnostics](debug-and-diagnostics.md)
-- [Shell Compatibility and Deprecation](shell-compatibility.md)
 - [Testing and Validation](testing-and-validation.md)
 - [Module Layout](module-layout.md)
 - [Contributing](contributing.md)
@@ -25,7 +24,7 @@ This section is for contributors working on the launcher, Python engine, runtime
 - Working on dashboard, selectors, input, or fallback behavior: [UI and Interaction Architecture](ui-and-interaction.md)
 - Working on persistence or projection: [State and Artifacts](state-and-artifacts.md)
 - Working on doctor, DFR, or debug bundles: [Debug and Diagnostics](debug-and-diagnostics.md)
-- Working on migration or fallback behavior: [Shell Compatibility and Deprecation](shell-compatibility.md)
+- Working on runtime cutover behavior: [Python Runtime Guide](python-runtime-guide.md)
 - Preparing a non-trivial change: [Testing and Validation](testing-and-validation.md)
 
 ## Related Sections

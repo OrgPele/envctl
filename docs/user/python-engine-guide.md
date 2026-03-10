@@ -18,10 +18,10 @@ In practice, that means:
 Temporary fallback is still available:
 
 ```bash
-ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume
+envctl --resume
 ```
 
-Use shell fallback only for parity debugging or emergency rollback. The legacy Bash/shell engine is deprecated, remains opt-in behind `ENVCTL_ENGINE_SHELL_FALLBACK=true`, and parts of the modern surface such as `debug-pack` are Python-runtime only. The current docs in this repository assume Python runtime behavior unless noted otherwise.
+The current docs in this repository assume Python runtime behavior unless noted otherwise.
 
 ## First Run and Local Config
 
@@ -134,8 +134,7 @@ Typical files:
 - `ports_manifest.json`: requested vs assigned vs final ports
 - `error_report.json`: structured recent failures
 - `events.jsonl`: structured runtime events
-- `shell_ownership_snapshot.json`: latest shell migration ledger snapshot
-- `shell_prune_report.json`: latest shell prune contract result
+- `runtime_readiness_report.json`: latest runtime readiness contract result
 - `runs/<run-id>/...`: immutable per-run artifact set
 - `debug/session-*/...`: debug flight recorder session data
 
@@ -187,7 +186,7 @@ The runtime doctor surfaces:
 - active debug mode
 - latest debug bundle
 - parity manifest status
-- shell ownership ledger status
+- runtime readiness contract status
 - pointer and lock health
 - synthetic-state detection
 - recent structured failures
@@ -217,7 +216,7 @@ The runtime doctor is also where cutover gates show up. In practice, that means 
 - the Python parity manifest is complete
 - runtime truth reconciliation is clean
 - lifecycle expectations are satisfied
-- shell prune budgets are within allowed limits
+- runtime readiness report shows no blocking gaps
 
 If you are trying to understand why the repo is still considered migration-gated, `envctl --doctor --json` is the command to start with.
 

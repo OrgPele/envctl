@@ -104,7 +104,7 @@ from envctl_engine.runtime.engine_runtime_dashboard_truth import (
 from envctl_engine.runtime.engine_runtime_artifacts import (
     print_summary as runtime_print_summary,
     write_artifacts as runtime_write_artifacts,
-    write_shell_prune_report as runtime_write_shell_prune_report,
+    write_runtime_readiness_report as runtime_write_runtime_readiness_report,
 )
 from envctl_engine.runtime.engine_runtime_commands import (
     command_env as runtime_command_env,
@@ -134,6 +134,7 @@ from envctl_engine.runtime.engine_runtime_hooks import (
     hook_bridge_enabled as runtime_hook_bridge_enabled,
     invoke_envctl_hook as runtime_invoke_envctl_hook,
     requirements_result_from_hook_payload as runtime_requirements_result_from_hook_payload,
+    startup_hook_contract_issue as runtime_startup_hook_contract_issue,
     run_supabase_reinit as runtime_run_supabase_reinit,
     services_from_hook_payload as runtime_services_from_hook_payload,
     supabase_auto_reinit_enabled as runtime_supabase_auto_reinit_enabled,
@@ -196,6 +197,7 @@ from envctl_engine.runtime.engine_runtime_ui_bridge import (
     select_grouped_targets as bridge_select_grouped_targets,
     select_project_targets as bridge_select_project_targets,
 )
+from envctl_engine.runtime.hook_migration_support import run_hook_migration as runtime_run_hook_migration
 from envctl_engine.runtime.command_resolution import CommandResolutionError, resolve_requirement_start_command, resolve_service_start_command
 from envctl_engine.runtime.command_router import MODE_FALSE_TOKENS, MODE_MAIN_TOKENS, MODE_TREE_TOKENS, Route, list_supported_commands, parse_route
 from envctl_engine.config.command_support import run_config_command
@@ -231,7 +233,6 @@ from envctl_engine.shell.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.runtime.runtime_context import RuntimeContext
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.shell.shell_prune import ShellPruneContractResult, evaluate_shell_prune_contract
 from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
@@ -312,6 +313,7 @@ from envctl_engine.planning.worktree_domain import (
     _worktree_add_failure as domain_worktree_add_failure,
     _setup_worktree_requested as domain_setup_worktree_requested,
 )
+from envctl_engine.planning.worktree_orchestrator import PlanningWorktreeOrchestrator
 
 
 @dataclass(slots=True)
@@ -327,15 +329,17 @@ EXPLICIT_MODE_TOKENS = {token.lower() for token in MODE_TREE_TOKENS.union(MODE_M
 class PythonEngineRuntime:
     PARTIAL_COMMANDS: tuple[str, ...] = ()
 
+    _RUNTIME_CONTEXT_ATTR_MAP: dict[str, str] = {
+        "process_runner": "process_runtime",
+        "port_planner": "port_allocator",
+        "state_repository": "state_repository",
+        "terminal_ui": "terminal_ui",
+    }
+
     _coerce_setup_entries = domain_coerce_setup_entries
     _create_single_worktree = domain_create_single_worktree
-    _apply_setup_worktree_selection = domain_apply_setup_worktree_selection
     _preferred_tree_root_for_feature = domain_preferred_tree_root_for_feature
     _trees_root_for_worktree = domain_trees_root_for_worktree
-    _select_plan_projects = domain_select_plan_projects
-    _prompt_planning_selection = domain_prompt_planning_selection
-    _initial_plan_selected_counts = domain_initial_plan_selected_counts
-    _run_planning_selection_menu = domain_run_planning_selection_menu
     _render_planning_selection_menu = domain_render_planning_selection_menu
     _terminal_size = domain_terminal_size
     _truncate_text = staticmethod(domain_truncate_text)
@@ -348,10 +352,6 @@ class PythonEngineRuntime:
     _planning_root = domain_planning_root
     _planning_done_root = domain_planning_done_root
     _plan_selection_memory_path = domain_plan_selection_memory_path
-    _load_plan_selection_memory = domain_load_plan_selection_memory
-    _save_plan_selection_memory = domain_save_plan_selection_memory
-    _planning_keep_plan_enabled = domain_planning_keep_plan_enabled
-    _sync_plan_worktrees_from_plan_counts = domain_sync_plan_worktrees_from_plan_counts
     _create_feature_worktrees = domain_create_feature_worktrees
     _worktree_add_failure = domain_worktree_add_failure
     _setup_worktree_placeholder_fallback_enabled = domain_setup_worktree_placeholder_fallback_enabled
@@ -393,6 +393,15 @@ class PythonEngineRuntime:
     _print_dashboard_tests_row = domain_print_dashboard_tests_row
     _dashboard_status_badge = staticmethod(domain_dashboard_status_badge)
     _dashboard_palette = domain_dashboard_palette
+
+    def __setattr__(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+        context_attr = self._RUNTIME_CONTEXT_ATTR_MAP.get(name)
+        if context_attr is None:
+            return
+        runtime_context = self.__dict__.get("runtime_context")
+        if runtime_context is not None:
+            object.__setattr__(runtime_context, context_attr, value)
 
     def __init__(self, config: EngineConfig, *, env: dict[str, str] | None = None) -> None:
         self.config = config
@@ -463,6 +472,7 @@ class PythonEngineRuntime:
             terminal_ui=self.terminal_ui,
             emit=self._emit,
         )
+        self.planning_worktree_orchestrator = PlanningWorktreeOrchestrator(self)
         self.startup_orchestrator = StartupOrchestrator(self)
         self.resume_orchestrator = ResumeOrchestrator(self)
         self.doctor_orchestrator = DoctorOrchestrator(self)
@@ -485,6 +495,65 @@ class PythonEngineRuntime:
                 reason=self.ui_backend_resolution.reason,
                 backend=self.ui_backend_resolution.backend,
             )
+
+    def _apply_setup_worktree_selection(self, route: Route, project_contexts: list[ProjectContext]) -> list[ProjectContext]:
+        return self.planning_worktree_orchestrator.apply_setup_worktree_selection(route, project_contexts)
+
+    def _select_plan_projects(self, route: Route, project_contexts: list[ProjectContext]) -> list[ProjectContext]:
+        return self.planning_worktree_orchestrator.select_plan_projects(route, project_contexts)
+
+    def _prompt_planning_selection(
+        self,
+        planning_files: list[str],
+        raw_projects: list[tuple[str, Path]],
+    ) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.prompt_planning_selection(planning_files, raw_projects)
+
+    def _initial_plan_selected_counts(
+        self,
+        *,
+        planning_files: list[str],
+        existing_counts: dict[str, int],
+    ) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.initial_plan_selected_counts(
+            planning_files=planning_files,
+            existing_counts=existing_counts,
+        )
+
+    def _run_planning_selection_menu(
+        self,
+        *,
+        planning_files: list[str],
+        selected_counts: dict[str, int],
+        existing_counts: dict[str, int],
+    ) -> dict[str, int] | None:
+        return self.planning_worktree_orchestrator.run_planning_selection_menu(
+            planning_files=planning_files,
+            selected_counts=selected_counts,
+            existing_counts=existing_counts,
+        )
+
+    def _load_plan_selection_memory(self) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.load_plan_selection_memory()
+
+    def _save_plan_selection_memory(self, selected_counts: dict[str, int]) -> None:
+        self.planning_worktree_orchestrator.save_plan_selection_memory(selected_counts)
+
+    def _planning_keep_plan_enabled(self, route: Route) -> bool:
+        return self.planning_worktree_orchestrator.planning_keep_plan_enabled(route)
+
+    def _sync_plan_worktrees_from_plan_counts(
+        self,
+        *,
+        plan_counts: dict[str, int],
+        raw_projects: list[tuple[str, Path]],
+        keep_plan: bool,
+    ) -> tuple[list[tuple[str, Path]], str | None]:
+        return self.planning_worktree_orchestrator.sync_plan_worktrees_from_plan_counts(
+            plan_counts=plan_counts,
+            raw_projects=raw_projects,
+            keep_plan=keep_plan,
+        )
 
     def _ensure_legacy_lock_view(self) -> None:
         scoped_locks = self.runtime_root / "locks"
@@ -652,13 +721,13 @@ class PythonEngineRuntime:
     def _write_artifacts(self, state: RunState, contexts: list[ProjectContext], *, errors: list[str]) -> None:
         runtime_write_artifacts(self, state, contexts, errors=errors)
 
-    def _write_shell_prune_report(
+    def _write_runtime_readiness_report(
         self,
         *,
         run_dir: Path | None = None,
-        contract_result: ShellPruneContractResult | None = None,
+        readiness_result: object | None = None,
     ) -> None:
-        runtime_write_shell_prune_report(self, run_dir=run_dir, contract_result=contract_result)
+        runtime_write_runtime_readiness_report(self, run_dir=run_dir, readiness_result=readiness_result)
 
     def _try_load_existing_state(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
         return runtime_try_load_existing_state(self, mode=mode, strict_mode_match=strict_mode_match)
@@ -676,6 +745,9 @@ class PythonEngineRuntime:
 
     def _config(self, route: Route) -> int:
         return run_config_command(self, route)
+
+    def _migrate_hooks(self, route: Route) -> int:
+        return runtime_run_hook_migration(self, route)
 
     def _doctor(self) -> int:
         return self.doctor_orchestrator.execute()
@@ -709,58 +781,19 @@ class PythonEngineRuntime:
     def _evaluate_shipability(
         self,
         *,
-        shell_budget: int | None,
-        shell_partial_keep_budget: int | None,
-        shell_intentional_keep_budget: int | None,
-        shell_phase: str | None,
-        require_shell_budget_complete: bool,
+        enforce_runtime_readiness_contract: bool = True,
     ) -> object:
         return evaluate_shipability(
             repo_root=self.config.base_dir,
             check_tests=self._doctor_should_check_tests(),
-            shell_prune_max_unmigrated=shell_budget,
-            shell_prune_max_partial_keep=shell_partial_keep_budget,
-            shell_prune_max_intentional_keep=shell_intentional_keep_budget,
-            shell_prune_phase=shell_phase,
-            require_shell_budget_complete=require_shell_budget_complete,
+            enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
         )
 
     def _doctor_should_check_tests(self) -> bool:
         return self.doctor_orchestrator.doctor_should_check_tests()
 
-    def _shell_prune_max_unmigrated_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_unmigrated_budget()
-
-    def _shell_prune_max_partial_keep_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_partial_keep_budget()
-
-    def _shell_prune_max_intentional_keep_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_intentional_keep_budget()
-
-    def _shell_prune_phase(self) -> str | None:
-        return self.doctor_orchestrator.shell_prune_phase()
-
-    def _shell_prune_budget_profile(self) -> tuple[int | None, int | None, int | None, str | None]:
-        return self.doctor_orchestrator.shell_prune_budget_profile()
-
-    def _shell_prune_budget_values_omitted(self) -> bool:
-        return self.doctor_orchestrator.shell_prune_budget_values_omitted()
-
-    def _is_shell_budget_profile_complete(
-        self,
-        *,
-        shell_budget: int | None,
-        shell_partial_keep_budget: int | None,
-        shell_intentional_keep_budget: int | None,
-    ) -> bool:
-        return self.doctor_orchestrator.is_shell_budget_profile_complete(
-            shell_budget=shell_budget,
-            shell_partial_keep_budget=shell_partial_keep_budget,
-            shell_intentional_keep_budget=shell_intentional_keep_budget,
-        )
-
-    def _enforce_runtime_shell_budget_profile(self, *, scope: str, strict_required: bool | None = None) -> bool:
-        return self.doctor_orchestrator.enforce_runtime_shell_budget_profile(
+    def _enforce_runtime_readiness_contract(self, *, scope: str, strict_required: bool | None = None) -> bool:
+        return self.doctor_orchestrator.enforce_runtime_readiness_contract(
             scope=scope,
             strict_required=strict_required,
         )
@@ -1399,6 +1432,9 @@ class PythonEngineRuntime:
 
     def _invoke_envctl_hook(self, *, context: ProjectContext, hook_name: str) -> HookInvocationResult:
         return runtime_invoke_envctl_hook(self, context=context, hook_name=hook_name)
+
+    def _startup_hook_contract_issue(self) -> str | None:
+        return runtime_startup_hook_contract_issue(self)
 
     def _requirements_result_from_hook_payload(
         self,

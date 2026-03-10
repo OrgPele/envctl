@@ -1,11 +1,50 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 
-set -euo pipefail
+from __future__ import annotations
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+import os
+from pathlib import Path
+import sys
 
-# shellcheck source=/dev/null
-source "$ROOT_DIR/lib/envctl.sh"
 
-envctl_main "$@"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+PYTHON_ROOT = ROOT_DIR / "python"
+
+
+def _supported_runtime() -> bool:
+    major, minor = sys.version_info[:2]
+    return major == 3 and 12 <= minor <= 14
+
+
+def _candidate_bins() -> list[str]:
+    repo_venv = ROOT_DIR / ".venv" / "bin" / "python"
+    candidates: list[str] = []
+    if repo_venv.is_file():
+        candidates.append(str(repo_venv))
+    candidates.extend(["python3.14", "python3.13", "python3.12"])
+    return candidates
+
+
+def _reexec_supported_python() -> None:
+    if _supported_runtime():
+        return
+    for candidate in _candidate_bins():
+        try:
+            os.execvp(candidate, [candidate, str(Path(__file__).resolve()), *sys.argv[1:]])
+        except OSError:
+            continue
+    raise SystemExit("Python 3.12-3.14 is required for envctl.")
+
+
+def main() -> int:
+    _reexec_supported_python()
+    if str(PYTHON_ROOT) not in sys.path:
+        sys.path.insert(0, str(PYTHON_ROOT))
+    os.environ.setdefault("ENVCTL_ROOT_DIR", str(ROOT_DIR))
+    from envctl_engine.runtime.launcher_cli import main as launcher_main
+
+    return int(launcher_main())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

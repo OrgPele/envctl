@@ -12,7 +12,6 @@ For deeper topic-specific guides, use:
 - [Runtime Lifecycle](runtime-lifecycle.md)
 - [State and Artifacts](state-and-artifacts.md)
 - [Debug and Diagnostics](debug-and-diagnostics.md)
-- [Shell Compatibility and Deprecation](shell-compatibility.md)
 - [Testing and Validation](testing-and-validation.md)
 
 ## Top-Level Flow
@@ -20,18 +19,16 @@ For deeper topic-specific guides, use:
 Current control flow:
 
 1. `bin/envctl`
-2. `lib/envctl.sh`
-3. `lib/engine/main.sh`
-4. `python -m envctl_engine.runtime.cli`
-5. `envctl_engine.runtime.command_router.parse_route`
-6. `envctl_engine.runtime.engine_runtime.EngineRuntime`
-7. `envctl_engine.runtime.engine_runtime_dispatch.dispatch_command`
-8. domain orchestrator or inspection handler
+2. `envctl_engine.runtime.launcher_cli`
+3. `python -m envctl_engine.runtime.cli`
+4. `envctl_engine.runtime.command_router.parse_route`
+5. `envctl_engine.runtime.engine_runtime.EngineRuntime`
+6. `envctl_engine.runtime.engine_runtime_dispatch.dispatch_command`
+7. domain orchestrator or inspection handler
 
 Key boundary decisions:
 
-- The launcher resolves repo root and sets engine-selection env vars.
-- `lib/engine/main.sh` owns Python 3.12 selection and shell fallback.
+- The launcher resolves repo root and prepares the Python runtime handoff.
 - `runtime/cli.py` owns prereq checks, local config bootstrap policy, and exit code normalization.
 - `EngineRuntime` is the runtime facade that wires the domains together.
 - Orchestrators own behavior; helper modules own reusable policy and contract logic.
@@ -93,7 +90,7 @@ The package layout under `python/envctl_engine/` is now the main architecture bo
 - `debug/`: debug bundle packaging, sanitization, diagnostics, doctor support
 - `ui/`: dashboard loop, selector flows, textual integration, spinners, input
 - `shared/`: low-level helpers such as ports, process probing, parsing, environment access, hooks
-- `shell/`: shell ownership ledger, prune contracts, shipability/cutover gates
+- `shell/`: remaining release/readiness checks during the final cutover period
 - `planning/`: plan discovery, selection, worktree setup support
 
 Use the grouped package paths. The flat compatibility shims remain only for migration tolerance.
@@ -240,8 +237,7 @@ Latest pointers:
 - `ports_manifest.json`
 - `error_report.json`
 - `events.jsonl`
-- `shell_ownership_snapshot.json`
-- `shell_prune_report.json`
+- `runtime_readiness_report.json`
 
 Per-run history:
 
@@ -250,7 +246,7 @@ Per-run history:
 - `runs/<run-id>/ports_manifest.json`
 - `runs/<run-id>/error_report.json`
 - `runs/<run-id>/events.jsonl`
-- `runs/<run-id>/shell_prune_report.json`
+- `runs/<run-id>/runtime_readiness_report.json`
 
 Repository responsibilities:
 
@@ -431,7 +427,7 @@ Developer rule:
 - if you add user-input-adjacent telemetry, route it through the existing redaction model
 - if the new signal is needed in bundles, make sure the bundle redaction and diagnostic layers know how to handle it
 
-## Doctor and Cutover Gates
+## Doctor and Runtime Readiness Gates
 
 `debug/doctor_orchestrator.py` is not only a health dump. It is also a migration/cutover gate.
 
@@ -441,7 +437,7 @@ It combines:
 - parity manifest validation
 - runtime truth reconciliation
 - synthetic-state detection
-- shell ownership ledger and prune-budget evaluation
+- runtime readiness contract evaluation
 - recent structured failure surfacing
 
 This means doctor changes are high leverage and high risk.
@@ -452,24 +448,22 @@ If you change doctor inputs or gate semantics:
 - update `contracts/python_engine_parity_manifest.json` or related ledgers if the gate contract changes
 - update user-facing diagnostics docs
 
-## Shell Migration Contract
+## Runtime Readiness Contract
 
-The repository is still carrying an explicit shell-prune contract.
+The repository now uses a Python-native runtime readiness contract.
 
 Main files:
 
-- `shell/shell_prune.py`
 - `shell/release_gate.py`
-- `contracts/envctl-shell-ownership-ledger.json`
+- `runtime/runtime_readiness.py`
+- `contracts/python_runtime_gap_report.json`
 - `contracts/python_engine_parity_manifest.json`
 
 Practical meaning:
 
-- old shell modules are not deleted on instinct
-- doctor and release gates enforce budgeted migration state
-- shell compatibility reads/writes still exist intentionally in some paths
-
-Do not delete shell compatibility code unless the ledger, tests, and gates all agree that the path is ready.
+- release/shipability checks validate Python readiness, not shell migration budgets
+- doctor and release gates use the runtime gap report plus parity manifest
+- compatibility surfaces are removed only when the generated readiness contract says they are no longer blockers
 
 ## Process and Truth Model
 
@@ -533,7 +527,7 @@ This repository now has meaningful coverage for:
 - state repository and compatibility
 - debug bundle generation and analysis
 - selector/UI behavior
-- shell prune and cutover gates
+- runtime readiness and shipability gates
 - BATS end-to-end parity flows
 
 Minimum bar for non-trivial runtime changes:

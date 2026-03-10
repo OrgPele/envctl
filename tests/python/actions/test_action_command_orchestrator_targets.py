@@ -40,6 +40,15 @@ class _RuntimeStub:
 
 
 class ActionCommandTargetTests(unittest.TestCase):
+    def test_runtime_facade_routes_target_dependencies(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+
+        projects = orchestrator.runtime.discover_projects(mode="trees")
+
+        self.assertEqual([project.name for project in projects], ["alpha", "beta"])
+        self.assertEqual(orchestrator.runtime.selectors_from_passthrough(["ignored"]), set())
+
     def test_resolve_targets_uses_interactive_selection(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = ActionCommandOrchestrator(runtime)

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
@@ -40,25 +40,129 @@ from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
+from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 
+class ActionRuntimeFacade:
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    def _resolve_callable(self, *names: str) -> Callable[..., object]:
+        for name in names:
+            candidate = getattr(self._runtime, name, None)
+            if callable(candidate):
+                return cast(Callable[..., object], candidate)
+        joined = ", ".join(names)
+        raise AttributeError(f"{type(self._runtime).__name__} is missing required action collaborator ({joined})")
+
+    @property
+    def env(self) -> Mapping[str, str]:
+        return cast(Mapping[str, str], getattr(self._runtime, "env", {}))
+
+    @property
+    def config(self) -> Any:
+        return getattr(self._runtime, "config", None)
+
+    @property
+    def process_runner(self) -> Any:
+        return getattr(self._runtime, "process_runner", None)
+
+    @property
+    def state_repository(self) -> Any:
+        return getattr(self._runtime, "state_repository", None)
+
+    def discover_projects(self, *, mode: str) -> list[object]:
+        discover = self._resolve_callable("discover_projects", "_discover_projects")
+        return cast(list[object], discover(mode=mode))
+
+    def selectors_from_passthrough(self, passthrough_args: list[str]) -> set[str]:
+        selectors = self._resolve_callable("selectors_from_passthrough", "_selectors_from_passthrough")
+        return cast(set[str], selectors(passthrough_args))
+
+    def load_existing_state(self, *, mode: str) -> object | None:
+        load_state = getattr(self._runtime, "load_existing_state", None)
+        if callable(load_state):
+            return load_state(mode=mode)
+        legacy = self._resolve_callable("_try_load_existing_state")
+        return legacy(mode=mode)
+
+    def project_name_from_service(self, service_name: str) -> str:
+        project_name = self._resolve_callable("project_name_from_service", "_project_name_from_service")
+        return str(project_name(service_name))
+
+    def select_project_targets(self, **kwargs: object) -> object:
+        select = self._resolve_callable("select_project_targets", "_select_project_targets")
+        return select(**kwargs)
+
+    def unsupported_command(self, command: str) -> int:
+        unsupported = self._resolve_callable("unsupported_command", "_unsupported_command")
+        return int(unsupported(command))
+
+    def emit(self, event: str, **payload: object) -> None:
+        emitter = getattr(self._runtime, "_emit", None)
+        if callable(emitter):
+            emitter(event, **payload)
+            return
+        emitter = getattr(self._runtime, "emit", None)
+        if callable(emitter):
+            emitter(event, **payload)
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self.emit(event, **payload)
+
+    def split_command(self, raw: str, *, replacements: Mapping[str, str]) -> list[str]:
+        splitter = self._resolve_callable("split_command", "_split_command")
+        return cast(list[str], splitter(raw, replacements=replacements))
+
+    def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
+        resolver = self._resolve_callable("trees_root_for_worktree", "_trees_root_for_worktree")
+        return cast(Path, resolver(worktree_root))
+
+    def _blast_worktree_before_delete(
+        self,
+        *,
+        project_name: str,
+        project_root: Path,
+        source_command: str,
+    ) -> list[str]:
+        cleanup = getattr(self._runtime, "_blast_worktree_before_delete", None)
+        if callable(cleanup):
+            return cast(list[str], cleanup(
+                project_name=project_name,
+                project_root=project_root,
+                source_command=source_command,
+            ))
+        cleanup = getattr(self._runtime, "blast_worktree_before_delete", None)
+        if callable(cleanup):
+            return cast(list[str], cleanup(
+                project_name=project_name,
+                project_root=project_root,
+                source_command=source_command,
+            ))
+        return []
+
+    @property
+    def raw_runtime(self) -> Any:
+        return self._runtime
+
+
 class ActionCommandOrchestrator:
     def __init__(self, runtime: Any) -> None:
-        self.runtime: Any = runtime
+        self.runtime = ActionRuntimeFacade(runtime)
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
         if route.command in {"delete-worktree", "blast-worktree"}:
             code = self.run_delete_worktree_action(route)
-            rt._emit("action.command.finish", command=route.command, code=code)  # type: ignore[attr-defined]
+            rt.emit("action.command.finish", command=route.command, code=code)
             return code
 
         targets, error = self.resolve_targets(route, trees_only=False)
         if error is not None:
             print(error)
-            rt._emit("action.command.finish", command=route.command, code=1, error=error)  # type: ignore[attr-defined]
+            rt.emit("action.command.finish", command=route.command, code=1, error=error)
             return 1
 
         handler_map: dict[str, Callable[[Route, list[object]], int]] = {
@@ -70,7 +174,7 @@ class ActionCommandOrchestrator:
         }
         handler = handler_map.get(route.command)
         if handler is None:
-            return rt._unsupported_command(route.command)  # type: ignore[attr-defined]
+            return rt.unsupported_command(route.command)
 
         spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
         op_id = f"action.{route.command}"
@@ -78,12 +182,12 @@ class ActionCommandOrchestrator:
         suppress_action_spinner = route.command == "test" and bool(route.flags.get("interactive_command"))
         action_spinner_enabled = spinner_policy.enabled and not suppress_action_spinner
         emit_spinner_policy(
-            getattr(rt, "_emit", None),
+            getattr(rt.raw_runtime, "_emit", None),
             spinner_policy,
             context={"component": "action.command", "command": route.command, "op_id": op_id},
         )
         if suppress_action_spinner:
-            rt._emit(  # type: ignore[attr-defined]
+            rt.emit(
                 "ui.spinner.disabled",
                 component="action.command",
                 command=route.command,
@@ -91,7 +195,7 @@ class ActionCommandOrchestrator:
                 reason="interactive_test_action_spinner_suppressed",
             )
 
-        rt._emit("action.command.start", command=route.command, mode=route.mode)  # type: ignore[attr-defined]
+        rt.emit("action.command.start", command=route.command, mode=route.mode)
         self._emit_status(start_status)
         with use_spinner_policy(spinner_policy), spinner(
             start_status,
@@ -100,7 +204,7 @@ class ActionCommandOrchestrator:
         ) as active_spinner:
             if action_spinner_enabled:
                 active_spinner.start()
-                rt._emit(  # type: ignore[attr-defined]
+                rt.emit(
                     "ui.spinner.lifecycle",
                     component="action.command",
                     command=route.command,
@@ -113,7 +217,7 @@ class ActionCommandOrchestrator:
                 if code == 0:
                     completion = f"{route.command} completed"
                     active_spinner.succeed(completion)
-                    rt._emit(  # type: ignore[attr-defined]
+                    rt.emit(
                         "ui.spinner.lifecycle",
                         component="action.command",
                         command=route.command,
@@ -124,7 +228,7 @@ class ActionCommandOrchestrator:
                 else:
                     failure = f"{route.command} failed"
                     active_spinner.fail(failure)
-                    rt._emit(  # type: ignore[attr-defined]
+                    rt.emit(
                         "ui.spinner.lifecycle",
                         component="action.command",
                         command=route.command,
@@ -132,29 +236,29 @@ class ActionCommandOrchestrator:
                         state="fail",
                         message=failure,
                     )
-                rt._emit(  # type: ignore[attr-defined]
+                rt.emit(
                     "ui.spinner.lifecycle",
                     component="action.command",
                     command=route.command,
                     op_id=op_id,
                     state="stop",
                 )
-        rt._emit("action.command.finish", command=route.command, code=code)  # type: ignore[attr-defined]
+        rt.emit("action.command.finish", command=route.command, code=code)
         return code
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
         rt = self.runtime
         if trees_only:
-            candidates = rt._discover_projects(mode="trees")  # type: ignore[attr-defined]
+            candidates = rt.discover_projects(mode="trees")
         else:
-            candidates = rt._discover_projects(mode=route.mode)  # type: ignore[attr-defined]
+            candidates = rt.discover_projects(mode=route.mode)
             if not candidates and route.mode == "main":
-                candidates = rt._discover_projects(mode="trees")  # type: ignore[attr-defined]
+                candidates = rt.discover_projects(mode="trees")
 
         run_all = bool(route.flags.get("all"))
         untested_selected = bool(route.flags.get("untested"))
         project_selectors = {name.lower() for name in route.projects}
-        project_selectors.update(rt._selectors_from_passthrough(route.passthrough_args))  # type: ignore[attr-defined]
+        project_selectors.update(rt.selectors_from_passthrough(route.passthrough_args))
 
         services = route.flags.get("services")
         if isinstance(services, list):
@@ -168,12 +272,15 @@ class ActionCommandOrchestrator:
 
         if not project_selectors and not run_all:
             if self._interactive_selection_allowed(route):
-                selection = rt._select_project_targets(  # type: ignore[attr-defined]
+                selection = cast(
+                    TargetSelection,
+                    rt.select_project_targets(
                     prompt=f"Select {route.command} target",
                     projects=candidates,
                     allow_all=True,
                     allow_untested=route.command == "test",
                     multi=True,
+                    ),
                 )
                 if selection.cancelled:
                     return [], self._no_target_selected_message(route)
@@ -199,7 +306,7 @@ class ActionCommandOrchestrator:
         return selected, None
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        return interactive_selection_allowed(self.runtime, route, allow_dashboard_override=True)
+        return interactive_selection_allowed(self.runtime.raw_runtime, route, allow_dashboard_override=True)
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
@@ -207,20 +314,20 @@ class ActionCommandOrchestrator:
         if not normalized_targets:
             return []
 
-        state = rt._try_load_existing_state(mode="trees") or rt._try_load_existing_state(mode="main")  # type: ignore[attr-defined]
+        state = rt.load_existing_state(mode="trees") or rt.load_existing_state(mode="main")
         resolved: list[str] = []
         for target in normalized_targets:
             matched = False
             if state is not None:
                 for service_name in state.services:
                     if service_name.lower() == target:
-                        project = rt._project_name_from_service(service_name)  # type: ignore[attr-defined]
+                        project = rt.project_name_from_service(service_name)
                         if project:
                             resolved.append(project)
                             matched = True
             if matched:
                 continue
-            project = rt._project_name_from_service(target)  # type: ignore[attr-defined]
+            project = rt.project_name_from_service(target)
             if project:
                 resolved.append(project)
 
@@ -297,7 +404,7 @@ class ActionCommandOrchestrator:
             if raw is not None:
                 replacements = self.action_replacements(targets, target=target)
                 try:
-                    command = rt._split_command(raw, replacements=replacements)  # type: ignore[attr-defined]
+                    command = rt.split_command(raw, replacements=replacements)
                 except RuntimeError as exc:
                     return ActionCommandResolution(command=None, cwd=None, error=str(exc))
                 return ActionCommandResolution(command=command, cwd=target_root)
@@ -370,7 +477,7 @@ class ActionCommandOrchestrator:
             include_frontend=include_frontend,
             run_all=run_all,
             untested=untested,
-            split_command=lambda command_raw, replacements: rt._split_command(  # type: ignore[attr-defined]
+            split_command=lambda command_raw, replacements: rt.split_command(
                 command_raw,
                 replacements=dict(replacements),
             ),
@@ -403,7 +510,7 @@ class ActionCommandOrchestrator:
             if raw is not None:
                 replacements = self.action_replacements(targets, target=target)
                 try:
-                    command = rt._split_command(raw, replacements=replacements)  # type: ignore[attr-defined]
+                    command = rt.split_command(raw, replacements=replacements)
                 except RuntimeError as exc:
                     return ActionCommandResolution(command=None, cwd=None, error=str(exc))
                 return ActionCommandResolution(command=command, cwd=target_root)
@@ -464,10 +571,8 @@ class ActionCommandOrchestrator:
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
         rt = self.runtime
-        state = rt._try_load_existing_state(  # type: ignore[attr-defined]
-            mode=getattr(route, "mode", None),
-            strict_mode_match=False,
-        )
+        route_mode = getattr(route, "mode", None)
+        state = rt.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
         run_id = getattr(state, "run_id", None)
         tree_diffs_root = rt.state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
         return build_action_env(
@@ -496,12 +601,12 @@ class ActionCommandOrchestrator:
         text = str(message).strip()
         if not text:
             return
-        rt._emit("ui.status", message=text)  # type: ignore[attr-defined]
+        rt.emit("ui.status", message=text)
 
     def _colors_enabled(self) -> bool:
         rt_env = getattr(self.runtime, "env", {})
         interactive_tty = False
-        can_interactive_tty = getattr(self.runtime, "_can_interactive_tty", None)
+        can_interactive_tty = getattr(self.runtime.raw_runtime, "_can_interactive_tty", None)
         if callable(can_interactive_tty):
             try:
                 interactive_tty = bool(can_interactive_tty())
@@ -662,7 +767,7 @@ class ActionCommandOrchestrator:
         if not project_roots:
             return
 
-        state = rt._try_load_existing_state(mode=route.mode, strict_mode_match=False)  # type: ignore[attr-defined]
+        state = rt.load_existing_state(mode=route.mode)
         if state is None:
             return
 
@@ -683,12 +788,12 @@ class ActionCommandOrchestrator:
         state.metadata["project_test_results_root"] = str(run_dir)
         state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
 
-        rt.state_repository.save_resume_state(  # type: ignore[attr-defined]
+        rt.state_repository.save_resume_state(
             state=state,
-            emit=rt._emit,
+            emit=rt.emit,
             runtime_map_builder=build_runtime_map,
         )
-        rt._emit(  # type: ignore[attr-defined]
+        rt.emit(
             "test.summary.persisted",
             mode=route.mode,
             projects=sorted(summaries),
@@ -696,7 +801,7 @@ class ActionCommandOrchestrator:
         )
 
     def _new_test_results_run_dir(self, run_id: str) -> Path:
-        results_root = self.runtime.state_repository.test_results_dir_path(run_id)  # type: ignore[attr-defined]
+        results_root = self.runtime.state_repository.test_results_dir_path(run_id)
         results_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
         candidate = results_root / stamp

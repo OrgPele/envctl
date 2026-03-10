@@ -12,7 +12,12 @@ if str(PYTHON_ROOT) not in sys.path:
 
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import ProjectContext, PythonEngineRuntime
-from envctl_engine.shared.hooks import run_envctl_hook
+from envctl_engine.shared.hooks import (
+    build_python_hook_starter_stub,
+    legacy_shell_hook_issue,
+    migrate_legacy_shell_hooks,
+    run_envctl_hook,
+)
 from envctl_engine.state.models import RequirementsResult
 
 
@@ -20,27 +25,79 @@ class HooksBridgeTests(unittest.TestCase):
     def test_run_hook_returns_not_found_when_file_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            result = run_envctl_hook(repo_root=repo, hook_name="envctl_setup_infrastructure", env={})
+            result = run_envctl_hook(repo_root=repo, hook_name="envctl_setup_infrastructure", context={})
             self.assertFalse(result.found)
             self.assertTrue(result.success)
             self.assertIsNone(result.payload)
 
-    def test_run_hook_parses_json_payload(self) -> None:
+    def test_run_hook_parses_python_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            hook_file = repo / ".envctl.sh"
+            hook_file = repo / ".envctl_hooks.py"
             hook_file.write_text(
+                "from __future__ import annotations\n\n"
+                "def envctl_setup_infrastructure(context: dict) -> dict | None:\n"
+                "    return {\"skip_default_requirements\": True}\n",
+                encoding="utf-8",
+            )
+            result = run_envctl_hook(
+                repo_root=repo,
+                hook_name="envctl_setup_infrastructure",
+                hook_file=hook_file,
+                context={"project_name": "Main"},
+            )
+            self.assertTrue(result.found)
+            self.assertTrue(result.success)
+            self.assertEqual(result.payload, {"skip_default_requirements": True})
+
+    def test_run_hook_reports_legacy_shell_hook_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl.sh").write_text(
                 "envctl_setup_infrastructure() {\n"
                 "  export ENVCTL_HOOK_JSON='{\"skip_default_requirements\":true}'\n"
                 "}\n",
                 encoding="utf-8",
             )
-            result = run_envctl_hook(repo_root=repo, hook_name="envctl_setup_infrastructure", env={})
+            result = run_envctl_hook(repo_root=repo, hook_name="envctl_setup_infrastructure", context={})
             self.assertTrue(result.found)
-            self.assertTrue(result.success)
-            self.assertIsInstance(result.payload, dict)
-            assert isinstance(result.payload, dict)
-            self.assertIs(result.payload.get("skip_default_requirements"), True)
+            self.assertFalse(result.success)
+            self.assertIn("envctl migrate-hooks", result.error or "")
+            self.assertIn(".envctl_hooks.py", result.error or "")
+
+    def test_migrate_legacy_shell_hooks_generates_python_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl.sh").write_text(
+                "envctl_setup_infrastructure() {\n"
+                "  export ENVCTL_HOOK_JSON='{\"skip_default_requirements\":true}'\n"
+                "}\n\n"
+                "envctl_define_services() {\n"
+                "  export ENVCTL_HOOK_JSON='{\"skip_default_services\":true,\"services\":[]}'\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            result = migrate_legacy_shell_hooks(repo)
+            self.assertTrue(result.migrated)
+            self.assertTrue(result.python_hook_path.is_file())
+            rendered = result.python_hook_path.read_text(encoding="utf-8")
+            self.assertIn("def envctl_setup_infrastructure", rendered)
+            self.assertIn("def envctl_define_services", rendered)
+
+    def test_migrate_legacy_shell_hooks_returns_stub_for_unsupported_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl.sh").write_text(
+                "envctl_setup_infrastructure() {\n"
+                "  echo nope\n"
+                "  export ENVCTL_HOOK_JSON='{}'\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            result = migrate_legacy_shell_hooks(repo)
+            self.assertFalse(result.migrated)
+            self.assertIn("Unsupported shell hook bodies", result.error or "")
+            self.assertEqual(result.starter_stub, build_python_hook_starter_stub(hook_names=["envctl_setup_infrastructure"]))
 
     def test_runtime_setup_hook_can_skip_default_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -48,16 +105,18 @@ class HooksBridgeTests(unittest.TestCase):
             repo = root / "repo"
             runtime_dir = root / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
-            (repo / ".envctl.sh").write_text(
-                "envctl_setup_infrastructure() {\n"
-                "  export ENVCTL_HOOK_JSON='{\"skip_default_requirements\":true,"
-                "\"requirements\":{"
-                "\"postgres\":{\"success\":true},"
-                "\"redis\":{\"success\":true},"
-                "\"n8n\":{\"success\":true},"
-                "\"supabase\":{\"success\":true}"
-                "}}'\n"
-                "}\n",
+            (repo / ".envctl_hooks.py").write_text(
+                "from __future__ import annotations\n\n"
+                "def envctl_setup_infrastructure(context: dict) -> dict | None:\n"
+                "    return {\n"
+                "        \"skip_default_requirements\": True,\n"
+                "        \"requirements\": {\n"
+                "            \"postgres\": {\"success\": True},\n"
+                "            \"redis\": {\"success\": True},\n"
+                "            \"n8n\": {\"success\": True},\n"
+                "            \"supabase\": {\"success\": True},\n"
+                "        },\n"
+                "    }\n",
                 encoding="utf-8",
             )
 
@@ -80,13 +139,16 @@ class HooksBridgeTests(unittest.TestCase):
             repo = root / "repo"
             runtime_dir = root / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
-            (repo / ".envctl.sh").write_text(
-                "envctl_define_services() {\n"
-                "  export ENVCTL_HOOK_JSON='{\"skip_default_services\":true,\"services\":["
-                "{\"name\":\"Main Backend\",\"type\":\"backend\",\"port\":8010,\"actual_port\":8010,\"status\":\"running\",\"cwd\":\"/tmp/backend\"},"
-                "{\"name\":\"Main Frontend\",\"type\":\"frontend\",\"port\":9010,\"actual_port\":9010,\"status\":\"running\",\"cwd\":\"/tmp/frontend\"}"
-                "]}'\n"
-                "}\n",
+            (repo / ".envctl_hooks.py").write_text(
+                "from __future__ import annotations\n\n"
+                "def envctl_define_services(context: dict) -> dict | None:\n"
+                "    return {\n"
+                "        \"skip_default_services\": True,\n"
+                "        \"services\": [\n"
+                "            {\"name\": \"Main Backend\", \"type\": \"backend\", \"port\": 8010, \"actual_port\": 8010, \"status\": \"running\", \"cwd\": \"/tmp/backend\"},\n"
+                "            {\"name\": \"Main Frontend\", \"type\": \"frontend\", \"port\": 9010, \"actual_port\": 9010, \"status\": \"running\", \"cwd\": \"/tmp/frontend\"},\n"
+                "        ],\n"
+                "    }\n",
                 encoding="utf-8",
             )
 
@@ -112,6 +174,12 @@ class HooksBridgeTests(unittest.TestCase):
             self.assertIn("Main Frontend", records)
             self.assertEqual(records["Main Backend"].actual_port, 8010)
             self.assertEqual(records["Main Frontend"].actual_port, 9010)
+
+    def test_legacy_shell_hook_issue_ignores_plain_config_prefill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl.sh").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+            self.assertIsNone(legacy_shell_hook_issue(repo))
 
 
 if __name__ == "__main__":

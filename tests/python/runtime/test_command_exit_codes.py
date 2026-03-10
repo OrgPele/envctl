@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import sys
 from io import StringIO
-from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -273,12 +273,28 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(seen.get("base_dir"), repo.resolve())
 
-    def test_installed_cli_install_subcommand_is_actionable_failure(self) -> None:
-        err = StringIO()
-        with redirect_stderr(err):
-            code = cli.run(["install"], env={})
-        self.assertEqual(code, 1)
-        self.assertIn("does not edit your shell PATH", err.getvalue())
+    def test_installed_cli_install_subcommand_supports_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shell_file = Path(tmpdir) / ".zshrc"
+            shell_file.write_text("# existing\n", encoding="utf-8")
+            out = StringIO()
+            with patch.object(sys, "argv", [str(Path(tmpdir) / "bin" / "envctl")]), redirect_stdout(out):
+                code = cli.run(["install", "--shell-file", str(shell_file), "--dry-run"], env={})
+            self.assertEqual(code, 0)
+            self.assertIn("# >>> envctl PATH >>>", out.getvalue())
+            self.assertEqual(shell_file.read_text(encoding="utf-8"), "# existing\n")
+
+    def test_installed_cli_uninstall_removes_path_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shell_file = Path(tmpdir) / ".zshrc"
+            shell_file.write_text(
+                '# >>> envctl PATH >>>\nexport PATH="/tmp/bin:$PATH"\n# <<< envctl PATH <<<\n',
+                encoding="utf-8",
+            )
+            with patch.object(sys, "argv", [str(Path(tmpdir) / "bin" / "envctl")]):
+                code = cli.run(["uninstall", "--shell-file", str(shell_file)], env={})
+            self.assertEqual(code, 0)
+            self.assertEqual(shell_file.read_text(encoding="utf-8"), "")
 
     def test_default_command_opens_disabled_dashboard_flow_when_startup_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

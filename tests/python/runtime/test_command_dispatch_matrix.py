@@ -51,8 +51,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
         
-        # Verify we have exactly 31 commands
-        self.assertEqual(len(commands), 31, f"Expected 31 commands, got {len(commands)}")
+        # Verify we have exactly 32 commands
+        self.assertEqual(len(commands), 32, f"Expected 32 commands, got {len(commands)}")
         
         # Expected command set
         expected_commands = {
@@ -60,7 +60,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "dashboard", "config", "doctor", "test", "logs", "clear-logs", "health", "errors",
             "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate",
             "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
-            "help", "debug-pack", "debug-report", "debug-last"
+            "help", "debug-pack", "debug-report", "debug-last", "migrate-hooks"
         }
         self.assertEqual(set(commands), expected_commands)
         

@@ -210,7 +210,7 @@ class LifecycleParityTests(unittest.TestCase):
                 "2222 /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo --plan\n"
                 "7777 /usr/bin/node /tmp/repo/frontend/node_modules/.bin/vite\n"
                 "3333 /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo blast-all\n"
-                "4444 /bin/bash /tmp/repo/lib/engine/main.sh --tree\n"
+                "4444 /usr/bin/python -m envctl_engine.runtime.cli --tree\n"
             )
             tracking_runner.ps_tree_stdout = (
                 "2222 1\n"
@@ -931,7 +931,7 @@ class LifecycleParityTests(unittest.TestCase):
             dump_state(state, str(runs_dir / "run_state.json"))
             (run_dir / "runtime_map.json").write_text("{}", encoding="utf-8")
             (run_dir / "ports_manifest.json").write_text("{}", encoding="utf-8")
-            (run_dir / "shell_prune_report.json").write_text("{}", encoding="utf-8")
+            (run_dir / "runtime_readiness_report.json").write_text("{}", encoding="utf-8")
             (run_dir / ".last_state.main").write_text(str(runs_dir / "run_state.json"), encoding="utf-8")
 
             config = load_config(
@@ -948,7 +948,7 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertEqual(stop_code, 0)
             self.assertTrue(planner.released)
             self.assertFalse((run_dir / "run_state.json").exists())
-            self.assertFalse((run_dir / "shell_prune_report.json").exists())
+            self.assertFalse((run_dir / "runtime_readiness_report.json").exists())
             self.assertTrue(any(event["event"] == "cleanup.stop" for event in engine.events))
 
             (run_dir / "runs" / "run-1").mkdir(parents=True, exist_ok=True)

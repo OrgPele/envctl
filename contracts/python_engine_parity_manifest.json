@@ -1,10 +1,6 @@
 {
   "generated_at": "2026-03-06T11:42:24+00:00",
   "engine_default": "python",
-  "fallback": {
-    "env_var": "ENVCTL_ENGINE_SHELL_FALLBACK",
-    "description": "Set true to force shell engine fallback during migration window"
-  },
   "modes": {
     "main": {
       "start": "python_complete",

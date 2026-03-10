@@ -743,16 +743,18 @@ def apply_ports_to_context(orchestrator, context: object, state: RunState) -> No
 
 def _state_repository(runtime: object) -> _StateRepositoryProtocol:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "state_repository", None)
-    candidate = getattr(runtime, "state_repository", fallback)
+    candidate = getattr(runtime_context, "state_repository", None)
+    if candidate is None:
+        candidate = getattr(runtime, "state_repository", None)
     if candidate is None:
         raise RuntimeError("state repository dependency is not configured")
     return cast(_StateRepositoryProtocol, candidate)
 
 def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "port_allocator", None)
-    candidate = getattr(runtime, "port_planner", fallback)
+    candidate = getattr(runtime_context, "port_allocator", None)
+    if candidate is None:
+        candidate = getattr(runtime, "port_planner", None)
     if candidate is None:
         raise RuntimeError("port allocator dependency is not configured")
     return cast(_PortAllocatorProtocol, candidate)

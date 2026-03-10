@@ -251,8 +251,8 @@ For deeper help:
 
 These docs assume the Python runtime.
 
-If you temporarily need the deprecated Bash/shell fallback for parity debugging or emergency rollback during cutover, force it explicitly:
+To restore the latest runtime state directly:
 
 ```bash
-ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume
+envctl --resume
 ```

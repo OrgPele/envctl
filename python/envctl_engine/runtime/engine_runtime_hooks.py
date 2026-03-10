@@ -5,7 +5,7 @@ import re
 from typing import Any, Mapping
 
 from envctl_engine.shared.dependency_compose_assets import materialize_dependency_compose, supabase_managed_env
-from envctl_engine.shared.hooks import HookInvocationResult, run_envctl_hook
+from envctl_engine.shared.hooks import HookInvocationResult, legacy_shell_hook_issue, run_envctl_hook
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.requirements.supabase import build_supabase_project_name
@@ -27,11 +27,22 @@ def invoke_envctl_hook(runtime: Any, *, context: Any, hook_name: str) -> HookInv
             stderr="",
             payload=None,
         )
+    repo_root = getattr(runtime.config, "base_dir", context.root)
+    default_mode = getattr(runtime.config, "default_mode", "main")
     result = run_envctl_hook(
         repo_root=context.root,
         hook_name=hook_name,
         env=runtime._command_env(port=0),
-        hook_file=context.root / ".envctl.sh",
+        hook_file=context.root / ".envctl_hooks.py",
+        context={
+            "repo_root": str(repo_root),
+            "project_name": context.name,
+            "project_root": str(context.root),
+            "mode": default_mode,
+            "run_id": None,
+            "ports": {name: int(plan.final) for name, plan in context.ports.items()},
+            "env": runtime._command_env(port=0),
+        },
     )
     runtime._emit(
         "hook.bridge.invoke",
@@ -42,6 +53,10 @@ def invoke_envctl_hook(runtime: Any, *, context: Any, hook_name: str) -> HookInv
         has_payload=isinstance(result.payload, dict),
     )
     return result
+
+
+def startup_hook_contract_issue(runtime: Any) -> str | None:
+    return legacy_shell_hook_issue(getattr(runtime.config, "base_dir", Path.cwd()))
 
 
 def requirements_result_from_hook_payload(

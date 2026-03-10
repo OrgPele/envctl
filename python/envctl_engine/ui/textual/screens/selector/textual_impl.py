@@ -5,12 +5,32 @@ from typing import Callable, Sequence, cast
 
 from envctl_engine.ui.textual.compat import textual_run_policy
 from envctl_engine.ui.selector_model import SelectorItem
+from envctl_engine.ui.terminal_session import consume_preserved_input
 from envctl_engine.ui.textual.screens.selector.prompt_toolkit_impl import (
     _run_prompt_toolkit_selector,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app import (
     create_selector_app,
 )
+
+
+def _consume_initial_selector_navigation() -> tuple[str, ...]:
+    raw = consume_preserved_input()
+    if not raw:
+        return ()
+    actions: list[str] = []
+    index = 0
+    while index < len(raw):
+        if raw[index:index + 3] == b"\x1b[A":
+            actions.append("up")
+            index += 3
+            continue
+        if raw[index:index + 3] == b"\x1b[B":
+            actions.append("down")
+            index += 3
+            continue
+        index += 1
+    return tuple(actions)
 from envctl_engine.ui.textual.screens.selector.support import (
     _deep_debug_enabled,
     _emit,
@@ -108,6 +128,7 @@ def run_textual_selector(
 
     if build_only:
         run_policy = textual_run_policy(screen="selector")
+        initial_navigation = _consume_initial_selector_navigation()
         app = create_selector_app(
             prompt=prompt,
             options=options,
@@ -123,6 +144,7 @@ def run_textual_selector(
             disable_focus_reporting=disable_focus_reporting,
             mouse_enabled=run_policy.mouse,
             selector_id=selector_id,
+            initial_navigation=initial_navigation,
         )
         return app  # type: ignore[return-value]
     with _guard_textual_nonblocking_read(
@@ -139,6 +161,7 @@ def run_textual_selector(
         ) as _driver_probe:
             driver_probe = cast(Callable[[], dict[str, object]] | None, _driver_probe)
             run_policy = textual_run_policy(screen="selector")
+            initial_navigation = _consume_initial_selector_navigation()
             app = create_selector_app(
                 prompt=prompt,
                 options=options,
@@ -154,6 +177,7 @@ def run_textual_selector(
                 disable_focus_reporting=disable_focus_reporting,
                 mouse_enabled=run_policy.mouse,
                 selector_id=selector_id,
+                initial_navigation=initial_navigation,
             )
             try:
                 import textual.constants as textual_constants  # type: ignore

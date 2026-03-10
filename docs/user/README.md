@@ -31,7 +31,7 @@ This section is for people using `envctl` to:
 ## Important Runtime Note
 
 - The Python engine is the primary runtime and the one these guides are written for.
-- A deprecated Bash/shell fallback still exists behind `ENVCTL_ENGINE_SHELL_FALLBACK=true`, but it is only for compatibility, parity debugging, or emergency rollback.
+- The supported runtime path is the Python runtime.
 
 ## Related Sections
 

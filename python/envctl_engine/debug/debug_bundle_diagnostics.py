@@ -491,7 +491,7 @@ def write_diagnostics(staging_dir: Path) -> None:
         "resume.restore.project_timing",
         "resume.restore.timing",
         "artifacts.write",
-        "artifacts.shell_prune_report",
+        "artifacts.runtime_readiness_report",
         "requirements.adapter",
         "requirements.adapter.stage",
         "requirements.adapter.command_timing",
@@ -554,13 +554,13 @@ def write_diagnostics(staging_dir: Path) -> None:
             )
             continue
 
-        if event_name in {"artifacts.write", "artifacts.shell_prune_report"}:
+        if event_name in {"artifacts.write", "artifacts.runtime_readiness_report"}:
             duration_ms = round(float(item.get("duration_ms", 0.0) or 0.0), 2)
             slowest_components.append(
                 {
                     "kind": "artifacts",
                     "project": "",
-                    "name": "write_total" if event_name == "artifacts.write" else "shell_prune_report",
+                    "name": "write_total" if event_name == "artifacts.write" else "runtime_readiness_report",
                     "duration_ms": duration_ms,
                     "success": True,
                 }

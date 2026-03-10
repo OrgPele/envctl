@@ -1,0 +1,1243 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-10T08:56:11+00:00",
+  "inventory_sources": {
+    "python_supported_commands": [
+      "blast-all",
+      "blast-worktree",
+      "clear-logs",
+      "commit",
+      "config",
+      "dashboard",
+      "debug-last",
+      "debug-pack",
+      "debug-report",
+      "delete-worktree",
+      "doctor",
+      "errors",
+      "explain-startup",
+      "health",
+      "help",
+      "list-commands",
+      "list-targets",
+      "list-trees",
+      "logs",
+      "migrate",
+      "migrate-hooks",
+      "plan",
+      "pr",
+      "restart",
+      "resume",
+      "review",
+      "show-config",
+      "show-state",
+      "start",
+      "stop",
+      "stop-all",
+      "test"
+    ],
+    "python_supported_flag_tokens": [
+      "--action",
+      "--all",
+      "--analyze",
+      "--analyze-mode",
+      "--backend-log-level",
+      "--backend-log-profile",
+      "--batch",
+      "--blast-all",
+      "--blast-keep-main-volumes",
+      "--blast-keep-worktree-volumes",
+      "--blast-remove-main-volumes",
+      "--blast-remove-worktree-volumes",
+      "--blast-worktree",
+      "--blast-worktrees",
+      "--clear-logs",
+      "--clear-port-cache",
+      "--clear-port-state",
+      "--clear-ports",
+      "--command",
+      "--command-only",
+      "--command-resume",
+      "--commit",
+      "--commit-message",
+      "--commit-message-file",
+      "--config",
+      "--copy-db-storage",
+      "--dashboard",
+      "--dashboard-interactive",
+      "--debug-auto-pack",
+      "--debug-capture",
+      "--debug-last",
+      "--debug-pack",
+      "--debug-report",
+      "--debug-trace",
+      "--debug-trace-log",
+      "--debug-trace-no-interactive",
+      "--debug-trace-no-stdio",
+      "--debug-trace-no-xtrace",
+      "--debug-ui",
+      "--debug-ui-deep",
+      "--debug-ui-include-doctor",
+      "--debug-ui-pack",
+      "--delete-worktree",
+      "--delete-worktrees",
+      "--docker",
+      "--docker-temp",
+      "--doctor",
+      "--dry-run",
+      "--errors",
+      "--explain-startup",
+      "--fast",
+      "--fast-startup",
+      "--force",
+      "--frontend-log-level",
+      "--frontend-log-profile",
+      "--frontend-test-runner",
+      "--headless",
+      "--health",
+      "--help",
+      "--include-existing-worktrees",
+      "--init",
+      "--interactive",
+      "--json",
+      "--keep-plan",
+      "--key-debug",
+      "--list-commands",
+      "--list-targets",
+      "--list-trees",
+      "--load-state",
+      "--log-level",
+      "--log-profile",
+      "--logs",
+      "--logs-duration",
+      "--logs-follow",
+      "--logs-no-color",
+      "--logs-tail",
+      "--main",
+      "--main-local",
+      "--main-remote",
+      "--main-services-local",
+      "--main-services-remote",
+      "--main=true",
+      "--migrate",
+      "--migrate-hooks",
+      "--no-auto-resume",
+      "--no-copy-db-storage",
+      "--no-interactive",
+      "--no-parallel-trees",
+      "--no-resume",
+      "--no-seed-requirements-from-base",
+      "--no-service-parallel",
+      "--no-test-parallel",
+      "--non-interactive",
+      "--output-dir",
+      "--parallel-plan",
+      "--parallel-trees",
+      "--parallel-trees-max",
+      "--plan",
+      "--plan-parallel",
+      "--plan-selection",
+      "--plan-sequential",
+      "--planning-envs",
+      "--planning-prs",
+      "--pr",
+      "--pr-base",
+      "--project",
+      "--projects",
+      "--prs",
+      "--recreate-existing-worktree",
+      "--refresh-cache",
+      "--remove-volumes",
+      "--remove-worktrees",
+      "--restart",
+      "--resume",
+      "--reuse-existing-worktree",
+      "--review",
+      "--review-mode",
+      "--run-id",
+      "--scope-id",
+      "--seed-requirements-from-base",
+      "--sequential-plan",
+      "--service",
+      "--service-parallel",
+      "--service-sequential",
+      "--session-id",
+      "--set",
+      "--setup-include-worktrees",
+      "--setup-worktree",
+      "--setup-worktree-existing",
+      "--setup-worktree-recreate",
+      "--setup-worktrees",
+      "--show-config",
+      "--show-state",
+      "--skip-startup",
+      "--stdin-json",
+      "--stop",
+      "--stop-all",
+      "--stop-all-remove-volumes",
+      "--stop-docker-on-exit",
+      "--temp-docker",
+      "--test",
+      "--test-parallel",
+      "--test-parallel-max",
+      "--test-sequential",
+      "--tests",
+      "--timeout",
+      "--tree",
+      "--tree=true",
+      "--trees",
+      "--trees=true",
+      "--untested",
+      "--yes",
+      "-b",
+      "-f"
+    ],
+    "documented_flag_tokens": [
+      "--all",
+      "--batch",
+      "--clear-port-state",
+      "--dashboard",
+      "--debug-auto-pack",
+      "--debug-capture",
+      "--debug-last",
+      "--debug-pack",
+      "--debug-report",
+      "--debug-trace",
+      "--debug-trace-log",
+      "--doctor",
+      "--fast",
+      "--force",
+      "--headless",
+      "--include-existing-worktrees",
+      "--json",
+      "--keep-plan",
+      "--logs-duration",
+      "--logs-follow",
+      "--logs-tail",
+      "--main",
+      "--main-services-local",
+      "--main-services-remote",
+      "--parallel-plan",
+      "--parallel-trees",
+      "--parallel-trees-max",
+      "--plan",
+      "--project",
+      "--projects",
+      "--refresh-cache",
+      "--repo",
+      "--resume",
+      "--seed-requirements-from-base",
+      "--sequential-plan",
+      "--service",
+      "--service-parallel",
+      "--service-sequential",
+      "--setup-worktree",
+      "--setup-worktrees",
+      "--test-parallel",
+      "--test-parallel-max",
+      "--test-sequential",
+      "--tree",
+      "--trees",
+      "--untested"
+    ]
+  },
+  "summary": {
+    "feature_count": 45,
+    "user_visible_feature_count": 44,
+    "areas": {
+      "actions": 5,
+      "artifacts": 3,
+      "cli": 7,
+      "diagnostics": 5,
+      "inspection": 8,
+      "launcher": 3,
+      "lifecycle": 6,
+      "planning": 5,
+      "requirements": 3
+    },
+    "parity_status": {
+      "verified_python": 45
+    }
+  },
+  "features": [
+    {
+      "id": "F-001",
+      "area": "lifecycle",
+      "feature": "Command: aggressively clean all managed runtime processes, ports, and dependency containers",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Blast-all cleanup breadth is covered by lifecycle support tests and the blast-all contract BATS lane.",
+      "command": "blast-all",
+      "current_behavior": "Python blast-all works and is tested, but the shell path still carries legacy cleanup breadth for global runtime teardown.",
+      "missing_python_behavior": "Prove and, where needed, close cleanup symmetry for ports, processes, Docker resources, and stale dependency artifacts across mixed failure states.",
+      "python_owner_module": "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Global cleanup regressions could leave orphaned processes, ports, or containers across repos.",
+      "wave": "Wave B"
+    },
+    {
+      "id": "F-002",
+      "area": "planning",
+      "feature": "Command: aggressively clean tree-scoped processes and dependency resources before deleting worktrees",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
+        "python/envctl_engine/actions/action_worktree_runner.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
+        "tests/python/actions/test_action_worktree_runner.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Blast-worktree cleanup, including legacy resource cleanup, is covered by lifecycle support and worktree action tests.",
+      "command": "blast-worktree",
+      "current_behavior": "Python blast-worktree deletes trees and cleans most scoped resources, but full cleanup symmetry still relies on shell behavior as the oracle.",
+      "missing_python_behavior": "Close any remaining tree-scoped cleanup gaps for processes, dependency containers, and legacy-named resources, then prove parity through focused lifecycle tests.",
+      "python_owner_module": "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
+        "tests/python/actions/test_action_worktree_runner.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Partial tree cleanup can leave stale containers or listeners that later break planning or startup.",
+      "wave": "Wave B"
+    },
+    {
+      "id": "F-003",
+      "area": "inspection",
+      "feature": "Command: clear accumulated runtime logs for selected services",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/state/action_orchestrator.py",
+        "python/envctl_engine/runtime/inspection_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_logs_parity.py",
+        "tests/python/runtime/test_command_dispatch_matrix.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Clear-logs is covered through state-action/log parity tests.",
+      "command": "clear-logs"
+    },
+    {
+      "id": "F-004",
+      "area": "actions",
+      "feature": "Command: stage, commit, and push selected project changes",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/project_action_domain.py",
+        "python/envctl_engine/actions/actions_git.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python commit flows are covered by action CLI/parity tests, including message sourcing and non-interactive cases.",
+      "command": "commit",
+      "current_behavior": "Python commit flows work for normal interactive and headless cases, but commit-message sourcing and helper assumptions are still mixed with legacy expectations.",
+      "missing_python_behavior": "Make Python the clear source of truth for commit message discovery, non-interactive failure cases, and pushed-branch reporting.",
+      "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
+      "proposed_tests": [
+        "tests/python/actions/test_actions_cli.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Edge-case commit flows can still diverge from user expectations if legacy message-resolution behavior is not fully proven.",
+      "wave": "Wave D"
+    },
+    {
+      "id": "F-005",
+      "area": "cli",
+      "feature": "Command: open the configuration wizard or headless config editor",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/config/wizard_domain.py",
+        "python/envctl_engine/config/command_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/config/test_config_wizard_domain.py",
+        "tests/python/config/test_config_command_support.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Wizard/headless config flows are Python-owned and well covered by config tests.",
+      "command": "config"
+    },
+    {
+      "id": "F-006",
+      "area": "inspection",
+      "feature": "Command: render the interactive dashboard and command loop",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/ui/dashboard/orchestrator.py",
+        "python/envctl_engine/ui/command_loop.py"
+      ],
+      "evidence_tests": [
+        "tests/python/ui/test_terminal_ui_dashboard_loop.py",
+        "tests/python/ui/test_dashboard_rendering_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python dashboard rendering and command-loop behavior are covered by dashboard rendering and terminal UI tests.",
+      "command": "dashboard",
+      "current_behavior": "Python dashboard is the default and heavily tested, but shell-era UX expectations still influence some interaction and presentation decisions.",
+      "missing_python_behavior": "Codify the remaining operator-facing dashboard behaviors that still rely on historical shell expectations and prove them in focused UI/runtime tests.",
+      "python_owner_module": "python/envctl_engine/ui/dashboard/orchestrator.py",
+      "proposed_tests": [
+        "tests/python/ui/test_terminal_ui_dashboard_loop.py",
+        "tests/python/ui/test_dashboard_rendering_parity.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Small dashboard regressions are highly visible to operators even when core runtime behavior is correct.",
+      "wave": "Wave E"
+    },
+    {
+      "id": "F-007",
+      "area": "diagnostics",
+      "feature": "Command: inspect the latest generated debug bundle",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/debug/debug_bundle_support.py",
+        "python/envctl_engine/runtime/engine_runtime_debug_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_debug_support.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Debug-last is Python-owned and covered by diagnostics tests.",
+      "command": "debug-last"
+    },
+    {
+      "id": "F-008",
+      "area": "diagnostics",
+      "feature": "Command: create a debug bundle pack from the Python runtime",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/debug/debug_bundle.py",
+        "python/envctl_engine/runtime/engine_runtime_debug_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_debug_support.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Debug-pack is intentionally Python-only and covered as part of the supported runtime diagnostics path.",
+      "command": "debug-pack"
+    },
+    {
+      "id": "F-009",
+      "area": "diagnostics",
+      "feature": "Command: render the last generated debug report",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/debug/debug_bundle_support.py",
+        "python/envctl_engine/runtime/engine_runtime_debug_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_debug_support.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Debug-report is part of the Python-only diagnostics path.",
+      "command": "debug-report"
+    },
+    {
+      "id": "F-010",
+      "area": "planning",
+      "feature": "Command: delete selected worktree directories after scoped cleanup",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/action_worktree_runner.py",
+        "python/envctl_engine/planning/worktree_domain.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_action_worktree_runner.py",
+        "tests/python/planning/test_planning_worktree_setup.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Delete-worktree flows are Python-owned and exercised by action/planning tests.",
+      "command": "delete-worktree"
+    },
+    {
+      "id": "F-011",
+      "area": "diagnostics",
+      "feature": "Command: print readiness and runtime diagnostics",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/debug/doctor_orchestrator.py",
+        "python/envctl_engine/runtime/engine_runtime.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_command_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Doctor is Python-owned and explicitly covered by runtime command parity tests.",
+      "command": "doctor",
+      "current_behavior": "Python doctor reports runtime readiness, parity, state health, and recent failure diagnostics without shell migration fields.",
+      "missing_python_behavior": "Keep the doctor output contract focused on runtime readiness and state diagnostics, then cover those fields explicitly in Python tests.",
+      "python_owner_module": "python/envctl_engine/debug/doctor_orchestrator.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_engine_runtime_command_parity.py"
+      ],
+      "severity": "low",
+      "rollout_risk": "Doctor output drift is mostly a diagnostics/readiness concern, but it can confuse operators during cutover.",
+      "wave": "Wave E"
+    },
+    {
+      "id": "F-012",
+      "area": "inspection",
+      "feature": "Command: print current error diagnostics for the latest run",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/runtime/engine_runtime_service_truth.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_runtime_health_truth.py",
+        "tests/python/runtime/test_engine_runtime_dashboard_truth.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Error reporting is covered by runtime truth and dashboard tests.",
+      "command": "errors"
+    },
+    {
+      "id": "F-013",
+      "area": "inspection",
+      "feature": "Command: explain startup selection and gating without starting services",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/runtime/engine_runtime_env.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_env.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Explain-startup is Python-owned and verified through env/runtime tests.",
+      "command": "explain-startup"
+    },
+    {
+      "id": "F-014",
+      "area": "inspection",
+      "feature": "Command: print current health for services and requirements",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/runtime/engine_runtime_service_truth.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_runtime_health_truth.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Health reporting is Python-owned and exercised by runtime truth tests.",
+      "command": "health"
+    },
+    {
+      "id": "F-015",
+      "area": "cli",
+      "feature": "Command: print runtime help and usage guidance",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/cli.py",
+        "python/envctl_engine/runtime/command_router.py",
+        "python/envctl_engine/runtime/launcher_cli.py",
+        "python/envctl_engine/runtime/launcher_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_cli_router.py",
+        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_command_exit_codes.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Help and usage guidance are now owned by Python for both the installed CLI and the top-level launcher wrapper.",
+      "command": "help",
+      "current_behavior": "Users can get help successfully, but top-level launcher usage and shell-backed help text still contribute to the final behavior.",
+      "missing_python_behavior": "Make Python the unambiguous source of help/usage semantics while preserving the current user-visible content and examples.",
+      "python_owner_module": "python/envctl_engine/runtime/cli.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_cli_router.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Help text drift creates immediate confusion for installation and first-run workflows.",
+      "wave": "Wave A"
+    },
+    {
+      "id": "F-016",
+      "area": "cli",
+      "feature": "Command: print the supported command inventory",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_command_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "List-commands is explicitly parity-tested against the shell inventory.",
+      "command": "list-commands"
+    },
+    {
+      "id": "F-017",
+      "area": "cli",
+      "feature": "Command: print available project and service targets",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_real_startup.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "List-targets is Python-owned and tested through runtime discovery paths.",
+      "command": "list-targets"
+    },
+    {
+      "id": "F-018",
+      "area": "cli",
+      "feature": "Command: print available tree targets",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_command_router_contract.py",
+        "tests/python/runtime/test_engine_runtime_command_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "List-trees is Python-owned and covered by router/runtime tests.",
+      "command": "list-trees"
+    },
+    {
+      "id": "F-019",
+      "area": "inspection",
+      "feature": "Command: tail or follow logs for selected services",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/state/action_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_logs_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Logs/follow behavior is covered by runtime parity tests and BATS.",
+      "command": "logs"
+    },
+    {
+      "id": "F-020",
+      "area": "actions",
+      "feature": "Command: run project migration actions on selected targets",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/project_action_domain.py",
+        "python/envctl_engine/actions/actions_analysis.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python migrate dispatch and output semantics are covered by action parity tests.",
+      "command": "migrate",
+      "current_behavior": "Python migrate dispatch works, but behavior and output expectations are still inherited from legacy helper conventions.",
+      "missing_python_behavior": "Lock down migrate target semantics, output reporting, and helper fallback behavior in Python tests and ownership docs.",
+      "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
+      "proposed_tests": [
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Migration actions may remain brittle in mixed helper/native setups without a fully Python-owned contract.",
+      "wave": "Wave D"
+    },
+    {
+      "id": "F-021",
+      "area": "cli",
+      "feature": "Command: migrate legacy shell hook functions into a Python .envctl_hooks.py module",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/shared/hooks.py",
+        "python/envctl_engine/runtime/hook_migration_support.py",
+        "python/envctl_engine/runtime/engine_runtime.py"
+      ],
+      "evidence_tests": [
+        "tests/python/startup/test_hooks_bridge.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Hook migration is Python-owned and provides an explicit path away from executable shell hooks.",
+      "command": "migrate-hooks"
+    },
+    {
+      "id": "F-022",
+      "area": "planning",
+      "feature": "Command: create or sync planning-driven worktrees and start or attach to the selected environment",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/planning/worktree_domain.py",
+        "python/envctl_engine/startup/startup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/runtime/test_engine_runtime_real_startup.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Plan creation, sync, scale-down, and disabled-run dashboard flows are implemented in Python.",
+      "command": "plan"
+    },
+    {
+      "id": "F-023",
+      "area": "actions",
+      "feature": "Command: create pull requests for selected projects",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/project_action_domain.py",
+        "python/envctl_engine/actions/actions_git.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python PR action flows are covered by CLI/action parity tests across native and helper-backed paths.",
+      "command": "pr",
+      "current_behavior": "Python PR creation supports helper and gh-backed paths, but legacy helper assumptions still shape the contract.",
+      "missing_python_behavior": "Finish defining the PR action contract so Python behavior is the source of truth for helper execution, output, and failure handling.",
+      "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
+      "proposed_tests": [
+        "tests/python/actions/test_actions_cli.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "PR workflows may still depend on helper-specific assumptions that are not fully captured in Python tests.",
+      "wave": "Wave D"
+    },
+    {
+      "id": "F-024",
+      "area": "lifecycle",
+      "feature": "Command: restart selected services or projects without losing the current run context",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/startup/startup_orchestrator.py",
+        "python/envctl_engine/ui/dashboard/orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_lifecycle_parity.py",
+        "tests/python/startup/test_startup_spinner_integration.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Restart orchestration and selector behavior are covered in runtime and UI suites.",
+      "command": "restart"
+    },
+    {
+      "id": "F-025",
+      "area": "lifecycle",
+      "feature": "Command: resume the last saved run state for the selected mode",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/startup/resume_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/state/test_state_roundtrip.py",
+        "tests/python/runtime/test_lifecycle_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python resume is the current default path and is exercised by state/lifecycle tests.",
+      "command": "resume"
+    },
+    {
+      "id": "F-026",
+      "area": "actions",
+      "feature": "Command: generate a merge/readiness review bundle for selected projects",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/project_action_domain.py",
+        "python/envctl_engine/state/repository.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python review now owns runtime-scoped artifacts, retained files, and output presentation, with CLI/parity coverage.",
+      "command": "review",
+      "current_behavior": "Python review produces runtime-scoped artifacts and improved output, but helper-backed review behavior is still anchored to the legacy analysis helper contract.",
+      "missing_python_behavior": "Define and prove a stable Python-owned review contract for helper output, retained files, and output semantics so shell helper behavior is no longer the oracle.",
+      "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
+      "proposed_tests": [
+        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Review output and retained artifacts can still drift if helper behavior changes independently of Python expectations.",
+      "wave": "Wave D"
+    },
+    {
+      "id": "F-027",
+      "area": "inspection",
+      "feature": "Command: print the effective local configuration",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/config/persistence.py"
+      ],
+      "evidence_tests": [
+        "tests/python/config/test_config_persistence.py",
+        "tests/python/runtime/test_command_dispatch_matrix.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Config inspection is Python-owned and validated by config/runtime tests.",
+      "command": "show-config"
+    },
+    {
+      "id": "F-028",
+      "area": "inspection",
+      "feature": "Command: print the latest saved runtime state",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/inspection_support.py",
+        "python/envctl_engine/state/repository.py"
+      ],
+      "evidence_tests": [
+        "tests/python/state/test_state_repository_contract.py",
+        "tests/python/runtime/test_command_dispatch_matrix.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Show-state is backed by the scoped state repository and covered by state/runtime tests.",
+      "command": "show-state"
+    },
+    {
+      "id": "F-029",
+      "area": "lifecycle",
+      "feature": "Command: start main or tree services for the selected mode",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/startup/startup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_real_startup.py",
+        "tests/python/runtime/test_lifecycle_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Core startup flows are owned by Python and covered by runtime/lifecycle parity tests.",
+      "command": "start"
+    },
+    {
+      "id": "F-030",
+      "area": "lifecycle",
+      "feature": "Command: stop selected services or projects",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_lifecycle_parity.py",
+        "tests/python/runtime/test_lifecycle_cleanup_spinner_integration.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Targeted stop flows are covered by lifecycle parity and cleanup integration tests.",
+      "command": "stop"
+    },
+    {
+      "id": "F-031",
+      "area": "lifecycle",
+      "feature": "Command: stop all managed services for the current runtime scope",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/engine_runtime.py",
+        "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_lifecycle_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python stop-all is covered by runtime parity and end-to-end tests.",
+      "command": "stop-all"
+    },
+    {
+      "id": "F-032",
+      "area": "actions",
+      "feature": "Command: run tests for selected projects and service scopes",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/actions/action_test_runner.py",
+        "python/envctl_engine/actions/action_command_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/actions/test_actions_parity.py",
+        "tests/python/actions/test_action_spinner_integration.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Python test execution, progress reporting, and failure summarization are covered by action and streaming fallback tests.",
+      "command": "test",
+      "current_behavior": "Python test execution works across native and helper-backed paths, but the shell runtime still embodies older test-runner edge semantics.",
+      "missing_python_behavior": "Stabilize target selection, helper integration, streaming/progress output, and failure summarization so shell is no longer needed as the fallback oracle.",
+      "python_owner_module": "python/envctl_engine/actions/action_test_runner.py",
+      "proposed_tests": [
+        "tests/python/actions/test_actions_parity.py",
+        "tests/python/test_output/test_test_runner_streaming_fallback.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Users could see confusing test selection or incomplete error propagation in interactive flows.",
+      "wave": "Wave D"
+    },
+    {
+      "id": "F-033",
+      "area": "launcher",
+      "feature": "Top-level envctl launcher resolves repo root, honors --repo, and forwards commands into the runtime",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/launcher_cli.py",
+        "python/envctl_engine/runtime/launcher_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_command_exit_codes.py",
+        "tests/python/runtime/test_cli_packaging.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "The top-level launcher now delegates repo resolution, doctor, and forwarding behavior through the Python launcher module.",
+      "current_behavior": "The shell launcher owns repo-root resolution and command forwarding before the Python runtime starts.",
+      "missing_python_behavior": "Decide whether repo resolution should remain a launcher concern or move into Python, and then prove the chosen contract independently of shell behavior.",
+      "python_owner_module": "python/envctl_engine/runtime/cli.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_command_exit_codes.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Launcher regressions can make envctl unusable before Python runtime logic even begins.",
+      "wave": "Wave A"
+    },
+    {
+      "id": "F-034",
+      "area": "launcher",
+      "feature": "envctl install writes a shell-file hook block that exposes envctl on PATH",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/launcher_cli.py",
+        "python/envctl_engine/runtime/launcher_support.py",
+        "python/envctl_engine/runtime/cli.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_command_exit_codes.py",
+        "tests/python/runtime/test_cli_packaging.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Install is now implemented and tested in Python for both the installed CLI and the top-level launcher wrapper.",
+      "current_behavior": "Install is implemented entirely in shell wrapper/installer code and remains outside Python runtime ownership.",
+      "missing_python_behavior": "Define the long-term ownership model for install behavior and prove it with stable tests that do not assume shell runtime semantics.",
+      "python_owner_module": "python/envctl_engine/runtime/cli.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_command_exit_codes.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Install regressions directly affect package adoption and first-run UX.",
+      "wave": "Wave A"
+    },
+    {
+      "id": "F-035",
+      "area": "launcher",
+      "feature": "envctl uninstall removes the shell-file hook block cleanly and idempotently",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/launcher_cli.py",
+        "python/envctl_engine/runtime/launcher_support.py",
+        "python/envctl_engine/runtime/cli.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_command_exit_codes.py",
+        "tests/python/runtime/test_cli_packaging.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Uninstall is now implemented and tested in Python for both the installed CLI and the top-level launcher wrapper.",
+      "current_behavior": "Uninstall is implemented by the shell installer path and has no Python-owned equivalent.",
+      "missing_python_behavior": "Capture uninstall semantics as an explicit contract and prove idempotent removal behavior independent of shell runtime assumptions.",
+      "python_owner_module": "python/envctl_engine/runtime/cli.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_command_exit_codes.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Uninstall drift is less severe than install drift but still affects trust in the package workflow.",
+      "wave": "Wave A"
+    },
+    {
+      "id": "F-036",
+      "area": "cli",
+      "feature": "Python command parser remains aligned with the supported public command and flag surface",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_cli_router_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Parser compatibility is now enforced against the Python-owned public command and documentation surface."
+    },
+    {
+      "id": "F-037",
+      "area": "planning",
+      "feature": "Interactive planning selection and count synchronization preserve existing runs while adding or removing trees",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/planning/worktree_domain.py",
+        "python/envctl_engine/startup/startup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/planning/test_planning_textual_selector.py",
+        "tests/python/runtime/test_engine_runtime_real_startup.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Planning add/remove/zero-scale synchronization, existing-run reuse, and archive behavior are covered by planning and real-startup tests.",
+      "current_behavior": "Python plan selection handles scale-up/down and existing-run reuse, but these flows are still among the most behaviorally rich parts of the old shell runtime.",
+      "missing_python_behavior": "Exhaustively prove plan selection, run reuse, and interactive handoff semantics across add/remove/zero-scale transitions so shell is no longer needed as a behavior oracle.",
+      "python_owner_module": "python/envctl_engine/planning/worktree_domain.py",
+      "proposed_tests": [
+        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/runtime/test_engine_runtime_real_startup.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Plan-selection regressions create high user confusion because they can restart, remove, or preserve the wrong trees.",
+      "wave": "Wave B"
+    },
+    {
+      "id": "F-038",
+      "area": "planning",
+      "feature": "Worktree setup flags reuse, recreate, and include-existing-worktrees behave consistently across planning workflows",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/planning/worktree_domain.py",
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/runtime/test_engine_runtime_real_startup.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Setup-worktree reuse, recreate, and include-existing flag behavior is covered by planning/runtime tests and the setup-worktree BATS lane.",
+      "current_behavior": "Setup-worktree and include-existing-worktrees flags are present, but parity evidence is still mostly external and shell-era.",
+      "missing_python_behavior": "Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
+      "python_owner_module": "python/envctl_engine/planning/worktree_domain.py",
+      "proposed_tests": [
+        "tests/python/planning/test_planning_worktree_setup.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Worktree setup flags can be destructive, so parity gaps here risk accidental reuse or recreation of the wrong tree.",
+      "wave": "Wave B"
+    },
+    {
+      "id": "F-039",
+      "area": "requirements",
+      "feature": "Dependency startup and cleanup remain symmetric for postgres, redis, supabase, and n8n across startup, stop, blast, and planning scale-down",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/requirements/orchestrator.py",
+        "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
+        "tests/python/requirements/test_requirements_orchestrator.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Dependency startup and cleanup symmetry is covered by runtime lifecycle, requirements orchestrator, and adapter parity tests.",
+      "current_behavior": "Python requirement startup works, but the shell stack still represents the older complete behavior for cleanup symmetry across dependency families.",
+      "missing_python_behavior": "Prove symmetric startup/cleanup behavior for every dependency family across startup, restart, blast-all, blast-worktree, and planning scale-down.",
+      "python_owner_module": "python/envctl_engine/requirements/orchestrator.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
+        "tests/python/requirements/test_requirements_orchestrator.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Lifecycle asymmetry leaves dependency resources behind and is one of the fastest ways to make future runs unreliable.",
+      "wave": "Wave C"
+    },
+    {
+      "id": "F-040",
+      "area": "requirements",
+      "feature": "Supabase lifecycle, project naming, and container cleanup remain stable for long project names and repeated plan cycles",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/requirements/supabase.py",
+        "python/envctl_engine/requirements/common.py"
+      ],
+      "evidence_tests": [
+        "tests/python/requirements/test_supabase_requirements_reliability.py",
+        "tests/python/requirements/test_requirements_common.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Supabase naming, cleanup, and repeated lifecycle behavior are covered by dedicated reliability and lifecycle tests.",
+      "current_behavior": "Python Supabase support is real and tested, but legacy shell behavior is still the broader historical reference for repeated cleanup and naming edge cases.",
+      "missing_python_behavior": "Fully prove long-name naming, stale-container cleanup, and repeated lifecycle behavior without needing shell as the fallback oracle.",
+      "python_owner_module": "python/envctl_engine/requirements/supabase.py",
+      "proposed_tests": [
+        "tests/python/requirements/test_supabase_requirements_reliability.py",
+        "tests/python/runtime/test_engine_runtime_lifecycle_support.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Supabase cleanup and naming bugs directly block startup and are expensive for users to diagnose manually.",
+      "wave": "Wave C"
+    },
+    {
+      "id": "F-041",
+      "area": "requirements",
+      "feature": "Seed or copy-db-storage behavior for per-tree requirements remains consistent with existing workflows",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/requirements/supabase.py",
+        "python/envctl_engine/runtime/command_router.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_engine_runtime_real_startup.py",
+        "tests/python/requirements/test_requirements_orchestrator.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Seed and copy-db-storage behavior is covered by runtime startup/requirements tests and the adapter parity BATS lane.",
+      "current_behavior": "Seed/copy-db flags still carry shell-era expectations and are not yet expressed as a full Python-owned contract.",
+      "missing_python_behavior": "Define the exact retained seeding behavior and cover it with Python and end-to-end tests so the feature is no longer implicitly shell-defined.",
+      "python_owner_module": "python/envctl_engine/requirements/supabase.py",
+      "proposed_tests": [
+        "tests/python/requirements/test_requirements_orchestrator.py"
+      ],
+      "severity": "high",
+      "rollout_risk": "Incorrect seeding semantics can corrupt developer expectations and destroy trust in tree isolation.",
+      "wave": "Wave C"
+    },
+    {
+      "id": "F-042",
+      "area": "artifacts",
+      "feature": "Run state, runtime map, ports manifest, and error report remain the authoritative per-run artifact set",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/state/repository.py",
+        "python/envctl_engine/runtime/engine_runtime_artifacts.py"
+      ],
+      "evidence_tests": [
+        "tests/python/state/test_state_repository_contract.py",
+        "tests/python/runtime/test_engine_runtime_artifacts.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Core runtime artifacts are already Python-owned and well covered."
+    },
+    {
+      "id": "F-043",
+      "area": "artifacts",
+      "feature": "Test results and review artifacts live under the scoped runtime /tmp tree and retain valid dashboard links",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/state/repository.py",
+        "python/envctl_engine/actions/project_action_domain.py"
+      ],
+      "evidence_tests": [
+        "tests/python/state/test_state_repository_contract.py",
+        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Artifact relocation into runtime scope is Python-owned and covered by focused tests."
+    },
+    {
+      "id": "F-044",
+      "area": "artifacts",
+      "feature": "Artifact retention and cleanup remain correct across stop, blast, resume, and plan scale-down flows",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/state/repository.py",
+        "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/state/test_state_repository_contract.py",
+        "tests/python/runtime/test_lifecycle_parity.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Artifact retention and cleanup semantics are covered by state repository and lifecycle parity tests.",
+      "current_behavior": "Python artifacts are scoped correctly, but retention and cleanup semantics across all lifecycle transitions are not yet expressed as a full parity contract.",
+      "missing_python_behavior": "Codify artifact retention expectations for stop, blast, resume, and plan scale-down, then cover them with focused repository and lifecycle tests.",
+      "python_owner_module": "python/envctl_engine/state/repository.py",
+      "proposed_tests": [
+        "tests/python/state/test_state_repository_contract.py",
+        "tests/python/runtime/test_lifecycle_parity.py"
+      ],
+      "severity": "medium",
+      "rollout_risk": "Artifact cleanup regressions can leave stale state that confuses later runs and operator debugging.",
+      "wave": "Wave E"
+    },
+    {
+      "id": "F-045",
+      "area": "diagnostics",
+      "feature": "Release or shipability checks reflect the retained product contract instead of historical shell migration governance",
+      "user_visible": false,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/shell/release_gate.py",
+        "python/envctl_engine/debug/doctor_orchestrator.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_release_shipability_gate.py",
+        "tests/python/runtime/test_cutover_gate_truth.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Release and cutover gate behavior is Python-owned and covered by release gate and cutover truth tests.",
+      "current_behavior": "Release and doctor readiness checks now use the Python runtime readiness contract and parity manifest as their source of truth.",
+      "missing_python_behavior": "Keep the release gate aligned with runtime readiness and parity freshness, then cover the retained contract directly in Python tests.",
+      "python_owner_module": "python/envctl_engine/shell/release_gate.py",
+      "proposed_tests": [
+        "tests/python/runtime/test_release_shipability_gate.py",
+        "tests/python/runtime/test_cutover_gate_truth.py"
+      ],
+      "severity": "low",
+      "rollout_risk": "This is mainly a developer-workflow risk, but confusing gates slow down confident cutover decisions.",
+      "wave": "Wave E"
+    }
+  ]
+}

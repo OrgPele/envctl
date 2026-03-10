@@ -12,6 +12,7 @@ from envctl_engine.runtime.command_router import Route, RouteError, parse_route
 from envctl_engine.config import EngineConfig, discover_local_config_state, load_config
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
+from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.engine_runtime import dispatch_route
 
 
@@ -76,6 +77,7 @@ def run(
 ) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     env_map = dict(os.environ if env is None else env)
+    custom_dispatcher = dispatcher is not None
     use_shell_runner = shell_runner is not None and dispatcher is None
     dispatcher = dispatcher or (lambda route, config: dispatch_route(route, config, env=env_map))
 
@@ -83,13 +85,16 @@ def run(
         try:
             argv, repo_arg = _extract_repo_arg(argv)
             if argv and argv[0] in {"install", "uninstall"}:
-                print(
-                    "The installed envctl command does not edit your shell PATH. "
-                    "Use 'python -m pip install .', 'python -m pip uninstall envctl', or 'pipx uninstall envctl'. "
-                    "The repo-clone compatibility flow remains available via './bin/envctl install'.",
-                    file=sys.stderr,
-                )
-                return 1
+                try:
+                    options = parse_install_options(list(argv[1:]), env=env_map)
+                except LauncherError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
+                bin_dir = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path(sys.executable).resolve().parent
+                rendered = install_or_uninstall(mode=argv[0], options=options, bin_dir=bin_dir)
+                if rendered:
+                    print(rendered, end="")
+                return 0
             base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
             if "RUN_REPO_ROOT" not in env_map and _is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
@@ -133,6 +138,7 @@ def run(
             "list-commands",
             "list-targets",
             "list-trees",
+            "migrate-hooks",
             "show-config",
             "show-state",
             "explain-startup",
@@ -142,7 +148,8 @@ def run(
             except KeyboardInterrupt:
                 return 2
 
-        if route.command in {"start", "plan", "restart"}:
+        skip_prereq_check = custom_dispatcher and route.command == "plan"
+        if route.command in {"start", "plan", "restart"} and not skip_prereq_check:
             ok, reason = check_prereqs(route, config)
             if not ok:
                 print(reason, file=sys.stderr)
@@ -193,6 +200,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "list-trees",
         "logs",
         "migrate",
+        "migrate-hooks",
         "plan",
         "pr",
         "resume",

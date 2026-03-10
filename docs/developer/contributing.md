@@ -2,10 +2,10 @@
 
 Contributions are welcome.
 
-This repository is currently Python-first at runtime, with a deprecated Bash/shell fallback still present for compatibility and cutover work. Most behavior changes therefore need two checks:
+This repository is Python-first at runtime. Most behavior changes therefore need two checks:
 
 - is the Python runtime contract correct and documented?
-- did the change accidentally break a shell-compatibility promise that still exists?
+- did the change accidentally break the supported Python runtime contract?
 
 ## Workflow
 1. Create a branch from `main`.
@@ -20,7 +20,7 @@ python3.12 -m venv .venv
 4. Run validation locally:
 
 ```bash
-bats tests/bats/*.bats
+.venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
 ```
 
 5. For Python engine changes, run Python unit tests:
@@ -60,5 +60,5 @@ For Python runtime behavior changes, check whether these docs also need updates:
 - `docs/developer/runtime-lifecycle.md`
 - `docs/developer/state-and-artifacts.md`
 - `docs/developer/debug-and-diagnostics.md`
-- `docs/developer/shell-compatibility.md`
+- `docs/developer/python-runtime-guide.md`
 - `docs/developer/testing-and-validation.md`

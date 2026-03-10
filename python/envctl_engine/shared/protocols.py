@@ -65,7 +65,7 @@ class StateRepository(Protocol):
         events: list[dict[str, object]],
         emit: Callable[..., None],
         runtime_map_builder: Callable[[RunState], dict[str, object]],
-        write_shell_prune_report: Callable[[Path], None] | None = None,
+        write_runtime_readiness_report: Callable[[Path], None] | None = None,
     ) -> object: ...
 
     def save_resume_state(

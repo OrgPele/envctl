@@ -83,7 +83,7 @@ class RuntimeStateRepository:
         events: list[dict[str, object]],
         emit: Callable[..., None],
         runtime_map_builder: Callable[[RunState], dict[str, object]],
-        write_shell_prune_report: Callable[[Path], None] | None = None,
+        write_runtime_readiness_report: Callable[[Path], None] | None = None,
     ) -> StateRepositoryPaths:
         run_dir = self.run_dir_path(state.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -126,8 +126,8 @@ class RuntimeStateRepository:
         events_text = events_path.read_text(encoding="utf-8")
         (self.runtime_root / "events.jsonl").write_text(events_text, encoding="utf-8")
 
-        if write_shell_prune_report is not None:
-            write_shell_prune_report(run_dir)
+        if write_runtime_readiness_report is not None:
+            write_runtime_readiness_report(run_dir)
 
         self._write_scoped_pointers(run_state_path=run_state_path, state=state, contexts=contexts)
 
@@ -179,54 +179,46 @@ class RuntimeStateRepository:
                     return False
                 return self._state_matches_scope(candidate)
 
-            state_path = self.run_state_path()
-            if state_path.is_file():
-                candidate = load_state(str(state_path), allowed_root=allowed_root)
-                if candidate_matches(candidate):
-                    return candidate
+            candidate = self._load_state_file_candidate(self.run_state_path(), allowed_root=allowed_root)
+            if candidate is not None and candidate_matches(candidate):
+                return candidate
 
-            legacy_path = self.runtime_root / "run_state.state"
-            if legacy_path.is_file():
-                candidate = load_legacy_shell_state(str(legacy_path), allowed_root=allowed_root)
-                if candidate_matches(candidate):
-                    return candidate
+            candidate = self._load_legacy_shell_candidate(self.runtime_root / "run_state.state", allowed_root=allowed_root)
+            if candidate is not None and candidate_matches(candidate):
+                return candidate
 
-            for pointer in self._ordered_scoped_pointers(mode=expected_mode):
-                try:
-                    candidate = load_state_from_pointer(str(pointer), allowed_root=allowed_root)
-                except Exception:
-                    continue
-                if candidate_matches(candidate):
-                    return candidate
+            candidate = self._load_pointer_candidates(
+                self._ordered_scoped_pointers(mode=expected_mode),
+                allowed_root=allowed_root,
+                predicate=candidate_matches,
+            )
+            if candidate is not None:
+                return candidate
 
             if self.compat_mode == self.SCOPED_ONLY:
                 return None
 
-            legacy_state_path = self.runtime_legacy_root / "run_state.json"
-            if legacy_state_path.is_file():
-                try:
-                    candidate = load_state(str(legacy_state_path), allowed_root=allowed_root)
-                    if candidate_matches(candidate):
-                        return candidate
-                except Exception:
-                    pass
+            candidate = self._load_state_file_candidate(
+                self.runtime_legacy_root / "run_state.json",
+                allowed_root=allowed_root,
+            )
+            if candidate is not None and candidate_matches(candidate):
+                return candidate
 
-            legacy_shell_path = self.runtime_legacy_root / "run_state.state"
-            if legacy_shell_path.is_file():
-                try:
-                    candidate = load_legacy_shell_state(str(legacy_shell_path), allowed_root=allowed_root)
-                    if candidate_matches(candidate):
-                        return candidate
-                except Exception:
-                    pass
+            candidate = self._load_legacy_shell_candidate(
+                self.runtime_legacy_root / "run_state.state",
+                allowed_root=allowed_root,
+            )
+            if candidate is not None and candidate_matches(candidate):
+                return candidate
 
-            for pointer in self._ordered_legacy_pointers(mode=expected_mode):
-                try:
-                    candidate = load_state_from_pointer(str(pointer), allowed_root=allowed_root)
-                    if candidate_matches(candidate):
-                        return candidate
-                except Exception:
-                    continue
+            candidate = self._load_pointer_candidates(
+                self._ordered_legacy_pointers(mode=expected_mode),
+                allowed_root=allowed_root,
+                predicate=candidate_matches,
+            )
+            if candidate is not None:
+                return candidate
             return None
 
         matched = load_for_mode(mode)
@@ -285,6 +277,38 @@ class RuntimeStateRepository:
     def load_by_pointer(self, pointer_path: str) -> RunState:
         return load_state_from_pointer(pointer_path, allowed_root=str(self.runtime_dir))
 
+    def _load_state_file_candidate(self, path: Path, *, allowed_root: str) -> RunState | None:
+        if not path.is_file():
+            return None
+        try:
+            return load_state(str(path), allowed_root=allowed_root)
+        except Exception:
+            return None
+
+    def _load_legacy_shell_candidate(self, path: Path, *, allowed_root: str) -> RunState | None:
+        if not path.is_file():
+            return None
+        try:
+            return load_legacy_shell_state(str(path), allowed_root=allowed_root)
+        except Exception:
+            return None
+
+    def _load_pointer_candidates(
+        self,
+        pointers: list[Path],
+        *,
+        allowed_root: str,
+        predicate: Callable[[RunState], bool],
+    ) -> RunState | None:
+        for pointer in pointers:
+            try:
+                candidate = load_state_from_pointer(str(pointer), allowed_root=allowed_root)
+            except Exception:
+                continue
+            if predicate(candidate):
+                return candidate
+        return None
+
     def purge(self, *, aggressive: bool = False) -> None:
         scoped_paths = (
             self.run_state_path(),
@@ -292,8 +316,7 @@ class RuntimeStateRepository:
             self.ports_manifest_path(),
             self.error_report_path(),
             self.runtime_root / "events.jsonl",
-            self.runtime_root / "shell_ownership_snapshot.json",
-            self.runtime_root / "shell_prune_report.json",
+            self.runtime_root / "runtime_readiness_report.json",
             self.runtime_root / ".last_state",
             self.runtime_root / ".last_state.main",
         )
@@ -309,8 +332,7 @@ class RuntimeStateRepository:
                 self.runtime_legacy_root / "ports_manifest.json",
                 self.runtime_legacy_root / "error_report.json",
                 self.runtime_legacy_root / "events.jsonl",
-                self.runtime_legacy_root / "shell_ownership_snapshot.json",
-                self.runtime_legacy_root / "shell_prune_report.json",
+                self.runtime_legacy_root / "runtime_readiness_report.json",
                 self.runtime_legacy_root / ".last_state",
                 self.runtime_legacy_root / ".last_state.main",
             )

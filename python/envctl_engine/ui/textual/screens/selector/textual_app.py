@@ -37,6 +37,7 @@ def create_selector_app(
     disable_focus_reporting: bool,
     mouse_enabled: bool,
     selector_id: str,
+    initial_navigation: tuple[str, ...] = (),
 ):
     status_error_timeout_seconds = 3.0
     from textual.app import App, ComposeResult
@@ -115,6 +116,8 @@ def create_selector_app(
                     Input=Input,
                     mouse_enabled=mouse_enabled,
                 )
+                if initial_navigation:
+                    self.call_after_refresh(self._apply_initial_navigation)
 
             def _list(self) -> ListView:
                 return self.query_one("#selector-list", ListView)
@@ -265,6 +268,16 @@ def create_selector_app(
             def _sync_confirm_state(self) -> None:
                 run_button = self.query_one("#btn-run", Button)
                 run_button.disabled = not bool(self._controller.index_map)
+
+            def _apply_initial_navigation(self) -> None:
+                if not initial_navigation:
+                    return
+                self.action_focus_list(reason="initial_navigation")
+                for action in initial_navigation:
+                    if action == "down":
+                        self.action_nav_down()
+                    elif action == "up":
+                        self.action_nav_up()
 
             def _focused_row(self) -> _RowRef | None:
                 return self._controller.focused_row(self._list().index)

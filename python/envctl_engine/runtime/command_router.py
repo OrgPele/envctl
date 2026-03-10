@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from .command_policy import apply_command_policy, apply_mode_token
+
 
 class RouteError(ValueError):
     """Raised when CLI route parsing fails."""
@@ -303,6 +305,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("migration", "migrate"),
     ("migrations", "migrate"),
     ("m", "migrate"),
+    ("migrate-hooks", "migrate-hooks"),
+    ("--migrate-hooks", "migrate-hooks"),
     ("dash", "dashboard"),
     ("d", "doctor"),
     ("r", "restart"),
@@ -335,6 +339,7 @@ SUPPORTED_COMMANDS = sorted(
         "commit",
         "review",
         "migrate",
+        "migrate-hooks",
         "list-commands",
         "list-targets",
         "list-trees",
@@ -496,16 +501,7 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         
         # Mode resolution with precedence
         if token_type == "mode":
-            if token in MODE_TREE_TOKENS:
-                state.mode = "trees"
-            elif token in MODE_FORCE_TREES_TOKENS:
-                state.mode = "trees"
-            elif token in MODE_MAIN_TOKENS:
-                state.mode = "main"
-                state.flags["no_resume"] = True
-            elif token in MODE_FORCE_MAIN_TOKENS:
-                state.mode = "main"
-                state.flags["no_resume"] = True
+            state.mode = apply_mode_token(token, flags=state.flags, current_mode=state.mode)
             continue
         
         # Command resolution with precedence
@@ -514,35 +510,9 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
             if mapped:
                 state.command = mapped
                 state.command_explicit = True
-                if mapped == "plan":
-                    state.mode = "trees"
-                    if "sequential" in token:
-                        state.flags["sequential"] = True
-                        state.flags["parallel_trees"] = False
-                    if "parallel" in token:
-                        state.flags["parallel_trees"] = True
-                    if token == "--planning-prs":
-                        state.flags["planning_prs"] = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
             continue
         
         if token_type == "command_explicit":
@@ -553,26 +523,9 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
                 state.command = mapped
                 state.command_explicit = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
             continue
 
 
@@ -609,26 +562,9 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
                 state.command = mapped
                 state.command_explicit = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
                 i += 2
             else:
                 i += 1

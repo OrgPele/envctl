@@ -577,8 +577,6 @@ class LifecycleCleanupOrchestrator:
         orchestrator_tokens = (
             "envctl_engine.runtime.cli",
             "envctl_engine.runtime.cli",
-            "/lib/engine/main.sh",
-            " lib/engine/main.sh",
             "/bin/envctl",
             " bin/envctl",
         )
@@ -828,8 +826,9 @@ class LifecycleCleanupOrchestrator:
     @staticmethod
     def _state_repository(runtime: object) -> _StateRepositoryProtocol:
         runtime_context = getattr(runtime, "runtime_context", None)
-        fallback = getattr(runtime_context, "state_repository", None)
-        candidate = getattr(runtime, "state_repository", fallback)
+        candidate = getattr(runtime_context, "state_repository", None)
+        if candidate is None:
+            candidate = getattr(runtime, "state_repository", None)
         if candidate is None:
             raise RuntimeError("state repository dependency is not configured")
         return cast(_StateRepositoryProtocol, candidate)
@@ -837,8 +836,9 @@ class LifecycleCleanupOrchestrator:
     @staticmethod
     def _process_runtime(runtime: object) -> _ProcessRuntimeProtocol:
         runtime_context = getattr(runtime, "runtime_context", None)
-        fallback = getattr(runtime_context, "process_runtime", None)
-        candidate = getattr(runtime, "process_runner", fallback)
+        candidate = getattr(runtime_context, "process_runtime", None)
+        if candidate is None:
+            candidate = getattr(runtime, "process_runner", None)
         if candidate is None:
             raise RuntimeError("process runtime dependency is not configured")
         return cast(_ProcessRuntimeProtocol, candidate)

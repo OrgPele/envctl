@@ -74,6 +74,10 @@ class StartupOrchestrator:
         preserved_services: dict[str, Any] = {}
         preserved_requirements: dict[str, RequirementsResult] = {}
         initial_runtime_mode = rt._effective_start_mode(route)
+        hook_contract_issue = rt._startup_hook_contract_issue()
+        if hook_contract_issue:
+            print(hook_contract_issue)
+            return 1
         try:
             rt._validate_mode_toggles(initial_runtime_mode, route=route)
         except RuntimeError as exc:
@@ -210,11 +214,11 @@ class StartupOrchestrator:
             )
 
         budget_started = time.monotonic()
-        if not rt._enforce_runtime_shell_budget_profile(scope=requested_command):
-            emit_phase("shell_budget_gate", budget_started, status="blocked")
-            print("Startup blocked: strict cutover shell budget profile is incomplete.")
+        if not rt._enforce_runtime_readiness_contract(scope=requested_command):
+            emit_phase("runtime_readiness_gate", budget_started, status="blocked")
+            print("Startup blocked: strict runtime readiness gate is incomplete.")
             return 1
-        emit_phase("shell_budget_gate", budget_started, status="ok")
+        emit_phase("runtime_readiness_gate", budget_started, status="ok")
 
         run_id = rt._new_run_id()
         print(f"run_id: {run_id}")
@@ -648,7 +652,7 @@ class StartupOrchestrator:
                     "ports_manifest": str(failed_run_dir / "ports_manifest.json"),
                     "error_report": str(failed_run_dir / "error_report.json"),
                     "events": str(failed_run_dir / "events.jsonl"),
-                    "shell_prune_report": str(failed_run_dir / "shell_prune_report.json"),
+                    "runtime_readiness_report": str(failed_run_dir / "runtime_readiness_report.json"),
                 }
                 artifacts_started = time.monotonic()
                 rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
@@ -694,7 +698,7 @@ class StartupOrchestrator:
             "ports_manifest": str(run_dir / "ports_manifest.json"),
             "error_report": str(run_dir / "error_report.json"),
             "events": str(run_dir / "events.jsonl"),
-            "shell_prune_report": str(run_dir / "shell_prune_report.json"),
+            "runtime_readiness_report": str(run_dir / "runtime_readiness_report.json"),
         }
 
         if rt.config.runtime_truth_mode == "strict":
@@ -835,7 +839,7 @@ class StartupOrchestrator:
             "ports_manifest": str(run_dir / "ports_manifest.json"),
             "error_report": str(run_dir / "error_report.json"),
             "events": str(run_dir / "events.jsonl"),
-            "shell_prune_report": str(run_dir / "shell_prune_report.json"),
+            "runtime_readiness_report": str(run_dir / "runtime_readiness_report.json"),
         }
         return run_state
 

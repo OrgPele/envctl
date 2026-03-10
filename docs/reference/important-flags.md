@@ -19,7 +19,7 @@ These are the highest-value flags for daily use.
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
 Allowed values are `main` and `trees` (default: `main`).
-Engine note: Python runtime is default. `ENVCTL_ENGINE_SHELL_FALLBACK=true` still enables the deprecated legacy shell runtime as an explicit compatibility fallback.
+Engine note: Python runtime is the only supported runtime path.
 
 ## Targeting
 | Flag | Purpose |
@@ -80,12 +80,6 @@ Engine note: Python runtime is default. `ENVCTL_ENGINE_SHELL_FALLBACK=true` stil
 | `ENVCTL_UI_BACKEND=auto\|textual\|legacy\|non_interactive` | Select dashboard backend policy. `auto` currently stays on legacy by default. |
 | `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` | In `auto` mode, prefer the Textual dashboard when available. |
 | `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus. Default is the Textual plan-style selector; `planning_style` enables the prompt-toolkit rollback; `legacy` is a compatibility alias that still maps to the Textual selector. |
-
-## Cutover Gates
-| Flag | Purpose |
-| --- | --- |
-| `ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED` | Maximum unmigrated shell ledger entries allowed for shipability/doctor (default: `0`). |
-| `ENVCTL_SHELL_PRUNE_PHASE` | Phase label shown in shell prune reports (default: `cutover`). |
 
 ## Main Infra Source
 | Flag | Purpose |
