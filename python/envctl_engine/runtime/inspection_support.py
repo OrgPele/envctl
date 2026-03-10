@@ -112,6 +112,33 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         if local_state.legacy_source_path is not None
         else None,
         "effective": managed_values_to_payload(values),
+        "dependency_env_section_present": local_state.dependency_env_section_present,
+        "dependency_env_templates": [
+            {
+                "name": entry.name,
+                "template": entry.template,
+                "line_number": entry.line_number,
+            }
+            for entry in local_state.dependency_env_templates
+        ],
+        "backend_dependency_env_section_present": local_state.backend_dependency_env_section_present,
+        "backend_dependency_env_templates": [
+            {
+                "name": entry.name,
+                "template": entry.template,
+                "line_number": entry.line_number,
+            }
+            for entry in local_state.backend_dependency_env_templates
+        ],
+        "frontend_dependency_env_section_present": local_state.frontend_dependency_env_section_present,
+        "frontend_dependency_env_templates": [
+            {
+                "name": entry.name,
+                "template": entry.template,
+                "line_number": entry.line_number,
+            }
+            for entry in local_state.frontend_dependency_env_templates
+        ],
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))

@@ -40,6 +40,19 @@ def main() -> int:
     _reexec_supported_python()
     if str(PYTHON_ROOT) not in sys.path:
         sys.path.insert(0, str(PYTHON_ROOT))
+    from envctl_engine.runtime.launcher_support import find_shadowed_installed_envctl
+
+    if os.environ.get("ENVCTL_USE_REPO_WRAPPER") != "1":
+        alternate = find_shadowed_installed_envctl(Path(__file__).resolve())
+        if alternate is not None:
+            print(
+                (
+                    f"envctl repo wrapper at {Path(__file__).resolve()} is shadowing installed envctl at {alternate}; "
+                    "re-executing installed envctl. Set ENVCTL_USE_REPO_WRAPPER=1 to force the repo wrapper."
+                ),
+                file=sys.stderr,
+            )
+            os.execv(str(alternate), [str(alternate), *sys.argv[1:]])
     os.environ.setdefault("ENVCTL_ROOT_DIR", str(ROOT_DIR))
     from envctl_engine.runtime.launcher_cli import main as launcher_main
 

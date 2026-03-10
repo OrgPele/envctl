@@ -343,26 +343,6 @@ def _prepare_frontend_runtime(
     if backend_port > 0:
         backend_url = f"http://localhost:{backend_port}"
         api_url = f"{backend_url}/api/v1"
-        sync_started = time.monotonic()
-        if _sync_frontend_local_env_file(
-            frontend_cwd / ".env.local",
-            api_url=api_url,
-            backend_url=backend_url,
-        ):
-            self._emit(
-                "service.bootstrap",
-                project=context.name,
-                service="frontend",
-                manager="env",
-                step="sync_env_local",
-            )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="frontend",
-            phase="env_sync",
-            started=sync_started,
-        )
 
     package_json = frontend_cwd / "package.json"
     if not package_json.is_file():

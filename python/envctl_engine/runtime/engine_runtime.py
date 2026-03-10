@@ -122,6 +122,7 @@ from envctl_engine.runtime.engine_runtime_env import (
     effective_main_requirement_flags as runtime_effective_main_requirement_flags,
     main_requirements_mode as runtime_main_requirements_mode,
     project_service_env as runtime_project_service_env,
+    project_service_env_internal as runtime_project_service_env_internal,
     requirement_enabled_for_mode as runtime_requirement_enabled_for_mode,
     requirements_ready as runtime_requirements_ready,
     service_enabled_for_mode as runtime_service_enabled_for_mode,
@@ -1394,8 +1395,18 @@ class PythonEngineRuntime:
         *,
         requirements: RequirementsResult,
         route: Route | None = None,
+        service_name: str | None = None,
     ) -> dict[str, str]:
-        return runtime_project_service_env(self, context, requirements=requirements, route=route)
+        return runtime_project_service_env(self, context, requirements=requirements, route=route, service_name=service_name)
+
+    def _project_service_env_internal(
+        self,
+        context: ProjectContext,
+        *,
+        requirements: RequirementsResult,
+        route: Route | None = None,
+    ) -> dict[str, str]:
+        return runtime_project_service_env_internal(self, context, requirements=requirements, route=route)
 
     def _runtime_env_overrides(self, route: Route | None) -> dict[str, str]:
         return runtime_env_overrides(route)

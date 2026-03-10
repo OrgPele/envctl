@@ -63,8 +63,32 @@ TREES_REDIS_ENABLE=false
 TREES_SUPABASE_ENABLE=false
 TREES_N8N_ENABLE=false
 
+# ==========================================
+# Service launch env templates
+# ==========================================
+
+# Launch env templates for services started by envctl.
+# Backend goes only to the backend process. Frontend goes only to the frontend process.
+# `${ENVCTL_SOURCE_*}` values come from envctl-managed dependencies.
+# >>> envctl backend launch env >>>
+# Env injected into the backend process.
+DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
+REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
+N8N_URL=${ENVCTL_SOURCE_N8N_URL}  # n8n base URL; e.g. http://localhost:5678
+SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # Supabase base URL; e.g. http://localhost:54321
+SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}  # SQLAlchemy sync URL; e.g. postgresql+psycopg://user:pass@host:5432/dbname
+ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; e.g. postgresql+asyncpg://user:pass@host:5432/dbname
+# APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # extra backend alias example
+# <<< envctl backend launch env <<<
+
+# >>> envctl frontend launch env >>>
+# Env injected into the frontend process.
+# VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+# <<< envctl frontend launch env <<<
+
 # Notes:
 # - `.envctl` is the canonical repo-local config file.
-# - The interactive `envctl config` wizard writes these canonical managed keys.
+# - The interactive `envctl config` wizard writes the canonical managed keys above.
+# - All launch env template sections are user-owned and preserved as-is.
 # - If a mode has `*_STARTUP_ENABLE=false`, `start`, `resume`, and `restart`
 #   for that mode are blocked until you re-enable startup.

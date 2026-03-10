@@ -47,8 +47,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 32 commands
-        self.assertEqual(len(commands), 32, f"Expected 32 commands, got {len(commands)}")
+        # Verify we have exactly 33 commands
+        self.assertEqual(len(commands), 33, f"Expected 33 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -73,6 +73,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "commit",
             "review",
             "migrate",
+            "install-prompts",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -128,6 +129,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "commit": "action_command_orchestrator",
             "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
+            "install-prompts": "utility_dispatch",
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",
@@ -145,7 +147,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         for command, expected_handler in command_mappings.items():
             with self.subTest(command=command, handler=expected_handler):
                 # Verify the orchestrator/handler exists
-                if expected_handler != "direct_dispatch":
+                if expected_handler not in {"direct_dispatch", "utility_dispatch"}:
                     self.assertTrue(
                         hasattr(runtime, expected_handler), f"Runtime missing {expected_handler} for command {command}"
                     )

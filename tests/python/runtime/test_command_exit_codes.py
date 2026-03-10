@@ -219,6 +219,26 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
 
+    def test_install_prompts_skips_bootstrap_when_envctl_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--dry-run"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

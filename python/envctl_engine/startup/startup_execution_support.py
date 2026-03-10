@@ -697,7 +697,27 @@ def start_project_services(
     safe_project_name = context.name.replace("/", "_").replace(" ", "_")
     backend_log_path = str(run_logs_dir / f"{safe_project_name}_backend.log")
     frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.log")
-    project_env_base = rt._project_service_env(context, requirements=requirements, route=route)
+    project_env_internal_builder = getattr(rt, "_project_service_env_internal", None)
+    if callable(project_env_internal_builder):
+        project_env_internal = project_env_internal_builder(context, requirements=requirements, route=route)
+    else:
+        project_env_internal = rt._project_service_env(context, requirements=requirements, route=route)
+
+    def project_env_for_service(service_name: str) -> dict[str, str]:
+        try:
+            return rt._project_service_env(
+                context,
+                requirements=requirements,
+                route=route,
+                service_name=service_name,
+            )
+        except TypeError as exc:
+            if "service_name" not in str(exc):
+                raise
+            return rt._project_service_env(context, requirements=requirements, route=route)
+
+    backend_project_env_base = project_env_for_service("backend")
+    frontend_project_env_base = project_env_for_service("frontend")
     backend_env_file, backend_env_is_default = rt._resolve_backend_env_file(
         context=context,
         backend_cwd=backend_cwd,
@@ -707,12 +727,12 @@ def start_project_services(
         frontend_cwd=frontend_cwd,
     )
     backend_env_extra = rt._service_env_from_file(
-        base_env=project_env_base,
+        base_env=backend_project_env_base,
         env_file=backend_env_file,
         include_app_env_file=True,
     )
     frontend_env_extra = rt._service_env_from_file(
-        base_env=project_env_base,
+        base_env=frontend_project_env_base,
         env_file=frontend_env_file,
         include_app_env_file=False,
     )
@@ -760,7 +780,7 @@ def start_project_services(
             context=context,
             backend_cwd=backend_cwd,
             backend_log_path=backend_log_path,
-            project_env_base=project_env_base,
+            project_env_base=project_env_internal,
             route=route,
             backend_env_file=backend_env_file,
             backend_env_is_default=backend_env_is_default,
@@ -773,7 +793,7 @@ def start_project_services(
             context=context,
             frontend_cwd=frontend_cwd,
             frontend_log_path=frontend_log_path,
-            project_env_base=project_env_base,
+            project_env_base=frontend_project_env_base,
             frontend_env_file=frontend_env_file,
             backend_port=backend_plan.final,
             route=route,

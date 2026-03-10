@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-06T11:42:24+00:00",
+  "generated_at": "2026-03-10T14:57:02+00:00",
   "engine_default": "python",
   "modes": {
     "main": {
@@ -34,6 +34,7 @@
     "commit": "python_complete",
     "review": "python_complete",
     "migrate": "python_complete",
+    "install-prompts": "python_complete",
     "list-commands": "python_complete",
     "list-targets": "python_complete",
     "help": "python_complete"

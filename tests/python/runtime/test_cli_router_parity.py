@@ -32,6 +32,7 @@ class CliRouterParityTests(unittest.TestCase):
             "--blast-all": "blast-all",
             "--delete-worktree": "delete-worktree",
             "--blast-worktree": "blast-worktree",
+            "--install-prompts": "install-prompts",
             "--debug-ui-pack": "debug-pack",
         }
         for token, command in expected.items():
@@ -71,6 +72,12 @@ class CliRouterParityTests(unittest.TestCase):
 
         route = parse_route(["config"], env={})
         self.assertEqual(route.command, "config")
+
+        route = parse_route(["install-prompts", "--cli", "codex,claude", "--preset", "implement_tdd", "--dry-run"], env={})
+        self.assertEqual(route.command, "install-prompts")
+        self.assertEqual(route.flags.get("cli"), "codex,claude")
+        self.assertEqual(route.flags.get("preset"), "implement_tdd")
+        self.assertTrue(route.flags.get("dry_run"))
 
         route = parse_route(["health"], env={})
         self.assertEqual(route.command, "health")

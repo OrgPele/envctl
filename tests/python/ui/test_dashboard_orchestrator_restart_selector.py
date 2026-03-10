@@ -160,6 +160,25 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertIsNone(runtime.last_dispatched_route)
         self.assertIn("Command 'migrate' is not available in this dashboard", out.getvalue())
 
+    def test_install_prompts_is_rejected_in_dashboard_context(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(run_id="run-plan", mode="trees")
+        runtime._latest_state = state
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command(
+                "install-prompts --cli codex --dry-run",
+                state,
+                runtime,
+            )
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("Command 'install-prompts' is not available in this dashboard context.", out.getvalue())
+
     def test_restart_selector_uses_runtime_backend_selection(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)

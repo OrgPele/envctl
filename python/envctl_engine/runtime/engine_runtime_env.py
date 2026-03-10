@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.requirements.orchestrator import RequirementOutcome
+
+
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TEMPLATE_VAR_RE = re.compile(r"\$\{([^}]+)\}")
 
 
 def skipped_requirement(service_name: str, plan: PortPlan) -> RequirementOutcome:
@@ -193,7 +198,7 @@ class SimpleProfile:
         self.n8n_enable = n8n_enable
 
 
-def project_service_env(
+def project_service_env_internal(
     runtime: Any,
     context: Any,
     *,
@@ -201,6 +206,45 @@ def project_service_env(
     route: Route | None = None,
 ) -> dict[str, str]:
     env = {"ENVCTL_PROJECT_NAME": context.name}
+    env.update(_dependency_projector_env(runtime, context, requirements=requirements, route=route))
+    env.update(runtime_env_overrides(route))
+    _apply_route_log_overrides(env, route)
+    return env
+
+
+def project_service_env(
+    runtime: Any,
+    context: Any,
+    *,
+    requirements: RequirementsResult,
+    route: Route | None = None,
+    service_name: str | None = None,
+) -> dict[str, str]:
+    env = {"ENVCTL_PROJECT_NAME": context.name}
+    dependency_env = _dependency_projector_env(runtime, context, requirements=requirements, route=route)
+    config = getattr(runtime, "config", None)
+    scoped_dependency_env = _resolve_scoped_dependency_env(
+        config,
+        canonical_dependency_env=dependency_env,
+        service_name=service_name,
+    )
+    if scoped_dependency_env is not None:
+        env.update(scoped_dependency_env)
+    else:
+        env.update(dependency_env)
+    env.update(runtime_env_overrides(route))
+    _apply_route_log_overrides(env, route)
+    return env
+
+
+def _dependency_projector_env(
+    runtime: Any,
+    context: Any,
+    *,
+    requirements: RequirementsResult,
+    route: Route | None = None,
+) -> dict[str, str]:
+    env: dict[str, str] = {}
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)):
@@ -209,7 +253,10 @@ def project_service_env(
             env.update(
                 definition.env_projector(runtime=runtime, context=context, requirements=requirements, route=route)
             )
-    env.update(runtime_env_overrides(route))
+    return env
+
+
+def _apply_route_log_overrides(env: dict[str, str], route: Route | None) -> None:
     if route is not None:
         log_profile = route.flags.get("log_profile")
         log_level = route.flags.get("log_level")
@@ -240,7 +287,155 @@ def project_service_env(
             env["FRONTEND_LOG_LEVEL_OVERRIDE"] = frontend_log_level
         if isinstance(frontend_test_runner, str):
             env["FRONTEND_TEST_RUNNER"] = frontend_test_runner
-    return env
+
+
+def resolve_dependency_env_templates(
+    entries: tuple[object, ...],
+    *,
+    canonical_dependency_env: dict[str, str],
+    resolved_env_base: dict[str, str] | None = None,
+) -> dict[str, str]:
+    source_env = {
+        f"ENVCTL_SOURCE_{key}": str(value)
+        for key, value in canonical_dependency_env.items()
+        if isinstance(value, str) and value.strip()
+    }
+    resolved: dict[str, str] = dict(resolved_env_base or {})
+    seen_names: set[str] = set(resolved)
+    for entry in entries:
+        name = str(getattr(entry, "name", "")).strip()
+        template = str(getattr(entry, "template", ""))
+        line_number = int(getattr(entry, "line_number", 0) or 0)
+        _validate_dependency_env_entry(name, line_number=line_number, seen_names=seen_names)
+        placeholders, skip_line = _collect_dependency_template_placeholders(
+            name=name,
+            template=template,
+            line_number=line_number,
+            source_env=source_env,
+            resolved_env=resolved,
+        )
+        if skip_line:
+            continue
+        rendered = template
+        for placeholder in placeholders:
+            rendered = rendered.replace(f"${{{placeholder}}}", _resolve_dependency_placeholder(placeholder, source_env, resolved))
+        resolved[name] = rendered
+    return resolved
+
+
+def _resolve_scoped_dependency_env(
+    config: Any,
+    *,
+    canonical_dependency_env: dict[str, str],
+    service_name: str | None,
+) -> dict[str, str] | None:
+    sections = _dependency_template_sections_for_service(config, service_name=service_name)
+    if not sections:
+        if _any_dependency_template_section_present(config):
+            return {}
+        return None
+    resolved: dict[str, str] = {}
+    for section_label, entries, errors in sections:
+        if errors:
+            raise RuntimeError(f"Invalid .envctl {section_label} section: " + "; ".join(errors))
+        resolved = resolve_dependency_env_templates(
+            entries,
+            canonical_dependency_env=canonical_dependency_env,
+            resolved_env_base=resolved,
+        )
+    return resolved
+
+
+def _dependency_template_sections_for_service(
+    config: Any,
+    *,
+    service_name: str | None,
+) -> list[tuple[str, tuple[object, ...], tuple[str, ...]]]:
+    sections: list[tuple[str, tuple[object, ...], tuple[str, ...]]] = []
+    if bool(getattr(config, "dependency_env_section_present", False)):
+        sections.append(
+            (
+                "shared launch env",
+                tuple(getattr(config, "dependency_env_templates", ())),
+                tuple(getattr(config, "dependency_env_template_errors", ())),
+            )
+        )
+    normalized_service = str(service_name or "").strip().lower()
+    if normalized_service == "backend" and bool(getattr(config, "backend_dependency_env_section_present", False)):
+        sections.append(
+            (
+                "backend launch env",
+                tuple(getattr(config, "backend_dependency_env_templates", ())),
+                tuple(getattr(config, "backend_dependency_env_template_errors", ())),
+            )
+        )
+    if normalized_service == "frontend" and bool(getattr(config, "frontend_dependency_env_section_present", False)):
+        sections.append(
+            (
+                "frontend launch env",
+                tuple(getattr(config, "frontend_dependency_env_templates", ())),
+                tuple(getattr(config, "frontend_dependency_env_template_errors", ())),
+            )
+        )
+    return sections
+
+
+def _any_dependency_template_section_present(config: Any) -> bool:
+    return bool(
+        getattr(config, "dependency_env_section_present", False)
+        or getattr(config, "backend_dependency_env_section_present", False)
+        or getattr(config, "frontend_dependency_env_section_present", False)
+    )
+
+
+def _validate_dependency_env_entry(name: str, *, line_number: int, seen_names: set[str]) -> None:
+    if not _ENV_VAR_NAME_RE.fullmatch(name):
+        raise RuntimeError(f"launch env entry {name or '<empty>'} on line {line_number} must use a valid env var name")
+    if name.startswith("ENVCTL_SOURCE_"):
+        raise RuntimeError(f"launch env entry {name} on line {line_number} uses reserved prefix ENVCTL_SOURCE_")
+    if name in seen_names:
+        raise RuntimeError(f"duplicate launch env key {name} in .envctl launch env section")
+    seen_names.add(name)
+
+
+def _collect_dependency_template_placeholders(
+    *,
+    name: str,
+    template: str,
+    line_number: int,
+    source_env: dict[str, str],
+    resolved_env: dict[str, str],
+) -> tuple[list[str], bool]:
+    sanitized = _TEMPLATE_VAR_RE.sub("", template)
+    if "${" in sanitized:
+        raise RuntimeError(f"launch env entry {name} on line {line_number} has malformed placeholder syntax")
+    placeholders: list[str] = []
+    skip_line = False
+    for match in _TEMPLATE_VAR_RE.finditer(template):
+        placeholder = str(match.group(1)).strip()
+        if not _ENV_VAR_NAME_RE.fullmatch(placeholder):
+            raise RuntimeError(
+                f"launch env entry {name} on line {line_number} has invalid placeholder {match.group(0)!r}"
+            )
+        if placeholder.startswith("ENVCTL_SOURCE_") and placeholder not in source_env:
+            skip_line = True
+            break
+        if not placeholder.startswith("ENVCTL_SOURCE_") and placeholder not in resolved_env:
+            raise RuntimeError(
+                f"launch env entry {name} on line {line_number} references unknown variable {placeholder}"
+            )
+        placeholders.append(placeholder)
+    return placeholders, skip_line
+
+
+def _resolve_dependency_placeholder(
+    placeholder: str,
+    source_env: dict[str, str],
+    resolved_env: dict[str, str],
+) -> str:
+    if placeholder in source_env:
+        return source_env[placeholder]
+    return resolved_env[placeholder]
 
 
 def runtime_env_overrides(route: Route | None) -> dict[str, str]:

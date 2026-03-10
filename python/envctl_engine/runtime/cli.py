@@ -136,6 +136,7 @@ def run(
 
         if route.command in {
             "help",
+            "install-prompts",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -193,6 +194,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "dashboard",
         "delete-worktree",
         "help",
+        "install-prompts",
         "doctor",
         "errors",
         "health",

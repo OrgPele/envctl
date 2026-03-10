@@ -10,11 +10,49 @@ import tempfile
 import tomllib
 import unittest
 
+from envctl_engine.runtime.launcher_support import find_shadowed_installed_envctl
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class CliPackagingTests(unittest.TestCase):
+    def test_repo_wrapper_detects_shadowed_installed_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_bin = tmp_path / "repo-bin"
+            installed_bin = tmp_path / "installed-bin"
+            repo_bin.mkdir()
+            installed_bin.mkdir()
+            current = repo_bin / "envctl"
+            alternate = installed_bin / "envctl"
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            result = find_shadowed_installed_envctl(
+                current,
+                env={"PATH": os.pathsep.join((str(repo_bin), str(installed_bin)))},
+            )
+
+        self.assertEqual(result, alternate.resolve())
+
+    def test_repo_wrapper_detects_no_shadowed_binary_when_only_current_is_on_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_bin = Path(tmpdir) / "repo-bin"
+            repo_bin.mkdir()
+            current = repo_bin / "envctl"
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+
+            result = find_shadowed_installed_envctl(
+                current,
+                env={"PATH": str(repo_bin)},
+            )
+
+        self.assertIsNone(result)
+
     def test_pyproject_declares_installable_console_script(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = payload["project"]

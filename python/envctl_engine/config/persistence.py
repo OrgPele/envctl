@@ -14,6 +14,7 @@ from envctl_engine.config import (
     StartupProfile,
     _default_port_value,
     _parse_envctl_text,
+    ensure_dependency_env_section,
 )
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
@@ -395,6 +396,7 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     elif local_state.file_text and local_state.config_source == "envctl":
         existing_text = local_state.file_text
     merged = merge_managed_block(existing_text, render_managed_block(values))
+    merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
     ignore_updated, ignore_warning = ensure_local_config_ignored(local_state.base_dir)
     return ConfigSaveResult(

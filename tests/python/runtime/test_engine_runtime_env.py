@@ -13,8 +13,10 @@ from envctl_engine.runtime.engine_runtime_env import (  # noqa: E402
     effective_main_requirement_flags,
     main_requirements_mode,
     project_service_env,
+    project_service_env_internal,
     requirement_enabled_for_mode,
     requirements_ready,
+    resolve_dependency_env_templates,
     runtime_env_overrides,
     service_enabled_for_mode,
     validate_mode_toggles,
@@ -194,6 +196,247 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["LOG_PROFILE_OVERRIDE"], "debug")
         self.assertEqual(env["BACKEND_LOG_LEVEL_OVERRIDE"], "warn")
         self.assertEqual(env["FRONTEND_TEST_RUNNER"], "bun")
+
+    def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: {"DB_HOST": "db.local", "DB_USER": "alice"}.get(key),
+            config=SimpleNamespace(
+                dependency_env_section_present=True,
+                dependency_env_template_errors=(),
+                dependency_env_templates=(
+                    SimpleNamespace(
+                        name="APP_DATABASE_URL",
+                        template="${ENVCTL_SOURCE_DATABASE_URL}?sslmode=disable",
+                        line_number=1,
+                    ),
+                    SimpleNamespace(
+                        name="WORKFLOW_BASE_URL",
+                        template="${ENVCTL_SOURCE_N8N_URL}",
+                        line_number=2,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": True, "success": True, "final": 5432},
+            redis={"enabled": True, "success": True, "final": 6380},
+            n8n={"enabled": True, "success": True, "final": 5678},
+            supabase={"enabled": False, "success": False, "final": 0},
+            health="healthy",
+            failures=[],
+        )
+
+        internal_env = project_service_env_internal(runtime, context, requirements=requirements, route=None)
+        env = project_service_env(runtime, context, requirements=requirements, route=None)
+
+        self.assertIn("DATABASE_URL", internal_env)
+        self.assertIn("REDIS_URL", internal_env)
+        self.assertEqual(env["APP_DATABASE_URL"], internal_env["DATABASE_URL"] + "?sslmode=disable")
+        self.assertEqual(env["WORKFLOW_BASE_URL"], "http://localhost:5678")
+        self.assertNotIn("DATABASE_URL", env)
+        self.assertNotIn("REDIS_URL", env)
+        self.assertNotIn("DB_HOST", env)
+
+    def test_project_service_env_applies_backend_only_templates_to_backend(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                backend_dependency_env_section_present=True,
+                backend_dependency_env_template_errors=(),
+                backend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="APP_DATABASE_URL",
+                        template="${ENVCTL_SOURCE_DATABASE_URL}",
+                        line_number=1,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": True, "success": True, "final": 5432},
+            redis={"enabled": True, "success": True, "final": 6380},
+            n8n={"enabled": False, "success": False, "final": 0},
+            supabase={"enabled": False, "success": False, "final": 0},
+            health="healthy",
+            failures=[],
+        )
+
+        backend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=None,
+            service_name="backend",
+        )
+        frontend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=None,
+            service_name="frontend",
+        )
+        internal_env = project_service_env_internal(runtime, context, requirements=requirements, route=None)
+
+        self.assertEqual(backend_env["APP_DATABASE_URL"], internal_env["DATABASE_URL"])
+        self.assertNotIn("DATABASE_URL", backend_env)
+        self.assertNotIn("DATABASE_URL", frontend_env)
+        self.assertNotIn("APP_DATABASE_URL", frontend_env)
+
+    def test_project_service_env_combines_shared_and_frontend_templates_for_frontend(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                dependency_env_section_present=True,
+                dependency_env_template_errors=(),
+                dependency_env_templates=(
+                    SimpleNamespace(
+                        name="SUPABASE_URL",
+                        template="${ENVCTL_SOURCE_SUPABASE_URL}",
+                        line_number=1,
+                    ),
+                ),
+                frontend_dependency_env_section_present=True,
+                frontend_dependency_env_template_errors=(),
+                frontend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="VITE_SUPABASE_URL",
+                        template="${SUPABASE_URL}",
+                        line_number=10,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": False, "success": False, "final": 0},
+            redis={"enabled": False, "success": False, "final": 0},
+            n8n={"enabled": False, "success": False, "final": 0},
+            supabase={"enabled": True, "success": True, "final": 5432},
+            health="healthy",
+            failures=[],
+        )
+
+        frontend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=None,
+            service_name="frontend",
+        )
+        backend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=None,
+            service_name="backend",
+        )
+
+        self.assertEqual(frontend_env["SUPABASE_URL"], "http://localhost:5432")
+        self.assertEqual(frontend_env["VITE_SUPABASE_URL"], "http://localhost:5432")
+        self.assertEqual(backend_env["SUPABASE_URL"], "http://localhost:5432")
+        self.assertNotIn("VITE_SUPABASE_URL", backend_env)
+
+    def test_project_service_env_skips_missing_source_lines_and_keeps_following_valid_aliases(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                dependency_env_section_present=True,
+                dependency_env_template_errors=(),
+                dependency_env_templates=(
+                    SimpleNamespace(
+                        name="N8N_URL",
+                        template="${ENVCTL_SOURCE_N8N_URL}",
+                        line_number=1,
+                    ),
+                    SimpleNamespace(
+                        name="REDIS_URL",
+                        template="${ENVCTL_SOURCE_REDIS_URL}",
+                        line_number=2,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": False, "success": False, "final": 0},
+            redis={"enabled": True, "success": True, "final": 6380},
+            n8n={"enabled": False, "success": False, "final": 0},
+            supabase={"enabled": False, "success": False, "final": 0},
+            health="healthy",
+            failures=[],
+        )
+
+        env = project_service_env(runtime, context, requirements=requirements, route=None)
+
+        self.assertNotIn("N8N_URL", env)
+        self.assertEqual(env["REDIS_URL"], "redis://localhost:6380/0")
+
+    def test_resolve_dependency_env_templates_raises_for_unknown_emitted_reference(self) -> None:
+        entries = (
+            SimpleNamespace(
+                name="APP_DATABASE_URL",
+                template="${DATABASE_URL}?sslmode=disable",
+                line_number=14,
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unknown variable DATABASE_URL"):
+            resolve_dependency_env_templates(entries, canonical_dependency_env={"DATABASE_URL": "postgresql://db"})
+
+    def test_resolve_dependency_env_templates_rejects_reserved_prefix_and_duplicates(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "reserved prefix ENVCTL_SOURCE_"):
+            resolve_dependency_env_templates(
+                (SimpleNamespace(name="ENVCTL_SOURCE_DATABASE_URL", template="x", line_number=1),),
+                canonical_dependency_env={"DATABASE_URL": "postgresql://db"},
+            )
+        with self.assertRaisesRegex(RuntimeError, "duplicate launch env key APP_DATABASE_URL"):
+            resolve_dependency_env_templates(
+                (
+                    SimpleNamespace(name="APP_DATABASE_URL", template="first", line_number=1),
+                    SimpleNamespace(name="APP_DATABASE_URL", template="second", line_number=2),
+                ),
+                canonical_dependency_env={"DATABASE_URL": "postgresql://db"},
+            )
+        with self.assertRaisesRegex(RuntimeError, "duplicate launch env key APP_DATABASE_URL"):
+            resolve_dependency_env_templates(
+                (SimpleNamespace(name="APP_DATABASE_URL", template="ignored", line_number=2),),
+                canonical_dependency_env={"DATABASE_URL": "postgresql://db"},
+                resolved_env_base={"APP_DATABASE_URL": "postgresql://db"},
+            )
 
     def test_requirements_ready_honors_strict_mode(self) -> None:
         result = RequirementsResult(

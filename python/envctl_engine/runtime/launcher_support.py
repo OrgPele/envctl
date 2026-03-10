@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,32 @@ class InstallOptions:
 
 def launcher_usage_text() -> str:
     return USAGE_TEXT
+
+
+def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
+    env_map = os.environ if env is None else env
+    path_value = env_map.get("PATH", "")
+    if not path_value:
+        return None
+    try:
+        current_resolved = current_binary.resolve()
+    except OSError:
+        current_resolved = current_binary
+    seen: set[Path] = {current_resolved}
+    for entry in path_value.split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry).expanduser() / "envctl"
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        return resolved
+    return None
 
 
 def is_repo_root(path: Path) -> bool:

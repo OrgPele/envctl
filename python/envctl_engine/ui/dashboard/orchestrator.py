@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route, parse_route
+from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
@@ -133,6 +134,9 @@ class DashboardOrchestrator:
 
         hidden_commands = self._dashboard_hidden_commands(state)
         if route.command in hidden_commands:
+            if route.command in DASHBOARD_ALWAYS_HIDDEN_COMMANDS:
+                print(f"Command '{route.command}' is not available in this dashboard context.")
+                return True, state
             print(
                 f"Command '{route.command}' is not available in this dashboard "
                 "because envctl runs are disabled for this mode."
@@ -247,6 +251,7 @@ class DashboardOrchestrator:
             if isinstance(raw, list)
             else set()
         )
+        hidden.update(DASHBOARD_ALWAYS_HIDDEN_COMMANDS)
         if not state.services:
             hidden.add("migrate")
         return hidden

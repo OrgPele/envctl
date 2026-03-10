@@ -777,6 +777,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "review",
             "migrate",
             "migrate-hooks",
+            "install-prompts",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -789,7 +790,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 32, "Should have exactly 32 commands")
+        self.assertEqual(len(lines), 33, "Should have exactly 33 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -802,6 +803,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "config",
                 "doctor",
                 "migrate-hooks",
+                "install-prompts",
                 "debug-pack",
                 "debug-report",
                 "debug-last",

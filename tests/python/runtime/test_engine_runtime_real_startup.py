@@ -1087,7 +1087,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "active" for env in frontend_start_envs))
 
-    def test_frontend_api_env_is_injected_and_env_local_is_synced_per_project_backend_port(self) -> None:
+    def test_frontend_api_env_overrides_stale_env_local_per_project_backend_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1103,7 +1103,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             )
             (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
             (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
-            env_local.write_text("VITE_API_URL=http://localhost:9999/api/v1\n", encoding="utf-8")
+            env_local.write_text(
+                "VITE_BACKEND_URL=http://localhost:9999\n"
+                "VITE_API_URL=http://localhost:9999/api/v1\n",
+                encoding="utf-8",
+            )
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             engine.port_planner.availability_checker = lambda _port: True
@@ -1119,9 +1123,12 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             plans = self._planned_ports(engine, "feature-a-1")
             expected_backend_url = f"http://localhost:{plans['backend'].final}"
             expected_api_url = f"http://localhost:{plans['backend'].final}/api/v1"
-            synced = env_local.read_text(encoding="utf-8")
-            self.assertIn(f"VITE_BACKEND_URL={expected_backend_url}", synced)
-            self.assertIn(f"VITE_API_URL={expected_api_url}", synced)
+            env_local_contents = env_local.read_text(encoding="utf-8")
+            self.assertEqual(
+                env_local_contents,
+                "VITE_BACKEND_URL=http://localhost:9999\n"
+                "VITE_API_URL=http://localhost:9999/api/v1\n",
+            )
 
             frontend_envs = [
                 env

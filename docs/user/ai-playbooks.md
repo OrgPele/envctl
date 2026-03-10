@@ -4,6 +4,28 @@ This guide collects short workflow patterns for high-throughput development, age
 
 Use it when you want a task recipe more than a conceptual explanation.
 
+## Install AI CLI Presets
+
+```bash
+envctl install-prompts --cli codex
+envctl install-prompts --cli claude --dry-run
+envctl install-prompts --cli codex,opencode --json
+```
+
+Use this when you want envctl to install the built-in `implement_tdd` preset into your user-local AI CLI directories.
+
+Current targets:
+
+- Codex: `~/.codex/prompts`
+- Claude Code: `~/.claude/commands`
+- OpenCode: `~/.config/opencode/commands`
+
+Notes:
+
+- existing files are backed up in-place before overwrite
+- `--dry-run` shows what would be written without mutating anything
+- this command is intentionally unavailable inside dashboard interactive mode
+
 ## Parallel Implementation Loop
 
 ```bash
