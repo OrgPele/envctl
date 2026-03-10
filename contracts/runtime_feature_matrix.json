@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-03-10T08:56:11+00:00",
+  "generated_at": "2026-03-10T14:12:55+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -128,6 +128,7 @@
       "--no-resume",
       "--no-seed-requirements-from-base",
       "--no-service-parallel",
+      "--no-service-prep-parallel",
       "--no-test-parallel",
       "--non-interactive",
       "--output-dir",
@@ -160,6 +161,8 @@
       "--sequential-plan",
       "--service",
       "--service-parallel",
+      "--service-prep-parallel",
+      "--service-prep-sequential",
       "--service-sequential",
       "--session-id",
       "--set",

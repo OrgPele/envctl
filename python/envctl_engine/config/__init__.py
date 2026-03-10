@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Literal, Mapping
 
 from envctl_engine.config.profile_defaults import default_profile_settings
-from envctl_engine.requirements.core import dependency_definitions, dependency_port_keys, managed_enable_keys
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
@@ -69,18 +68,35 @@ def _build_defaults() -> dict[str, str]:
 
 DEFAULTS: dict[str, str] = _build_defaults()
 
+_MANAGED_DEPENDENCY_PORT_KEYS: tuple[str, ...] = (
+    "DB_PORT",
+    "REDIS_PORT",
+    "N8N_PORT_BASE",
+)
+
+_MANAGED_DEPENDENCY_ENABLE_KEYS: tuple[str, ...] = (
+    "MAIN_POSTGRES_ENABLE",
+    "MAIN_REDIS_ENABLE",
+    "MAIN_SUPABASE_ENABLE",
+    "MAIN_N8N_ENABLE",
+    "TREES_POSTGRES_ENABLE",
+    "TREES_REDIS_ENABLE",
+    "TREES_SUPABASE_ENABLE",
+    "TREES_N8N_ENABLE",
+)
+
 MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_DEFAULT_MODE",
     "BACKEND_DIR",
     "FRONTEND_DIR",
     "BACKEND_PORT_BASE",
     "FRONTEND_PORT_BASE",
-    *dependency_port_keys(),
+    *_MANAGED_DEPENDENCY_PORT_KEYS,
     "PORT_SPACING",
     "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
     "MAIN_FRONTEND_ENABLE",
-    *managed_enable_keys(),
+    *_MANAGED_DEPENDENCY_ENABLE_KEYS,
     "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
     "TREES_FRONTEND_ENABLE",
@@ -279,6 +295,12 @@ class EngineConfig:
         return profile.dependency_enabled(str(requirement_name).strip().lower())
 
 
+def _dependency_definitions():
+    from envctl_engine.requirements.core import dependency_definitions
+
+    return dependency_definitions()
+
+
 def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     env = env or {}
     base_dir = Path(env.get("RUN_REPO_ROOT") or Path.cwd()).resolve()
@@ -306,7 +328,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     runtime_scope_dir.mkdir(parents=True, exist_ok=True)
 
     dependency_ports: dict[str, dict[str, int]] = {}
-    for definition in dependency_definitions():
+    for definition in _dependency_definitions():
         resources: dict[str, int] = {}
         for resource in definition.resources:
             default_value = 0
@@ -452,7 +474,7 @@ def _startup_profile_from_resolved(
         return default
 
     dependencies: dict[str, bool] = {}
-    for definition in dependency_definitions():
+    for definition in _dependency_definitions():
         default = definition.enabled_by_default(mode)
         value = default
         for key in definition.enable_keys_for_mode(mode):

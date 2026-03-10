@@ -11,7 +11,7 @@ _PROFILE_COMPONENT_DEFAULTS: dict[str, bool] = {
     "frontend_enable": True,
 }
 
-_BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
+_MANAGED_BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
     "main": {
         "postgres": False,
         "redis": False,
@@ -23,6 +23,21 @@ _BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
         "redis": False,
         "supabase": False,
         "n8n": False,
+    },
+}
+
+_RUNTIME_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
+    "main": {
+        "postgres": True,
+        "redis": True,
+        "supabase": False,
+        "n8n": False,
+    },
+    "trees": {
+        "postgres": True,
+        "redis": True,
+        "supabase": False,
+        "n8n": True,
     },
 }
 
@@ -46,7 +61,7 @@ def default_profile_settings(mode: str) -> dict[str, object]:
     normalized = _normalize_mode(mode)
     return {
         **_PROFILE_COMPONENT_DEFAULTS,
-        "dependencies": dict(_BASELINE_DEPENDENCY_DEFAULTS[normalized]),
+        "dependencies": dict(_RUNTIME_DEPENDENCY_DEFAULTS[normalized]),
     }
 
 
@@ -54,7 +69,9 @@ def wizard_preset_settings(mode: str, preset: str) -> dict[str, object]:
     normalized_mode = _normalize_mode(mode)
     normalized_preset = _normalize_preset(preset)
     if normalized_preset == "apps_only":
-        dependencies = {dependency_id: False for dependency_id in _BASELINE_DEPENDENCY_DEFAULTS[normalized_mode]}
+        dependencies = {
+            dependency_id: False for dependency_id in _MANAGED_BASELINE_DEPENDENCY_DEFAULTS[normalized_mode]
+        }
     else:
         dependencies = dict(_STANDARD_PRESET_DEPENDENCIES[normalized_mode])
     return {
@@ -68,7 +85,13 @@ def wizard_preset_settings(mode: str, preset: str) -> dict[str, object]:
 def dependency_default_enabled(dependency_id: str, mode: str) -> bool:
     normalized_mode = _normalize_mode(mode)
     normalized_dependency_id = str(dependency_id).strip().lower()
-    return bool(_BASELINE_DEPENDENCY_DEFAULTS[normalized_mode].get(normalized_dependency_id, False))
+    return bool(_RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode].get(normalized_dependency_id, False))
+
+
+def managed_dependency_default_enabled(dependency_id: str, mode: str) -> bool:
+    normalized_mode = _normalize_mode(mode)
+    normalized_dependency_id = str(dependency_id).strip().lower()
+    return bool(_MANAGED_BASELINE_DEPENDENCY_DEFAULTS[normalized_mode].get(normalized_dependency_id, False))
 
 
 def _normalize_mode(mode: str) -> Mode:

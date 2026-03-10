@@ -15,6 +15,7 @@ from envctl_engine.config import (
     _default_port_value,
     _parse_envctl_text,
 )
+from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.shared.parsing import parse_int
 
@@ -456,7 +457,7 @@ def config_review_text(
 
 def _resolve_dependency_enable(values: dict[str, str], dependency_id: str, *, mode: str) -> bool:
     definition = next(defn for defn in dependency_definitions() if defn.id == dependency_id)
-    default = definition.enabled_by_default(mode)
+    default = managed_dependency_default_enabled(dependency_id, mode)
     for key in definition.enable_keys_for_mode(mode):
         if key in values:
             return _parse_bool_value(values.get(key), default)

@@ -837,7 +837,16 @@ def start_project_services(
         env: dict[str, str],
         log_path: Path,
     ) -> object:
-        return process_runtime.start_background(
+        start_background = getattr(process_runtime, "start_background", None)
+        if callable(start_background):
+            return start_background(
+                command,
+                cwd=cwd,
+                env=env,
+                stdout_path=log_path,
+                stderr_path=log_path,
+            )
+        return process_runtime.start(
             command,
             cwd=cwd,
             env=env,
