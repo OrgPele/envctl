@@ -4,8 +4,6 @@
 
 It is optimized for high-throughput development and AI-assisted workflows: run multiple implementations in parallel, test everything, compare behavior quickly, and keep one deterministic command surface.
 
-The Python engine is the primary runtime. A legacy Bash/shell engine still exists as an explicitly gated compatibility fallback during the migration/cutover window, but it is deprecated and should only be used for parity debugging or emergency rollback.
-
 ## Quick Start
 
 ```bash
@@ -34,14 +32,6 @@ envctl --plan
 ```
 
 That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven trees.
-
-To reopen the wizard later:
-
-```bash
-envctl config
-```
-
-That wrapper path is now compatibility-only. The primary install story is a package install so `envctl` is on your `PATH` in every shell.
 
 ## What envctl Is For
 
@@ -91,28 +81,6 @@ Project docs:
 - [Planning and Roadmaps](todo/plans/README.md)
 - [Changelog](docs/changelog/README.md)
 - [License](docs/license.md)
-
-## How to Use
-
-Recommended flow:
-
-1. Run `envctl --main` in your target repository for the normal repo-root environment.
-2. If `.envctl` does not exist, complete the guided setup wizard.
-3. Use `envctl --plan` when you want multiple implementations or worktrees side by side.
-4. Use `envctl config` any time you want to reopen and edit the configuration wizard.
-5. Follow the user guides for the normal operating loop after startup.
-
-Example:
-
-```bash
-# if ENVCTL_PLANNING_DIR is default:
-mkdir -p todo/plans/backend
-cat > todo/plans/backend/checkout.md <<'PLAN'
-# Checkout Implementation Plan
-PLAN
-
-envctl --plan
-```
 
 ## Configuration
 
