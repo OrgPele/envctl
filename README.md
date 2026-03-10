@@ -41,13 +41,6 @@ To reopen the wizard later:
 envctl config
 ```
 
-Repo-clone compatibility still exists:
-
-```bash
-./bin/envctl install
-./bin/envctl uninstall
-```
-
 That wrapper path is now compatibility-only. The primary install story is a package install so `envctl` is on your `PATH` in every shell.
 
 ## What envctl Is For
