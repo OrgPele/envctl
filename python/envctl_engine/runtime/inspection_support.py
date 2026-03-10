@@ -256,7 +256,9 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
             selection_info.update(
                 {
                     "reason": "headless_tree_start_requires_explicit_selection",
-                    "message": "Run 'envctl --list-trees --json' and retry with '--project <tree>' or '--plan <selector>'.",
+                    "message": (
+                        "Run 'envctl --list-trees --json' and retry with '--project <tree>' or '--plan <selector>'."
+                    ),
                     "selected_projects": [],
                 }
             )

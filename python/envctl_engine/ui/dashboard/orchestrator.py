@@ -134,7 +134,8 @@ class DashboardOrchestrator:
         hidden_commands = self._dashboard_hidden_commands(state)
         if route.command in hidden_commands:
             print(
-                f"Command '{route.command}' is not available in this dashboard because envctl runs are disabled for this mode."
+                f"Command '{route.command}' is not available in this dashboard "
+                "because envctl runs are disabled for this mode."
             )
             return True, state
 

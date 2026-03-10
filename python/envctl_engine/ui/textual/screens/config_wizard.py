@@ -86,12 +86,17 @@ _STEP_TITLES = {
 }
 
 _STEP_HELP_TEXT = {
-    "welcome": "This wizard saves the repo-local envctl run configuration. Existing services are not changed until a later command runs.",
+    "welcome": (
+        "This wizard saves the repo-local envctl run configuration. "
+        "Existing services are not changed until a later command runs."
+    ),
     "wizard_type": "Choose the shorter preset-based flow or the full advanced flow with per-mode controls.",
     "default_mode": "Pick which mode envctl should use by default when you do not pass --main or --trees.",
     "main_preset": "Choose a simple preset for main mode. This controls what main mode is configured to run.",
     "trees_preset": "Choose a simple preset for trees mode. This is configured independently from main mode.",
-    "startup_modes": "Turn main and trees on or off for envctl-run behavior. Detailed component settings stay configurable below.",
+    "startup_modes": (
+        "Turn main and trees on or off for envctl-run behavior. Detailed component settings stay configurable below."
+    ),
     "main_profile": "Choose which main-mode components are configured: backend, frontend, and built-in dependencies.",
     "trees_profile": "Choose which tree-mode components are configured: backend, frontend, and built-in dependencies.",
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
@@ -519,7 +524,8 @@ def run_config_wizard_textual(
             empty.display = False
             if step == "welcome":
                 welcome.update(
-                    "envctl is the CLI for configuring, planning, and operating this repository's local environments.\n\n"
+                    "envctl is the CLI for configuring, planning, and operating "
+                    "this repository's local environments.\n\n"
                     "This wizard will guide you through:\n"
                     "- choosing simple or advanced setup\n"
                     "- selecting the default mode (main or trees)\n"
@@ -662,7 +668,8 @@ def run_config_wizard_textual(
                         status.update("Simple presets overwrite detailed mode settings.")
                     elif step == "startup_modes":
                         status.update(
-                            "Choose whether envctl may run main and trees by default. Detailed service toggles stay in the next screens."
+                            "Choose whether envctl may run main and trees by default. "
+                            "Detailed service toggles stay in the next screens."
                         )
                     else:
                         status.update("Configuration is valid.")

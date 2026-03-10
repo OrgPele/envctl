@@ -75,7 +75,8 @@ def _run_wizard(
 def _require_interactive_config_bootstrap(env: Mapping[str, str]) -> None:
     if not _has_tty(env):
         raise RuntimeError(
-            "Missing repo-local .envctl and no interactive TTY is available. Run envctl from a terminal to create the config."
+            "Missing repo-local .envctl and no interactive TTY is available. "
+            "Run envctl from a terminal to create the config."
         )
     if not _textual_stack_available():
         raise RuntimeError(

@@ -152,7 +152,6 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
             _ = message, enabled, start_immediately
             raise AssertionError("spinner should not start when stop target resolution fails")
-            yield  # pragma: no cover
 
         with (
             patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.spinner", side_effect=fake_spinner),

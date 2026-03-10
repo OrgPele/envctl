@@ -479,7 +479,10 @@ def _start_supabase_db_native(
         "-v",
         f"{compose_root / 'init' / '01-create-n8n-db.sql'}:/docker-entrypoint-initdb.d/01-create-n8n-db.sql:ro",
         "-v",
-        f"{compose_root / 'init' / '02-bootstrap-gotrue-auth.sql'}:/docker-entrypoint-initdb.d/02-bootstrap-gotrue-auth.sql:ro",
+        (
+            f"{compose_root / 'init' / '02-bootstrap-gotrue-auth.sql'}:"
+            "/docker-entrypoint-initdb.d/02-bootstrap-gotrue-auth.sql:ro"
+        ),
         image,
     ]
     create_result, create_error = run_docker(
@@ -1235,7 +1238,8 @@ def _normalize_compose_error(error: str, *, compose_project_name: str) -> str:
         detail = f"conflicting container={container_name}" if container_name else "conflicting container already exists"
         return (
             f"supabase compose namespace conflict for project {compose_project_name}: {detail}. "
-            "This usually means the stack is not using a project-scoped compose namespace or a stale conflicting container still exists."
+            "This usually means the stack is not using a project-scoped compose namespace "
+            "or a stale conflicting container still exists."
         )
     return normalized
 

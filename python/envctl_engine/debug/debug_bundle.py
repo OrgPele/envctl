@@ -4,12 +4,14 @@ import shutil
 import uuid
 from pathlib import Path
 
+from envctl_engine.debug.debug_bundle_diagnostics import summarize_debug_bundle as _summarize_debug_bundle
 from envctl_engine.debug.debug_bundle_diagnostics import write_diagnostics
 from envctl_engine.debug.debug_bundle_support import (
     copy_debug_session_files,
     create_tarball,
     ensure_summary,
     resolve_session_id,
+    sanitize_runtime_event as _sanitize_runtime_event,
     write_bundle_contract,
     write_command_index,
     write_manifest,
@@ -17,6 +19,9 @@ from envctl_engine.debug.debug_bundle_support import (
     write_timeline,
 )
 from envctl_engine.debug.debug_utils import file_lock
+
+summarize_debug_bundle = _summarize_debug_bundle
+sanitize_runtime_event = _sanitize_runtime_event
 
 
 def pack_debug_bundle(

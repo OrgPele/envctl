@@ -430,7 +430,10 @@ def run_test_action(
                     execution = future_map[future]
                     code, error = future.result()
                     if code != 0:
-                        label = f"{execution.project_name}:{execution.spec.source} [{execution.index}/{len(execution_specs)}]"
+                        label = (
+                            f"{execution.project_name}:{execution.spec.source} "
+                            f"[{execution.index}/{len(execution_specs)}]"
+                        )
                         failures.append(f"{label}: {error or 'unknown test failure'}")
         else:
             for spec in execution_specs:

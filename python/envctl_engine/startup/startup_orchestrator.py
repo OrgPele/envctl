@@ -280,7 +280,8 @@ class StartupOrchestrator:
             enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
             if route.command == "plan":
                 print(
-                    f"Planning mode complete; skipping service startup because envctl runs are disabled for {runtime_mode}."
+                    "Planning mode complete; skipping service startup because "
+                    f"envctl runs are disabled for {runtime_mode}."
                 )
             elif not enter_interactive_dashboard:
                 print(f"envctl runs are disabled for {runtime_mode}; opening dashboard without starting services.")
@@ -827,7 +828,9 @@ class StartupOrchestrator:
                     "errors",
                 ],
                 "dashboard_runs_disabled": True,
-                "dashboard_banner": f"envctl runs are disabled for {runtime_mode}; planning and action commands remain available.",
+                "dashboard_banner": (
+                    f"envctl runs are disabled for {runtime_mode}; planning and action commands remain available."
+                ),
             },
         )
         run_dir = rt._run_dir_path(run_id)

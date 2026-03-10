@@ -40,7 +40,14 @@ def release_port_session(runtime: Any) -> None:
 def build_process_probe_backend(runtime: Any) -> ProbeBackend:
     if not isinstance(runtime.process_runner, ProcessRunner):
         return ShellProbeBackend(runtime.process_runner)
-    if probe_psutil_enabled(runtime) and psutil_available():
+    psutil_available_fn = psutil_available
+    try:
+        from envctl_engine.runtime import engine_runtime as engine_runtime_module
+
+        psutil_available_fn = getattr(engine_runtime_module, "psutil_available", psutil_available_fn)
+    except Exception:
+        pass
+    if probe_psutil_enabled(runtime) and psutil_available_fn():
         try:
             from envctl_engine.runtime import engine_runtime as engine_runtime_module
 
@@ -52,17 +59,24 @@ def build_process_probe_backend(runtime: Any) -> ProbeBackend:
 
 
 def probe_psutil_enabled(runtime: Any) -> bool:
+    psutil_available_fn = psutil_available
+    try:
+        from envctl_engine.runtime import engine_runtime as engine_runtime_module
+
+        psutil_available_fn = getattr(engine_runtime_module, "psutil_available", psutil_available_fn)
+    except Exception:
+        pass
     raw = runtime.env.get("ENVCTL_PROBE_PSUTIL")
     if raw is None:
         raw = os.environ.get("ENVCTL_PROBE_PSUTIL")
     if raw is None:
-        return psutil_available()
+        return psutil_available_fn()
     value = str(raw).strip().lower()
     if value in {"0", "false", "no", "off"}:
         return False
     if value in {"1", "true", "yes", "on"}:
-        return psutil_available()
-    return psutil_available()
+        return psutil_available_fn()
+    return psutil_available_fn()
 
 
 def tokens_set_mode(tokens: Iterable[str]) -> bool:

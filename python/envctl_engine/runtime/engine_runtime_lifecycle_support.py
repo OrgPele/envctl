@@ -9,9 +9,16 @@ from typing import Any
 
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.requirements.core import dependency_definitions
-from envctl_engine.requirements.common import build_container_name, run_docker, run_result_error
+from envctl_engine.requirements.common import (
+    build_container_name,
+    container_exists as _container_exists,
+    run_docker,
+    run_result_error,
+)
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.state.runtime_map import build_runtime_map
+
+container_exists = _container_exists
 
 
 def terminate_started_services(runtime: Any, services: dict[str, object]) -> None:
@@ -335,7 +342,10 @@ def _remove_tree_containers(
             timeout=60.0,
         )
         if rm_result is None:
-            warning = f"failed removing {service_name} container for {project_name} ({name}): {rm_error or 'docker unavailable'}"
+            warning = (
+                f"failed removing {service_name} container for {project_name} ({name}): "
+                f"{rm_error or 'docker unavailable'}"
+            )
             warnings.append(warning)
             runtime._emit(
                 "cleanup.worktree.warning",
@@ -376,7 +386,10 @@ def _remove_tree_containers(
                 timeout=30.0,
             )
             if volume_result is None:
-                warning = f"failed removing Docker volume for {project_name} ({volume_name}): {volume_error or 'docker unavailable'}"
+                warning = (
+                    f"failed removing Docker volume for {project_name} ({volume_name}): "
+                    f"{volume_error or 'docker unavailable'}"
+                )
                 warnings.append(warning)
                 runtime._emit(
                     "cleanup.worktree.warning",

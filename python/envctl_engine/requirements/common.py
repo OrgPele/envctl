@@ -106,7 +106,9 @@ def run_docker(
     except subprocess.TimeoutExpired as exc:
         return (
             None,
-            f"Command timed out after {timeout:.1f}s: {' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}",
+            "Command timed out after "
+            f"{timeout:.1f}s: "
+            f"{' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}",
         )
     except OSError as exc:
         return None, f"docker unavailable: {exc}"

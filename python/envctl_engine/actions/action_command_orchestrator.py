@@ -23,8 +23,8 @@ from envctl_engine.actions.action_target_support import (
 )
 from envctl_engine.actions.action_test_support import (
     TestExecutionSpec as _TestExecutionSpec,
-    TestTargetContext as _TestTargetContext,
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
+    TestTargetContext,
     build_test_execution_specs,
     build_test_target_contexts,
     is_backend_only_selection,
@@ -38,6 +38,7 @@ from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -470,7 +471,7 @@ class ActionCommandOrchestrator:
         *,
         raw: str | None,
         targets: list[object],
-        target_contexts: list["_TestTargetContext"],
+        target_contexts: list[TestTargetContext],
         include_backend: bool,
         include_frontend: bool,
         run_all: bool,
@@ -1064,6 +1065,6 @@ class ActionCommandOrchestrator:
     def _is_legacy_tree_test_script(command: list[str]) -> bool:
         return len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh")
 
-    def _test_target_contexts(self, targets: list[object]) -> list["_TestTargetContext"]:
+    def _test_target_contexts(self, targets: list[object]) -> list[TestTargetContext]:
         rt = self.runtime
         return build_test_target_contexts(targets, repo_root=rt.config.base_dir)  # type: ignore[attr-defined]

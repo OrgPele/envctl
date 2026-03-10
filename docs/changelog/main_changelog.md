@@ -13208,6 +13208,47 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 - Risks/notes:
   - A raw `python -m unittest discover -s tests/python -p 'test_*.py'` run still drives interactive planning/textual paths and optional-rich behavior in ways that are noisy under unattended CLI execution, so the non-interactive regression suite remains the reliable verification command.
 
+## 2026-03-10 - Add phased Python cleanup runner with dry-run planning
+
+- Scope:
+  - Added a reusable Python-native cleanup runner under `scripts/python_cleanup.py` to orchestrate phased repo-wide cleanup planning and execution using Ruff, basedpyright, Vulture, and targeted pytest suites.
+  - Added unit coverage for the runner and exercised dry-run plans for safe/core/risky cleanup presets without applying real cleanup changes.
+
+- Key behavior changes:
+  - `scripts/python_cleanup.py`
+    - Supports repo-root resolution, path/preset selection, report-only dry runs by default, explicit `--execute`, optional `--fix`, and staged Ruff/basedpyright/Vulture/test planning.
+    - Includes envctl-specific cleanup presets:
+      - `safe`: `config`, `test_output`, `requirements`, `debug`
+      - `core`: `shared`, `state`
+      - `risky`: `actions`, `startup`, `runtime`, `planning`, `ui`
+    - Maps source-domain cleanup targets to the corresponding `tests/python/<domain>` test suites.
+  - `tests/python/shared/test_python_cleanup_script.py`
+    - Verifies path resolution, preset expansion, dry-run planning, fix-mode planning, and source-to-test path mapping.
+
+- Files/modules touched:
+  - `scripts/python_cleanup.py`
+  - `tests/python/shared/test_python_cleanup_script.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m unittest tests.python.shared.test_python_cleanup_script`
+    - Result: pass (`7 tests`).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset safe --json`
+    - Result: pass (dry-run report only).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset core --json`
+    - Result: pass (dry-run report only).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset risky --json`
+    - Result: pass (dry-run report only).
+
+- Config/env/migrations:
+  - No runtime config/env changes.
+  - No schema or data migrations.
+  - Cleanup execution remains opt-in via `--execute`; default mode is report-only.
+
+- Risks/notes:
+  - No real cleanup commands were executed in this change set.
+  - The `risky` preset intentionally includes the most dynamic domains and should only be run after reviewing the dry-run plan and its test scope.
+
 ## 2026-03-09 - Rename `analyze` command to `review` across the app
 
 - Scope:

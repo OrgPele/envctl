@@ -46,7 +46,12 @@ def start_project_context(
         f"Requirements ready for {context.name}: "
         + " ".join(
             f"{definition.id}="
-            f"{requirements.component(definition.id).get('final') or requirements.component(definition.id).get('requested')}"
+            f"{
+                (
+                    requirements.component(definition.id).get('final')
+                    or requirements.component(definition.id).get('requested')
+                )
+            }"
             for definition in dependency_definitions()
             if bool(requirements.component(definition.id).get("enabled", False))
         ),
@@ -569,7 +574,8 @@ def start_project_services(
             return hook_records
         if bool(payload.get("skip_default_services")):
             raise RuntimeError(
-                f"envctl_define_services hook requested skip_default_services for {context.name} but returned no services"
+                f"envctl_define_services hook requested skip_default_services for {context.name} "
+                "but returned no services"
             )
 
     run_logs_dir = rt._run_dir_path(run_id)  # type: ignore[attr-defined]

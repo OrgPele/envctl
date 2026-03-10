@@ -25,7 +25,9 @@ class ProjectSpinnerGroup(BaseProjectSpinnerGroup):
             emit=emit,
             component=component,
             op_id=op_id,
-            start_message=f"Starting {len([str(project).strip() for project in projects if str(project).strip()])} project(s)...",
+            start_message=(
+                f"Starting {len([str(project).strip() for project in projects if str(project).strip()])} project(s)..."
+            ),
             idle_message="running...",
             env=env,
         )

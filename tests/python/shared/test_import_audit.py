@@ -118,7 +118,9 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_misc_support.py",
     },
-    "_textual_importable": set(),
+    "_textual_importable": {
+        ENGINE_ROOT / "ui" / "textual" / "screens" / "selector" / "support.py",
+    },
     "_prompt_toolkit_disabled": set(),
     "_interactive_selection_allowed": {
         ENGINE_ROOT / "actions" / "action_command_orchestrator.py",

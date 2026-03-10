@@ -87,7 +87,8 @@ def evaluate_shipability(
             readiness = evaluate_runtime_readiness(repo_root)
             if not readiness.passed:
                 errors.append(
-                    f"python_complete blocked: runtime readiness contract failed with {readiness.blocking_gap_count} blocking gaps"
+                    "python_complete blocked: runtime readiness contract failed with "
+                    f"{readiness.blocking_gap_count} blocking gaps"
                 )
 
     if enforce_runtime_readiness_contract:

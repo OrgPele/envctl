@@ -702,7 +702,8 @@ class StateActionOrchestrator:
                     port_raw = row.get("port")
                     port_text = str(port_raw) if port_raw is not None else "n/a"
                     print(
-                        f"    {icon_color}{icon}{reset} {display_name:<12} {dim}status={status:<10} port={port_text}{reset}"
+                        f"    {icon_color}{icon}{reset} {display_name:<12} "
+                        f"{dim}status={status:<10} port={port_text}{reset}"
                     )
             if project_dependencies:
                 print(f"  {magenta}Dependencies ({len(project_dependencies)}){reset}")
@@ -713,7 +714,8 @@ class StateActionOrchestrator:
                     port_text = row.get("port") if row.get("port") is not None else "n/a"
                     component = str(row.get("component", "dependency"))
                     print(
-                        f"    {icon_color}{icon}{reset} {component:<12} {dim}status={status:<10} port={port_text}{reset}"
+                        f"    {icon_color}{icon}{reset} {component:<12} "
+                        f"{dim}status={status:<10} port={port_text}{reset}"
                     )
 
     @staticmethod

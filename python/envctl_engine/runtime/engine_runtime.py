@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil as _shutil
+import sys as _sys
 import uuid
 import threading
 from dataclasses import dataclass
@@ -207,8 +209,14 @@ from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
 from envctl_engine.shared.ports import PortPlanner
-from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, psutil_available
+from envctl_engine.shared.process_probe import (
+    ProcessProbe,
+    ProbeBackend,
+    PsutilProbeBackend as _PsutilProbeBackend,
+    psutil_available,
+)
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
 from envctl_engine.shell.release_gate import evaluate_shipability
@@ -240,7 +248,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _backend_async_driver_mismatch_error as domain_backend_async_driver_mismatch_error,
     _backend_bootstrap_strict as domain_backend_bootstrap_strict,
     _backend_has_migrations as domain_backend_has_migrations,
-    _backend_migration_retry_env_for_async_driver_mismatch as domain_backend_migration_retry_env_for_async_driver_mismatch,
+    _backend_migration_retry_env_for_async_driver_mismatch as domain_backend_migration_retry_env_for_async_driver_mismatch,  # noqa: E501
     _env_assignment_key as domain_env_assignment_key,
     _override_env_path as domain_override_env_path,
     _prepare_backend_runtime as domain_prepare_backend_runtime,
@@ -285,6 +293,10 @@ from envctl_engine.planning.worktree_domain import (
     _setup_worktree_requested as domain_setup_worktree_requested,
 )
 from envctl_engine.planning.worktree_orchestrator import PlanningWorktreeOrchestrator
+
+shutil = _shutil
+sys = _sys
+PsutilProbeBackend = _PsutilProbeBackend
 
 
 @dataclass(slots=True)
