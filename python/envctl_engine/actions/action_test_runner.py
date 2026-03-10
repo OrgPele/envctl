@@ -40,6 +40,21 @@ def _format_live_progress_status(label: str, current: int, total: int) -> str:
     return f"Running {label}... {current}/{total} tests complete"
 
 
+def _live_failed_count(parsed: object | None) -> int:
+    if parsed is None:
+        return 0
+    failed = int(getattr(parsed, "failed", 0) or 0)
+    errors = int(getattr(parsed, "errors", 0) or 0)
+    failed_tests = len(getattr(parsed, "failed_tests", ()) or ())
+    return max(failed + errors, failed_tests + errors)
+
+
+def _format_live_progress_status_with_counts(label: str, current: int, total: int, *, parsed: object | None) -> str:
+    failed = min(max(_live_failed_count(parsed), 0), max(current, 0))
+    passed = max(0, int(current) - failed)
+    return f"{_format_live_progress_status(label, current, total)} • {passed} passed, {failed} failed"
+
+
 def run_test_action(
     orchestrator: Any,
     route: Route,
@@ -243,7 +258,9 @@ def run_test_action(
                 return
             progress_status["last"] = snapshot
             live_label = f"{project_name} / {suite_label}" if multi_project else suite_label
-            orchestrator._emit_status(_format_live_progress_status(live_label, current, total))
+            orchestrator._emit_status(
+                _format_live_progress_status_with_counts(live_label, current, total, parsed=runner.last_result)
+            )
 
         if parallel:
             with progress_lock:

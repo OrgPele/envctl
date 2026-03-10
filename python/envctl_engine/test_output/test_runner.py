@@ -74,6 +74,8 @@ class TestRunner:
 
         test_type = self._detect_test_type(command)
         parser = self._get_parser(test_type)
+        self.last_result = parser.result
+        self.last_test_type = test_type
 
         # Run with streaming output
         instrumented_command, instrumented_env = self._instrument_command(

@@ -31,6 +31,6 @@ List:
 
 15. add relevant prompts to codex CLI
 
-16. snot only spesify in the docs - but be able to configure what are the environment variable names that are created for each depandancy (for example postres URI or n8n URL)
+16. not only spesify it in the docs - but be able to configure what are the environment variable names that are created for each depandancy (for example postres URI or n8n URL)
 
 17. Add for live tests spinner pass/failed count

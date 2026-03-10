@@ -191,8 +191,60 @@ class ActionsParityTests(unittest.TestCase):
             status_messages = [
                 str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
-            self.assertTrue(any("1/3 tests complete" in message for message in status_messages))
-            self.assertTrue(any("3/3 tests complete" in message for message in status_messages))
+            self.assertTrue(
+                any("1/3 tests complete • 1 passed, 0 failed" in message for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertTrue(
+                any("3/3 tests complete • 3 passed, 0 failed" in message for message in status_messages),
+                msg=status_messages,
+            )
+
+    def test_interactive_test_action_live_progress_counts_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            class _ProgressRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = SimpleNamespace(
+                        counts_detected=True,
+                        passed=1,
+                        failed=1,
+                        skipped=0,
+                        errors=0,
+                        total=2,
+                        failed_tests=["tests/test_sample.py::test_two"],
+                    )
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None, progress_callback=None):  # noqa: ANN001
+                    _ = command, cwd, env, timeout
+                    if callable(progress_callback):
+                        progress_callback(2, 2)
+                    return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertTrue(
+                any("2/2 tests complete • 1 passed, 1 failed" in message for message in status_messages),
+                msg=status_messages,
+            )
 
     def test_interactive_test_action_prints_failure_excerpt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
