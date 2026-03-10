@@ -112,6 +112,64 @@ class ActionsCliTests(unittest.TestCase):
             self.assertTrue(
                 any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
             )
+            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertIn("--head", gh_create)
+            self.assertIn("feature/new-demo", gh_create)
+            self.assertIn("--base", gh_create)
+            self.assertIn("main", gh_create)
+
+    def test_pr_action_interactive_mode_does_not_prompt_for_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/no-prompt\n"
+                if args and args[0:2] == ["log", "--oneline"]:
+                    return "abc123 feat: demo\n"
+                if args == ["status", "--porcelain"]:
+                    return ""
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/101\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_ACTION_INTERACTIVE": "1"}, clear=False),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("builtins.input", side_effect=AssertionError("input() should not be called for pr action")),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("https://github.com/acme/supportopia/pull/101", output)
+            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertIn("--head", gh_create)
+            self.assertIn("feature/no-prompt", gh_create)
 
     def test_pr_action_prefers_repo_helper_over_gh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

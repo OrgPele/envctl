@@ -139,7 +139,7 @@ def run_pr_action(context: ActionProjectContext) -> int:
         print("gh is required for pr action when utils/create-pr.sh is unavailable")
         print(f"PR summary written: {output_path}")
         return 1
-    args = [gh_path, "pr", "create", "--fill"]
+    args = [gh_path, "pr", "create", "--fill", "--head", head_branch]
     if base_branch:
         args.extend(["--base", base_branch])
     created = subprocess.run(args, cwd=str(git_root), text=True, capture_output=True, check=False)
@@ -286,19 +286,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     explicit = str(context.env.get("ENVCTL_PR_BASE", "")).strip()
     if explicit:
         return explicit
-    default_branch = detect_default_branch(git_root)
-    if not context.interactive:
-        return default_branch
-    print(f"Base branch for PRs (default: {default_branch}): ", end="", flush=True)
-    try:
-        response = input().strip()
-    except EOFError:
-        response = ""
-    candidate = response or default_branch
-    if _run_git(git_root, ["rev-parse", "--verify", candidate]).returncode != 0:
-        print(f"Base branch '{candidate}' not found; using {default_branch}.")
-        return default_branch
-    return candidate
+    return detect_default_branch(git_root)
 
 
 def _resolve_analyze_mode(context: ActionProjectContext) -> str:
