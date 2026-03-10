@@ -21,9 +21,7 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
     }
 )
 
-SKIP_STARTUP_ONLY_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"debug-pack", "debug-report", "debug-last"}
-)
+SKIP_STARTUP_ONLY_COMMANDS: Final[frozenset[str]] = frozenset({"debug-pack", "debug-report", "debug-last"})
 
 DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
     {"list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup"}
@@ -38,7 +36,16 @@ STARTUP_COMMANDS: Final[frozenset[str]] = frozenset({"restart", "plan", "start"}
 
 
 def apply_mode_token(token: str, *, flags: dict[str, object], current_mode: str) -> str:
-    if token in {"--tree", "--tree=true", "--trees", "--trees=true", "tree=true", "trees=true", "TREE=true", "TREES=true"}:
+    if token in {
+        "--tree",
+        "--tree=true",
+        "--trees",
+        "--trees=true",
+        "tree=true",
+        "trees=true",
+        "TREE=true",
+        "TREES=true",
+    }:
         return "trees"
     if token in {"main=false", "MAIN=false"}:
         return "trees"

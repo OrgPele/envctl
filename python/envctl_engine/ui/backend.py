@@ -209,11 +209,7 @@ def _debug_orch_groups(runtime: Any) -> set[str]:
         raw = str(env.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
     if not raw:
         raw = str(os.environ.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
-    return {
-        token.strip()
-        for token in raw.replace("+", ",").split(",")
-        if token.strip()
-    }
+    return {token.strip() for token in raw.replace("+", ",").split(",") if token.strip()}
 
 
 def _debug_tty_groups(runtime: Any) -> set[str]:
@@ -226,11 +222,7 @@ def _debug_tty_groups(runtime: Any) -> set[str]:
         raw = str(env.get("ENVCTL_DEBUG_PLAN_TTY_GROUP", "")).strip().lower()
     if not raw:
         raw = str(os.environ.get("ENVCTL_DEBUG_PLAN_TTY_GROUP", "")).strip().lower()
-    return {
-        token.strip()
-        for token in raw.replace("+", ",").split(",")
-        if token.strip()
-    }
+    return {token.strip() for token in raw.replace("+", ",").split(",") if token.strip()}
 
 
 def _debug_tty_group_enabled(runtime: Any, name: str) -> bool:
@@ -399,8 +391,11 @@ def _run_selector_subprocess(*, runtime: Any, payload: Mapping[str, object]) -> 
         if isinstance(runtime_env, Mapping):
             env.update({str(key): str(value) for key, value in runtime_env.items()})
         if isinstance(session_id, str) and session_id.strip():
-            debug_path = runtime.runtime_root / "debug" / session_id.strip() / (
-                f"selector-subprocess-{str(payload.get('kind', 'unknown')).strip().lower()}.jsonl"
+            debug_path = (
+                runtime.runtime_root
+                / "debug"
+                / session_id.strip()
+                / (f"selector-subprocess-{str(payload.get('kind', 'unknown')).strip().lower()}.jsonl")
             )
             try:
                 debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,10 +461,7 @@ def _emit_parent_selector_thread_snapshot(*, emit: Any, stage: str) -> None:
         stack: list[str] = []
         if frame is not None:
             try:
-                stack = [
-                    f"{item.filename}:{item.lineno}:{item.name}"
-                    for item in traceback.extract_stack(frame)[-12:]
-                ]
+                stack = [f"{item.filename}:{item.lineno}:{item.name}" for item in traceback.extract_stack(frame)[-12:]]
             except Exception:
                 stack = []
         threads.append(
@@ -570,11 +562,7 @@ def _run_selector_preflight(
         key="ENVCTL_UI_SELECTOR_PREFLIGHT_DRAIN",
         default=False,
     )
-    drained_bytes = (
-        _drain_stdin_escape_tail(fd=fd, max_window_seconds=0.03, max_bytes=64)
-        if drain_enabled
-        else 0
-    )
+    drained_bytes = _drain_stdin_escape_tail(fd=fd, max_window_seconds=0.03, max_bytes=64) if drain_enabled else 0
     _emit_selector_preflight(
         emit,
         stage="end",

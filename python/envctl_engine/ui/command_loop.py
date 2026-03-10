@@ -10,7 +10,7 @@ from ..debug.debug_utils import hash_command
 from ..state.models import RunState
 from .color_policy import colors_enabled
 from .command_aliases import normalize_interactive_command
-from .debug_anomaly_rules import detect_dispatch_anomaly, detect_input_anomalies, detect_spinner_anomaly
+from .debug_anomaly_rules import detect_input_anomalies, detect_spinner_anomaly
 from .spinner import Spinner, spinner, spinner_enabled, use_spinner_policy
 from .spinner_service import emit_spinner_policy, resolve_spinner_policy
 from .debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
@@ -46,7 +46,12 @@ def run_dashboard_command_loop(
     yellow = "" if not use_color else "\033[33m"
     magenta = "" if not use_color else "\033[35m"
 
-    minimal_dashboard = str(getattr(rt, 'env', {}).get('ENVCTL_DEBUG_MINIMAL_DASHBOARD', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+    minimal_dashboard = str(getattr(rt, "env", {}).get("ENVCTL_DEBUG_MINIMAL_DASHBOARD", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     debug_plan_snapshot = snapshot_enabled(getattr(rt, "env", {}))
     rt._emit("ui.command_loop.enter", minimal=minimal_dashboard)
     print("")
@@ -122,7 +127,11 @@ def run_dashboard_command_loop(
                     raw = read_command_line("Enter command: ")
                 else:
                     raw = session.read_command_line("Enter command: ")
-                rt._emit("ui.input.read.end", component="ui.command_loop", bytes_read=len(raw.encode("utf-8", errors="ignore")))
+                rt._emit(
+                    "ui.input.read.end",
+                    component="ui.command_loop",
+                    bytes_read=len(raw.encode("utf-8", errors="ignore")),
+                )
             except EOFError:
                 print(f"{yellow}No interactive TTY input available; leaving interactive mode.{reset}")
                 rt._emit("ui.command_loop.exit", reason="eof")
@@ -189,11 +198,14 @@ def run_dashboard_command_loop(
                 and spinner_enabled(getattr(rt, "env", {}))
             )
             tracker = _SpinnerTracker()
-            with use_spinner_policy(command_spinner_policy), spinner(
-                _command_spinner_message(normalized_command),
-                enabled=show_command_spinner,
-                start_immediately=False,
-            ) as active_spinner:
+            with (
+                use_spinner_policy(command_spinner_policy),
+                spinner(
+                    _command_spinner_message(normalized_command),
+                    enabled=show_command_spinner,
+                    start_immediately=False,
+                ) as active_spinner,
+            ):
                 restore_emit = _install_spinner_event_bridge(
                     runtime=rt,
                     active_spinner=active_spinner,
@@ -242,7 +254,9 @@ def run_dashboard_command_loop(
                 spinner_started=show_command_spinner,
             )
             if spinner_anomaly is not None:
-                rt._emit(spinner_anomaly["event"], component="ui.command_loop", **spinner_anomaly, command_id=command_id)
+                rt._emit(
+                    spinner_anomaly["event"], component="ui.command_loop", **spinner_anomaly, command_id=command_id
+                )
                 if str(spinner_anomaly.get("severity", "")).lower() in {"high", "critical"}:
                     _emit_auto_pack(rt, reason="spinner_anomaly")
 
@@ -264,7 +278,9 @@ def _call_or_default_can_interactive_tty(candidate: Callable[[], bool] | None) -
 
 def _dashboard_hidden_commands(state: RunState) -> set[str]:
     raw = state.metadata.get("dashboard_hidden_commands")
-    hidden = {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+    hidden = (
+        {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+    )
     if not state.services:
         hidden.add("migrate")
     return hidden
@@ -376,6 +392,7 @@ def _install_spinner_event_bridge(
 ) -> Callable[[], None]:
     add_listener = getattr(runtime, "add_emit_listener", None)
     if callable(add_listener):
+
         def listener(event_name: str, payload: Mapping[str, object]) -> None:
             if _suite_spinner_group_enabled_event(event_name, payload):
                 tracker.suppressed_by_suite_group = True
@@ -400,6 +417,7 @@ def _install_spinner_event_bridge(
 
         remove = add_listener(listener)
         if callable(remove):
+
             def restore_from_listener() -> None:
                 remove()
 

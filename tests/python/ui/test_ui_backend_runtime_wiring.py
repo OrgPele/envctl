@@ -45,4 +45,3 @@ class UiBackendRuntimeWiringTests(unittest.TestCase):
 
             self.assertEqual(code, 7)
             self.assertEqual(backend.calls, 1)
-

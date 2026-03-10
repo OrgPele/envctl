@@ -320,6 +320,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                     "ENVCTL_UI_SPINNER_MODE": "on",
                 },
             )
+
             class _FakeProcess:
                 def __init__(self, pid: int) -> None:
                     self.pid = pid

@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import concurrent.futures
 from contextlib import nullcontext
-import os
 import threading
 import time
 from typing import Any
 
-from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.runtime.engine_runtime_env import _route_is_implicit_start
-from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
-from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -21,29 +18,22 @@ from envctl_engine.startup.startup_progress import (
 from envctl_engine.startup.startup_selection_support import (
     _port_allocator as _port_allocator_impl,
     _process_runtime as _process_runtime_impl,
-    _project_name_from_service_name as _project_name_from_service_name_impl,
     _project_ports_text as _project_ports_text_impl,
     _restart_include_requirements as _restart_include_requirements_impl,
     _restart_selected_services as _restart_selected_services_impl,
     _restart_service_types_for_project as _restart_service_types_for_project_impl,
     _restart_target_projects as _restart_target_projects_impl,
     _restart_target_projects_for_selected_services as _restart_target_projects_for_selected_services_impl,
-    _route_explicit_trees_mode as _route_explicit_trees_mode_impl,
     _select_start_tree_projects as _select_start_tree_projects_impl,
     _state_matches_selected_projects as _state_matches_selected_projects_impl,
     _state_covers_selected_projects as _state_covers_selected_projects_impl,
     _state_project_names as _state_project_names_impl,
-    _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
     _trees_start_selection_required as _trees_start_selection_required_impl,
 )
 from envctl_engine.startup.startup_execution_support import (
-    _docker_prewarm_enabled as _docker_prewarm_enabled_impl,
-    _docker_prewarm_timeout_seconds as _docker_prewarm_timeout_seconds_impl,
     _maybe_prewarm_docker as _maybe_prewarm_docker_impl,
-    _prewarm_requires_startup_requirements as _prewarm_requires_startup_requirements_impl,
     _requirements_for_restart_context as _requirements_for_restart_context_impl,
     _requirements_timing_enabled as _requirements_timing_enabled_impl,
-    _service_attach_parallel_enabled as _service_attach_parallel_enabled_impl,
     _startup_breakdown_enabled as _startup_breakdown_enabled_impl,
     print_startup_summary as print_startup_summary_impl,
     start_project_context as start_project_context_impl,
@@ -117,10 +107,13 @@ class StartupOrchestrator:
                     prestop_policy,
                     context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
                 )
-                with use_spinner_policy(prestop_policy), spinner(
-                    "Restarting services...",
-                    enabled=use_prestop_spinner,
-                ) as prestop_spinner:
+                with (
+                    use_spinner_policy(prestop_policy),
+                    spinner(
+                        "Restarting services...",
+                        enabled=use_prestop_spinner,
+                    ) as prestop_spinner,
+                ):
                     if use_prestop_spinner:
                         rt._emit(  # type: ignore[attr-defined]
                             "ui.spinner.lifecycle",
@@ -142,9 +135,7 @@ class StartupOrchestrator:
                             else:
                                 preserved_requirements[project_name] = requirements
                         preserved_services = {
-                            name: service
-                            for name, service in resumed.services.items()
-                            if name not in selected_services
+                            name: service for name, service in resumed.services.items() if name not in selected_services
                         }
                         if use_prestop_spinner:
                             prestop_spinner.succeed("Restart pre-stop complete")
@@ -193,6 +184,7 @@ class StartupOrchestrator:
         reset_startup_warnings = getattr(rt, "_reset_project_startup_warnings", None)
         if callable(reset_startup_warnings):
             reset_startup_warnings()
+
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "startup.phase",
@@ -270,9 +262,7 @@ class StartupOrchestrator:
         restored_project_names: list[str] = []
 
         mode_runs_enabled = (
-            rt.config.startup_enabled_for_mode(runtime_mode)
-            if hasattr(rt.config, "startup_enabled_for_mode")
-            else True
+            rt.config.startup_enabled_for_mode(runtime_mode) if hasattr(rt.config, "startup_enabled_for_mode") else True
         )
         allow_disabled_dashboard = not mode_runs_enabled and (
             route.command == "plan" or _route_is_implicit_start(route)
@@ -289,7 +279,9 @@ class StartupOrchestrator:
             emit_phase("artifacts_write", artifacts_started, status="ok")
             enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
             if route.command == "plan":
-                print(f"Planning mode complete; skipping service startup because envctl runs are disabled for {runtime_mode}.")
+                print(
+                    f"Planning mode complete; skipping service startup because envctl runs are disabled for {runtime_mode}."
+                )
             elif not enter_interactive_dashboard:
                 print(f"envctl runs are disabled for {runtime_mode}; opening dashboard without starting services.")
             if enter_interactive_dashboard:
@@ -300,9 +292,7 @@ class StartupOrchestrator:
         if requested_command == "plan":
             raw_orch_group = str(getattr(rt, "env", {}).get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
             debug_orch_groups = {
-                token.strip()
-                for token in raw_orch_group.replace("+", ",").split(",")
-                if token.strip()
+                token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()
             }
         if requested_command != "restart" and mode_runs_enabled and rt._auto_resume_start_enabled(route):
             auto_resume_started = time.monotonic()
@@ -481,7 +471,8 @@ class StartupOrchestrator:
         emit_phase("docker_prewarm", prewarm_started, status="ok")
         debug_suppress_plan_progress = bool(
             requested_command == "plan"
-            and str(getattr(rt, "env", {}).get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower() in {"1", "true", "yes", "on"}
+            and str(getattr(rt, "env", {}).get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower()
+            in {"1", "true", "yes", "on"}
         )
         route_for_execution = Route(
             command=route.command,
@@ -514,10 +505,13 @@ class StartupOrchestrator:
         use_single_spinner = use_startup_spinner and not use_project_spinner_group
         group_context = project_spinner_group if use_project_spinner_group else nullcontext(project_spinner_group)
 
-        with use_spinner_policy(spinner_policy), spinner(
-            spinner_message,
-            enabled=use_single_spinner,
-        ) as active_spinner:
+        with (
+            use_spinner_policy(spinner_policy),
+            spinner(
+                spinner_message,
+                enabled=use_single_spinner,
+            ) as active_spinner,
+        ):
             if use_single_spinner:
                 route_for_execution.flags["_spinner_update"] = active_spinner.update
                 rt._emit(  # type: ignore[attr-defined]
@@ -555,7 +549,9 @@ class StartupOrchestrator:
                                     completed[context.name] = (req_result, project_services, project_warnings)
                                     if use_single_spinner:
                                         done = len(restored_project_names) + len(completed)
-                                        progress_message = f"Started {done}/{len(selected_project_contexts)} project(s)..."
+                                        progress_message = (
+                                            f"Started {done}/{len(selected_project_contexts)} project(s)..."
+                                        )
                                         active_spinner.update(progress_message)
                                         rt._emit(  # type: ignore[attr-defined]
                                             "ui.spinner.lifecycle",
@@ -573,7 +569,9 @@ class StartupOrchestrator:
                                         context=context,
                                         warnings=project_warnings,
                                         route=route_for_execution,
-                                        project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                                        project_spinner_group=project_spinner_group
+                                        if use_project_spinner_group
+                                        else None,
                                     )
                                 except RuntimeError as exc:
                                     failures.append(str(exc))
@@ -964,7 +962,9 @@ class StartupOrchestrator:
         project_name: str,
         default_service_types: set[str] | None = None,
     ) -> set[str]:
-        return _restart_service_types_for_project_impl(route=route, project_name=project_name, default_service_types=default_service_types)
+        return _restart_service_types_for_project_impl(
+            route=route, project_name=project_name, default_service_types=default_service_types
+        )
 
     @staticmethod
     def _process_runtime(runtime: Any) -> Any:

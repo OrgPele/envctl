@@ -241,15 +241,17 @@ class JestOutputParser(TestOutputParser):
                 capture_lines = 0
                 pending = False
                 continue
-            if pending and re.search(r"(AssertionError:|TypeError:|ReferenceError:|SyntaxError:|Error:|Expected:|Received:|Cannot )", stripped):
+            if pending and re.search(
+                r"(AssertionError:|TypeError:|ReferenceError:|SyntaxError:|Error:|Expected:|Received:|Cannot )",
+                stripped,
+            ):
                 current_message = stripped
                 capture_lines = 0
                 pending = False
                 continue
             if current_message and capture_lines < 18:
-                if (
-                    re.match(r"^\s*(at |>|\\||[0-9]+\\s*\\|)", line)
-                    or re.search(r"(Expected:|Received:|AssertionError:|TypeError:|ReferenceError:|SyntaxError:|Error:)", stripped)
+                if re.match(r"^\s*(at |>|\\||[0-9]+\\s*\\|)", line) or re.search(
+                    r"(Expected:|Received:|AssertionError:|TypeError:|ReferenceError:|SyntaxError:|Error:)", stripped
                 ):
                     current_message = f"{current_message}\n{line.rstrip()}"
                     capture_lines += 1

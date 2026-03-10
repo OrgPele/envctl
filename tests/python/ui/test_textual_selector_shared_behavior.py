@@ -33,7 +33,11 @@ class TextualSelectorSharedBehaviorTests(unittest.TestCase):
         self.assertEqual(controller.ensure_list_index(None), 0)
 
     def test_controller_cycles_focus_and_toggles_visible_rows(self) -> None:
-        rows = [_Row(visible=True, selected=False), _Row(visible=True, selected=True), _Row(visible=False, selected=False)]
+        rows = [
+            _Row(visible=True, selected=False),
+            _Row(visible=True, selected=True),
+            _Row(visible=False, selected=False),
+        ]
         controller = TextualListController(rows)
 
         self.assertEqual(controller.cycle_focus_target(filter_has_focus=False), "filter")

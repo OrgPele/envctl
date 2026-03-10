@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import uuid
 import threading
-import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
-from envctl_engine.actions.actions_worktree import delete_worktree_path
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 from envctl_engine.debug.doctor_orchestrator import DoctorOrchestrator
@@ -198,45 +195,28 @@ from envctl_engine.runtime.engine_runtime_ui_bridge import (
     select_project_targets as bridge_select_project_targets,
 )
 from envctl_engine.runtime.hook_migration_support import run_hook_migration as runtime_run_hook_migration
-from envctl_engine.runtime.command_resolution import CommandResolutionError, resolve_requirement_start_command, resolve_service_start_command
-from envctl_engine.runtime.command_router import MODE_FALSE_TOKENS, MODE_MAIN_TOKENS, MODE_TREE_TOKENS, Route, list_supported_commands, parse_route
+from envctl_engine.runtime.command_router import (
+    MODE_FALSE_TOKENS,
+    MODE_MAIN_TOKENS,
+    MODE_TREE_TOKENS,
+    Route,
+    list_supported_commands,
+)
 from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.shared.ports import PortPlanner
-from envctl_engine.planning import (
-    discover_tree_projects,
-    filter_projects_for_plan,
-    list_planning_files,
-    planning_existing_counts,
-    planning_feature_name,
-    resolve_planning_files,
-    select_projects_for_plan_files,
-)
-from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, PsutilProbeBackend, psutil_available
-from envctl_engine.shared.parsing import parse_float_or_none
+from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, psutil_available
 from envctl_engine.shared.process_runner import ProcessRunner
-from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome, RequirementsOrchestrator
-from envctl_engine.requirements.common import build_container_name, container_exists, run_docker, run_result_error
-from envctl_engine.requirements.n8n import start_n8n_container
-from envctl_engine.requirements.postgres import start_postgres_container
-from envctl_engine.requirements.redis import start_redis_container
-from envctl_engine.requirements.supabase import (
-    evaluate_supabase_reliability_contract,
-    read_fingerprint as read_supabase_fingerprint,
-    start_supabase_stack,
-    write_fingerprint as write_supabase_fingerprint,
-)
+from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
 from envctl_engine.shell.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.runtime.runtime_context import RuntimeContext
-from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
-from envctl_engine.state import dump_state, load_legacy_shell_state, load_state, load_state_from_pointer
 from envctl_engine.state.repository import RuntimeStateRepository
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder, DebugRecorderConfig
@@ -277,7 +257,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _sync_backend_env_file as domain_sync_backend_env_file,
 )
 from envctl_engine.planning.worktree_domain import (
-    _apply_setup_worktree_selection as domain_apply_setup_worktree_selection,
     _cleanup_empty_feature_root as domain_cleanup_empty_feature_root,
     _coerce_setup_entries as domain_coerce_setup_entries,
     _create_feature_worktrees as domain_create_feature_worktrees,
@@ -285,27 +264,19 @@ from envctl_engine.planning.worktree_domain import (
     _decode_planning_menu_escape as domain_decode_planning_menu_escape,
     _delete_feature_worktrees as domain_delete_feature_worktrees,
     _feature_project_candidates as domain_feature_project_candidates,
-    _initial_plan_selected_counts as domain_initial_plan_selected_counts,
-    _load_plan_selection_memory as domain_load_plan_selection_memory,
     _move_plan_to_done as domain_move_plan_to_done,
     _next_available_iteration as domain_next_available_iteration,
-    _planning_keep_plan_enabled as domain_planning_keep_plan_enabled,
     _planning_menu_apply_key as domain_planning_menu_apply_key,
     _planning_done_root as domain_planning_done_root,
     _planning_root as domain_planning_root,
     _plan_selection_memory_path as domain_plan_selection_memory_path,
     _preferred_tree_root_for_feature as domain_preferred_tree_root_for_feature,
     _project_sort_key_for_feature as domain_project_sort_key_for_feature,
-    _prompt_planning_selection as domain_prompt_planning_selection,
     _read_planning_menu_escape_sequence as domain_read_planning_menu_escape_sequence,
     _read_planning_menu_key as domain_read_planning_menu_key,
     _render_planning_selection_menu as domain_render_planning_selection_menu,
     _resolve_planning_selection_target as domain_resolve_planning_selection_target,
-    _run_planning_selection_menu as domain_run_planning_selection_menu,
-    _save_plan_selection_memory as domain_save_plan_selection_memory,
-    _select_plan_projects as domain_select_plan_projects,
     _setup_worktree_placeholder_fallback_enabled as domain_setup_worktree_placeholder_fallback_enabled,
-    _sync_plan_worktrees_from_plan_counts as domain_sync_plan_worktrees_from_plan_counts,
     _terminal_size as domain_terminal_size,
     _to_terminal_lines as domain_to_terminal_lines,
     _trees_root_for_worktree as domain_trees_root_for_worktree,
@@ -378,7 +349,9 @@ class PythonEngineRuntime:
     _run_backend_bootstrap_command = domain_run_backend_bootstrap_command
     _run_frontend_bootstrap_command = domain_run_frontend_bootstrap_command
     _run_backend_migration_step = domain_run_backend_migration_step
-    _backend_migration_retry_env_for_async_driver_mismatch = domain_backend_migration_retry_env_for_async_driver_mismatch
+    _backend_migration_retry_env_for_async_driver_mismatch = (
+        domain_backend_migration_retry_env_for_async_driver_mismatch
+    )
     _backend_async_driver_mismatch_error = staticmethod(domain_backend_async_driver_mismatch_error)
     _rewrite_database_url_to_asyncpg = staticmethod(domain_rewrite_database_url_to_asyncpg)
     _read_env_file_safe = staticmethod(domain_read_env_file_safe)
@@ -496,7 +469,9 @@ class PythonEngineRuntime:
                 backend=self.ui_backend_resolution.backend,
             )
 
-    def _apply_setup_worktree_selection(self, route: Route, project_contexts: list[ProjectContext]) -> list[ProjectContext]:
+    def _apply_setup_worktree_selection(
+        self, route: Route, project_contexts: list[ProjectContext]
+    ) -> list[ProjectContext]:
         return self.planning_worktree_orchestrator.apply_setup_worktree_selection(route, project_contexts)
 
     def _select_plan_projects(self, route: Route, project_contexts: list[ProjectContext]) -> list[ProjectContext]:
@@ -601,7 +576,6 @@ class PythonEngineRuntime:
 
     def _start(self, route: Route) -> int:
         return self.startup_orchestrator.execute(route)
-
 
     def _effective_start_mode(self, route: Route) -> str:
         return runtime_effective_start_mode(self, route)
@@ -737,6 +711,7 @@ class PythonEngineRuntime:
 
     def _print_summary(self, state: RunState, contexts: list[ProjectContext]) -> None:
         runtime_print_summary(self, state, contexts)
+
     def _print_help(self) -> None:
         print("envctl Python runtime")
         print("Commands: " + ", ".join(list_supported_commands()))
@@ -886,12 +861,14 @@ class PythonEngineRuntime:
     def _restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
         """Restore terminal state after raw input handling."""
         from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+
         RuntimeTerminalUI.restore_terminal_after_input(fd=fd, original_state=original_state)
 
     @staticmethod
     def _can_interactive_tty() -> bool:
         """Check if interactive TTY is available."""
         from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+
         return RuntimeTerminalUI._can_interactive_tty()
 
     def _build_process_probe_backend(self) -> ProbeBackend:
@@ -930,7 +907,6 @@ class PythonEngineRuntime:
 
     def _state_lookup_strict_mode_match(self, route: Route) -> bool:
         return self._route_has_explicit_mode(route)
-
 
     def _state_action(self, route: Route) -> int:
         return self.state_action_orchestrator.execute(route)
@@ -1126,10 +1102,7 @@ class PythonEngineRuntime:
         return ActionCommandOrchestrator.action_extra_env(route)
 
     def _unsupported_command(self, command: str) -> int:
-        print(
-            "Command is not yet fully implemented in the Python runtime: "
-            f"{command}."
-        )
+        print(f"Command is not yet fully implemented in the Python runtime: {command}.")
         return 1
 
     def _stop(self, route: Route) -> int:

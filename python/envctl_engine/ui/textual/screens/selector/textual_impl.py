@@ -3,6 +3,21 @@ from __future__ import annotations
 import os
 from typing import Callable, Sequence, cast
 
+from envctl_engine.ui.textual.screens.selector.support import (
+    _deep_debug_enabled,
+    _emit,
+    _emit_selector_debug,
+    _guard_textual_nonblocking_read,
+    _instrument_textual_parser_keys,
+    _selector_backend_decision,
+    _selector_disable_focus_reporting_enabled,
+    _selector_driver_trace_enabled,
+    _selector_id,
+    _selector_key_trace_enabled,
+    _selector_key_trace_verbose_enabled,
+    _selector_thread_stack_enabled,
+    _textual_importable,
+)
 from envctl_engine.ui.textual.compat import textual_run_policy
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.terminal_session import consume_preserved_input
@@ -21,31 +36,16 @@ def _consume_initial_selector_navigation() -> tuple[str, ...]:
     actions: list[str] = []
     index = 0
     while index < len(raw):
-        if raw[index:index + 3] == b"\x1b[A":
+        if raw[index : index + 3] == b"\x1b[A":
             actions.append("up")
             index += 3
             continue
-        if raw[index:index + 3] == b"\x1b[B":
+        if raw[index : index + 3] == b"\x1b[B":
             actions.append("down")
             index += 3
             continue
         index += 1
     return tuple(actions)
-from envctl_engine.ui.textual.screens.selector.support import (
-    _deep_debug_enabled,
-    _emit,
-    _emit_selector_debug,
-    _guard_textual_nonblocking_read,
-    _instrument_textual_parser_keys,
-    _selector_backend_decision,
-    _selector_disable_focus_reporting_enabled,
-    _selector_driver_trace_enabled,
-    _selector_id,
-    _selector_key_trace_enabled,
-    _selector_key_trace_verbose_enabled,
-    _selector_thread_stack_enabled,
-    _textual_importable,
-)
 
 
 def run_textual_selector(

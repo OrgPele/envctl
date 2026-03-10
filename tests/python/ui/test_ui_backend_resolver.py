@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -76,9 +75,7 @@ class UiBackendResolverTests(unittest.TestCase):
             patch("envctl_engine.ui.backend_resolver._textual_available", return_value=True),
             patch("envctl_engine.ui.backend_resolver._interactive_tty_available", return_value=True),
         ):
-            result = resolve_ui_backend(
-                {"ENVCTL_UI_BACKEND": "auto", "ENVCTL_UI_EXPERIMENTAL_DASHBOARD": "1"}
-            )
+            result = resolve_ui_backend({"ENVCTL_UI_BACKEND": "auto", "ENVCTL_UI_EXPERIMENTAL_DASHBOARD": "1"})
 
         self.assertEqual(result.backend, "textual")
         self.assertTrue(result.interactive)

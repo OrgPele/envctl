@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
-import termios
 
 from envctl_engine.planning.menu import PlanningSelectionMenu
 from envctl_engine.ui.terminal_session import TerminalSession, can_interactive_tty, restore_terminal_after_input

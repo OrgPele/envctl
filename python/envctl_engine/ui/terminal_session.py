@@ -35,7 +35,9 @@ def prompt_toolkit_available() -> bool:
     return importlib.util.find_spec("prompt_toolkit") is not None
 
 
-def restore_terminal_after_input(*, fd: int, original_state: list[int] | None, emit: Callable[..., None] | None = None) -> None:
+def restore_terminal_after_input(
+    *, fd: int, original_state: list[int] | None, emit: Callable[..., None] | None = None
+) -> None:
     if original_state is not None:
         try:
             # Preserve unread bytes so rapid follow-up keystrokes survive the
@@ -465,7 +467,13 @@ def _read_command_line_fallback(
                 )
         except Exception:
             if callable(emit):
-                emit("ui.input.flush", component="ui.terminal_session", backend="fallback", result="failed", discarded_bytes=0)
+                emit(
+                    "ui.input.flush",
+                    component="ui.terminal_session",
+                    backend="fallback",
+                    result="failed",
+                    discarded_bytes=0,
+                )
             if debug_recorder is not None:
                 debug_recorder.append_anomaly(
                     {
@@ -495,6 +503,7 @@ def _read_command_line_fallback(
             total_bytes += len(data)
             if debug_recorder is not None:
                 debug_recorder.record_input_bytes(data, component="ui.terminal_session", backend="fallback")
+
         try:
             text, dropped_escape_sequences = _read_line_from_fd_graceful(
                 fd,
@@ -631,11 +640,7 @@ def _read_command_line_basic(
             {
                 "event": "ui.tty.transition",
                 "action": "basic_input_read",
-                "source": (
-                    "fd"
-                    if used_fd_reader
-                    else ("tty_fallback" if used_tty_fallback else "provider")
-                ),
+                "source": ("fd" if used_fd_reader else ("tty_fallback" if used_tty_fallback else "provider")),
                 "stdin_tty": bool(sys.stdin.isatty()),
             }
         )
@@ -683,7 +688,9 @@ class TerminalSession:
             self._emit_backend("fallback")
             return text
         _restore_stdin_terminal_sane(emit=self._emit)
-        force_basic = self._prefer_basic_input or _force_basic_input_backend(self.env) or prompt_toolkit_disabled(self.env)
+        force_basic = (
+            self._prefer_basic_input or _force_basic_input_backend(self.env) or prompt_toolkit_disabled(self.env)
+        )
         if force_basic:
             text = _read_command_line_basic(
                 prompt,
@@ -767,12 +774,7 @@ def _reset_terminal_escape_modes(*, emit: Callable[..., None] | None = None) -> 
         # Ensure stale tracking / protocol modes from prior TUI sessions are disabled.
         # Also restore cursor and keypad modes for shell line editing.
         write(
-            "\x1b[?1l"
-            "\x1b>"
-            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1004l"
-            "\x1b[<u"
-            "\x1b[?2004l"
-            "\x1b[?25h"
+            "\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1004l\x1b[<u\x1b[?2004l\x1b[?25h"
         )
         if callable(flush):
             flush()
@@ -872,9 +874,16 @@ def temporary_tty_character_mode(
         restore_terminal_after_input(fd=fd, original_state=original_state, emit=emit)
 
 
-def normalize_standard_tty_state(*, emit: Callable[..., None] | None = None, component: str = "ui.terminal_session") -> None:
+def normalize_standard_tty_state(
+    *, emit: Callable[..., None] | None = None, component: str = "ui.terminal_session"
+) -> None:
     seen: set[int] = set()
-    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None), getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None)):
+    for stream in (
+        getattr(sys, "stdout", None),
+        getattr(sys, "stderr", None),
+        getattr(sys, "__stdout__", None),
+        getattr(sys, "__stderr__", None),
+    ):
         if stream is None:
             continue
         try:
@@ -968,7 +977,12 @@ def _set_pendin(*, fd: int, emit: Callable[..., None] | None = None, component: 
 
 def _clear_standard_tty_pendin(*, emit: Callable[..., None] | None = None, component: str) -> None:
     seen: set[int] = set()
-    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None), getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None)):
+    for stream in (
+        getattr(sys, "stdout", None),
+        getattr(sys, "stderr", None),
+        getattr(sys, "__stdout__", None),
+        getattr(sys, "__stderr__", None),
+    ):
         if stream is None:
             continue
         try:
@@ -994,7 +1008,12 @@ def temporary_standard_output_pendin(
 ) -> Iterator[None]:
     touched: list[tuple[int, list[int]]] = []
     seen: set[int] = set()
-    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None), getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None)):
+    for stream in (
+        getattr(sys, "stdout", None),
+        getattr(sys, "stderr", None),
+        getattr(sys, "__stdout__", None),
+        getattr(sys, "__stderr__", None),
+    ):
         if stream is None:
             continue
         try:

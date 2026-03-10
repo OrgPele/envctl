@@ -305,7 +305,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertFalse(result.container_recreated)
             stop_seen = any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
             rm_seen = any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
-            create_seen = any(cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands)
+            create_seen = any(
+                cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands
+            )
             start_seen = any(cmd[:2] == ["docker", "start"] and cmd[-1] == container_name for cmd in runner.commands)
             self.assertFalse(stop_seen)
             self.assertFalse(rm_seen)
@@ -340,7 +342,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.container_recreated)
             stop_seen = any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
             rm_seen = any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
-            create_seen = any(cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands)
+            create_seen = any(
+                cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands
+            )
             self.assertTrue(stop_seen)
             self.assertTrue(rm_seen)
             self.assertTrue(create_seen)
@@ -370,9 +374,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             self.assertTrue(result.port_adopted)
-            self.assertFalse(any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_redis_recovers_when_create_times_out_but_container_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -421,8 +431,12 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
             self.assertTrue(result.success)
-            self.assertFalse(any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_n8n_recovers_when_recreate_times_out_but_container_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -473,9 +487,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertTrue(result.port_adopted)
             self.assertEqual(result.effective_port, 5681)
-            self.assertFalse(any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_n8n_recovered_create_uses_settle_listener_without_restart_or_recreate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -499,9 +519,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
             self.assertTrue(result.success)
-            self.assertFalse(any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertFalse(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:2] == ["docker", "stop"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertFalse(
+                any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_supabase_stack_starts_compose_services_and_waits_for_db_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -524,9 +550,26 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
             self.assertEqual(result.container_name, compose_project)
-            self.assertTrue(any(cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "config" in cmd for cmd in runner.commands))
-            self.assertTrue(any(cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "supabase-db"] for cmd in runner.commands))
-            self.assertTrue(any(cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "supabase-auth" in cmd and "supabase-kong" in cmd for cmd in runner.commands))
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "config" in cmd
+                    for cmd in runner.commands
+                )
+            )
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "supabase-db"]
+                    for cmd in runner.commands
+                )
+            )
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"]
+                    and "supabase-auth" in cmd
+                    and "supabase-kong" in cmd
+                    for cmd in runner.commands
+                )
+            )
 
     def test_supabase_stack_starts_secondary_services_in_background_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -652,7 +695,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             root = Path(tmpdir)
             supabase_dir = root / "supabase"
             supabase_dir.mkdir(parents=True, exist_ok=True)
-            (supabase_dir / "docker-compose.yml").write_text("services:\n  db: {}\n  auth: {}\n  kong: {}\n", encoding="utf-8")
+            (supabase_dir / "docker-compose.yml").write_text(
+                "services:\n  db: {}\n  auth: {}\n  kong: {}\n", encoding="utf-8"
+            )
 
             runner = _FakeRunner()
             runner.compose_services_stdout = "db\nauth\nkong\n"
@@ -665,8 +710,18 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(result.success)
             compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
-            self.assertTrue(any(cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "db"] for cmd in runner.commands))
-            self.assertTrue(any(cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "auth" in cmd and "kong" in cmd for cmd in runner.commands))
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "db"]
+                    for cmd in runner.commands
+                )
+            )
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "auth" in cmd and "kong" in cmd
+                    for cmd in runner.commands
+                )
+            )
 
     def test_supabase_stack_fails_when_compose_file_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -740,8 +795,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(result.success)
             restart_seen = any(
-                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["restart", "supabase-db"]
-                for cmd in runner.commands
+                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["restart", "supabase-db"] for cmd in runner.commands
             )
             self.assertTrue(restart_seen)
 
@@ -784,16 +838,13 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(result.success)
             restart_seen = any(
-                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["restart", "supabase-db"]
-                for cmd in runner.commands
+                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["restart", "supabase-db"] for cmd in runner.commands
             )
             stop_seen = any(
-                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["stop", "supabase-db"]
-                for cmd in runner.commands
+                cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["stop", "supabase-db"] for cmd in runner.commands
             )
             rm_seen = any(
-                cmd[:2] == ["docker", "compose"] and cmd[-3:] == ["rm", "-f", "supabase-db"]
-                for cmd in runner.commands
+                cmd[:2] == ["docker", "compose"] and cmd[-3:] == ["rm", "-f", "supabase-db"] for cmd in runner.commands
             )
             self.assertTrue(restart_seen)
             self.assertTrue(stop_seen)
@@ -841,7 +892,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.container_name, container_name)
             self.assertEqual(result.effective_port, 5435)
-            self.assertTrue(any(cmd[:2] == ["docker", "start"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertTrue(
+                any(cmd[:2] == ["docker", "start"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_supabase_native_db_start_timeout_surfaces_bind_conflict_state_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -911,7 +964,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertIn(["docker", "stop", container_name], runner.commands)
             self.assertIn(["docker", "rm", "-f", container_name], runner.commands)
-            self.assertIn(["docker", "create", "--name", container_name, "-p", "6384:6379", "redis:7-alpine"], runner.commands)
+            self.assertIn(
+                ["docker", "create", "--name", container_name, "-p", "6384:6379", "redis:7-alpine"], runner.commands
+            )
 
     def test_n8n_created_bind_conflict_container_is_cleaned_in_discover(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1014,7 +1069,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.container_name, container_name)
             rm_seen = any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
-            create_seen = any(cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands)
+            create_seen = any(
+                cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands
+            )
             self.assertTrue(rm_seen)
             self.assertTrue(create_seen)
 
@@ -1038,7 +1095,9 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             rm_seen = any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
-            create_seen = any(cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands)
+            create_seen = any(
+                cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands
+            )
             self.assertTrue(rm_seen)
             self.assertTrue(create_seen)
 
@@ -1060,8 +1119,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.container_name, container_name)
             self.assertEqual(result.effective_port, 5435)
-            self.assertTrue(any(cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd for cmd in runner.commands))
-            self.assertTrue(any(cmd[:2] == ["docker", "start"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd
+                    for cmd in runner.commands
+                )
+            )
+            self.assertTrue(
+                any(cmd[:2] == ["docker", "start"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
 
     def test_supabase_stack_uses_unique_compose_project_name_per_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1103,7 +1169,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner = _FakeRunner()
             runner.compose_returncode["up -d supabase-db"] = 1
             runner.compose_stderr["up -d supabase-db"] = (
-                'Container supabase-supabase-db-1 Error response from daemon: Conflict. '
+                "Container supabase-supabase-db-1 Error response from daemon: Conflict. "
                 'The container name "/supabase-supabase-db-1" is already in use by container "abc".\n'
                 'Error response from daemon: Conflict. The container name "/supabase-supabase-db-1" is already in use by container "abc".'
             )
@@ -1771,9 +1837,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(first.success)
             container = first.container_name
-            runner.port_mapping_errors[(container, "6379")] = (
-                "Error: No public port '6379' published for envctl-redis"
-            )
+            runner.port_mapping_errors[(container, "6379")] = "Error: No public port '6379' published for envctl-redis"
 
             second = start_redis_container(
                 process_runner=runner,
@@ -1855,9 +1919,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(first.success)
             container = first.container_name
-            runner.port_mapping_errors[(container, "5678")] = (
-                "Error: No public port '5678' published for envctl-n8n"
-            )
+            runner.port_mapping_errors[(container, "5678")] = "Error: No public port '5678' published for envctl-n8n"
 
             second = start_n8n_container(
                 process_runner=runner,

@@ -27,9 +27,7 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
                 pid = int(command[command.index("-p") + 1])
                 lines: list[str] = []
                 for port in ports_by_pid.get(pid, []):
-                    lines.append(
-                        f"python3 {pid} user 10u IPv4 0x0 0t0 TCP 127.0.0.1:{port} (LISTEN)"
-                    )
+                    lines.append(f"python3 {pid} user 10u IPv4 0x0 0t0 TCP 127.0.0.1:{port} (LISTEN)")
                 stdout = "\n".join(lines)
                 return subprocess.CompletedProcess(command, 0, stdout, "")
             return subprocess.CompletedProcess(command, 1, "", "")
@@ -151,7 +149,9 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
                     (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 9000, 0, 0)),
                 ],
             ),
-            patch("envctl_engine.shared.process_runner.socket.socket", side_effect=lambda family, *_a: _FakeSocket(family)),
+            patch(
+                "envctl_engine.shared.process_runner.socket.socket", side_effect=lambda family, *_a: _FakeSocket(family)
+            ),
             patch("envctl_engine.shared.process_runner.time.monotonic", side_effect=[0.0, 0.0, 0.2]),
             patch("envctl_engine.shared.process_runner.time.sleep", return_value=None),
         ):
@@ -159,6 +159,7 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
 
     def test_run_returns_controlled_timeout_result_instead_of_raising(self) -> None:
         runner = ProcessRunner()
+
         class _FakeProcess:
             pid = 4321
 
@@ -176,6 +177,7 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
 
     def test_run_timeout_preserves_partial_stdout_and_stderr(self) -> None:
         runner = ProcessRunner()
+
         class _FakeProcess:
             pid = 4321
 

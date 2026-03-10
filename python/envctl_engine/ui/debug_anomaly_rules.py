@@ -96,4 +96,3 @@ def _repeated_burst_ratio(text: str) -> float:
             current = 1
     _ = runs
     return float(best) / float(max(1, len(text)))
-

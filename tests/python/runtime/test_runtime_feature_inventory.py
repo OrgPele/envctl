@@ -67,11 +67,7 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
 
     def test_runtime_feature_matrix_tracks_all_supported_commands(self) -> None:
         payload = json.loads(self._MATRIX_PATH.read_text(encoding="utf-8"))
-        feature_commands = {
-            str(feature["command"])
-            for feature in payload["features"]
-            if "command" in feature
-        }
+        feature_commands = {str(feature["command"]) for feature in payload["features"] if "command" in feature}
         self.assertEqual(feature_commands, set(list_supported_commands()))
 
     def test_repository_gap_report_matches_generator(self) -> None:
@@ -99,10 +95,7 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
         gap_payload = json.loads(self._GAP_REPORT_PATH.read_text(encoding="utf-8"))
         validate_runtime_feature_matrix_payload(matrix_payload, repo_root=REPO_ROOT)
         validate_python_runtime_gap_report_payload(gap_payload, matrix_payload=matrix_payload)
-        matrix_ids = {
-            str(feature["id"])
-            for feature in matrix_payload["features"]
-        }
+        matrix_ids = {str(feature["id"]) for feature in matrix_payload["features"]}
         gap_ids = {str(gap["feature_id"]) for gap in gap_payload["gaps"]}
         self.assertTrue(gap_ids.issubset(matrix_ids))
         verified_ids = {

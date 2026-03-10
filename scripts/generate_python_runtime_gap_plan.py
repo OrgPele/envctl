@@ -26,7 +26,9 @@ def main(argv: list[str] | None = None) -> int:
         default="todo/plans/refactoring/python-runtime-gap-closure.md",
         help="Output markdown path relative to repo root.",
     )
-    parser.add_argument("--stdout", action="store_true", help="Print generated markdown to stdout instead of writing to file.")
+    parser.add_argument(
+        "--stdout", action="store_true", help="Print generated markdown to stdout instead of writing to file."
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()

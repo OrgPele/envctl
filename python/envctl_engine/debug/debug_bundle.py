@@ -4,13 +4,12 @@ import shutil
 import uuid
 from pathlib import Path
 
-from envctl_engine.debug.debug_bundle_diagnostics import summarize_debug_bundle, write_diagnostics
+from envctl_engine.debug.debug_bundle_diagnostics import write_diagnostics
 from envctl_engine.debug.debug_bundle_support import (
     copy_debug_session_files,
     create_tarball,
     ensure_summary,
     resolve_session_id,
-    sanitize_runtime_event,
     write_bundle_contract,
     write_command_index,
     write_manifest,

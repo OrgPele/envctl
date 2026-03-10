@@ -301,10 +301,7 @@ class MultiProjectTestRunner:
         if success:
             return f"{self.colors.GREEN}✓ {passed} passed{self.colors.NC}"
 
-        return (
-            f"{self.colors.GREEN}{passed} passed{self.colors.NC}, "
-            f"{self.colors.RED}{failed} failed{self.colors.NC}"
-        )
+        return f"{self.colors.GREEN}{passed} passed{self.colors.NC}, {self.colors.RED}{failed} failed{self.colors.NC}"
 
     @staticmethod
     def _extract_duration(output: str) -> float:

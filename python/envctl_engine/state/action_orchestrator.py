@@ -258,10 +258,7 @@ class StateActionOrchestrator:
                     )
                 )
                 return 1 if failed > 0 else 0
-            print(
-                f"Log clear summary: cleared={cleared} missing={missing} "
-                f"unavailable={unavailable} failed={failed}"
-            )
+            print(f"Log clear summary: cleared={cleared} missing={missing} unavailable={unavailable} failed={failed}")
             return 1 if failed > 0 else 0
         if command == "health":
             ensure_reconciled()
@@ -353,7 +350,11 @@ class StateActionOrchestrator:
                     command=command,
                     filtered_service_count=len(current_state.services),
                 )
-            failed = [svc for svc in current_state.services.values() if (svc.status or "").lower() not in {"running", "healthy"}]
+            failed = [
+                svc
+                for svc in current_state.services.values()
+                if (svc.status or "").lower() not in {"running", "healthy"}
+            ]
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -499,10 +500,7 @@ class StateActionOrchestrator:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         payload["exists"] = True
         payload["size_bytes"] = log_path.stat().st_size
-        payload["tail_lines"] = [
-            self.runtime.normalize_log_line(line, no_color=no_color)
-            for line in lines[-tail:]
-        ]
+        payload["tail_lines"] = [self.runtime.normalize_log_line(line, no_color=no_color) for line in lines[-tail:]]
         return payload
 
     def _clear_log_snapshot(self, service: object) -> dict[str, object]:
@@ -597,11 +595,7 @@ class StateActionOrchestrator:
             return RunState(run_id=state.run_id, mode=state.mode)
         services = {name: svc for name, svc in state.services.items() if name in selected_services}
         project_names = {self.runtime.project_name_from_service(name) for name in services}
-        requirements = {
-            project: req
-            for project, req in state.requirements.items()
-            if project in project_names
-        }
+        requirements = {project: req for project, req in state.requirements.items() if project in project_names}
         return RunState(
             run_id=state.run_id,
             mode=state.mode,
@@ -691,7 +685,9 @@ class StateActionOrchestrator:
         project_order = self._health_project_order(service_rows=service_rows, dependency_rows=dependency_rows)
         for project in project_order:
             print(f"\n{bold}{blue}{project}{reset}")
-            project_services = [row for row in service_rows if str(row.get("project", "")).strip().lower() == project.lower()]
+            project_services = [
+                row for row in service_rows if str(row.get("project", "")).strip().lower() == project.lower()
+            ]
             project_dependencies = [
                 row for row in dependency_rows if str(row.get("project", "")).strip().lower() == project.lower()
             ]
@@ -705,7 +701,9 @@ class StateActionOrchestrator:
                     display_name = self._health_service_display_name(project=project, service_name=service_name)
                     port_raw = row.get("port")
                     port_text = str(port_raw) if port_raw is not None else "n/a"
-                    print(f"    {icon_color}{icon}{reset} {display_name:<12} {dim}status={status:<10} port={port_text}{reset}")
+                    print(
+                        f"    {icon_color}{icon}{reset} {display_name:<12} {dim}status={status:<10} port={port_text}{reset}"
+                    )
             if project_dependencies:
                 print(f"  {magenta}Dependencies ({len(project_dependencies)}){reset}")
                 for row in project_dependencies:
@@ -714,7 +712,9 @@ class StateActionOrchestrator:
                     icon_color = self._health_status_color(status, palette)
                     port_text = row.get("port") if row.get("port") is not None else "n/a"
                     component = str(row.get("component", "dependency"))
-                    print(f"    {icon_color}{icon}{reset} {component:<12} {dim}status={status:<10} port={port_text}{reset}")
+                    print(
+                        f"    {icon_color}{icon}{reset} {component:<12} {dim}status={status:<10} port={port_text}{reset}"
+                    )
 
     @staticmethod
     def _health_service_display_name(*, project: str, service_name: str) -> str:
@@ -831,7 +831,9 @@ class StateActionOrchestrator:
         return cleared, missing, unavailable, failed
 
     @staticmethod
-    def _parallel_service_map(services: Sequence[ServiceRecord], fn: Callable[[ServiceRecord], dict[str, object]]) -> list[dict[str, object]]:
+    def _parallel_service_map(
+        services: Sequence[ServiceRecord], fn: Callable[[ServiceRecord], dict[str, object]]
+    ) -> list[dict[str, object]]:
         if len(services) <= 1:
             return [fn(service) for service in services]
         worker_count = min(len(services), 8)

@@ -21,7 +21,9 @@ from envctl_engine.requirements.supabase import (
 )
 
 
-def _write_supabase_files(repo: Path, *, static_network_name: bool = False, bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n") -> None:
+def _write_supabase_files(
+    repo: Path, *, static_network_name: bool = False, bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n"
+) -> None:
     supabase_dir = repo / "supabase"
     init_dir = supabase_dir / "init"
     init_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +43,7 @@ def _write_supabase_files(repo: Path, *, static_network_name: bool = False, boot
         f"{network_block}"
     )
     (supabase_dir / "docker-compose.yml").write_text(compose, encoding="utf-8")
-    (supabase_dir / "kong.yml").write_text("_format_version: \"3.0\"\n", encoding="utf-8")
+    (supabase_dir / "kong.yml").write_text('_format_version: "3.0"\n', encoding="utf-8")
     (init_dir / "01-create-n8n-db.sql").write_text("select 1;\n", encoding="utf-8")
     (init_dir / "02-bootstrap-gotrue-auth.sql").write_text(bootstrap_sql, encoding="utf-8")
 
@@ -60,7 +62,10 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             repo = Path(tmpdir)
             _write_supabase_files(repo, bootstrap_sql="CREATE SCHEMA IF NOT EXISTS auth;\n")
             first = evaluate_supabase_reliability_contract(repo)
-            _write_supabase_files(repo, bootstrap_sql="CREATE SCHEMA IF NOT EXISTS auth;\nALTER ROLE postgres IN DATABASE postgres SET search_path = auth, public;\n")
+            _write_supabase_files(
+                repo,
+                bootstrap_sql="CREATE SCHEMA IF NOT EXISTS auth;\nALTER ROLE postgres IN DATABASE postgres SET search_path = auth, public;\n",
+            )
             second = evaluate_supabase_reliability_contract(repo)
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)
@@ -86,7 +91,9 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                     "ENVCTL_REQUIREMENT_SUPABASE_CMD": "sh -lc true",
                 },
             )
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
 
             with patch(
                 "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
@@ -128,13 +135,19 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                 },
             )
             runtime._wait_for_requirement_listener = lambda _port: True  # type: ignore[method-assign]
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
 
             with patch(
                 "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
                 side_effect=[
-                    SupabaseReliabilityContract(ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")),
-                    SupabaseReliabilityContract(ok=True, fingerprint="v2", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")),
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v2", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
                 ],
             ):
                 first = runtime._start_requirement_component(
@@ -176,7 +189,9 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                 },
             )
             runtime._wait_for_requirement_listener = lambda _port: True  # type: ignore[method-assign]
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
 
             commands: list[list[str]] = []
 
@@ -188,8 +203,12 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             with patch(
                 "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
                 side_effect=[
-                    SupabaseReliabilityContract(ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")),
-                    SupabaseReliabilityContract(ok=True, fingerprint="v2", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")),
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v2", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
                 ],
             ):
                 first = runtime._start_requirement_component(
@@ -225,7 +244,9 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                 }
             )
             runtime = PythonEngineRuntime(config, env={})
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
 
             commands: list[list[str]] = []
 
@@ -251,9 +272,7 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             expected_project = build_supabase_project_name(project_root=repo, project_name="Main")
             self.assertTrue(
                 any(
-                    expected_project in " ".join(cmd)
-                    and "supabase-db" in " ".join(cmd)
-                    and cmd[0] == "docker"
+                    expected_project in " ".join(cmd) and "supabase-db" in " ".join(cmd) and cmd[0] == "docker"
                     for cmd in commands
                 )
             )

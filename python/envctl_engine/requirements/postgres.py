@@ -69,13 +69,15 @@ def start_postgres_container(
 
     bind_cleanup = None
     if bind_safe_cleanup_enabled(env, service_name="postgres"):
-        bind_cleanup = lambda bound_port: cleanup_envctl_owned_port_containers(
-            process_runner=process_runner,
-            project_root=project_root,
-            env=env,
-            port=bound_port,
-            allowed_prefixes=("envctl-postgres-",),
-        )
+
+        def bind_cleanup(bound_port: int) -> None:
+            cleanup_envctl_owned_port_containers(
+                process_runner=process_runner,
+                project_root=project_root,
+                env=env,
+                port=bound_port,
+                allowed_prefixes=("envctl-postgres-",),
+            )
 
     lifecycle = ContainerLifecycleTemplate(
         service_name="postgres",

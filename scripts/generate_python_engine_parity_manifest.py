@@ -60,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
         default="contracts/python_engine_parity_manifest.json",
         help="Manifest output path relative to repo root.",
     )
-    parser.add_argument("--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file.")
+    parser.add_argument(
+        "--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file."
+    )
     parser.add_argument(
         "--timestamp",
         default=None,

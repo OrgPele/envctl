@@ -50,7 +50,10 @@ _PORT_FIELDS: tuple[tuple[str, str], ...] = (
     ("backend_port_base", "Backend base port"),
     ("frontend_port_base", "Frontend base port"),
     *tuple(
-        (f"dependency::{definition.id}::{resource.name}", resource.display_name or f"{definition.display_name} base port")
+        (
+            f"dependency::{definition.id}::{resource.name}",
+            resource.display_name or f"{definition.display_name} base port",
+        )
         for definition in dependency_definitions()
         for resource in definition.resources
     ),
@@ -146,7 +149,17 @@ def _directory_validation_message(base_dir: Path, label: str, raw: str) -> str |
 
 def _wizard_steps(wizard_type: str) -> list[str]:
     if wizard_type == "advanced":
-        return ["welcome", "wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "directories", "ports", "review"]
+        return [
+            "welcome",
+            "wizard_type",
+            "default_mode",
+            "startup_modes",
+            "main_profile",
+            "trees_profile",
+            "directories",
+            "ports",
+            "review",
+        ]
     return ["welcome", "wizard_type", "default_mode", "main_preset", "trees_preset", "review"]
 
 
@@ -167,7 +180,9 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         port_defaults=type(values.port_defaults)(
             backend_port_base=values.port_defaults.backend_port_base,
             frontend_port_base=values.port_defaults.frontend_port_base,
-            dependency_ports={key: dict(resource_map) for key, resource_map in values.port_defaults.dependency_ports.items()},
+            dependency_ports={
+                key: dict(resource_map) for key, resource_map in values.port_defaults.dependency_ports.items()
+            },
             port_spacing=values.port_defaults.port_spacing,
         ),
         backend_dir_name=values.backend_dir_name,
@@ -395,12 +410,20 @@ def run_config_wizard_textual(
                     with VerticalScroll(id="config-directories"):
                         for field_name, label in _DIRECTORY_FIELDS:
                             yield Label(label, id=_field_label_id("directory", field_name))
-                            yield Input(value=str(self._field_value(field_name)), id=_directory_input_id(field_name), classes="directory-field")
+                            yield Input(
+                                value=str(self._field_value(field_name)),
+                                id=_directory_input_id(field_name),
+                                classes="directory-field",
+                            )
                             yield Static("", id=_directory_error_id(field_name), classes="directory-error")
                     with VerticalScroll(id="config-ports"):
                         for field_name, label in _PORT_FIELDS:
                             yield Label(label, id=_field_label_id("port", field_name))
-                            yield Input(value=str(self._field_value(field_name)), id=_port_input_id(field_name), classes="port-field")
+                            yield Input(
+                                value=str(self._field_value(field_name)),
+                                id=_port_input_id(field_name),
+                                classes="port-field",
+                            )
                     with VerticalScroll(id="config-review-scroll"):
                         yield Static("", id="config-review")
                 yield Static("", id="config-status")
@@ -430,7 +453,15 @@ def run_config_wizard_textual(
         def on_key(self, event: Key) -> None:
             if event.key == "enter":
                 current_step = self._current_step()
-                if current_step in {"wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset"}:
+                if current_step in {
+                    "wizard_type",
+                    "default_mode",
+                    "startup_modes",
+                    "main_profile",
+                    "trees_profile",
+                    "main_preset",
+                    "trees_preset",
+                }:
                     list_view = self.query_one("#config-list", ListView)
                     if list_view.has_focus:
                         event.stop()
@@ -502,13 +533,17 @@ def run_config_wizard_textual(
                 self._render_choice_step(list_view, selected=self._wizard_type, options=_WIZARD_TYPES)
                 return
             if step == "default_mode":
-                self._render_choice_step(list_view, selected=self.values.default_mode, options=(("main", "Main"), ("trees", "Trees")))
+                self._render_choice_step(
+                    list_view, selected=self.values.default_mode, options=(("main", "Main"), ("trees", "Trees"))
+                )
                 return
             if step == "startup_modes":
                 self._render_startup_step(list_view)
                 return
             if step in {"main_profile", "trees_profile"}:
-                self._render_profile_step(list_view, profile=self._profile_for_mode("main" if step == "main_profile" else "trees"))
+                self._render_profile_step(
+                    list_view, profile=self._profile_for_mode("main" if step == "main_profile" else "trees")
+                )
                 return
             if step in {"main_preset", "trees_preset"}:
                 mode = "main" if step == "main_preset" else "trees"
@@ -518,14 +553,18 @@ def run_config_wizard_textual(
                 visible_fields = _visible_directory_fields(self.values)
                 self._sync_directory_inputs(visible_fields)
                 if not visible_fields:
-                    empty.update("No directories need configuration for the components currently configured in main or trees.")
+                    empty.update(
+                        "No directories need configuration for the components currently configured in main or trees."
+                    )
                     empty.display = True
                 return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 self._sync_port_inputs(visible_fields)
                 if not visible_fields:
-                    empty.update("No ports need configuration for the components currently configured in main or trees.")
+                    empty.update(
+                        "No ports need configuration for the components currently configured in main or trees."
+                    )
                     empty.display = True
                 return
             if step == "review":
@@ -622,7 +661,9 @@ def run_config_wizard_textual(
                     if step in {"main_preset", "trees_preset"}:
                         status.update("Simple presets overwrite detailed mode settings.")
                     elif step == "startup_modes":
-                        status.update("Choose whether envctl may run main and trees by default. Detailed service toggles stay in the next screens.")
+                        status.update(
+                            "Choose whether envctl may run main and trees by default. Detailed service toggles stay in the next screens."
+                        )
                     else:
                         status.update("Configuration is valid.")
                 else:
@@ -650,7 +691,15 @@ def run_config_wizard_textual(
 
         def _focus_current_step(self) -> None:
             step = self._current_step()
-            if step in {"wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset"}:
+            if step in {
+                "wizard_type",
+                "default_mode",
+                "startup_modes",
+                "main_profile",
+                "trees_profile",
+                "main_preset",
+                "trees_preset",
+            }:
                 self.query_one("#config-list", ListView).focus()
             elif step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
@@ -699,7 +748,9 @@ def run_config_wizard_textual(
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
             directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
             error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
-            message = self._directory_validation_error(field_name, raw=raw if raw is not None else directory_input.value)
+            message = self._directory_validation_error(
+                field_name, raw=raw if raw is not None else directory_input.value
+            )
             if message is None:
                 directory_input.remove_class("directory-invalid")
                 error.update("")
@@ -725,7 +776,15 @@ def run_config_wizard_textual(
             return None
 
         def action_cursor_up(self) -> None:
-            if self._current_step() not in {"wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset"}:
+            if self._current_step() not in {
+                "wizard_type",
+                "default_mode",
+                "startup_modes",
+                "main_profile",
+                "trees_profile",
+                "main_preset",
+                "trees_preset",
+            }:
                 return
             list_view = self.query_one("#config-list", ListView)
             if list_view.index is None:
@@ -734,7 +793,15 @@ def run_config_wizard_textual(
             list_view.index = max(list_view.index - 1, 0)
 
         def action_cursor_down(self) -> None:
-            if self._current_step() not in {"wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset"}:
+            if self._current_step() not in {
+                "wizard_type",
+                "default_mode",
+                "startup_modes",
+                "main_profile",
+                "trees_profile",
+                "main_preset",
+                "trees_preset",
+            }:
                 return
             list_view = self.query_one("#config-list", ListView)
             count = len(list_view.children)
@@ -829,7 +896,16 @@ def run_config_wizard_textual(
                 return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset", "directories", "ports", "review"}:
+            if step in {
+                "startup_modes",
+                "main_profile",
+                "trees_profile",
+                "main_preset",
+                "trees_preset",
+                "directories",
+                "ports",
+                "review",
+            }:
                 validation = validate_managed_values(self.values)
                 if not validation.valid:
                     self._refresh_status(validation.errors[0])

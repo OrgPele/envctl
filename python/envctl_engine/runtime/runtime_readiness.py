@@ -60,8 +60,12 @@ def evaluate_runtime_readiness(
 
     report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else ""
     manifest_text = manifest_path.read_text(encoding="utf-8") if manifest_path.is_file() else ""
-    report_generated_at = str(report_payload.get("generated_at", "")).strip() if isinstance(report_payload, dict) else ""
-    manifest_generated_at = str(manifest_payload.get("generated_at", "")).strip() if isinstance(manifest_payload, dict) else ""
+    report_generated_at = (
+        str(report_payload.get("generated_at", "")).strip() if isinstance(report_payload, dict) else ""
+    )
+    manifest_generated_at = (
+        str(manifest_payload.get("generated_at", "")).strip() if isinstance(manifest_payload, dict) else ""
+    )
 
     return RuntimeReadinessResult(
         passed=not errors,

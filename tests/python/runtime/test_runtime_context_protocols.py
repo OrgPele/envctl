@@ -81,8 +81,12 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIs(_resume_restore_support._port_allocator(runtime), context_port_allocator)
         self.assertIs(_startup_selection_support._port_allocator(runtime), context_port_allocator)
         self.assertIs(_startup_selection_support._process_runtime(runtime), context_process_runtime)
-        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), context_state_repository)
-        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), context_process_runtime)
+        self.assertIs(
+            _lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), context_state_repository
+        )
+        self.assertIs(
+            _lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), context_process_runtime
+        )
 
     def test_helper_accessors_fall_back_to_runtime_attributes_when_context_missing(self) -> None:
         runtime = SimpleNamespace()
@@ -94,7 +98,9 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIs(_resume_restore_support._port_allocator(runtime), runtime.port_planner)
         self.assertIs(_startup_selection_support._port_allocator(runtime), runtime.port_planner)
         self.assertIs(_startup_selection_support._process_runtime(runtime), runtime.process_runner)
-        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), runtime.state_repository)
+        self.assertIs(
+            _lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), runtime.state_repository
+        )
         self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), runtime.process_runner)
 
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:

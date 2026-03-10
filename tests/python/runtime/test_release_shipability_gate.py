@@ -21,8 +21,15 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
 
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def _commit_paths(self, repo: Path, *paths: str, message: str = "init") -> None:
         subprocess.run(["git", "-C", str(repo), "add", *paths], check=True, capture_output=True, text=True)
@@ -74,7 +81,9 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _prepare_repo(self, repo: Path, *, complete_manifest: bool = True, high: int = 0, medium: int = 0, low: int = 0) -> None:
+    def _prepare_repo(
+        self, repo: Path, *, complete_manifest: bool = True, high: int = 0, medium: int = 0, low: int = 0
+    ) -> None:
         self._write_required_engine_init(repo)
         self._write_required_test_files(repo)
         self._write_parity_manifest(repo, complete=complete_manifest)

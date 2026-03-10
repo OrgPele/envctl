@@ -16,7 +16,6 @@ from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container
 from envctl_engine.requirements.supabase import (
-    evaluate_supabase_reliability_contract,
     evaluate_managed_supabase_reliability_contract,
     read_fingerprint as read_supabase_fingerprint,
     start_supabase_stack,
@@ -90,12 +89,16 @@ def _requirements_trace_enabled(self: Any, route: Route | None) -> bool:
         return True
     if route is not None and (bool(route.flags.get("debug_ui")) or bool(route.flags.get("debug_ui_deep"))):
         return True
-    mode = str(self.env.get("ENVCTL_DEBUG_UI_MODE") or self.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "").strip().lower()
+    mode = (
+        str(self.env.get("ENVCTL_DEBUG_UI_MODE") or self.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "").strip().lower()
+    )
     return mode in {"deep"}
 
 
 def _docker_command_timing_enabled(self: Any, route: Route | None) -> bool:
-    raw = self.env.get("ENVCTL_DEBUG_DOCKER_COMMAND_TIMING") or self.config.raw.get("ENVCTL_DEBUG_DOCKER_COMMAND_TIMING")
+    raw = self.env.get("ENVCTL_DEBUG_DOCKER_COMMAND_TIMING") or self.config.raw.get(
+        "ENVCTL_DEBUG_DOCKER_COMMAND_TIMING"
+    )
     if parse_bool(raw, False):
         return True
     return _requirements_trace_enabled(self, route)
@@ -189,19 +192,30 @@ def _start_requirement_component(
                 )
                 for error in contract.errors
             )
-            self._emit("supabase.network.contract", project=context.name, ok=network_ok, compose=str(contract.compose_path))
-            self._emit("supabase.auth_namespace.contract", project=context.name, ok=auth_ok, compose=str(contract.compose_path))
+            self._emit(
+                "supabase.network.contract", project=context.name, ok=network_ok, compose=str(contract.compose_path)
+            )
+            self._emit(
+                "supabase.auth_namespace.contract", project=context.name, ok=auth_ok, compose=str(contract.compose_path)
+            )
             if not contract.ok:
                 return False, "; ".join(contract.errors)
 
             fingerprint_path = self._supabase_fingerprint_path(context.name)
             previous = read_supabase_fingerprint(fingerprint_path)
             if previous is not None and previous != contract.fingerprint:
-                self._emit("supabase.fingerprint.changed", project=context.name, previous=previous, current=contract.fingerprint)
+                self._emit(
+                    "supabase.fingerprint.changed",
+                    project=context.name,
+                    previous=previous,
+                    current=contract.fingerprint,
+                )
                 if not self._supabase_auto_reinit_enabled():
                     self._emit("supabase.reinit.required", project=context.name, fingerprint_path=str(fingerprint_path))
                     return False, self._supabase_reinit_required_message()
-                reinit_error = self._run_supabase_reinit(project_root=context.root, project_name=context.name, db_port=port)
+                reinit_error = self._run_supabase_reinit(
+                    project_root=context.root, project_name=context.name, db_port=port
+                )
                 if reinit_error is not None:
                     return False, reinit_error
                 self._emit("supabase.reinit.executed", project=context.name, fingerprint_path=str(fingerprint_path))
@@ -218,9 +232,10 @@ def _start_requirement_component(
         )
         if adapter_result is not None:
             command_source = "native_adapter"
-            native_effective_port = int(adapter_result.effective_port) if isinstance(adapter_result.effective_port, int) else None
+            native_effective_port = (
+                int(adapter_result.effective_port) if isinstance(adapter_result.effective_port, int) else None
+            )
             native_port_adopted = bool(adapter_result.port_adopted)
-            native_container_name = str(adapter_result.container_name).strip() if getattr(adapter_result, "container_name", None) else None
             return adapter_result.success, adapter_result.error
 
         command, resolved_source = self._requirement_command_resolved(
@@ -315,7 +330,9 @@ def _start_requirement_component(
             )
             self._emit("supabase.signup.probe", project=context.name, status="skipped")
     else:
-        failure_class = outcome.failure_class.value if isinstance(outcome.failure_class, FailureClass) else outcome.failure_class
+        failure_class = (
+            outcome.failure_class.value if isinstance(outcome.failure_class, FailureClass) else outcome.failure_class
+        )
         reason_code = outcome.reason_code
         if reason_code is None and isinstance(outcome.failure_class, FailureClass):
             reason_code = self.requirements.reason_code_for_failure(name, outcome.failure_class, error=outcome.error)
@@ -430,7 +447,11 @@ def _start_requirement_with_native_adapter(
     stage_durations_ms = result.stage_durations_ms if isinstance(result.stage_durations_ms, dict) else {}
     listener_wait_ms = float(result.listener_wait_ms or 0.0)
     probe_attempts = _extract_probe_attempts(command_timings, service_name=service_name)
-    effective_port = int(result.effective_port) if isinstance(result.effective_port, int) and result.effective_port > 0 else int(port)
+    effective_port = (
+        int(result.effective_port)
+        if isinstance(result.effective_port, int) and result.effective_port > 0
+        else int(port)
+    )
     port_adopted = bool(result.port_adopted)
     mismatch_requested_port = (
         int(result.port_mismatch_requested_port)
@@ -466,8 +487,7 @@ def _start_requirement_with_native_adapter(
         )
         restart_used = any(str(item.get("stage", "")).startswith("probe.retry.restart") for item in stage_events)
         recreate_used = bool(result.container_recreated) or any(
-            str(item.get("stage", "")).startswith("probe.retry.recreate")
-            for item in stage_events
+            str(item.get("stage", "")).startswith("probe.retry.recreate") for item in stage_events
         )
         self._emit(
             "requirements.adapter.retry_path",

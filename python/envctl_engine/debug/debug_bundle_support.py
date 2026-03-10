@@ -189,11 +189,13 @@ def write_manifest(staging_dir: Path, *, scope_id: str, strict: bool, session_id
     for path in sorted(staging_dir.iterdir()):
         if path.name == "manifest.json" or not path.is_file():
             continue
-        files.append({
-            "path": path.name,
-            "sha256": file_hash(path),
-            "bytes": path.stat().st_size,
-        })
+        files.append(
+            {
+                "path": path.name,
+                "sha256": file_hash(path),
+                "bytes": path.stat().st_size,
+            }
+        )
     payload = {
         "version": 1,
         "generated_at": datetime.now(tz=UTC).isoformat(),

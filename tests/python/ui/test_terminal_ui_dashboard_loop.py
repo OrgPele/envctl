@@ -422,7 +422,9 @@ class DashboardLoopTests(unittest.TestCase):
             normalized = raw.strip().lower()
             if normalized == "p":
                 runtime_any._emit("action.command.start", command="pr")
-                runtime_any._emit("ui.status", message="PR already exists: https://github.com/kfiramar/supportopia/pull/53")
+                runtime_any._emit(
+                    "ui.status", message="PR already exists: https://github.com/kfiramar/supportopia/pull/53"
+                )
                 runtime_any._emit("ui.status", message="PR summary written: /tmp/pr_summary_Main.md")
                 runtime_any._emit("action.command.finish", command="pr", code=0)
                 return True, current
@@ -548,9 +550,7 @@ class DashboardLoopTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         checkpoints = [
-            event.get("checkpoint")
-            for event in runtime.events
-            if event.get("event") == "ui.plan_handoff.snapshot"
+            event.get("checkpoint") for event in runtime.events if event.get("event") == "ui.plan_handoff.snapshot"
         ]
         self.assertEqual(checkpoints, ["after_first_dashboard_render"])
 

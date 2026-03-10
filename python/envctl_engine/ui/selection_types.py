@@ -28,4 +28,6 @@ class TargetSelection:
                 route.flags["services"] = list(self.service_names)
 
     def empty(self) -> bool:
-        return not (self.all_selected or self.untested_selected or self.project_names or self.service_names or self.cancelled)
+        return not (
+            self.all_selected or self.untested_selected or self.project_names or self.service_names or self.cancelled
+        )

@@ -327,7 +327,10 @@ class TerminalSessionDebugTests(unittest.TestCase):
         with (
             patch("envctl_engine.ui.terminal_session.can_interactive_tty", return_value=True),
             patch("envctl_engine.ui.terminal_session._restore_stdin_terminal_sane"),
-            patch("envctl_engine.ui.terminal_session._read_command_line_fallback", side_effect=AssertionError("fallback should not be used")),
+            patch(
+                "envctl_engine.ui.terminal_session._read_command_line_fallback",
+                side_effect=AssertionError("fallback should not be used"),
+            ),
         ):
             session = TerminalSession(
                 env={},
@@ -365,7 +368,10 @@ class TerminalSessionDebugTests(unittest.TestCase):
             with (
                 patch("envctl_engine.ui.terminal_session.can_interactive_tty", return_value=True),
                 patch("envctl_engine.ui.terminal_session._restore_stdin_terminal_sane"),
-                patch("envctl_engine.ui.terminal_session._read_command_line_fallback", side_effect=AssertionError("fallback should not be used")),
+                patch(
+                    "envctl_engine.ui.terminal_session._read_command_line_fallback",
+                    side_effect=AssertionError("fallback should not be used"),
+                ),
             ):
                 session = TerminalSession(
                     env={},

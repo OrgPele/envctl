@@ -36,15 +36,16 @@ def run_delete_worktree_action(orchestrator: Any, route: Route) -> int:
     failures = 0
     total = max(len(targets), 1)
     spinner_message = (
-        "Blasting selected worktrees..."
-        if command_name == "blast-worktree"
-        else "Deleting selected worktrees..."
+        "Blasting selected worktrees..." if command_name == "blast-worktree" else "Deleting selected worktrees..."
     )
-    with use_spinner_policy(spinner_policy), spinner(
-        spinner_message,
-        enabled=spinner_policy.enabled,
-        start_immediately=False,
-    ) as active_spinner:
+    with (
+        use_spinner_policy(spinner_policy),
+        spinner(
+            spinner_message,
+            enabled=spinner_policy.enabled,
+            start_immediately=False,
+        ) as active_spinner,
+    ):
         if spinner_policy.enabled:
             active_spinner.start()
             rt._emit(  # type: ignore[attr-defined]

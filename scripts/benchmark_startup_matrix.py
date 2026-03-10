@@ -78,7 +78,15 @@ def main() -> int:
 
     env = dict(os.environ)
     env.update(DEFAULT_DEBUG_ENV)
-    env["PATH"] = str(Path("/usr/bin")) + ":" + str(Path("/opt/homebrew/bin")) + ":" + str(Path.home() / ".local/bin") + ":" + env.get("PATH", "")
+    env["PATH"] = (
+        str(Path("/usr/bin"))
+        + ":"
+        + str(Path("/opt/homebrew/bin"))
+        + ":"
+        + str(Path.home() / ".local/bin")
+        + ":"
+        + env.get("PATH", "")
+    )
 
     cases = {
         "main_warm": ["--headless", "--main"],

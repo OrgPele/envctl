@@ -85,7 +85,9 @@ class TestSummaryFormatter:
             rate_color = (
                 self.colors.GREEN
                 if success_rate >= 80
-                else self.colors.YELLOW if success_rate >= 50 else self.colors.RED
+                else self.colors.YELLOW
+                if success_rate >= 50
+                else self.colors.RED
             )
             print(f"  {rate_color}Success rate: {success_rate:.1f}%{self.colors.NC}")
 
@@ -138,9 +140,7 @@ class TestSummaryFormatter:
 
         coverage = result.coverage_percent
         coverage_color = (
-            self.colors.GREEN
-            if coverage >= 80
-            else self.colors.YELLOW if coverage >= 60 else self.colors.RED
+            self.colors.GREEN if coverage >= 80 else self.colors.YELLOW if coverage >= 60 else self.colors.RED
         )
 
         print(f"\n{self.colors.CYAN}Coverage:{self.colors.NC}")

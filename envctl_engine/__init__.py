@@ -9,4 +9,3 @@ _SOURCE_PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "python" / "envc
 
 __path__ = [str(_SOURCE_PACKAGE_ROOT)]
 __file__ = str(_SOURCE_PACKAGE_ROOT / "__init__.py")
-

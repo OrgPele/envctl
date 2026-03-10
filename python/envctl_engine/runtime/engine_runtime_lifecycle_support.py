@@ -9,7 +9,7 @@ from typing import Any
 
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.requirements.core import dependency_definitions
-from envctl_engine.requirements.common import build_container_name, container_exists, run_docker, run_result_error
+from envctl_engine.requirements.common import build_container_name, run_docker, run_result_error
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.state.runtime_map import build_runtime_map
 
@@ -35,7 +35,9 @@ def terminate_services_from_state(
 
     def terminate_one(item: tuple[str, object]) -> tuple[str, bool, int | None]:
         name, service = item
-        terminated = runtime._terminate_service_record(service, aggressive=aggressive, verify_ownership=verify_ownership)
+        terminated = runtime._terminate_service_record(
+            service, aggressive=aggressive, verify_ownership=verify_ownership
+        )
         return name, terminated, service_port(service)
 
     if len(work_items) <= 1:
@@ -259,7 +261,9 @@ def _remove_tree_containers(
     if not callable(getattr(runtime.process_runner, "run", None)):
         return
     exact_names = {
-        build_container_name(prefix="envctl-postgres", project_root=resolved_root, project_name=project_name): "postgres",
+        build_container_name(
+            prefix="envctl-postgres", project_root=resolved_root, project_name=project_name
+        ): "postgres",
         build_container_name(prefix="envctl-redis", project_root=resolved_root, project_name=project_name): "redis",
         build_container_name(prefix="envctl-n8n", project_root=resolved_root, project_name=project_name): "n8n",
         _legacy_container_name(prefix="envctl-postgres", project_name=project_name): "postgres",
@@ -312,9 +316,7 @@ def _remove_tree_containers(
         cid, name = parts[0].strip(), parts[1].strip()
         service_name = exact_names.get(name)
         if service_name is None and not (
-            include_supabase
-            and supabase_prefixes
-            and any(name.startswith(prefix) for prefix in supabase_prefixes)
+            include_supabase and supabase_prefixes and any(name.startswith(prefix) for prefix in supabase_prefixes)
         ):
             continue
         matched = True

@@ -7,8 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
-import sys
 from typing import Any
 
 from envctl_engine.runtime.command_router import list_supported_commands, list_supported_flag_tokens
@@ -123,9 +121,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/engine_runtime.py",
             "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_lifecycle_parity.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_lifecycle_parity.py",),
         parity_status="verified_python",
         notes="Python stop-all is covered by runtime parity and end-to-end tests.",
     ),
@@ -138,17 +134,13 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/engine_runtime.py",
             "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_lifecycle_support.py",),
         parity_status="verified_python",
         notes="Blast-all cleanup breadth is covered by lifecycle support tests and the blast-all contract BATS lane.",
         current_behavior="Python blast-all works and is tested, but the shell path still carries legacy cleanup breadth for global runtime teardown.",
         missing_python_behavior="Prove and, where needed, close cleanup symmetry for ports, processes, Docker resources, and stale dependency artifacts across mixed failure states.",
         python_owner_module="python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
-        proposed_tests=(
-            "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_engine_runtime_lifecycle_support.py",),
         severity="high",
         rollout_risk="Global cleanup regressions could leave orphaned processes, ports, or containers across repos.",
         wave="Wave B",
@@ -239,9 +231,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         current_behavior="Python PR creation supports helper and gh-backed paths, but legacy helper assumptions still shape the contract.",
         missing_python_behavior="Finish defining the PR action contract so Python behavior is the source of truth for helper execution, output, and failure handling.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
-        proposed_tests=(
-            "tests/python/actions/test_actions_cli.py",
-        ),
+        proposed_tests=("tests/python/actions/test_actions_cli.py",),
         severity="medium",
         rollout_risk="PR workflows may still depend on helper-specific assumptions that are not fully captured in Python tests.",
         wave="Wave D",
@@ -264,9 +254,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         current_behavior="Python commit flows work for normal interactive and headless cases, but commit-message sourcing and helper assumptions are still mixed with legacy expectations.",
         missing_python_behavior="Make Python the clear source of truth for commit message discovery, non-interactive failure cases, and pushed-branch reporting.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
-        proposed_tests=(
-            "tests/python/actions/test_actions_cli.py",
-        ),
+        proposed_tests=("tests/python/actions/test_actions_cli.py",),
         severity="medium",
         rollout_risk="Edge-case commit flows can still diverge from user expectations if legacy message-resolution behavior is not fully proven.",
         wave="Wave D",
@@ -306,17 +294,13 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/actions/project_action_domain.py",
             "python/envctl_engine/actions/actions_analysis.py",
         ),
-        evidence_tests=(
-            "tests/python/actions/test_actions_parity.py",
-        ),
+        evidence_tests=("tests/python/actions/test_actions_parity.py",),
         parity_status="verified_python",
         notes="Python migrate dispatch and output semantics are covered by action parity tests.",
         current_behavior="Python migrate dispatch works, but behavior and output expectations are still inherited from legacy helper conventions.",
         missing_python_behavior="Lock down migrate target semantics, output reporting, and helper fallback behavior in Python tests and ownership docs.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
-        proposed_tests=(
-            "tests/python/actions/test_actions_parity.py",
-        ),
+        proposed_tests=("tests/python/actions/test_actions_parity.py",),
         severity="medium",
         rollout_risk="Migration actions may remain brittle in mixed helper/native setups without a fully Python-owned contract.",
         wave="Wave D",
@@ -330,9 +314,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/state/action_orchestrator.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_logs_parity.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_logs_parity.py",),
         parity_status="verified_python",
         notes="Logs/follow behavior is covered by runtime parity tests and BATS.",
     ),
@@ -361,9 +343,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/runtime/engine_runtime_service_truth.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_runtime_health_truth.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_runtime_health_truth.py",),
         parity_status="verified_python",
         notes="Health reporting is Python-owned and exercised by runtime truth tests.",
     ),
@@ -424,9 +404,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/runtime/engine_runtime_env.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_env.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_env.py",),
         parity_status="verified_python",
         notes="Explain-startup is Python-owned and verified through env/runtime tests.",
     ),
@@ -481,17 +459,13 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/debug/doctor_orchestrator.py",
             "python/envctl_engine/runtime/engine_runtime.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
         parity_status="verified_python",
         notes="Doctor is Python-owned and explicitly covered by runtime command parity tests.",
         current_behavior="Python doctor reports runtime readiness, parity, state health, and recent failure diagnostics without shell migration fields.",
         missing_python_behavior="Keep the doctor output contract focused on runtime readiness and state diagnostics, then cover those fields explicitly in Python tests.",
         python_owner_module="python/envctl_engine/debug/doctor_orchestrator.py",
-        proposed_tests=(
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
         severity="low",
         rollout_risk="Doctor output drift is mostly a diagnostics/readiness concern, but it can confuse operators during cutover.",
         wave="Wave E",
@@ -506,9 +480,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/hook_migration_support.py",
             "python/envctl_engine/runtime/engine_runtime.py",
         ),
-        evidence_tests=(
-            "tests/python/startup/test_hooks_bridge.py",
-        ),
+        evidence_tests=("tests/python/startup/test_hooks_bridge.py",),
         parity_status="verified_python",
         notes="Hook migration is Python-owned and provides an explicit path away from executable shell hooks.",
     ),
@@ -521,9 +493,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/debug/debug_bundle.py",
             "python/envctl_engine/runtime/engine_runtime_debug_support.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_debug_support.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_debug_support.py",),
         parity_status="verified_python",
         notes="Debug-pack is intentionally Python-only and covered as part of the supported runtime diagnostics path.",
     ),
@@ -536,9 +506,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/debug/debug_bundle_support.py",
             "python/envctl_engine/runtime/engine_runtime_debug_support.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_debug_support.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_debug_support.py",),
         parity_status="verified_python",
         notes="Debug-report is part of the Python-only diagnostics path.",
     ),
@@ -551,9 +519,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/debug/debug_bundle_support.py",
             "python/envctl_engine/runtime/engine_runtime_debug_support.py",
         ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_debug_support.py",
-        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_debug_support.py",),
         parity_status="verified_python",
         notes="Debug-last is Python-owned and covered by diagnostics tests.",
     ),
@@ -578,9 +544,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         current_behavior="Users can get help successfully, but top-level launcher usage and shell-backed help text still contribute to the final behavior.",
         missing_python_behavior="Make Python the unambiguous source of help/usage semantics while preserving the current user-visible content and examples.",
         python_owner_module="python/envctl_engine/runtime/cli.py",
-        proposed_tests=(
-            "tests/python/runtime/test_cli_router.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_cli_router.py",),
         severity="medium",
         rollout_risk="Help text drift creates immediate confusion for installation and first-run workflows.",
         wave="Wave A",
@@ -590,12 +554,8 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         feature="Command: print the supported command inventory",
         user_visible=True,
         shell_source_of_truth=(),
-        python_source_of_truth=(
-            "python/envctl_engine/runtime/command_router.py",
-        ),
-        evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
-        ),
+        python_source_of_truth=("python/envctl_engine/runtime/command_router.py",),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
         parity_status="verified_python",
         notes="List-commands is explicitly parity-tested against the shell inventory.",
     ),
@@ -652,9 +612,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="The shell launcher owns repo-root resolution and command forwarding before the Python runtime starts.",
         missing_python_behavior="Decide whether repo resolution should remain a launcher concern or move into Python, and then prove the chosen contract independently of shell behavior.",
         python_owner_module="python/envctl_engine/runtime/cli.py",
-        proposed_tests=(
-            "tests/python/runtime/test_command_exit_codes.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_command_exit_codes.py",),
         severity="high",
         rollout_risk="Launcher regressions can make envctl unusable before Python runtime logic even begins.",
         wave="Wave A",
@@ -678,9 +636,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="Install is implemented entirely in shell wrapper/installer code and remains outside Python runtime ownership.",
         missing_python_behavior="Define the long-term ownership model for install behavior and prove it with stable tests that do not assume shell runtime semantics.",
         python_owner_module="python/envctl_engine/runtime/cli.py",
-        proposed_tests=(
-            "tests/python/runtime/test_command_exit_codes.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_command_exit_codes.py",),
         severity="high",
         rollout_risk="Install regressions directly affect package adoption and first-run UX.",
         wave="Wave A",
@@ -704,9 +660,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="Uninstall is implemented by the shell installer path and has no Python-owned equivalent.",
         missing_python_behavior="Capture uninstall semantics as an explicit contract and prove idempotent removal behavior independent of shell runtime assumptions.",
         python_owner_module="python/envctl_engine/runtime/cli.py",
-        proposed_tests=(
-            "tests/python/runtime/test_command_exit_codes.py",
-        ),
+        proposed_tests=("tests/python/runtime/test_command_exit_codes.py",),
         severity="medium",
         rollout_risk="Uninstall drift is less severe than install drift but still affects trust in the package workflow.",
         wave="Wave A",
@@ -716,9 +670,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         feature="Python command parser remains aligned with the supported public command and flag surface",
         user_visible=True,
         shell_source_of_truth=(),
-        python_source_of_truth=(
-            "python/envctl_engine/runtime/command_router.py",
-        ),
+        python_source_of_truth=("python/envctl_engine/runtime/command_router.py",),
         evidence_tests=(
             "tests/python/runtime/test_cli_router_parity.py",
             "tests/python/runtime/test_engine_runtime_command_parity.py",
@@ -770,9 +722,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="Setup-worktree and include-existing-worktrees flags are present, but parity evidence is still mostly external and shell-era.",
         missing_python_behavior="Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
         python_owner_module="python/envctl_engine/planning/worktree_domain.py",
-        proposed_tests=(
-            "tests/python/planning/test_planning_worktree_setup.py",
-        ),
+        proposed_tests=("tests/python/planning/test_planning_worktree_setup.py",),
         severity="medium",
         rollout_risk="Worktree setup flags can be destructive, so parity gaps here risk accidental reuse or recreation of the wrong tree.",
         wave="Wave B",
@@ -847,9 +797,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="Seed/copy-db flags still carry shell-era expectations and are not yet expressed as a full Python-owned contract.",
         missing_python_behavior="Define the exact retained seeding behavior and cover it with Python and end-to-end tests so the feature is no longer implicitly shell-defined.",
         python_owner_module="python/envctl_engine/requirements/supabase.py",
-        proposed_tests=(
-            "tests/python/requirements/test_requirements_orchestrator.py",
-        ),
+        proposed_tests=("tests/python/requirements/test_requirements_orchestrator.py",),
         severity="high",
         rollout_risk="Incorrect seeding semantics can corrupt developer expectations and destroy trust in tree isolation.",
         wave="Wave C",
@@ -941,7 +889,9 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
     ),
 )
 
-_FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = tuple(_COMMAND_DEFINITIONS[command] for command in list_supported_commands()) + _EXTRA_FEATURES
+_FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
+    tuple(_COMMAND_DEFINITIONS[command] for command in list_supported_commands()) + _EXTRA_FEATURES
+)
 
 _ALLOWED_PARITY_STATUSES = {"verified_python", "shell_only", "unverified", "python_partial"}
 _ALLOWED_SEVERITIES = {"high", "medium", "low"}
@@ -956,7 +906,9 @@ def _documented_flag_tokens(repo_root: Path) -> list[str]:
     return sorted(set(re.findall(r"--[a-z0-9][a-z0-9-]*", text)))
 
 
-def _feature_row(index: int, feature: FeatureDefinition, *, repo_root: Path, command: str | None = None) -> dict[str, Any]:
+def _feature_row(
+    index: int, feature: FeatureDefinition, *, repo_root: Path, command: str | None = None
+) -> dict[str, Any]:
     shell_refs = [ref for ref in feature.shell_source_of_truth if (repo_root / ref).exists()]
     evidence_refs = [ref for ref in feature.evidence_tests if (repo_root / ref).exists()]
     row = {
@@ -1018,7 +970,9 @@ def build_runtime_feature_matrix(*, repo_root: Path, generated_at: str) -> dict[
     }
 
 
-def build_python_runtime_gap_report(*, repo_root: Path, generated_at: str, matrix_payload: dict[str, Any]) -> dict[str, Any]:
+def build_python_runtime_gap_report(
+    *, repo_root: Path, generated_at: str, matrix_payload: dict[str, Any]
+) -> dict[str, Any]:
     features = matrix_payload.get("features", [])
     gaps: list[dict[str, Any]] = []
     for feature in features if isinstance(features, list) else []:
@@ -1096,7 +1050,7 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
         "# Python Runtime Gap Closure Plan",
         "",
         "## Summary",
-        f"- Generated from `contracts/python_runtime_gap_report.json`.",
+        "- Generated from `contracts/python_runtime_gap_report.json`.",
         f"- Total inventoried features: {summary.get('feature_count', 0)}",
         f"- Open gaps: {summary.get('gap_count', 0)}",
         f"- High or medium gaps: {summary.get('high_or_medium_gap_count', 0)}",
@@ -1259,7 +1213,7 @@ def _check_bash_hook_bridge_removed(repo_root: Path) -> dict[str, Any]:
     if not hook_bridge.is_file():
         return {"passed": False, "details": ["python/envctl_engine/shared/hooks.py is missing."]}
     text = hook_bridge.read_text(encoding="utf-8")
-    forbidden_tokens = ('["bash", "-lc"', "source \"$ENVCTL_HOOK_FILE\"", "subprocess.run(")
+    forbidden_tokens = ('["bash", "-lc"', 'source "$ENVCTL_HOOK_FILE"', "subprocess.run(")
     matches = [token for token in forbidden_tokens if token in text]
     passed = not matches
     details = (
@@ -1350,7 +1304,9 @@ def _check_legacy_config_python_owned(repo_root: Path) -> dict[str, Any]:
 
 def _check_bats_harness_removed(repo_root: Path) -> dict[str, Any]:
     bats_dir = repo_root / "tests" / "bats"
-    bats_files = sorted(str(path.relative_to(repo_root)) for path in bats_dir.rglob("*.bats")) if bats_dir.exists() else []
+    bats_files = (
+        sorted(str(path.relative_to(repo_root)) for path in bats_dir.rglob("*.bats")) if bats_dir.exists() else []
+    )
     passed = not bats_files
     details = (
         ["The BATS harness has been fully removed."]

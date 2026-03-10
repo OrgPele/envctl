@@ -36,11 +36,16 @@ class RuntimeStateRepository:
         self.runtime_legacy_root = runtime_legacy_root
         self.runtime_dir = runtime_dir
         self.runtime_scope_id = runtime_scope_id
-        self.compat_mode = compat_mode if compat_mode in {
-            self.COMPAT_READ_WRITE,
-            self.COMPAT_READ_ONLY,
-            self.SCOPED_ONLY,
-        } else self.COMPAT_READ_WRITE
+        self.compat_mode = (
+            compat_mode
+            if compat_mode
+            in {
+                self.COMPAT_READ_WRITE,
+                self.COMPAT_READ_ONLY,
+                self.SCOPED_ONLY,
+            }
+            else self.COMPAT_READ_WRITE
+        )
 
     def run_state_path(self) -> Path:
         return self.runtime_root / "run_state.json"
@@ -99,7 +104,11 @@ class RuntimeStateRepository:
         (run_dir / "runtime_map.json").write_text(runtime_map_text, encoding="utf-8")
         self.runtime_map_path().write_text(runtime_map_text, encoding="utf-8")
         emit("runtime_map.write", path=str(run_dir / "runtime_map.json"))
-        emit("runtime_map.fingerprint", run_id=state.run_id, runtime_map_fingerprint=self._text_fingerprint(runtime_map_text))
+        emit(
+            "runtime_map.fingerprint",
+            run_id=state.run_id,
+            runtime_map_fingerprint=self._text_fingerprint(runtime_map_text),
+        )
 
         ports_manifest = {
             "run_id": state.run_id,
@@ -183,7 +192,9 @@ class RuntimeStateRepository:
             if candidate is not None and candidate_matches(candidate):
                 return candidate
 
-            candidate = self._load_legacy_shell_candidate(self.runtime_root / "run_state.state", allowed_root=allowed_root)
+            candidate = self._load_legacy_shell_candidate(
+                self.runtime_root / "run_state.state", allowed_root=allowed_root
+            )
             if candidate is not None and candidate_matches(candidate):
                 return candidate
 
@@ -248,7 +259,11 @@ class RuntimeStateRepository:
         (run_state_path.parent / "runtime_map.json").write_text(runtime_map_text, encoding="utf-8")
         self.runtime_map_path().write_text(runtime_map_text, encoding="utf-8")
         emit("runtime_map.write", path=str(self.runtime_map_path()))
-        emit("runtime_map.fingerprint", run_id=state.run_id, runtime_map_fingerprint=self._text_fingerprint(runtime_map_text))
+        emit(
+            "runtime_map.fingerprint",
+            run_id=state.run_id,
+            runtime_map_fingerprint=self._text_fingerprint(runtime_map_text),
+        )
 
         project_names = self._project_names_from_state(state)
         self._write_mode_pointers(

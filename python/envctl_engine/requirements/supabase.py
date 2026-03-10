@@ -217,7 +217,9 @@ def start_supabase_stack(
                 error=f"probe timeout waiting for readiness on port {db_port}{suffix}",
             )
 
-    secondary_services = [service for service in (auth_service, gateway_service) if isinstance(service, str) and service]
+    secondary_services = [
+        service for service in (auth_service, gateway_service) if isinstance(service, str) and service
+    ]
     if secondary_services:
         if _supabase_two_phase_enabled(env):
             _start_secondary_services_background(
@@ -275,10 +277,7 @@ def _start_supabase_db_native(
     start_timeout_seconds = _native_db_start_timeout_seconds(env)
     listener_wait_timeout = _db_probe_timeout_seconds(env)
     volume_name = f"{compose_project_name}_supabase_db_data"
-    image = (
-        (env or {}).get("SUPABASE_DB_IMAGE")
-        or "supabase/postgres:15.1.0.147"
-    )
+    image = (env or {}).get("SUPABASE_DB_IMAGE") or "supabase/postgres:15.1.0.147"
 
     existing, existing_error = container_exists(
         process_runner,
@@ -330,9 +329,8 @@ def _start_supabase_db_native(
                     )
                     recovered = False
                     recovery_error = None
-                    start_timed_out = (
-                        (start_result is None and timeout_error(start_error))
-                        or (start_result is not None and getattr(start_result, "returncode", 1) == 124)
+                    start_timed_out = (start_result is None and timeout_error(start_error)) or (
+                        start_result is not None and getattr(start_result, "returncode", 1) == 124
                     )
                     if start_timed_out:
                         recovered, recovery_error = _recover_native_db_start_timeout(
@@ -405,18 +403,17 @@ def _start_supabase_db_native(
                 )
                 recovered = False
                 recovery_error = None
-                start_timed_out = (
-                    (start_result is None and timeout_error(start_error))
-                    or (start_result is not None and getattr(start_result, "returncode", 1) == 124)
+                start_timed_out = (start_result is None and timeout_error(start_error)) or (
+                    start_result is not None and getattr(start_result, "returncode", 1) == 124
                 )
                 if start_timed_out:
                     recovered, recovery_error = _recover_native_db_start_timeout(
-                    process_runner=process_runner,
-                    container_name=container_name,
-                    port=db_port,
-                    cwd=project_root,
-                    env=env,
-                    listener_wait_timeout=listener_wait_timeout,
+                        process_runner=process_runner,
+                        container_name=container_name,
+                        port=db_port,
+                        cwd=project_root,
+                        env=env,
+                        listener_wait_timeout=listener_wait_timeout,
                     )
                 if (start_result is None or start_timed_out) and not recovered:
                     return ContainerStartResult(
@@ -517,9 +514,8 @@ def _start_supabase_db_native(
     )
     recovered = False
     recovery_error = None
-    start_timed_out = (
-        (start_result is None and timeout_error(start_error))
-        or (start_result is not None and getattr(start_result, "returncode", 1) == 124)
+    start_timed_out = (start_result is None and timeout_error(start_error)) or (
+        start_result is not None and getattr(start_result, "returncode", 1) == 124
     )
     if start_timed_out:
         recovered, recovery_error = _recover_native_db_start_timeout(
@@ -1048,14 +1044,18 @@ def _compose_up_handoff(
         if time.monotonic() >= deadline:
             stdout, stderr = _terminate_compose_process(process)
             timed_out_error = f"Command timed out after {timeout_seconds:.1f}s: docker compose {' '.join(args)}"
-            if service_names and _compose_services_started(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                service_names=service_names,
-            ) and (probe_port is None or bool(process_runner.wait_for_port(probe_port, timeout=0.5))):
+            if (
+                service_names
+                and _compose_services_started(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    service_names=service_names,
+                )
+                and (probe_port is None or bool(process_runner.wait_for_port(probe_port, timeout=0.5)))
+            ):
                 return None
             result = subprocess.CompletedProcess(command, 124, stdout, stderr or timed_out_error)
             return _normalize_compose_error(
@@ -1118,14 +1118,14 @@ def _terminate_compose_process(process: subprocess.Popen[str]) -> tuple[str, str
 def _compose_db_port(*, compose_root: Path) -> int | None:
     # Managed supabase DB startup is considered ready once the host DB port accepts connections.
     # Extract the rendered port from the materialized compose file name/location contract.
-    env_path = compose_root / '.env'
+    env_path = compose_root / ".env"
     if not env_path.is_file():
         return None
     try:
-        text = env_path.read_text(encoding='utf-8')
+        text = env_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    match = re.search(r'^SUPABASE_DB_PORT=(\d+)$', text, re.MULTILINE)
+    match = re.search(r"^SUPABASE_DB_PORT=(\d+)$", text, re.MULTILINE)
     if not match:
         return None
     try:

@@ -23,8 +23,8 @@ from envctl_engine.actions.action_target_support import (
 )
 from envctl_engine.actions.action_test_support import (
     TestExecutionSpec as _TestExecutionSpec,
-    TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext as _TestTargetContext,
+    TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     build_test_execution_specs,
     build_test_target_contexts,
     is_backend_only_selection,
@@ -38,7 +38,6 @@ from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -129,18 +128,24 @@ class ActionRuntimeFacade:
     ) -> list[str]:
         cleanup = getattr(self._runtime, "_blast_worktree_before_delete", None)
         if callable(cleanup):
-            return cast(list[str], cleanup(
-                project_name=project_name,
-                project_root=project_root,
-                source_command=source_command,
-            ))
+            return cast(
+                list[str],
+                cleanup(
+                    project_name=project_name,
+                    project_root=project_root,
+                    source_command=source_command,
+                ),
+            )
         cleanup = getattr(self._runtime, "blast_worktree_before_delete", None)
         if callable(cleanup):
-            return cast(list[str], cleanup(
-                project_name=project_name,
-                project_root=project_root,
-                source_command=source_command,
-            ))
+            return cast(
+                list[str],
+                cleanup(
+                    project_name=project_name,
+                    project_root=project_root,
+                    source_command=source_command,
+                ),
+            )
         return []
 
     @property
@@ -197,11 +202,14 @@ class ActionCommandOrchestrator:
 
         rt.emit("action.command.start", command=route.command, mode=route.mode)
         self._emit_status(start_status)
-        with use_spinner_policy(spinner_policy), spinner(
-            start_status,
-            enabled=action_spinner_enabled,
-            start_immediately=False,
-        ) as active_spinner:
+        with (
+            use_spinner_policy(spinner_policy),
+            spinner(
+                start_status,
+                enabled=action_spinner_enabled,
+                start_immediately=False,
+            ) as active_spinner,
+        ):
             if action_spinner_enabled:
                 active_spinner.start()
                 rt.emit(
@@ -275,11 +283,11 @@ class ActionCommandOrchestrator:
                 selection = cast(
                     TargetSelection,
                     rt.select_project_targets(
-                    prompt=f"Select {route.command} target",
-                    projects=candidates,
-                    allow_all=True,
-                    allow_untested=route.command == "test",
-                    multi=True,
+                        prompt=f"Select {route.command} target",
+                        projects=candidates,
+                        allow_all=True,
+                        allow_untested=route.command == "test",
+                        multi=True,
                     ),
                 )
                 if selection.cancelled:
@@ -692,10 +700,7 @@ class ActionCommandOrchestrator:
         rt = self.runtime
         if len(specs) <= 1:
             return False
-        if any(
-            self._is_legacy_tree_test_script(spec.spec.command)
-            for spec in specs
-        ):
+        if any(self._is_legacy_tree_test_script(spec.spec.command) for spec in specs):
             return False
         forced = route.flags.get("test_parallel")
         if isinstance(forced, bool):
@@ -959,9 +964,7 @@ class ActionCommandOrchestrator:
         print(self._colorize("Test Suite Summary", fg="cyan", bold=True))
         print(self._colorize("======================================================================", fg="cyan"))
         project_labels = {
-            str(item.get("project_name", "")).strip()
-            for item in outcomes
-            if str(item.get("project_name", "")).strip()
+            str(item.get("project_name", "")).strip() for item in outcomes if str(item.get("project_name", "")).strip()
         }
         multi_project = len(project_labels) > 1
         total_passed = 0
@@ -999,7 +1002,11 @@ class ActionCommandOrchestrator:
                 duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
                 duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
 
-                icon = self._colorize("✓", fg="green", bold=True) if returncode == 0 else self._colorize("✗", fg="red", bold=True)
+                icon = (
+                    self._colorize("✓", fg="green", bold=True)
+                    if returncode == 0
+                    else self._colorize("✗", fg="red", bold=True)
+                )
                 if counts_detected:
                     total_passed += passed
                     total_failed += failed

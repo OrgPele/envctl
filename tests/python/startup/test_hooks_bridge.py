@@ -37,7 +37,7 @@ class HooksBridgeTests(unittest.TestCase):
             hook_file.write_text(
                 "from __future__ import annotations\n\n"
                 "def envctl_setup_infrastructure(context: dict) -> dict | None:\n"
-                "    return {\"skip_default_requirements\": True}\n",
+                '    return {"skip_default_requirements": True}\n',
                 encoding="utf-8",
             )
             result = run_envctl_hook(
@@ -73,7 +73,7 @@ class HooksBridgeTests(unittest.TestCase):
                 "  export ENVCTL_HOOK_JSON='{\"skip_default_requirements\":true}'\n"
                 "}\n\n"
                 "envctl_define_services() {\n"
-                "  export ENVCTL_HOOK_JSON='{\"skip_default_services\":true,\"services\":[]}'\n"
+                '  export ENVCTL_HOOK_JSON=\'{"skip_default_services":true,"services":[]}\'\n'
                 "}\n",
                 encoding="utf-8",
             )
@@ -88,16 +88,15 @@ class HooksBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl.sh").write_text(
-                "envctl_setup_infrastructure() {\n"
-                "  echo nope\n"
-                "  export ENVCTL_HOOK_JSON='{}'\n"
-                "}\n",
+                "envctl_setup_infrastructure() {\n  echo nope\n  export ENVCTL_HOOK_JSON='{}'\n}\n",
                 encoding="utf-8",
             )
             result = migrate_legacy_shell_hooks(repo)
             self.assertFalse(result.migrated)
             self.assertIn("Unsupported shell hook bodies", result.error or "")
-            self.assertEqual(result.starter_stub, build_python_hook_starter_stub(hook_names=["envctl_setup_infrastructure"]))
+            self.assertEqual(
+                result.starter_stub, build_python_hook_starter_stub(hook_names=["envctl_setup_infrastructure"])
+            )
 
     def test_runtime_setup_hook_can_skip_default_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -109,12 +108,12 @@ class HooksBridgeTests(unittest.TestCase):
                 "from __future__ import annotations\n\n"
                 "def envctl_setup_infrastructure(context: dict) -> dict | None:\n"
                 "    return {\n"
-                "        \"skip_default_requirements\": True,\n"
-                "        \"requirements\": {\n"
-                "            \"postgres\": {\"success\": True},\n"
-                "            \"redis\": {\"success\": True},\n"
-                "            \"n8n\": {\"success\": True},\n"
-                "            \"supabase\": {\"success\": True},\n"
+                '        "skip_default_requirements": True,\n'
+                '        "requirements": {\n'
+                '            "postgres": {"success": True},\n'
+                '            "redis": {"success": True},\n'
+                '            "n8n": {"success": True},\n'
+                '            "supabase": {"success": True},\n'
                 "        },\n"
                 "    }\n",
                 encoding="utf-8",
@@ -127,7 +126,9 @@ class HooksBridgeTests(unittest.TestCase):
                 }
             )
             runtime = PythonEngineRuntime(config, env={"ENVCTL_ENABLE_HOOK_BRIDGE": "true"})
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
             result = runtime._start_requirements_for_project(context, mode="main")
             self.assertIsInstance(result, RequirementsResult)
             self.assertEqual(result.health, "healthy")
@@ -143,10 +144,10 @@ class HooksBridgeTests(unittest.TestCase):
                 "from __future__ import annotations\n\n"
                 "def envctl_define_services(context: dict) -> dict | None:\n"
                 "    return {\n"
-                "        \"skip_default_services\": True,\n"
-                "        \"services\": [\n"
-                "            {\"name\": \"Main Backend\", \"type\": \"backend\", \"port\": 8010, \"actual_port\": 8010, \"status\": \"running\", \"cwd\": \"/tmp/backend\"},\n"
-                "            {\"name\": \"Main Frontend\", \"type\": \"frontend\", \"port\": 9010, \"actual_port\": 9010, \"status\": \"running\", \"cwd\": \"/tmp/frontend\"},\n"
+                '        "skip_default_services": True,\n'
+                '        "services": [\n'
+                '            {"name": "Main Backend", "type": "backend", "port": 8010, "actual_port": 8010, "status": "running", "cwd": "/tmp/backend"},\n'
+                '            {"name": "Main Frontend", "type": "frontend", "port": 9010, "actual_port": 9010, "status": "running", "cwd": "/tmp/frontend"},\n'
                 "        ],\n"
                 "    }\n",
                 encoding="utf-8",
@@ -159,7 +160,9 @@ class HooksBridgeTests(unittest.TestCase):
                 }
             )
             runtime = PythonEngineRuntime(config, env={"ENVCTL_ENABLE_HOOK_BRIDGE": "true"})
-            context = ProjectContext(name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0))
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
             requirements = RequirementsResult(
                 project="Main",
                 db={"enabled": False, "success": True},

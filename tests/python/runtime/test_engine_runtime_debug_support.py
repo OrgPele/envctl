@@ -44,7 +44,10 @@ class EngineRuntimeDebugSupportTests(unittest.TestCase):
 
         with (
             redirect_stdout(io.StringIO()),
-            patch("envctl_engine.runtime.engine_runtime_debug_support.pack_debug_bundle", return_value=Path("/tmp/bundle.tar.gz")),
+            patch(
+                "envctl_engine.runtime.engine_runtime_debug_support.pack_debug_bundle",
+                return_value=Path("/tmp/bundle.tar.gz"),
+            ),
         ):
             code = debug_pack(runtime, route)
 
@@ -138,8 +141,17 @@ class EngineRuntimeDebugSupportTests(unittest.TestCase):
                     "probable_root_causes": [],
                     "next_data_needed": [],
                     "launch_intent_counts": {"background_service": 2, "probe": 4},
-                    "tracked_controller_input_owners": [{"launch_intent": "interactive_child", "pid": 333, "stdin_policy": "inherit"}],
-                    "launch_policy_violations": [{"launch_intent": "background_service", "pid": 444, "stdin_policy": "inherit", "controller_input_owner_allowed": True}],
+                    "tracked_controller_input_owners": [
+                        {"launch_intent": "interactive_child", "pid": 333, "stdin_policy": "inherit"}
+                    ],
+                    "launch_policy_violations": [
+                        {
+                            "launch_intent": "background_service",
+                            "pid": 444,
+                            "stdin_policy": "inherit",
+                            "controller_input_owner_allowed": True,
+                        }
+                    ],
                 },
             ),
         ):

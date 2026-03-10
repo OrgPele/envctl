@@ -173,8 +173,6 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("cutover.gate.fail_reason", event_names)
         self.assertIn("cutover.gate.evaluate", event_names)
 
-
-
     def test_doctor_readiness_emits_cutover_gate_evaluation_event(self) -> None:
         runtime = self._runtime()
         runtime._parity_manifest_is_complete = lambda: True  # type: ignore[assignment]
@@ -263,23 +261,26 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         runtime._parity_manifest_is_complete = lambda: True  # type: ignore[assignment]
         runtime._try_load_existing_state = lambda mode=None: None  # type: ignore[assignment]
 
-        with patch(
-            "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
-            return_value=SimpleNamespace(
-                passed=True,
-                blocking_gap_count=0,
-                errors=[],
-                warnings=[],
-                report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
-                report_generated_at="2026-03-09T00:00:00Z",
-                report_sha256="gap123",
-                high_gap_count=0,
-                medium_gap_count=0,
-                low_gap_count=0,
+        with (
+            patch(
+                "envctl_engine.debug.doctor_orchestrator.evaluate_runtime_readiness",
+                return_value=SimpleNamespace(
+                    passed=True,
+                    blocking_gap_count=0,
+                    errors=[],
+                    warnings=[],
+                    report_path=Path("/tmp/contracts/python_runtime_gap_report.json"),
+                    report_generated_at="2026-03-09T00:00:00Z",
+                    report_sha256="gap123",
+                    high_gap_count=0,
+                    medium_gap_count=0,
+                    low_gap_count=0,
+                ),
             ),
-        ), patch(
-            "envctl_engine.runtime.engine_runtime.evaluate_shipability",
-            return_value=SimpleNamespace(passed=False, errors=["strict gate failed"], warnings=[]),
+            patch(
+                "envctl_engine.runtime.engine_runtime.evaluate_shipability",
+                return_value=SimpleNamespace(passed=False, errors=["strict gate failed"], warnings=[]),
+            ),
         ):
             readiness = runtime._doctor_readiness_gates()
 
@@ -755,27 +756,83 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(code, 0)
         output = buffer.getvalue()
         lines = [line.strip() for line in output.strip().split("\n") if line.strip()]
-        
+
         # Verify all supported commands are present
         expected_commands = {
-            "plan", "start", "restart", "resume", "stop", "stop-all", "blast-all",
+            "plan",
+            "start",
+            "restart",
+            "resume",
+            "stop",
+            "stop-all",
+            "blast-all",
             "config",
-            "dashboard", "doctor", "test", "logs", "clear-logs", "health", "errors",
-            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate", "migrate-hooks",
-            "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
-            "help", "debug-pack", "debug-report", "debug-last"
+            "dashboard",
+            "doctor",
+            "test",
+            "logs",
+            "clear-logs",
+            "health",
+            "errors",
+            "delete-worktree",
+            "blast-worktree",
+            "pr",
+            "commit",
+            "review",
+            "migrate",
+            "migrate-hooks",
+            "list-commands",
+            "list-targets",
+            "list-trees",
+            "show-config",
+            "show-state",
+            "explain-startup",
+            "help",
+            "debug-pack",
+            "debug-report",
+            "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
         self.assertEqual(len(lines), 32, "Should have exactly 32 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
-        self.assertEqual(set(list_supported_commands()), {
-            "start", "plan", "resume", "dashboard", "config", "doctor", "migrate-hooks",
-            "debug-pack", "debug-report", "debug-last", "help", "list-commands",
-            "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
-            "test", "pr", "commit", "review", "migrate", "logs", "clear-logs", "health",
-            "errors", "delete-worktree", "blast-worktree", "stop", "restart", "stop-all", "blast-all",
-        })
+        self.assertEqual(
+            set(list_supported_commands()),
+            {
+                "start",
+                "plan",
+                "resume",
+                "dashboard",
+                "config",
+                "doctor",
+                "migrate-hooks",
+                "debug-pack",
+                "debug-report",
+                "debug-last",
+                "help",
+                "list-commands",
+                "list-targets",
+                "list-trees",
+                "show-config",
+                "show-state",
+                "explain-startup",
+                "test",
+                "pr",
+                "commit",
+                "review",
+                "migrate",
+                "logs",
+                "clear-logs",
+                "health",
+                "errors",
+                "delete-worktree",
+                "blast-worktree",
+                "stop",
+                "restart",
+                "stop-all",
+                "blast-all",
+            },
+        )
 
     def test_help_output_lists_same_command_inventory(self) -> None:
         runtime = self._runtime()
@@ -788,11 +845,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertGreaterEqual(len(lines), 3)
         self.assertEqual(lines[0], "envctl Python runtime")
         self.assertTrue(lines[1].startswith("Commands: "))
-        help_commands = {
-            item.strip()
-            for item in lines[1].split("Commands: ", 1)[1].split(",")
-            if item.strip()
-        }
+        help_commands = {item.strip() for item in lines[1].split("Commands: ", 1)[1].split(",") if item.strip()}
         self.assertEqual(help_commands, set(list_supported_commands()))
         self.assertIn("Mode flags: --main, --tree, --trees, trees=true, main=true", lines[2])
         self.assertIn("Non-interactive: --headless (preferred), --batch (compatibility alias)", lines[3])
@@ -826,7 +879,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n")
         config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
         runtime = PythonEngineRuntime(config, env={})
-        
+
         buffer = StringIO()
         with redirect_stdout(buffer):
             code = runtime.dispatch(parse_route(["--list-targets", "--main"], env={}))
@@ -847,7 +900,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         (feature_dir / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n")
         config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
         runtime = PythonEngineRuntime(config, env={})
-        
+
         buffer = StringIO()
         with redirect_stdout(buffer):
             code = runtime.dispatch(parse_route(["--list-targets", "--trees"], env={}))
@@ -1029,6 +1082,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "config_startup_disabled")
         self.assertEqual(payload["dependencies"], [])
         self.assertEqual(payload["services"], {"backend": False, "frontend": False})
+
 
 if __name__ == "__main__":
     unittest.main()

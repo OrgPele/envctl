@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import time
 import threading
 import concurrent.futures
@@ -26,7 +27,8 @@ def format_requirements_progress_message(*, active: set[str], pending: set[str])
     return "Preparing requirements..."
 
 
-def start_project_context(orchestrator,
+def start_project_context(
+    orchestrator,
     *,
     context: Any,
     mode: str,
@@ -38,15 +40,13 @@ def start_project_context(orchestrator,
     rt._reserve_project_ports(context)  # type: ignore[attr-defined]
     requirements = orchestrator._requirements_for_restart_context(context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):  # type: ignore[attr-defined]
-        raise RuntimeError(
-            f"Requirements unavailable for {context.name}: "
-            + ", ".join(requirements.failures)
-        )
+        raise RuntimeError(f"Requirements unavailable for {context.name}: " + ", ".join(requirements.failures))
     orchestrator._report_progress(
         route,
         f"Requirements ready for {context.name}: "
         + " ".join(
-            f"{definition.id}={requirements.component(definition.id).get('final') or requirements.component(definition.id).get('requested')}"
+            f"{definition.id}="
+            f"{requirements.component(definition.id).get('final') or requirements.component(definition.id).get('requested')}"
             for definition in dependency_definitions()
             if bool(requirements.component(definition.id).get("enabled", False))
         ),
@@ -103,24 +103,24 @@ def _synthetic_requirements_result(rt: Any, *, context: Any, mode: str, route: R
 
 def _synthetic_service_records(rt: Any, *, context: Any, mode: str) -> dict[str, Any]:
     project_services = {}
-    if rt._service_enabled_for_mode(mode, 'backend'):
-        project_services[f'{context.name} Backend'] = ServiceRecord(
-            name=f'{context.name} Backend',
-            type='backend',
+    if rt._service_enabled_for_mode(mode, "backend"):
+        project_services[f"{context.name} Backend"] = ServiceRecord(
+            name=f"{context.name} Backend",
+            type="backend",
             cwd=str(context.root),
-            requested_port=context.ports['backend'].final,
-            actual_port=context.ports['backend'].final,
-            status='unknown',
+            requested_port=context.ports["backend"].final,
+            actual_port=context.ports["backend"].final,
+            status="unknown",
             synthetic=True,
         )
-    if rt._service_enabled_for_mode(mode, 'frontend'):
-        project_services[f'{context.name} Frontend'] = ServiceRecord(
-            name=f'{context.name} Frontend',
-            type='frontend',
+    if rt._service_enabled_for_mode(mode, "frontend"):
+        project_services[f"{context.name} Frontend"] = ServiceRecord(
+            name=f"{context.name} Frontend",
+            type="frontend",
             cwd=str(context.root),
-            requested_port=context.ports['frontend'].final,
-            actual_port=context.ports['frontend'].final,
-            status='unknown',
+            requested_port=context.ports["frontend"].final,
+            actual_port=context.ports["frontend"].final,
+            status="unknown",
             synthetic=True,
         )
     return project_services
@@ -128,36 +128,38 @@ def _synthetic_service_records(rt: Any, *, context: Any, mode: str) -> dict[str,
 
 def _synthetic_running_service_records(rt: Any, *, context: Any, mode: str) -> dict[str, Any]:
     project_services = {}
-    if rt._service_enabled_for_mode(mode, 'backend'):
-        backend_port = context.ports['backend'].final
-        project_services[f'{context.name} Backend'] = ServiceRecord(
-            name=f'{context.name} Backend',
-            type='backend',
+    if rt._service_enabled_for_mode(mode, "backend"):
+        backend_port = context.ports["backend"].final
+        project_services[f"{context.name} Backend"] = ServiceRecord(
+            name=f"{context.name} Backend",
+            type="backend",
             cwd=str(context.root),
             pid=os.getpid(),
             requested_port=backend_port,
             actual_port=backend_port,
-            status='running',
+            status="running",
             synthetic=True,
             listener_pids=[os.getpid()],
         )
-    if rt._service_enabled_for_mode(mode, 'frontend'):
-        frontend_port = context.ports['frontend'].final
-        project_services[f'{context.name} Frontend'] = ServiceRecord(
-            name=f'{context.name} Frontend',
-            type='frontend',
+    if rt._service_enabled_for_mode(mode, "frontend"):
+        frontend_port = context.ports["frontend"].final
+        project_services[f"{context.name} Frontend"] = ServiceRecord(
+            name=f"{context.name} Frontend",
+            type="frontend",
             cwd=str(context.root),
             pid=os.getpid() + 1,
             requested_port=frontend_port,
             actual_port=frontend_port,
-            status='running',
+            status="running",
             synthetic=True,
             listener_pids=[os.getpid() + 1],
         )
     return project_services
 
 
-def startup_summary_payload(orchestrator, *, project_contexts: list[Any], start_event_index: int, startup_started_at: float) -> dict[str, object]:
+def startup_summary_payload(
+    orchestrator, *, project_contexts: list[Any], start_event_index: int, startup_started_at: float
+) -> dict[str, object]:
     rt: Any = orchestrator.runtime
     event_slice = list(getattr(rt, "events", [])[start_event_index:])
     requirement_totals: dict[str, float] = {}
@@ -184,30 +186,25 @@ def startup_summary_payload(orchestrator, *, project_contexts: list[Any], start_
         "requirements_ms": round(sum(requirement_totals.values()), 2),
         "services_ms": round(sum(service_totals.values()), 2),
         "startup_ms": total_ms,
-        "top_components": [
-            {"name": name, "duration_ms": round(duration, 2)}
-            for name, duration in top_components[:3]
-        ],
+        "top_components": [{"name": name, "duration_ms": round(duration, 2)} for name, duration in top_components[:3]],
     }
 
 
-def print_startup_summary(orchestrator, *, project_contexts: list[Any], start_event_index: int, startup_started_at: float) -> None:
+def print_startup_summary(
+    orchestrator, *, project_contexts: list[Any], start_event_index: int, startup_started_at: float
+) -> None:
     payload = startup_summary_payload(
         orchestrator,
         project_contexts=project_contexts,
         start_event_index=start_event_index,
         startup_started_at=startup_started_at,
     )
-    top = ", ".join(
-        f"{item['name']}={float(item['duration_ms']):.1f}ms"
-        for item in payload["top_components"]
-    )
+    top = ", ".join(f"{item['name']}={float(item['duration_ms']):.1f}ms" for item in payload["top_components"])
     print(
         "Startup summary: "
         f"requirements={float(payload['requirements_ms']):.1f}ms "
         f"services={float(payload['services_ms']):.1f}ms "
-        f"total={float(payload['startup_ms']):.1f}ms"
-        + (f" top=[{top}]" if top else "")
+        f"total={float(payload['startup_ms']):.1f}ms" + (f" top=[{top}]" if top else "")
     )
 
 
@@ -217,7 +214,9 @@ def _float_ms(value: object) -> float:
     except (TypeError, ValueError):
         return 0.0
 
-def _requirements_for_restart_context(orchestrator,
+
+def _requirements_for_restart_context(
+    orchestrator,
     *,
     context: Any,
     mode: str,
@@ -249,7 +248,9 @@ def _requirements_for_restart_context(orchestrator,
     )
     return orchestrator.start_requirements_for_project(context, mode=mode, route=route)
 
-def start_requirements_for_project(orchestrator,
+
+def start_requirements_for_project(
+    orchestrator,
     context: Any,
     *,
     mode: str,
@@ -364,7 +365,9 @@ def start_requirements_for_project(orchestrator,
     emit_requirements_progress()
     raw_parallel = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL")  # type: ignore[attr-defined]
     parallel_enabled = parse_bool(raw_parallel, True) and len(enabled_definitions) > 1
-    raw_workers = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX")  # type: ignore[attr-defined]
+    raw_workers = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX") or rt.config.raw.get(
+        "ENVCTL_REQUIREMENTS_PARALLEL_MAX"
+    )  # type: ignore[attr-defined]
     worker_limit = max(parse_int(raw_workers, 4), 1)
     worker_count = min(worker_limit, len(enabled_definitions)) if parallel_enabled else 1
     rt._emit(  # type: ignore[attr-defined]
@@ -388,7 +391,9 @@ def start_requirements_for_project(orchestrator,
             future_map = {}
             for definition in definitions:
                 strict = bool(definition.id == "n8n" and rt.config.strict_n8n_bootstrap)  # type: ignore[attr-defined]
-                future = executor.submit(run_component, definition.id, plan_for_dependency(definition.id), strict=strict)
+                future = executor.submit(
+                    run_component, definition.id, plan_for_dependency(definition.id), strict=strict
+                )
                 future_map[future] = definition.id
             for future in concurrent.futures.as_completed(future_map):
                 definition_id = future_map[future]
@@ -440,6 +445,7 @@ def start_requirements_for_project(orchestrator,
         failures=failures,
     )
 
+
 def _requirements_timing_enabled(orchestrator, route: Route | None) -> bool:
     rt = orchestrator.runtime
     raw_force = rt.env.get("ENVCTL_DEBUG_RESTORE_TIMING") or rt.config.raw.get("ENVCTL_DEBUG_RESTORE_TIMING")  # type: ignore[attr-defined]
@@ -450,18 +456,23 @@ def _requirements_timing_enabled(orchestrator, route: Route | None) -> bool:
     raw_mode = (rt.env.get("ENVCTL_DEBUG_UI_MODE") or rt.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "").strip().lower()  # type: ignore[attr-defined]
     return raw_mode in {"standard", "deep"}
 
+
 def _docker_prewarm_enabled(orchestrator, route: Route | None) -> bool:
     _ = route
     rt = orchestrator.runtime
     raw = rt.env.get("ENVCTL_DOCKER_PREWARM") or rt.config.raw.get("ENVCTL_DOCKER_PREWARM")  # type: ignore[attr-defined]
     return parse_bool(raw, True)
 
+
 def _docker_prewarm_timeout_seconds(orchestrator, route: Route | None) -> int:
     _ = route
     rt = orchestrator.runtime
-    raw = rt.env.get("ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS") or rt.config.raw.get("ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS")  # type: ignore[attr-defined]
+    raw = rt.env.get("ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS") or rt.config.raw.get(
+        "ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS"
+    )  # type: ignore[attr-defined]
     value = parse_int(raw, 10)
     return max(value, 1)
+
 
 def _prewarm_requires_startup_requirements(orchestrator, *, mode: str, route: Route | None) -> bool:
     rt: Any = orchestrator.runtime
@@ -469,6 +480,7 @@ def _prewarm_requires_startup_requirements(orchestrator, *, mode: str, route: Ro
         if bool(rt._requirement_enabled(definition.id, mode=mode, route=route)):  # type: ignore[attr-defined]
             return True
     return False
+
 
 def _maybe_prewarm_docker(orchestrator, *, route: Route | None, mode: str) -> None:
     rt: Any = orchestrator.runtime
@@ -500,6 +512,7 @@ def _maybe_prewarm_docker(orchestrator, *, route: Route | None, mode: str) -> No
         success=returncode == 0 and not timed_out,
     )
 
+
 def _startup_breakdown_enabled(orchestrator, route: Route | None) -> bool:
     rt = orchestrator.runtime
     raw = rt.env.get("ENVCTL_DEBUG_STARTUP_BREAKDOWN") or rt.config.raw.get("ENVCTL_DEBUG_STARTUP_BREAKDOWN")  # type: ignore[attr-defined]
@@ -509,6 +522,7 @@ def _startup_breakdown_enabled(orchestrator, route: Route | None) -> bool:
         return True
     raw_mode = (rt.env.get("ENVCTL_DEBUG_UI_MODE") or rt.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "").strip().lower()  # type: ignore[attr-defined]
     return raw_mode in {"deep"}
+
 
 def _service_attach_parallel_enabled(orchestrator, *, route: Route | None, selected_service_types: set[str]) -> bool:
     if selected_service_types != {"backend", "frontend"}:
@@ -521,7 +535,9 @@ def _service_attach_parallel_enabled(orchestrator, *, route: Route | None, selec
     raw = rt.env.get("ENVCTL_SERVICE_ATTACH_PARALLEL") or rt.config.raw.get("ENVCTL_SERVICE_ATTACH_PARALLEL")  # type: ignore[attr-defined]
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
-def start_project_services(orchestrator,
+
+def start_project_services(
+    orchestrator,
     context: Any,
     *,
     requirements: RequirementsResult,
@@ -544,7 +560,9 @@ def start_project_services(orchestrator,
     services_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_define_services")  # type: ignore[attr-defined]
     if services_hook.found:
         if not services_hook.success:
-            raise RuntimeError(f"envctl_define_services hook failed for {context.name}: {services_hook.error or 'failed'}")
+            raise RuntimeError(
+                f"envctl_define_services hook failed for {context.name}: {services_hook.error or 'failed'}"
+            )
         payload = services_hook.payload if isinstance(services_hook.payload, dict) else {}
         hook_records = rt._services_from_hook_payload(context=context, payload=payload)  # type: ignore[attr-defined]
         if hook_records:
@@ -888,6 +906,7 @@ def start_project_services(orchestrator,
     )
     attach_duration_ms = 0.0
     records: dict[str, Any]
+
     def _running_service_record(
         *,
         service_name: str,
@@ -998,10 +1017,7 @@ def start_project_services(orchestrator,
             timing_parts.append(f"prepare_frontend_runtime={prepare_frontend_duration_ms:.1f}ms")
         timing_parts.append(f"start_project_with_attach={attach_duration_ms:.1f}ms")
         timing_parts.append(f"total={total_duration_ms:.1f}ms")
-        print(
-            "Service timing for "
-            f"{context.name}: {' '.join(timing_parts)}"
-        )
+        print(f"Service timing for {context.name}: {' '.join(timing_parts)}")
 
     backend_record = records.get(f"{context.name} Backend")
     frontend_record = records.get(f"{context.name} Frontend")

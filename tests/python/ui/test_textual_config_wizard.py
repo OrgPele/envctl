@@ -113,7 +113,20 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(app._wizard_type, "advanced")  # noqa: SLF001
             self.assertEqual(app._current_step(), "default_mode")  # noqa: SLF001
-            self.assertEqual(app._steps, ["welcome", "wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "directories", "ports", "review"])  # noqa: SLF001
+            self.assertEqual(
+                app._steps,
+                [
+                    "welcome",
+                    "wizard_type",
+                    "default_mode",
+                    "startup_modes",
+                    "main_profile",
+                    "trees_profile",
+                    "directories",
+                    "ports",
+                    "review",
+                ],
+            )  # noqa: SLF001
             app.exit(None)
 
     async def test_advanced_startup_step_is_separate_from_profile_settings(self) -> None:

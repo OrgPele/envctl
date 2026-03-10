@@ -213,4 +213,3 @@ def _unsupported_documented_flags(repo_root: Path) -> list[str]:
     supported = set(list_supported_flag_tokens())
     ignored = {"--help"}
     return [token for token in tokens if token not in supported and token not in ignored]
-

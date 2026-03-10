@@ -59,7 +59,9 @@ def emit(runtime: Any, event_name: str, **payload: object) -> None:
         payload=safe_payload,
         timestamp=datetime.now(tz=UTC).isoformat(),
         trace_id=trace_id,
-        parent_trace_id=str(safe_payload.get("parent_trace_id")) if isinstance(safe_payload.get("parent_trace_id"), str) else None,
+        parent_trace_id=str(safe_payload.get("parent_trace_id"))
+        if isinstance(safe_payload.get("parent_trace_id"), str)
+        else None,
     )
     with runtime._emit_lock:
         runtime.events.append(event)
@@ -76,7 +78,11 @@ def emit(runtime: Any, event_name: str, **payload: object) -> None:
 
 
 def debug_should_auto_pack(runtime: Any, *, reason: str) -> bool:
-    policy = (runtime.env.get("ENVCTL_DEBUG_AUTO_PACK") or runtime.config.raw.get("ENVCTL_DEBUG_AUTO_PACK") or "off").strip().lower()
+    policy = (
+        (runtime.env.get("ENVCTL_DEBUG_AUTO_PACK") or runtime.config.raw.get("ENVCTL_DEBUG_AUTO_PACK") or "off")
+        .strip()
+        .lower()
+    )
     if policy == "off":
         return False
     if policy == "always":

@@ -36,8 +36,12 @@ class EngineRuntimeHooksTests(unittest.TestCase):
                 "db": PortPlan(project="feature/a-1", requested=5432, assigned=5432, final=5432, source="assigned"),
                 "redis": PortPlan(project="feature/a-1", requested=6379, assigned=6379, final=6379, source="assigned"),
                 "n8n": PortPlan(project="feature/a-1", requested=5678, assigned=5678, final=5678, source="assigned"),
-                "backend": PortPlan(project="feature/a-1", requested=8000, assigned=8000, final=8000, source="assigned"),
-                "frontend": PortPlan(project="feature/a-1", requested=9000, assigned=9000, final=9000, source="assigned"),
+                "backend": PortPlan(
+                    project="feature/a-1", requested=8000, assigned=8000, final=8000, source="assigned"
+                ),
+                "frontend": PortPlan(
+                    project="feature/a-1", requested=9000, assigned=9000, final=9000, source="assigned"
+                ),
             },
         )
 
@@ -112,8 +116,20 @@ class EngineRuntimeHooksTests(unittest.TestCase):
                 context=context,
                 payload={
                     "services": [
-                        {"name": "feature/a-1 Backend", "type": "backend", "pid": 101, "requested_port": 8000, "actual_port": 8010},
-                        {"name": "feature/a-1 Frontend", "type": "frontend", "pid": 102, "port": 9010, "status": "healthy"},
+                        {
+                            "name": "feature/a-1 Backend",
+                            "type": "backend",
+                            "pid": 101,
+                            "requested_port": 8000,
+                            "actual_port": 8010,
+                        },
+                        {
+                            "name": "feature/a-1 Frontend",
+                            "type": "frontend",
+                            "pid": 102,
+                            "port": 9010,
+                            "status": "healthy",
+                        },
                     ]
                 },
             )
@@ -152,7 +168,13 @@ class EngineRuntimeHooksTests(unittest.TestCase):
         project_name = build_supabase_project_name(project_root=project_root, project_name="feature/a-1")
         self.assertTrue(commands)
         self.assertTrue(any(cmd[:4] == ["docker", "compose", "-p", project_name] for cmd in commands))
-        self.assertTrue(any("dependency_compose" in token and token.endswith("docker-compose.yml") for cmd in commands for token in cmd))
+        self.assertTrue(
+            any(
+                "dependency_compose" in token and token.endswith("docker-compose.yml")
+                for cmd in commands
+                for token in cmd
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -53,12 +53,7 @@ def _prepare_backend_runtime(
         redis_url = project_env_base.get("REDIS_URL")
         if isinstance(redis_url, str) and redis_url.strip():
             env["REDIS_URL"] = redis_url
-    if (
-        backend_env_file is not None
-        and backend_env_file.is_file()
-        and backend_env_is_default
-        and not skip_local_db_env
-    ):
+    if backend_env_file is not None and backend_env_file.is_file() and backend_env_is_default and not skip_local_db_env:
         self._sync_backend_env_file(backend_env_file, env=env)
     _emit_bootstrap_phase(
         self,
@@ -1007,7 +1002,9 @@ def _run_backend_migration_step(
             if backend_log_path:
                 record_warning(context.name, f"backend log: {backend_log_path}")
         else:
-            print(f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})")
+            print(
+                f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})"
+            )
             if backend_log_path:
                 print(f"  backend log: {backend_log_path}")
         missing_revision = _backend_missing_revision_id(message)
@@ -1202,9 +1199,7 @@ def _emit_bootstrap_phase(
 
 
 def _backend_bootstrap_strict(self: Any) -> bool:
-    raw = self.env.get("ENVCTL_BACKEND_BOOTSTRAP_STRICT") or self.config.raw.get(
-        "ENVCTL_BACKEND_BOOTSTRAP_STRICT"
-    )
+    raw = self.env.get("ENVCTL_BACKEND_BOOTSTRAP_STRICT") or self.config.raw.get("ENVCTL_BACKEND_BOOTSTRAP_STRICT")
     return parse_bool(raw, False)
 
 

@@ -15,7 +15,9 @@ class DependencyRegistryTests(unittest.TestCase):
         ids = [definition.id for definition in definitions]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertEqual(ids, ["postgres", "redis", "supabase", "n8n"])
-        self.assertEqual([definition.order for definition in definitions], sorted(definition.order for definition in definitions))
+        self.assertEqual(
+            [definition.order for definition in definitions], sorted(definition.order for definition in definitions)
+        )
 
     def test_requirements_result_keeps_legacy_aliases_and_components(self) -> None:
         result = RequirementsResult(
@@ -35,7 +37,9 @@ class DependencyRegistryTests(unittest.TestCase):
             id="kafka",
             display_name="Kafka",
             order=25,
-            resources=(DependencyResourceSpec(name="primary", legacy_port_key="redis", config_port_keys=("KAFKA_PORT",)),),
+            resources=(
+                DependencyResourceSpec(name="primary", legacy_port_key="redis", config_port_keys=("KAFKA_PORT",)),
+            ),
             mode_enable_keys={"main": ("MAIN_KAFKA_ENABLE",), "trees": ("TREES_KAFKA_ENABLE",)},
             default_enabled={"main": False, "trees": False},
         )

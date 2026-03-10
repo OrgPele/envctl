@@ -5,7 +5,9 @@ from typing import Any, Callable, Protocol
 
 
 class DependencyAdapter(Protocol):
-    def project_env(self, *, runtime: Any, context: Any, requirements: Any, route: Any | None = None) -> dict[str, str]: ...
+    def project_env(
+        self, *, runtime: Any, context: Any, requirements: Any, route: Any | None = None
+    ) -> dict[str, str]: ...
 
     def cleanup(self, *, runtime: Any, project_name: str, project_root: Any) -> list[str] | None: ...
 
@@ -85,7 +87,9 @@ class RequirementComponentResult:
     def from_payload(cls, component_id: str, payload: dict[str, Any] | None) -> "RequirementComponentResult":
         data = payload or {}
         resources = data.get("resources") if isinstance(data.get("resources"), dict) else {}
-        normalized_resources = {str(key): int(value) for key, value in resources.items() if isinstance(value, int) and value > 0}
+        normalized_resources = {
+            str(key): int(value) for key, value in resources.items() if isinstance(value, int) and value > 0
+        }
         requested = data.get("requested")
         final = data.get("final")
         if isinstance(requested, int) and requested > 0:

@@ -185,8 +185,13 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         assert state is not None
 
         with (
-            patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI._can_interactive_tty", return_value=True),
-            patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input") as flush_mock,
+            patch(
+                "envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI._can_interactive_tty",
+                return_value=True,
+            ),
+            patch(
+                "envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input"
+            ) as flush_mock,
         ):
             selected = orchestrator._select_services_for_stop(state, route)
 

@@ -98,7 +98,9 @@ class CliPackagingTests(unittest.TestCase):
                 check=False,
             )
             if bootstrap.returncode != 0:
-                raise unittest.SkipTest(f"setuptools bootstrap failed for packaging smoke test: {bootstrap.stderr.strip()}")
+                raise unittest.SkipTest(
+                    f"setuptools bootstrap failed for packaging smoke test: {bootstrap.stderr.strip()}"
+                )
             install_cmd = [
                 str(python_bin),
                 "-m",

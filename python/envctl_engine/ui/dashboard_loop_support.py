@@ -14,19 +14,11 @@ def _preserve_output_tty_state_for_dashboard() -> bool:
 
 def _tty_termios_group_enabled() -> bool:
     raw_orch = str(os.environ.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
-    orch_groups = {
-        token.strip()
-        for token in raw_orch.replace("+", ",").split(",")
-        if token.strip()
-    }
+    orch_groups = {token.strip() for token in raw_orch.replace("+", ",").split(",") if token.strip()}
     if orch_groups and "tty" not in orch_groups:
         return True
     raw_tty = str(os.environ.get("ENVCTL_DEBUG_PLAN_TTY_GROUP", "")).strip().lower()
-    tty_groups = {
-        token.strip()
-        for token in raw_tty.replace("+", ",").split(",")
-        if token.strip()
-    }
+    tty_groups = {token.strip() for token in raw_tty.replace("+", ",").split(",") if token.strip()}
     if not tty_groups:
         return True
     return "termios" in tty_groups

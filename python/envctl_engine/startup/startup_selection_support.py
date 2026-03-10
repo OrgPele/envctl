@@ -7,6 +7,7 @@ from envctl_engine.state.models import RunState
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 
+
 def _project_ports_text(context: Any) -> str:
     return (
         f"backend={context.ports['backend'].final} "
@@ -16,6 +17,7 @@ def _project_ports_text(context: Any) -> str:
         f"n8n={context.ports['n8n'].final}"
     )
 
+
 def _state_project_names(*, runtime: Any, state: RunState) -> set[str]:
     names = {str(name).strip() for name in state.requirements.keys() if str(name).strip()}
     for service_name in state.services:
@@ -23,6 +25,7 @@ def _state_project_names(*, runtime: Any, state: RunState) -> set[str]:
         if isinstance(project_name, str) and project_name.strip():
             names.add(project_name.strip())
     return names
+
 
 def _state_matches_selected_projects(orchestrator, *, runtime: Any, state: RunState, contexts: list[Any]) -> bool:
     selected = {str(context.name).strip() for context in contexts if str(getattr(context, "name", "")).strip()}
@@ -43,12 +46,14 @@ def _state_covers_selected_projects(orchestrator, *, runtime: Any, state: RunSta
         return False
     return selected.issubset(state_projects)
 
+
 def _route_explicit_trees_mode(route: Route) -> bool:
     for token in route.raw_args:
         normalized = str(token).strip().lower()
         if normalized in _MODE_TREE_TOKENS_NORMALIZED:
             return True
     return False
+
 
 def _trees_start_selection_required(orchestrator, *, route: Route, runtime_mode: str) -> bool:
     if runtime_mode != "trees" or route.command != "start":
@@ -60,6 +65,7 @@ def _trees_start_selection_required(orchestrator, *, route: Route, runtime_mode:
     if bool(route.flags.get("setup_worktree")) or bool(route.flags.get("setup_worktrees")):
         return False
     return True
+
 
 def _tree_preselected_projects_from_state(orchestrator, *, runtime: Any, project_contexts: list[Any]) -> list[str]:
     state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)  # type: ignore[attr-defined]
@@ -78,6 +84,7 @@ def _tree_preselected_projects_from_state(orchestrator, *, runtime: Any, project
         seen.add(resolved.lower())
         preselected.append(resolved)
     return preselected
+
 
 def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts: list[Any]) -> list[Any]:
     rt: Any = orchestrator.runtime
@@ -146,6 +153,7 @@ def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts:
     )
     return filtered
 
+
 def _restart_include_requirements(route: Route) -> bool:
     explicit = route.flags.get("restart_include_requirements")
     if explicit is not None:
@@ -159,6 +167,7 @@ def _restart_include_requirements(route: Route) -> bool:
         return False
     return True
 
+
 def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
     service_filters = route.flags.get("services")
     selected: set[str] = set()
@@ -169,7 +178,9 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
         return selected
 
     if route.projects:
-        project_set = {project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()}
+        project_set = {
+            project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()
+        }
         for name in state.services:
             project = _project_name_from_service_name(name)
             if project and project.lower() in project_set:
@@ -178,6 +189,7 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
             return selected
 
     return set(state.services.keys())
+
 
 def _restart_target_projects(*, state: RunState, route: Route, runtime: Any) -> set[str]:
     targets: set[str] = set()
@@ -204,7 +216,10 @@ def _restart_target_projects(*, state: RunState, route: Route, runtime: Any) -> 
             targets.add(project)
     return targets
 
-def _restart_target_projects_for_selected_services(*, selected_services: set[str], state: RunState, runtime: Any) -> set[str]:
+
+def _restart_target_projects_for_selected_services(
+    *, selected_services: set[str], state: RunState, runtime: Any
+) -> set[str]:
     targets: set[str] = set()
     for service_name in selected_services:
         project = runtime._project_name_from_service(service_name)  # type: ignore[attr-defined]
@@ -218,6 +233,7 @@ def _restart_target_projects_for_selected_services(*, selected_services: set[str
             targets.add(project)
     return targets
 
+
 def _project_name_from_service_name(name: str) -> str | None:
     lowered = str(name).strip().lower()
     if lowered.endswith(" backend"):
@@ -225,6 +241,7 @@ def _project_name_from_service_name(name: str) -> str | None:
     if lowered.endswith(" frontend"):
         return str(name)[: -len(" Frontend")].strip()
     return None
+
 
 def _restart_service_types_for_project(
     *,
@@ -263,12 +280,14 @@ def _restart_service_types_for_project(
             return normalized.intersection(default_service_types or normalized)
     return set(default_service_types or {"backend", "frontend"})
 
+
 def _port_allocator(runtime: Any) -> Any:
     runtime_context = getattr(runtime, "runtime_context", None)
     candidate = getattr(runtime_context, "port_allocator", None)
     if candidate is None:
         candidate = getattr(runtime, "port_planner", None)
     return candidate
+
 
 def _process_runtime(runtime: Any) -> Any:
     runtime_context = getattr(runtime, "runtime_context", None)

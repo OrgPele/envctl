@@ -54,7 +54,13 @@ def is_bind_conflict(error: str | None) -> bool:
     )
 
 
-def run_with_retry(*, initial_port: int, start: Callable[[int], tuple[bool, str | None]], reserve_next: Callable[[int], int], max_retries: int = 3) -> RetryResult:
+def run_with_retry(
+    *,
+    initial_port: int,
+    start: Callable[[int], tuple[bool, str | None]],
+    reserve_next: Callable[[int], int],
+    max_retries: int = 3,
+) -> RetryResult:
     port = initial_port
     attempts = 0
     while attempts < max_retries:
@@ -98,7 +104,10 @@ def run_docker(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        return None, f"Command timed out after {timeout:.1f}s: {' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}"
+        return (
+            None,
+            f"Command timed out after {timeout:.1f}s: {' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}",
+        )
     except OSError as exc:
         return None, f"docker unavailable: {exc}"
     return result, None

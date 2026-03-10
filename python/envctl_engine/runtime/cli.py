@@ -62,10 +62,7 @@ def _effective_prereq_mode(route: Route) -> str:
 
 
 def _requires_docker(mode: str, config: EngineConfig) -> bool:
-    return any(
-        config.requirement_enabled_for_mode(mode, definition.id)
-        for definition in dependency_definitions()
-    )
+    return any(config.requirement_enabled_for_mode(mode, definition.id) for definition in dependency_definitions())
 
 
 def run(
@@ -90,7 +87,11 @@ def run(
                 except LauncherError as exc:
                     print(str(exc), file=sys.stderr)
                     return 1
-                bin_dir = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path(sys.executable).resolve().parent
+                bin_dir = (
+                    Path(sys.argv[0]).resolve().parent
+                    if sys.argv and sys.argv[0]
+                    else Path(sys.executable).resolve().parent
+                )
                 rendered = install_or_uninstall(mode=argv[0], options=options, bin_dir=bin_dir)
                 if rendered:
                     print(rendered, end="")

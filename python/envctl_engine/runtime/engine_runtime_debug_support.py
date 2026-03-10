@@ -27,10 +27,7 @@ def debug_pack(runtime: Any, route: Any) -> int:
     if explicit_run_id is not None:
         scope_run_id = runtime._scope_latest_run_id(runtime_scope_dir)
         if isinstance(scope_run_id, str) and scope_run_id and scope_run_id != explicit_run_id:
-            print(
-                f"Note: using explicit run_id={explicit_run_id}; "
-                f"current scope run_id={scope_run_id}."
-            )
+            print(f"Note: using explicit run_id={explicit_run_id}; current scope run_id={scope_run_id}.")
     if session_id is None and run_id is None:
         latest_state = runtime.state_repository.load_latest(mode=None, strict_mode_match=False)
         if latest_state is not None and isinstance(latest_state.run_id, str) and latest_state.run_id:
@@ -270,7 +267,9 @@ def debug_report(runtime: Any, route: object) -> int:
                 python_exe = str(item.get("python_executable", "")).strip() or "unknown"
                 rich_supported = bool(item.get("rich_progress_supported", False))
                 rich_error = str(item.get("rich_progress_error", "")).strip()
-                details = f"reason={reason} backend={backend} rich_progress_supported={rich_supported} python={python_exe}"
+                details = (
+                    f"reason={reason} backend={backend} rich_progress_supported={rich_supported} python={python_exe}"
+                )
                 if rich_error:
                     details += f" rich_progress_error={rich_error}"
                 print(f"- {details}")

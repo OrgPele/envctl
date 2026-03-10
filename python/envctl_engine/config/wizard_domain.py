@@ -79,7 +79,8 @@ def _require_interactive_config_bootstrap(env: Mapping[str, str]) -> None:
         )
     if not _textual_stack_available():
         raise RuntimeError(
-            "Missing Textual/Rich dependencies required for initial configuration. Install with: python -m pip install -r python/requirements.txt"
+            "Missing Textual/Rich dependencies required for initial configuration. "
+            "Install with: python -m pip install -r python/requirements.txt"
         )
 
 

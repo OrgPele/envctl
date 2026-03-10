@@ -478,7 +478,9 @@ class StateRepositoryContractTests(unittest.TestCase):
                 runtime_map_builder=lambda _state: {"projection": {}},
             )
 
-            test_summary = repo.test_results_dir_path("run-1", "run_20260309_100000") / "Main" / "failed_tests_summary.txt"
+            test_summary = (
+                repo.test_results_dir_path("run-1", "run_20260309_100000") / "Main" / "failed_tests_summary.txt"
+            )
             test_summary.parent.mkdir(parents=True, exist_ok=True)
             test_summary.write_text("No failed tests.\n", encoding="utf-8")
 

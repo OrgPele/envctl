@@ -9,7 +9,6 @@ from envctl_engine.config import (
     CONFIG_MANAGED_BLOCK_END,
     CONFIG_MANAGED_BLOCK_START,
     CONFIG_PRIMARY_FILENAME,
-    MANAGED_CONFIG_KEYS,
     LocalConfigState,
     PortDefaults,
     StartupProfile,
@@ -67,7 +66,9 @@ def managed_values_from_mapping(values: dict[str, str]) -> ManagedConfigValues:
         frontend_port_base=parse_int(values.get("FRONTEND_PORT_BASE"), 9000),
         dependency_ports={
             definition.id: {
-                resource.name: parse_int(values.get(resource.config_port_keys[0]), _default_port_value(resource.config_port_keys[0]))
+                resource.name: parse_int(
+                    values.get(resource.config_port_keys[0]), _default_port_value(resource.config_port_keys[0])
+                )
                 for resource in definition.resources
             }
             for definition in dependency_definitions()
@@ -119,9 +120,15 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
     }
     for definition in dependency_definitions():
         for resource in definition.resources:
-            rendered[resource.config_port_keys[0]] = str(values.port_defaults.dependency_port(definition.id, resource.name))
-        rendered[definition.enable_keys_for_mode("main")[0]] = _bool_text(values.main_profile.dependency_enabled(definition.id))
-        rendered[definition.enable_keys_for_mode("trees")[0]] = _bool_text(values.trees_profile.dependency_enabled(definition.id))
+            rendered[resource.config_port_keys[0]] = str(
+                values.port_defaults.dependency_port(definition.id, resource.name)
+            )
+        rendered[definition.enable_keys_for_mode("main")[0]] = _bool_text(
+            values.main_profile.dependency_enabled(definition.id)
+        )
+        rendered[definition.enable_keys_for_mode("trees")[0]] = _bool_text(
+            values.trees_profile.dependency_enabled(definition.id)
+        )
     return rendered
 
 
@@ -352,8 +359,7 @@ def _component_enabled_any(values: ManagedConfigValues, component: str) -> bool:
 
 def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> bool:
     return bool(
-        values.main_profile.dependency_enabled(dependency_id)
-        or values.trees_profile.dependency_enabled(dependency_id)
+        values.main_profile.dependency_enabled(dependency_id) or values.trees_profile.dependency_enabled(dependency_id)
     )
 
 
@@ -433,7 +439,9 @@ def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:
     return True
 
 
-def config_review_text(*, path: Path, values: ManagedConfigValues, source_label: str, ignore_warning: str | None = None) -> str:
+def config_review_text(
+    *, path: Path, values: ManagedConfigValues, source_label: str, ignore_warning: str | None = None
+) -> str:
     summary = [
         f"Path: {path}",
         f"Source: {source_label}",
@@ -453,6 +461,7 @@ def _resolve_dependency_enable(values: dict[str, str], dependency_id: str, *, mo
         if key in values:
             return _parse_bool_value(values.get(key), default)
     return default
+
 
 def _validate_profile(profile: StartupProfile, *, mode: str, errors: list[str]) -> None:
     enabled = [

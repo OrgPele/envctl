@@ -219,11 +219,14 @@ def _apply_setup_worktree_selection(
     policy = _worktree_spinner_policy(self, op_id="worktree.setup")
     enabled = bool(policy.enabled)
 
-    with use_spinner_policy(policy), spinner(
-        "Setting up worktrees...",
-        enabled=enabled,
-        start_immediately=False,
-    ) as active_spinner:
+    with (
+        use_spinner_policy(policy),
+        spinner(
+            "Setting up worktrees...",
+            enabled=enabled,
+            start_immediately=False,
+        ) as active_spinner,
+    ):
         _worktree_spinner_start(
             self,
             enabled=enabled,
@@ -486,11 +489,7 @@ def _select_plan_projects(
             strict_no_match=self.config.plan_strict_selection,
         )
         if not filtered:
-            print(
-                "No tree paths found for requested project filter(s): "
-                + ", ".join(route.passthrough_args)
-                + "."
-            )
+            print("No tree paths found for requested project filter(s): " + ", ".join(route.passthrough_args) + ".")
             return []
         selected_names = {name for name, _ in filtered}
         return [ctx for ctx in project_contexts if ctx.name in selected_names]
@@ -803,11 +802,14 @@ def _sync_plan_worktrees_from_plan_counts(
     policy = _worktree_spinner_policy(self, op_id="worktree.sync")
     enabled = bool(policy.enabled)
 
-    with use_spinner_policy(policy), spinner(
-        "Syncing planning worktrees...",
-        enabled=enabled,
-        start_immediately=False,
-    ) as active_spinner:
+    with (
+        use_spinner_policy(policy),
+        spinner(
+            "Syncing planning worktrees...",
+            enabled=enabled,
+            start_immediately=False,
+        ) as active_spinner,
+    ):
         _worktree_spinner_start(
             self,
             enabled=enabled,
@@ -921,11 +923,7 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
         return None
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
-    existing_iters = {
-        int(path.name)
-        for path in feature_root.iterdir()
-        if path.is_dir() and path.name.isdigit()
-    }
+    existing_iters = {int(path.name) for path in feature_root.iterdir() if path.is_dir() and path.name.isdigit()}
     setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(self._planning_root() / plan_file)})
 
     for _ in range(count):
@@ -976,9 +974,8 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
 
 
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
-    raw = (
-        self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK")
-        or self.config.raw.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK")
+    raw = self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK") or self.config.raw.get(
+        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
     )
     return parse_bool(raw, False)
 
@@ -1092,7 +1089,6 @@ def _next_available_iteration(existing_iters: set[int]) -> int:
     while candidate in existing_iters:
         candidate += 1
     return candidate
-
 
 
 def _setup_worktree_requested(route: Route) -> bool:

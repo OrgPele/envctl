@@ -85,7 +85,9 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             },
         )
 
-        terminate_services_from_state(runtime, state, selected_services={"Main Backend"}, aggressive=True, verify_ownership=False)
+        terminate_services_from_state(
+            runtime, state, selected_services={"Main Backend"}, aggressive=True, verify_ownership=False
+        )
 
         self.assertEqual(terminated, [1])
         self.assertEqual(released, [8000])
@@ -98,7 +100,9 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             run_id="run-1",
             mode="trees",
             services={
-                "Feature Backend": ServiceRecord(name="Feature Backend", type="backend", cwd=".", pid=10, actual_port=8000),
+                "Feature Backend": ServiceRecord(
+                    name="Feature Backend", type="backend", cwd=".", pid=10, actual_port=8000
+                ),
             },
             requirements={
                 "Feature": RequirementsResult(project="Feature", db={"enabled": True, "final": 5432}),
@@ -110,12 +114,16 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             _project_name_from_service=lambda name: "Feature" if "Feature" in name else "",
             _terminate_services_from_state=lambda *args, **kwargs: None,
             port_planner=SimpleNamespace(release=lambda port: released.append(port)),
-            state_repository=SimpleNamespace(save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])),
+            state_repository=SimpleNamespace(
+                save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+            ),
             process_runner=SimpleNamespace(),
             env={},
         )
 
-        with patch("envctl_engine.runtime.engine_runtime_lifecycle_support.container_exists", return_value=(False, None)):
+        with patch(
+            "envctl_engine.runtime.engine_runtime_lifecycle_support.container_exists", return_value=(False, None)
+        ):
             warnings = blast_worktree_before_delete(
                 runtime,
                 project_name="Feature",
@@ -137,7 +145,9 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             log_path = root / "runtime" / "runs" / "run-1" / "feature_backend.log"
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text("backend log\n", encoding="utf-8")
-            summary_path = root / "runtime" / "runs" / "run-1" / "test-results" / "run_1" / "Feature" / "failed_tests_summary.txt"
+            summary_path = (
+                root / "runtime" / "runs" / "run-1" / "test-results" / "run_1" / "Feature" / "failed_tests_summary.txt"
+            )
             state_path = summary_path.parent / "test_state.txt"
             summary_path.parent.mkdir(parents=True, exist_ok=True)
             summary_path.write_text("summary\n", encoding="utf-8")
@@ -166,7 +176,7 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
                 def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
                     docker_commands.append(list(cmd))
                     if cmd[:5] == ["docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}"]:
-                        stdout = f"cid-postgres|{postgres_name}\n" f"cid-supabase|{supabase_prefix}-supabase-db-1\n"
+                        stdout = f"cid-postgres|{postgres_name}\ncid-supabase|{supabase_prefix}-supabase-db-1\n"
                         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
                     if cmd[:4] == ["docker", "rm", "-f", "-v"]:
                         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -217,7 +227,9 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
                 _collect_container_volume_candidates=lambda cid, volumes: volumes.append(f"vol-{cid}"),
                 _supabase_fingerprint_path=lambda project_name: fingerprint_path,
                 port_planner=SimpleNamespace(release=lambda port: released.append(port)),
-                state_repository=SimpleNamespace(save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])),
+                state_repository=SimpleNamespace(
+                    save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+                ),
                 lifecycle_cleanup_orchestrator=SimpleNamespace(
                     run_best_effort_command=lambda cmd, timeout=None: (
                         0,
@@ -258,7 +270,9 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
     def test_blast_worktree_before_delete_removes_legacy_truncated_dependency_container_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            project_root = root / "trees" / "implementations_hebrew_rtl_full_app_localization_100_percent_gap_closure" / "1"
+            project_root = (
+                root / "trees" / "implementations_hebrew_rtl_full_app_localization_100_percent_gap_closure" / "1"
+            )
             project_root.mkdir(parents=True, exist_ok=True)
             project_name = "implementations_hebrew_rtl_full_app_localization_100_percent_gap_closure-1"
 

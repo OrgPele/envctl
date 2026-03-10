@@ -4,7 +4,6 @@ from contextlib import redirect_stdout
 from io import StringIO
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from pathlib import Path
 import sys
@@ -183,7 +182,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 )
             },
         )
-        route = Route(command="restart", mode="main", raw_args=["--restart"], passthrough_args=[], projects=[], flags={})
+        route = Route(
+            command="restart", mode="main", raw_args=["--restart"], passthrough_args=[], projects=[], flags={}
+        )
         updated = orchestrator._apply_restart_selection(route, state, runtime)
 
         self.assertIsNotNone(updated)

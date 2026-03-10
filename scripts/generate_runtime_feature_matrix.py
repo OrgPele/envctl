@@ -21,7 +21,9 @@ def main(argv: list[str] | None = None) -> int:
         default="contracts/runtime_feature_matrix.json",
         help="Output path relative to repo root.",
     )
-    parser.add_argument("--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file.")
+    parser.add_argument(
+        "--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file."
+    )
     parser.add_argument("--timestamp", default=None, help="Override generated_at timestamp for deterministic output.")
     args = parser.parse_args(argv)
 

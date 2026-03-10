@@ -75,7 +75,10 @@ class EngineRuntimeEventSupportTests(unittest.TestCase):
 
         auto_debug_pack(runtime, reason="dispatch_exception")
 
-        self.assertEqual(events, [("debug.auto_pack", {"reason": "dispatch_exception", "success": True, "bundle_path": "/tmp/bundle.tgz"})])
+        self.assertEqual(
+            events,
+            [("debug.auto_pack", {"reason": "dispatch_exception", "success": True, "bundle_path": "/tmp/bundle.tgz"})],
+        )
 
     def test_current_session_id_trims_value(self) -> None:
         runtime = SimpleNamespace(_debug_recorder=SimpleNamespace(session_id="  session-1  "))
@@ -83,7 +86,9 @@ class EngineRuntimeEventSupportTests(unittest.TestCase):
         self.assertEqual(current_session_id(runtime), "session-1")
 
     def test_debug_mode_from_route_and_output_root(self) -> None:
-        route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={"debug_ui": True})
+        route = Route(
+            command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={"debug_ui": True}
+        )
         runtime = SimpleNamespace(
             env={"ENVCTL_DEBUG_UI_PATH": "tmp/debug"},
             config=SimpleNamespace(raw={}, base_dir=Path("/repo")),
@@ -102,7 +107,9 @@ class EngineRuntimeEventSupportTests(unittest.TestCase):
         self.assertEqual(calls, ["run-1"])
 
     def test_configure_debug_recorder_builds_recorder(self) -> None:
-        route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={"debug_ui_deep": True})
+        route = Route(
+            command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={"debug_ui_deep": True}
+        )
         runtime = SimpleNamespace(
             env={},
             config=SimpleNamespace(raw={}, runtime_scope_id="repo-1", base_dir=Path("/repo")),

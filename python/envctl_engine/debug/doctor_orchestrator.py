@@ -101,8 +101,8 @@ class DoctorOrchestrator:
         write_field("runtime_map_file", str(rt.runtime_map_path()))
         write_field("runtime_truth_mode", rt.config.runtime_truth_mode)
         write_field("state_compat_mode", rt.state_compat_mode())
-        debug_mode = (rt.env.get("ENVCTL_DEBUG_UI_MODE") or rt.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "off")
-        debug_auto_pack = (rt.env.get("ENVCTL_DEBUG_AUTO_PACK") or rt.config.raw.get("ENVCTL_DEBUG_AUTO_PACK") or "off")
+        debug_mode = rt.env.get("ENVCTL_DEBUG_UI_MODE") or rt.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "off"
+        debug_auto_pack = rt.env.get("ENVCTL_DEBUG_AUTO_PACK") or rt.config.raw.get("ENVCTL_DEBUG_AUTO_PACK") or "off"
         write_field("debug_mode", debug_mode)
         write_field("debug_auto_pack", debug_auto_pack)
         write_field("debug_latest_bundle", rt.latest_debug_bundle_path())
@@ -140,7 +140,9 @@ class DoctorOrchestrator:
             if session_id:
                 anomalies_path = rt.runtime_root / "debug" / session_id / "anomalies.jsonl"  # type: ignore[attr-defined]
                 if anomalies_path.is_file():
-                    latest_anomalies = sum(1 for line in anomalies_path.read_text(encoding="utf-8").splitlines() if line.strip())
+                    latest_anomalies = sum(
+                        1 for line in anomalies_path.read_text(encoding="utf-8").splitlines() if line.strip()
+                    )
         write_field("debug_last_session_anomalies", latest_anomalies)
         doctor_state = rt.load_state()
         synthetic_state_detected = doctor_state is not None and rt.state_has_synthetic_services(doctor_state)
@@ -247,7 +249,12 @@ class DoctorOrchestrator:
                 gate="command_parity",
                 reason="synthetic_state_detected",
             )
-        lifecycle = hasattr(getattr(rt, "_runtime", None).process_runner if hasattr(getattr(rt, "_runtime", None), "process_runner") else None, "terminate")
+        lifecycle = hasattr(
+            getattr(rt, "_runtime", None).process_runner
+            if hasattr(getattr(rt, "_runtime", None), "process_runner")
+            else None,
+            "terminate",
+        )
         if state is not None:
             lifecycle = lifecycle and runtime_truth
         readiness_contract = evaluate_runtime_readiness(rt.config.base_dir)
@@ -333,9 +340,7 @@ class DoctorOrchestrator:
         rt = self.runtime
         readiness = evaluate_runtime_readiness(rt.config.base_dir)
         requested_enforcement = (
-            bool(strict_required)
-            if strict_required is not None
-            else rt.config.runtime_truth_mode == "strict"  # type: ignore[attr-defined]
+            bool(strict_required) if strict_required is not None else rt.config.runtime_truth_mode == "strict"  # type: ignore[attr-defined]
         )
         contract_present = readiness.report_path.is_file() or readiness.parity_manifest_path.is_file()
         enforced = requested_enforcement and contract_present

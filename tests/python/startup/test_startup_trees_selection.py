@@ -65,14 +65,18 @@ class StartupTreesSelectionTests(unittest.TestCase):
         orchestrator = StartupOrchestrator(runtime)
 
         self.assertTrue(
-            orchestrator._trees_start_selection_required(route=self._trees_route(raw_args=["--trees"]), runtime_mode="trees")
+            orchestrator._trees_start_selection_required(
+                route=self._trees_route(raw_args=["--trees"]), runtime_mode="trees"
+            )
         )
         self.assertTrue(
             orchestrator._trees_start_selection_required(route=self._trees_route(raw_args=[]), runtime_mode="trees")
         )
         self.assertFalse(
             orchestrator._trees_start_selection_required(
-                route=Route(command="plan", mode="trees", raw_args=["--plan"], passthrough_args=[], projects=[], flags={}),
+                route=Route(
+                    command="plan", mode="trees", raw_args=["--plan"], passthrough_args=[], projects=[], flags={}
+                ),
                 runtime_mode="trees",
             )
         )

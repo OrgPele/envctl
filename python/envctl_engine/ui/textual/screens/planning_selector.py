@@ -20,6 +20,7 @@ from .selector import (
     _selector_thread_stack_enabled,
 )
 
+
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
     if not callable(emit):
         return
@@ -512,6 +513,7 @@ def select_planning_counts_textual(
             try:
                 return app.run(mouse=run_policy.mouse)
             finally:
+
                 def _emit_shutdown_snapshot() -> None:
                     if not key_trace_enabled:
                         return

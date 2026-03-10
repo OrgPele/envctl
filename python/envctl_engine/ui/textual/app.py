@@ -27,6 +27,7 @@ class _PlainRenderable:
     def __str__(self) -> str:
         return self.plain
 
+
 def _emit(runtime: Any, event: str, **payload: object) -> None:
     candidate = getattr(runtime, "_emit", None)
     if callable(candidate):

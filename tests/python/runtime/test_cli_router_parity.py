@@ -258,11 +258,7 @@ class CliRouterParityTests(unittest.TestCase):
 
     def test_python_parser_covers_documented_long_flag_surface(self) -> None:
         docs = (REPO_ROOT / "docs" / "reference" / "important-flags.md").read_text(encoding="utf-8")
-        documented_flags = {
-            token
-            for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs)
-            if token.startswith("--")
-        }
+        documented_flags = {token for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs) if token.startswith("--")}
         parser_flags = set(list_supported_flag_tokens())
         ignored = {"--help", "--repo"}
         missing = sorted(documented_flags.difference(parser_flags).difference(ignored))

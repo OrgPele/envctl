@@ -168,7 +168,9 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             report_text = json.dumps({"generated_at": "now", "summary": {"total_gap_count": 0}}, sort_keys=True)
             report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
             gap_report_path.write_text(report_text, encoding="utf-8")
-            manifest_path.write_text(json.dumps({"generated_at": "now", "commands": {}, "modes": {}}, sort_keys=True), encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps({"generated_at": "now", "commands": {}, "modes": {}}, sort_keys=True), encoding="utf-8"
+            )
             report_payload = {
                 "passed": True,
                 "errors": [],
@@ -191,7 +193,9 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
                     "total_gap_count": 0,
                 },
             }
-            (runtime_root / "runtime_readiness_report.json").write_text(json.dumps(report_payload, indent=2, sort_keys=True), encoding="utf-8")
+            (runtime_root / "runtime_readiness_report.json").write_text(
+                json.dumps(report_payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
             emitted: list[tuple[str, dict[str, object]]] = []
             runtime = SimpleNamespace(
                 runtime_root=runtime_root,

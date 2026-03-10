@@ -34,9 +34,7 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
     def test_action_command_dispatch_routes_to_action_orchestrator(self) -> None:
         seen: list[str] = []
         runtime = SimpleNamespace(
-            action_command_orchestrator=SimpleNamespace(
-                execute=lambda route: seen.append(str(route.command)) or 7
-            ),
+            action_command_orchestrator=SimpleNamespace(execute=lambda route: seen.append(str(route.command)) or 7),
             _unsupported_command=lambda command: 1,
         )
         route = SimpleNamespace(command="test", mode="main")
@@ -49,9 +47,7 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
     def test_state_command_dispatch_routes_to_state_orchestrator(self) -> None:
         seen: list[str] = []
         runtime = SimpleNamespace(
-            state_action_orchestrator=SimpleNamespace(
-                execute=lambda route: seen.append(str(route.command)) or 5
-            ),
+            state_action_orchestrator=SimpleNamespace(execute=lambda route: seen.append(str(route.command)) or 5),
             _unsupported_command=lambda command: 1,
         )
         route = SimpleNamespace(command="health", mode="main")
@@ -64,9 +60,7 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
     def test_startup_command_dispatch_routes_to_startup_orchestrator(self) -> None:
         seen: list[str] = []
         runtime = SimpleNamespace(
-            startup_orchestrator=SimpleNamespace(
-                execute=lambda route: seen.append(str(route.command)) or 3
-            ),
+            startup_orchestrator=SimpleNamespace(execute=lambda route: seen.append(str(route.command)) or 3),
             _unsupported_command=lambda command: 1,
         )
         route = SimpleNamespace(command="plan", mode="trees")

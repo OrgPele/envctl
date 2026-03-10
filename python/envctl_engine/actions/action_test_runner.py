@@ -188,8 +188,7 @@ def run_test_action(
 
     if parallel and not use_suite_spinner_group:
         orchestrator._emit_status(
-            f"Running {len(execution_specs)} test suites in parallel "
-            f"(max {parallel_workers} concurrent)..."
+            f"Running {len(execution_specs)} test suites in parallel (max {parallel_workers} concurrent)..."
         )
         emit_parallel_progress_status(phase="queued")
     suite_spinner_group = suite_spinner_group_cls(
@@ -269,7 +268,9 @@ def run_test_action(
             project_root=str(project_root),
         )
 
-        selected_target = execution.target_obj if execution.target_obj is not None else (targets[0] if targets else None)
+        selected_target = (
+            execution.target_obj if execution.target_obj is not None else (targets[0] if targets else None)
+        )
         env = orchestrator.action_env("test", targets, target=selected_target)
 
         def emit_test_event(event_name: str, data: dict[str, Any]) -> None:
@@ -300,8 +301,7 @@ def run_test_action(
                     "timeout": 300.0,
                     **(
                         {"progress_callback": emit_live_progress}
-                        if interactive_command
-                        and "progress_callback" in inspect.signature(runner.run_tests).parameters
+                        if interactive_command and "progress_callback" in inspect.signature(runner.run_tests).parameters
                         else {}
                     ),
                 }
@@ -339,7 +339,11 @@ def run_test_action(
             counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
             if parsed is not None and counts_detected:
                 counts_suffix = f" • {parsed.passed} passed, {parsed.failed} failed, {parsed.skipped} skipped"
-            icon = orchestrator._colorize("✓", fg="green", bold=True) if completed.returncode == 0 else orchestrator._colorize("✗", fg="red", bold=True)
+            icon = (
+                orchestrator._colorize("✓", fg="green", bold=True)
+                if completed.returncode == 0
+                else orchestrator._colorize("✗", fg="red", bold=True)
+            )
             index_text = orchestrator._colorize(f"[{index}/{len(execution_specs)}]", fg="yellow")
             suite_text = orchestrator._colorize(finished_label, fg="cyan", bold=True)
             status_text = orchestrator._colorize(
@@ -359,9 +363,7 @@ def run_test_action(
                 )
                 print(f"      failure: {orchestrator._colorize(failure_excerpt, fg='red')}")
             elif parsed is not None and not counts_detected:
-                print(
-                    "      note: test command completed, but envctl could not extract test counts from the output."
-                )
+                print("      note: test command completed, but envctl could not extract test counts from the output.")
         suite_outcomes.append(
             {
                 "suite": spec.source,
@@ -423,10 +425,7 @@ def run_test_action(
     with suite_spinner_context:
         if parallel:
             with futures_module.ThreadPoolExecutor(max_workers=parallel_workers) as pool:
-                future_map = {
-                    pool.submit(run_spec, spec): spec
-                    for spec in execution_specs
-                }
+                future_map = {pool.submit(run_spec, spec): spec for spec in execution_specs}
                 for future in futures_module.as_completed(future_map):
                     execution = future_map[future]
                     code, error = future.result()

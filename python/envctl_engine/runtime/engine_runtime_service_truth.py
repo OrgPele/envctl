@@ -41,7 +41,9 @@ def tail_log_error_line(log_path: str | None, *, max_chars: int = 240) -> str | 
     if not path.is_file():
         return None
     try:
-        lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        lines = [
+            line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()
+        ]
     except OSError:
         return None
     if not lines:
@@ -89,8 +91,10 @@ def wait_for_service_listener(
                 return True
         except Exception:  # noqa: BLE001
             pass
-    if debug_listener_group in {"", "port_fallback"} and service_truth_fallback_enabled(runtime) and bool(
-        runtime.process_runner.wait_for_port(port, timeout=timeout)
+    if (
+        debug_listener_group in {"", "port_fallback"}
+        and service_truth_fallback_enabled(runtime)
+        and bool(runtime.process_runner.wait_for_port(port, timeout=timeout))
     ):
         runtime._emit(
             "service.bind.port_fallback",

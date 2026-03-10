@@ -50,20 +50,47 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_report = lambda _route: 0  # type: ignore[method-assign]
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
-        
+
         # Verify we have exactly 32 commands
         self.assertEqual(len(commands), 32, f"Expected 32 commands, got {len(commands)}")
-        
+
         # Expected command set
         expected_commands = {
-            "plan", "start", "restart", "resume", "stop", "stop-all", "blast-all",
-            "dashboard", "config", "doctor", "test", "logs", "clear-logs", "health", "errors",
-            "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate",
-            "list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup",
-            "help", "debug-pack", "debug-report", "debug-last", "migrate-hooks"
+            "plan",
+            "start",
+            "restart",
+            "resume",
+            "stop",
+            "stop-all",
+            "blast-all",
+            "dashboard",
+            "config",
+            "doctor",
+            "test",
+            "logs",
+            "clear-logs",
+            "health",
+            "errors",
+            "delete-worktree",
+            "blast-worktree",
+            "pr",
+            "commit",
+            "review",
+            "migrate",
+            "list-commands",
+            "list-targets",
+            "list-trees",
+            "show-config",
+            "show-state",
+            "explain-startup",
+            "help",
+            "debug-pack",
+            "debug-report",
+            "debug-last",
+            "migrate-hooks",
         }
         self.assertEqual(set(commands), expected_commands)
-        
+
         # Verify each command can be dispatched without error
         for command in commands:
             with self.subTest(command=command):
@@ -75,34 +102,28 @@ class CommandDispatchMatrixTests(unittest.TestCase):
     def test_command_to_orchestrator_mapping(self) -> None:
         """Verify command -> orchestrator/handler mapping is correct."""
         runtime = self._runtime()
-        
+
         # Define expected mappings
         command_mappings = {
             # Startup orchestrator
             "plan": "startup_orchestrator",
             "start": "startup_orchestrator",
             "restart": "startup_orchestrator",
-            
             # Resume orchestrator
             "resume": "resume_orchestrator",
-            
             # Lifecycle cleanup orchestrator
             "stop": "lifecycle_cleanup_orchestrator",
             "stop-all": "lifecycle_cleanup_orchestrator",
             "blast-all": "lifecycle_cleanup_orchestrator",
-            
             # Doctor orchestrator
             "doctor": "doctor_orchestrator",
-            
             # Dashboard orchestrator
             "dashboard": "dashboard_orchestrator",
-            
             # State action orchestrator
             "logs": "state_action_orchestrator",
             "clear-logs": "state_action_orchestrator",
             "health": "state_action_orchestrator",
             "errors": "state_action_orchestrator",
-            
             # Action command orchestrator
             "test": "action_command_orchestrator",
             "delete-worktree": "action_command_orchestrator",
@@ -111,7 +132,6 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "commit": "action_command_orchestrator",
             "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
-            
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",
@@ -125,14 +145,13 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "debug-report": "direct_dispatch",
             "debug-last": "direct_dispatch",
         }
-        
+
         for command, expected_handler in command_mappings.items():
             with self.subTest(command=command, handler=expected_handler):
                 # Verify the orchestrator/handler exists
                 if expected_handler != "direct_dispatch":
                     self.assertTrue(
-                        hasattr(runtime, expected_handler),
-                        f"Runtime missing {expected_handler} for command {command}"
+                        hasattr(runtime, expected_handler), f"Runtime missing {expected_handler} for command {command}"
                     )
 
     def test_unsupported_command_returns_error(self) -> None:
@@ -140,7 +159,10 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime = self._runtime()
         # Manually create a route with an unsupported command
         from envctl_engine.runtime.command_router import Route
-        route = Route(command="unsupported-command", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
+
+        route = Route(
+            command="unsupported-command", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={}
+        )
         code = runtime.dispatch(route)
         self.assertEqual(code, 1, "Unsupported command should return exit code 1")
 

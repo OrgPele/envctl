@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import inspect
 import os
 import subprocess
@@ -16,6 +15,8 @@ from .parser_pytest import PytestOutputParser
 from .progress_markers import parse_progress_marker, strip_progress_markers
 from .parser_unittest import UnittestOutputParser
 from .summary import TestSummaryFormatter
+
+
 class TestRunner:
     """Orchestrates test execution with rich output, spinner, and real-time parsing."""
 

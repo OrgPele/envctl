@@ -135,10 +135,7 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 self.invalidated = True
 
             def run(self) -> PromptToolkitListResult | None:
-                handlers = {
-                    binding.keys[0].key: binding.handler
-                    for binding in self.key_bindings.bindings
-                }
+                handlers = {binding.keys[0].key: binding.handler for binding in self.key_bindings.bindings}
                 event = types.SimpleNamespace(app=self)
                 handlers["enter"](event)
                 app_state["invalidated_after_enter"] = self.invalidated

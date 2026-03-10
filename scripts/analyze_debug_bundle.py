@@ -102,7 +102,9 @@ def main() -> int:
         mode = str(startup_breakdown.get("execution_mode", "unknown"))
         workers = startup_breakdown.get("workers", 0)
         print(f"- execution_mode={mode} workers={workers}")
-        print(f"- measured_window_ms={measured:.2f} known_total_ms={known:.2f} unknown_ms={unknown:.2f} unknown_ratio={ratio:.4f}")
+        print(
+            f"- measured_window_ms={measured:.2f} known_total_ms={known:.2f} unknown_ms={unknown:.2f} unknown_ratio={ratio:.4f}"
+        )
         print(
             "- requirements_total_ms="
             f"{float(startup_breakdown.get('requirements_total_ms', 0.0) or 0.0):.2f} "

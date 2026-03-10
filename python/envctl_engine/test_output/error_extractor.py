@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import override
 
+
 @dataclass(slots=True)
 class ErrorDetail:
     """Detailed error information from test execution."""
@@ -29,10 +30,7 @@ class ErrorDetail:
             location_str += f":{self.line_number}"
 
         return (
-            f"{self.test_name}\n"
-            f"  Type: {self.error_type}\n"
-            f"  Location: {location_str}\n"
-            f"  Message: {self.error_message}"
+            f"{self.test_name}\n  Type: {self.error_type}\n  Location: {location_str}\n  Message: {self.error_message}"
         )
 
 
@@ -56,7 +54,10 @@ class ErrorDetailExtractor:
         line_number = None
 
         # Extract error type from output
-        type_match = re.search(r"(AssertionError|TypeError|ValueError|KeyError|AttributeError|RuntimeError|Exception)(?:\s*:|$)", error_text)
+        type_match = re.search(
+            r"(AssertionError|TypeError|ValueError|KeyError|AttributeError|RuntimeError|Exception)(?:\s*:|$)",
+            error_text,
+        )
         if type_match:
             error_type = type_match.group(1)
 
@@ -76,7 +77,7 @@ class ErrorDetailExtractor:
             error_message = message_match.group(1).strip()
         elif error_text:
             # Fallback: use first non-empty line
-            lines = [l.strip() for l in error_text.split("\n") if l.strip()]
+            lines = [line.strip() for line in error_text.split("\n") if line.strip()]
             if lines:
                 error_message = lines[0]
 
@@ -129,7 +130,9 @@ class ErrorDetailExtractor:
             error_message = message_match.group(1).strip()
         else:
             # Fallback: use first meaningful line
-            lines = [l.strip() for l in error_text.split("\n") if l.strip() and not l.strip().startswith("at ")]
+            lines = [
+                line.strip() for line in error_text.split("\n") if line.strip() and not line.strip().startswith("at ")
+            ]
             if lines:
                 error_message = lines[0]
 

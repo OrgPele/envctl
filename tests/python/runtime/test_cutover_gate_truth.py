@@ -23,8 +23,15 @@ from envctl_engine.state.models import RunState, ServiceRecord
 class CutoverGateTruthTests(unittest.TestCase):
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def _write_required_files(self, repo: Path, *, blocking_gaps: int = 0) -> None:
         (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
@@ -176,7 +183,9 @@ class CutoverGateTruthTests(unittest.TestCase):
             self._write_required_files(repo, blocking_gaps=1)
 
             engine = self._runtime(repo, runtime_root, {"ENVCTL_RUNTIME_TRUTH_MODE": "strict"})
-            engine._try_load_existing_state = lambda mode=None, strict_mode_match=True: RunState(run_id="run-1", mode="main")  # type: ignore[assignment]
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=True: RunState(
+                run_id="run-1", mode="main"
+            )  # type: ignore[assignment]
             out = StringIO()
             with redirect_stdout(out):
                 code = engine.dispatch(parse_route(["resume", "--batch"], env={}))

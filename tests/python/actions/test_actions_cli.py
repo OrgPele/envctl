@@ -48,7 +48,10 @@ class ActionsCliTests(unittest.TestCase):
             with (
                 patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value="https://github.com/acme/supportopia/pull/42"),
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pr_url",
+                    return_value="https://github.com/acme/supportopia/pull/42",
+                ),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -110,7 +113,9 @@ class ActionsCliTests(unittest.TestCase):
             self.assertNotIn("PR already exists:", output)
             self.assertIn("https://github.com/acme/supportopia/pull/99", output)
             self.assertIn("PR summary written:", output)
-            self.assertTrue(any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls)
+            self.assertTrue(
+                any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
+            )
 
     def test_pr_action_prefers_repo_helper_over_gh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -159,7 +164,9 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("helper ok", output)
             self.assertTrue(calls)
             self.assertEqual(calls[0][0], str(helper.resolve()))
-            self.assertFalse(any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls)
+            self.assertFalse(
+                any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
+            )
 
     def test_pr_action_skips_detached_head(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -201,7 +208,9 @@ class ActionsCliTests(unittest.TestCase):
                 if args == ["status", "--porcelain"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr="")
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                    )
                 if args[:3] == ["push", "-u", "origin"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
@@ -236,7 +245,9 @@ class ActionsCliTests(unittest.TestCase):
                 if args == ["status", "--porcelain"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr="")
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                    )
                 if args[:3] == ["push", "-u", "fork"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
@@ -365,11 +376,7 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("Summary file", output)
             self.assertIn("Full review bundle", output)
             self.assertIn("Output directory", output)
-            written_path = next(
-                Path(line.strip())
-                for line in output.splitlines()
-                if line.strip().endswith(".md")
-            )
+            written_path = next(Path(line.strip()) for line in output.splitlines() if line.strip().endswith(".md"))
             self.assertTrue(written_path.is_file())
             self.assertTrue(written_path.resolve().is_relative_to(runtime_root))
             self.assertFalse((repo_root / "review").exists())

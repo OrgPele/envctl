@@ -148,7 +148,9 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
         with (
             patch("envctl_engine.shared.process_runner.spinner", side_effect=fake_spinner),
             patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=True),
-            patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakePopen("line\n", returncode=1)),
+            patch(
+                "envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakePopen("line\n", returncode=1)
+            ),
             patch("builtins.print") as print_mock,
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None, show_spinner=False)
