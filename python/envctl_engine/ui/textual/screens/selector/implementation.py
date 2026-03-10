@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Sequence
+from typing import Callable, Sequence
 
 from envctl_engine.ui.selector_model import (
     SelectorContext,
@@ -63,6 +63,7 @@ _emit_selector_debug = _emit_selector_debug_impl
 def _run_prompt_toolkit_selector(**kwargs):
     return _run_prompt_toolkit_selector_impl(**kwargs)
 
+
 def _run_textual_selector(
     *,
     prompt: str,
@@ -86,7 +87,6 @@ def _run_textual_selector(
     )
 
 
-
 def _run_selector_with_impl(
     *,
     prompt: str,
@@ -100,11 +100,7 @@ def _run_selector_with_impl(
     impl = _selector_impl()
     requested_impl_raw = str(os.environ.get("ENVCTL_UI_SELECTOR_IMPL", "")).strip().lower()
     requested_impl = requested_impl_raw or "default"
-    effective_engine = (
-        "planning_style_prompt_toolkit_rollback"
-        if impl == "planning_style"
-        else "textual_plan_style"
-    )
+    effective_engine = "planning_style_prompt_toolkit_rollback" if impl == "planning_style" else "textual_plan_style"
     rollback_used = impl == "planning_style"
     _emit_selector_debug(
         emit,
@@ -220,9 +216,7 @@ def select_project_targets_textual(
             reason=suppressed.reason,
         )
     available_tokens = {
-        str(item.label).strip().lower(): str(item.token)
-        for item in result.items
-        if str(item.kind) == "project"
+        str(item.label).strip().lower(): str(item.token) for item in result.items if str(item.kind) == "project"
     }
     initial_tokens: list[str] = []
     for name in initial_project_names or ():

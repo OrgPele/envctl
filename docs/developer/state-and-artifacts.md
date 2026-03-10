@@ -140,8 +140,7 @@ The runtime keeps a latest view for active inspection and resume:
 - `ports_manifest.json`
 - `error_report.json`
 - `events.jsonl`
-- `shell_ownership_snapshot.json`
-- `shell_prune_report.json`
+- `runtime_readiness_report.json`
 
 These files should be stable enough for operators and tooling to inspect directly.
 
@@ -160,7 +159,7 @@ Typical contents:
 - `ports_manifest.json`
 - `error_report.json`
 - `events.jsonl`
-- `shell_prune_report.json`
+- `runtime_readiness_report.json`
 
 If you are adding a new artifact, decide whether it belongs:
 
@@ -220,7 +219,7 @@ These govern how aggressively Python writes or reads compatibility artifacts out
 This is not just an implementation choice. It affects:
 
 - migration behavior
-- shell compatibility
+- legacy compatibility inputs
 - debugging expectations
 - state inspection across mixed runs
 
@@ -265,8 +264,7 @@ Do not conflate them:
 
 The runtime also persists:
 
-- `shell_ownership_snapshot.json`
-- `shell_prune_report.json`
+- `runtime_readiness_report.json`
 
 These are part of the migration/cutover governance layer.
 

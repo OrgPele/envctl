@@ -26,9 +26,10 @@ class _StateRepositoryProtocol(Protocol):
 
 
 class _PortAllocatorProtocol(Protocol):
-    def reserve_next(self, preferred: int, *, owner: str) -> int: ...
-    def update_final_port(self, plan: object, final_port: int, *, source: str) -> None: ...
-    def release(self, port: int) -> None: ...
+    def reserve_next(self, _preferred: int, *, _owner: str) -> int: ...
+    def update_final_port(self, _plan: object, _final_port: int, *, _source: str) -> None: ...
+    def release(self, _port: int) -> None: ...
+
 
 def restore_missing(
     orchestrator,
@@ -228,9 +229,7 @@ def restore_missing(
             if rt._project_name_from_service(name).lower() == project.lower()  # type: ignore[attr-defined]
         ]
         original_services: dict[str, ServiceRecord] = {
-            name: state.services[name]
-            for name in project_service_names
-            if name in state.services
+            name: state.services[name] for name in project_service_names if name in state.services
         }
         original_requirements = state.requirements.get(project)
         context_root = getattr(context, "root", None)
@@ -320,9 +319,11 @@ def restore_missing(
                         flags={
                             **route_for_startup.flags,
                             "_spinner_update_project": (
-                                lambda _project, message, *, _project_name=project: project_spinner_group.update_project(
-                                    _project_name,
-                                    f"{prefix} {message}",
+                                lambda _project, message, *, _project_name=project: (
+                                    project_spinner_group.update_project(
+                                        _project_name,
+                                        f"{prefix} {message}",
+                                    )
                                 )
                             ),
                         },
@@ -336,21 +337,20 @@ def restore_missing(
                         projects=route_for_startup.projects,
                         flags={
                             **route_for_startup.flags,
-                            "_spinner_update": (
-                                lambda message: active_spinner.update(f"{prefix} {message}")
-                            ),
+                            "_spinner_update": (lambda message: active_spinner.update(f"{prefix} {message}")),
                         },
                     )
                 requirements_started = time.monotonic()
-                requirements = rt._start_requirements_for_project(context, mode=state.mode, route=project_route_for_startup)  # type: ignore[attr-defined]
+                requirements = rt._start_requirements_for_project(
+                    context, mode=state.mode, route=project_route_for_startup
+                )  # type: ignore[attr-defined]
                 mark_step(
                     "start_requirements",
                     duration_ms=_round_ms(time.monotonic() - requirements_started),
                 )
                 if not rt._requirements_ready(requirements):  # type: ignore[attr-defined]
-                    error_message = (
-                        "requirements unavailable: "
-                        + (", ".join(requirements.failures) or "unknown requirements failure")
+                    error_message = "requirements unavailable: " + (
+                        ", ".join(requirements.failures) or "unknown requirements failure"
                     )
                     if use_project_spinner_group:
                         project_spinner_group.mark_failure(project, f"{prefix} Requirements unavailable")
@@ -434,10 +434,13 @@ def restore_missing(
                 "total_ms": project_total,
             }
 
-    with use_spinner_policy_fn(spinner_policy), spinner_factory(
-        initial_message,
-        enabled=use_single_spinner,
-    ) as active_spinner:
+    with (
+        use_spinner_policy_fn(spinner_policy),
+        spinner_factory(
+            initial_message,
+            enabled=use_single_spinner,
+        ) as active_spinner,
+    ):
         with group_context:
             project_results: dict[str, dict[str, object]] = {}
             if parallel_enabled:
@@ -548,8 +551,10 @@ def _mark_restore_failure_requirements(state: RunState, *, project: str, error: 
         if bool(component.get("enabled", False)):
             component["runtime_status"] = "unreachable"
 
+
 def _round_ms(value_seconds: float) -> float:
     return round(value_seconds * 1000.0, 2)
+
 
 def _format_project_timing_line(project: str, steps: Mapping[str, float], total_ms: float) -> str:
     ordered_steps = (
@@ -570,7 +575,9 @@ def _format_project_timing_line(project: str, steps: Mapping[str, float], total_
     parts.append(f"total={total_ms:.1f}ms")
     return "  - " + " ".join(parts)
 
-def _restore_parallel_config(orchestrator,
+
+def _restore_parallel_config(
+    orchestrator,
     *,
     route: Route | None,
     mode: str,
@@ -587,7 +594,11 @@ def _restore_parallel_config(orchestrator,
             flags={},
         )
     source_command = str(route.flags.get("_resume_source_command") or route.command).strip().lower()
-    if source_command == "plan" and route.flags.get("parallel_trees") is None and not bool(route.flags.get("sequential")):
+    if (
+        source_command == "plan"
+        and route.flags.get("parallel_trees") is None
+        and not bool(route.flags.get("sequential"))
+    ):
         route = Route(
             command=route.command,
             mode=route.mode,
@@ -601,6 +612,7 @@ def _restore_parallel_config(orchestrator,
         )
     return rt._tree_parallel_startup_config(mode=mode, route=route, project_count=project_count)  # type: ignore[attr-defined]
 
+
 def _restore_timing_enabled(orchestrator, route: Route | None) -> bool:
     rt = orchestrator.runtime
     raw_force = rt.env.get("ENVCTL_DEBUG_RESTORE_TIMING") or rt.config.raw.get("ENVCTL_DEBUG_RESTORE_TIMING")  # type: ignore[attr-defined]
@@ -612,7 +624,9 @@ def _restore_timing_enabled(orchestrator, route: Route | None) -> bool:
     raw_mode = (rt.env.get("ENVCTL_DEBUG_UI_MODE") or rt.config.raw.get("ENVCTL_DEBUG_UI_MODE") or "").strip().lower()  # type: ignore[attr-defined]
     return raw_mode in {"standard", "deep"}
 
-def _requirements_reuse_decision(orchestrator,
+
+def _requirements_reuse_decision(
+    orchestrator,
     rt: Any,
     *,
     project: str,
@@ -632,11 +646,14 @@ def _requirements_reuse_decision(orchestrator,
         return (not bool(issues), "service_stale_only" if not issues else "dependency_endpoint_changed")
     return True, "service_stale_only"
 
+
 def _resume_terminate_aggressive(orchestrator, rt: Any) -> bool:
     raw = rt.env.get("ENVCTL_RESUME_AGGRESSIVE_TERMINATE") or rt.config.raw.get("ENVCTL_RESUME_AGGRESSIVE_TERMINATE")  # type: ignore[attr-defined]
     return parse_bool(raw, True)
 
-def _reserve_application_service_ports(orchestrator,
+
+def _reserve_application_service_ports(
+    orchestrator,
     rt: Any,
     context: object,
     port_allocator: _PortAllocatorProtocol,
@@ -663,6 +680,7 @@ def _reserve_application_service_ports(orchestrator,
             plan.final = reserved
         rt._emit("port.reserved", project=context_name, service=service_name, port=reserved)  # type: ignore[attr-defined]
 
+
 def context_for_project(orchestrator, state: RunState, project: str) -> object | None:
     rt = orchestrator.runtime
     discovered = rt._discover_projects(mode=state.mode)  # type: ignore[attr-defined]
@@ -680,6 +698,7 @@ def context_for_project(orchestrator, state: RunState, project: str) -> object |
     context = contexts[0]
     orchestrator.apply_ports_to_context(context, state)
     return context
+
 
 def project_root(orchestrator, state: RunState, project: str) -> Path | None:
     rt = orchestrator.runtime
@@ -712,6 +731,7 @@ def project_root(orchestrator, state: RunState, project: str) -> Path | None:
 
     return None
 
+
 def apply_ports_to_context(orchestrator, context: object, state: RunState) -> None:
     rt = orchestrator.runtime
     project = str(getattr(context, "name", ""))
@@ -741,18 +761,22 @@ def apply_ports_to_context(orchestrator, context: object, state: RunState) -> No
         elif service_type == "frontend":
             rt._set_plan_port(context_ports["frontend"], port)  # type: ignore[attr-defined]
 
+
 def _state_repository(runtime: object) -> _StateRepositoryProtocol:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "state_repository", None)
-    candidate = getattr(runtime, "state_repository", fallback)
+    candidate = getattr(runtime_context, "state_repository", None)
+    if candidate is None:
+        candidate = getattr(runtime, "state_repository", None)
     if candidate is None:
         raise RuntimeError("state repository dependency is not configured")
     return cast(_StateRepositoryProtocol, candidate)
 
+
 def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
     runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "port_allocator", None)
-    candidate = getattr(runtime, "port_planner", fallback)
+    candidate = getattr(runtime_context, "port_allocator", None)
+    if candidate is None:
+        candidate = getattr(runtime, "port_planner", None)
     if candidate is None:
         raise RuntimeError("port allocator dependency is not configured")
     return cast(_PortAllocatorProtocol, candidate)

@@ -18,6 +18,7 @@ _state_repository = importlib.import_module("envctl_engine.state.repository")
 RunState = _models.RunState
 ServiceRecord = _models.ServiceRecord
 dump_state = _state.dump_state
+load_state = _state.load_state
 RuntimeStateRepository = _state_repository.RuntimeStateRepository
 
 
@@ -69,7 +70,7 @@ class StateRepositoryContractTests(unittest.TestCase):
                 events=[{"event": "test"}],
                 emit=lambda *_args, **_kwargs: None,
                 runtime_map_builder=lambda _state: {"projection": {}},
-                write_shell_prune_report=None,
+                write_runtime_readiness_report=None,
             )
 
             self.assertTrue((runtime_root / "run_state.json").is_file())
@@ -328,11 +329,71 @@ class StateRepositoryContractTests(unittest.TestCase):
             self.assertTrue(tree_pointer.is_file())
             self.assertEqual(tree_pointer.read_text(encoding="utf-8").strip(), str(tree_state_path))
 
+    def test_load_latest_ignores_invalid_scoped_pointer_and_uses_next_valid_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            runtime_root = runtime_dir / "scope"
+            legacy_root = runtime_dir / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.COMPAT_READ_WRITE,
+            )
+
+            bad_pointer = runtime_root / ".last_state.main"
+            bad_pointer.write_text(str(runtime_dir / "missing" / "run_state.json") + "\n", encoding="utf-8")
+
+            valid_state_path = runtime_root / "runs" / "run-valid" / "run_state.json"
+            valid_state_path.parent.mkdir(parents=True, exist_ok=True)
+            dump_state(RunState(run_id="run-valid", mode="main"), str(valid_state_path))
+            generic_pointer = runtime_root / ".last_state"
+            generic_pointer.write_text(str(valid_state_path) + "\n", encoding="utf-8")
+
+            loaded = repo.load_latest(mode="main", strict_mode_match=True)
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.run_id, "run-valid")
+
+    def test_compat_read_only_mode_reads_legacy_state_without_writing_legacy_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            runtime_root = runtime_dir / "scope"
+            legacy_root = runtime_dir / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.COMPAT_READ_ONLY,
+            )
+
+            legacy_state_path = legacy_root / "run_state.json"
+            dump_state(RunState(run_id="legacy-run", mode="main"), str(legacy_state_path))
+
+            loaded = repo.load_latest(mode="main", strict_mode_match=True)
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.run_id, "legacy-run")
+
+            repo.save_resume_state(
+                state=RunState(run_id="scoped-run", mode="main", metadata={"repo_scope_id": "repo-123"}),
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {"projection": {}},
+            )
+
+            self.assertTrue((runtime_root / "run_state.json").is_file())
+            self.assertEqual(load_state(str(legacy_state_path), allowed_root=str(runtime_dir)).run_id, "legacy-run")
+
             loaded_trees = repo.load_latest(mode="trees", strict_mode_match=True)
-            self.assertIsNotNone(loaded_trees)
-            assert loaded_trees is not None
-            self.assertEqual(loaded_trees.run_id, "run-tree")
-            self.assertEqual(loaded_trees.mode, "trees")
+            self.assertIsNone(loaded_trees)
 
     def test_save_run_trees_preserves_existing_main_pointer_for_mode_switch_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -417,7 +478,9 @@ class StateRepositoryContractTests(unittest.TestCase):
                 runtime_map_builder=lambda _state: {"projection": {}},
             )
 
-            test_summary = repo.test_results_dir_path("run-1", "run_20260309_100000") / "Main" / "failed_tests_summary.txt"
+            test_summary = (
+                repo.test_results_dir_path("run-1", "run_20260309_100000") / "Main" / "failed_tests_summary.txt"
+            )
             test_summary.parent.mkdir(parents=True, exist_ok=True)
             test_summary.write_text("No failed tests.\n", encoding="utf-8")
 

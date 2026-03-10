@@ -154,11 +154,7 @@ class PlanningSelectionMenu:
                         selected_counts=(
                             dict(selected_counts)
                             if has_existing
-                            else {
-                                plan_file: count
-                                for plan_file, count in selected_counts.items()
-                                if count > 0
-                            }
+                            else {plan_file: count for plan_file, count in selected_counts.items() if count > 0}
                         )
                     )
                 )

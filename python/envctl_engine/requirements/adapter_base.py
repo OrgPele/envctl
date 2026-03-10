@@ -5,6 +5,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from ..shared.env_access import float_from_env, int_from_env, str_from_env
 from ..shared.parsing import parse_bool
 from ..shared.reason_codes import (
@@ -92,7 +94,7 @@ class AdapterLifecycleEvent:
 class ContainerLifecycleTemplate:
     service_name: str
     container_name: str
-    process_runner: object
+    process_runner: ProcessRuntime
     project_root: Path
     env: Mapping[str, str] | None
     port: int
@@ -196,7 +198,13 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
         )
 
     def _recover_timeout_created_container(*, recreate: bool = False) -> bool:
-        nonlocal effective_port, port_adopted, mismatch_requested_port, mismatch_existing_port, mismatch_action, timeout_recovered_create
+        nonlocal \
+            effective_port, \
+            port_adopted, \
+            mismatch_requested_port, \
+            mismatch_existing_port, \
+            mismatch_action, \
+            timeout_recovered_create
         for _ in range(3):
             recovered_exists, recovered_error = container_exists(
                 template.process_runner,
@@ -457,7 +465,9 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                     if cleanup_error:
                         error_text = f"{error_text}; cleanup failed: {cleanup_error}"
                     return _failure(
-                        format_bind_conflict_guidance(template.service_name, template.port, state_error_text or error_text),
+                        format_bind_conflict_guidance(
+                            template.service_name, template.port, state_error_text or error_text
+                        ),
                         reason_code=reason_code_to_string(PortFailureReason.PORT_IN_USE),
                         failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
                         stage="start.bind_conflict.unresolved",
@@ -486,7 +496,9 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                     if cleanup_error:
                         error_text = f"{error_text}; cleanup failed: {cleanup_error}"
                     return _failure(
-                        format_bind_conflict_guidance(template.service_name, template.port, state_error_text or error_text),
+                        format_bind_conflict_guidance(
+                            template.service_name, template.port, state_error_text or error_text
+                        ),
                         reason_code=reason_code_to_string(PortFailureReason.PORT_IN_USE),
                         failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
                         stage="start.bind_conflict.unresolved",
@@ -502,14 +514,18 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
         port_adopted = False
         create_error = template.create_container()
         if create_error and is_bind_conflict(create_error):
-            _emit("start.bind_conflict", reason=reason_code_to_string(PortFailureReason.PORT_IN_USE), detail=create_error)
+            _emit(
+                "start.bind_conflict", reason=reason_code_to_string(PortFailureReason.PORT_IN_USE), detail=create_error
+            )
             if template.bind_cleanup is not None:
                 cleaned, cleanup_error = template.bind_cleanup(template.port)
                 if cleanup_error:
                     _add_stage_duration("create", start_or_create_started)
                     return _failure(
                         f"{create_error}; safe cleanup failed: {cleanup_error}",
-                        reason_code=reason_code_to_string(RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANUP_FAILED),
+                        reason_code=reason_code_to_string(
+                            RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANUP_FAILED
+                        ),
                         stage="start.bind_conflict.cleanup_failed",
                     )
                 if cleaned:
@@ -551,9 +567,15 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             settled, settled_error = _attempt_local_settle(
                 listener_ready=False,
                 probe_error_text=listener_error,
-                stage="probe.retry.timeout_recovered_settle" if timeout_recovered_create else "probe.retry.adopted_existing_settle",
-                success_stage="probe.healthy.after_timeout_recovery" if timeout_recovered_create else "probe.healthy.after_adopted_existing",
-                timeout_suffix="after timeout recovery" if timeout_recovered_create else "after adopted-existing settle",
+                stage="probe.retry.timeout_recovered_settle"
+                if timeout_recovered_create
+                else "probe.retry.adopted_existing_settle",
+                success_stage="probe.healthy.after_timeout_recovery"
+                if timeout_recovered_create
+                else "probe.healthy.after_adopted_existing",
+                timeout_suffix="after timeout recovery"
+                if timeout_recovered_create
+                else "after adopted-existing settle",
             )
             if settled:
                 return _run_result(
@@ -605,8 +627,12 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
         settled, settled_error = _attempt_local_settle(
             listener_ready=True,
             probe_error_text=probe_error_text,
-            stage="probe.retry.timeout_recovered_settle" if timeout_recovered_create else "probe.retry.adopted_existing_settle",
-            success_stage="probe.healthy.after_timeout_recovery" if timeout_recovered_create else "probe.healthy.after_adopted_existing",
+            stage="probe.retry.timeout_recovered_settle"
+            if timeout_recovered_create
+            else "probe.retry.adopted_existing_settle",
+            success_stage="probe.healthy.after_timeout_recovery"
+            if timeout_recovered_create
+            else "probe.healthy.after_adopted_existing",
             timeout_suffix="after timeout recovery" if timeout_recovered_create else "after adopted-existing settle",
         )
         if settled:
@@ -628,7 +654,10 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             stage="probe.timeout_recovered_create.failed",
         )
     if template.restart_on_probe_failure and retryable:
-        _emit("probe.retry.restart", reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE))
+        _emit(
+            "probe.retry.restart",
+            reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+        )
         restart_started = time.monotonic()
         restart_result, restart_error = run_docker(
             template.process_runner,
@@ -699,7 +728,10 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             retryable = template.retryable_probe_error(probe_error_text)
 
         if template.recreate_on_probe_failure and retryable:
-            _emit("probe.retry.recreate", reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE))
+            _emit(
+                "probe.retry.recreate",
+                reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+            )
             container_recreated = True
             recreate_started = time.monotonic()
             cleanup_error = stop_and_remove_container(

@@ -4,6 +4,7 @@ from typing import Any
 
 from envctl_engine.startup.progress_shared import BaseProjectSpinnerGroup
 
+
 class _ResumeProjectSpinnerGroup(BaseProjectSpinnerGroup):
     def __init__(
         self,
@@ -21,7 +22,11 @@ class _ResumeProjectSpinnerGroup(BaseProjectSpinnerGroup):
             emit=emit,
             component="resume.restore",
             op_id="resume.restore",
-            start_message=f"Preparing stale restore for {len([str(project).strip() for project in projects if str(project).strip()])} project(s)...",
+            start_message=(
+                "Preparing stale restore for "
+                f"{len([str(project).strip() for project in projects if str(project).strip()])} "
+                "project(s)..."
+            ),
             idle_message="restoring...",
             env=env,
         )

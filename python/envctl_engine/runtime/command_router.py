@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from .command_policy import apply_command_policy, apply_mode_token
+
 
 class RouteError(ValueError):
     """Raised when CLI route parsing fails."""
@@ -303,6 +305,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("migration", "migrate"),
     ("migrations", "migrate"),
     ("m", "migrate"),
+    ("migrate-hooks", "migrate-hooks"),
+    ("--migrate-hooks", "migrate-hooks"),
     ("dash", "dashboard"),
     ("d", "doctor"),
     ("r", "restart"),
@@ -335,6 +339,7 @@ SUPPORTED_COMMANDS = sorted(
         "commit",
         "review",
         "migrate",
+        "migrate-hooks",
         "list-commands",
         "list-targets",
         "list-trees",
@@ -386,6 +391,7 @@ def list_supported_flag_tokens() -> list[str]:
 @dataclass(slots=True)
 class _ParserState:
     """Mutable state accumulated through pipeline phases."""
+
     env: Mapping[str, str]
     mode: str = ""
     command: str = "start"
@@ -393,7 +399,7 @@ class _ParserState:
     projects: list[str] = field(default_factory=list)
     passthrough: list[str] = field(default_factory=list)
     flags: dict[str, object] = field(default_factory=dict)
-    
+
     def __post_init__(self) -> None:
         if not self.mode:
             self.mode = _default_mode(self.env)
@@ -402,19 +408,19 @@ class _ParserState:
 def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     """Parse CLI arguments through staged declarative pipeline."""
     state = _ParserState(env)
-    
+
     # Phase 1: Normalization - standardize token formats
     normalized = _phase_normalize(argv)
-    
+
     # Phase 2: Classification - categorize each token
     classified = _phase_classify(normalized)
-    
+
     # Phase 3: Command/Mode Resolution - determine command and mode
     _phase_resolve_command_mode(classified, state)
-    
+
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
-    
+
     # Phase 5: Route Finalization - build final Route object
     return _phase_finalize(state, argv)
 
@@ -436,13 +442,15 @@ def _phase_classify(normalized: list[tuple[str, str]]) -> list[dict[str, str | o
     while i < len(normalized):
         token, norm = normalized[i]
         token_type = _classify_token(token, norm)
-        classified.append({
-            "original": token,
-            "normalized": norm,
-            "type": token_type,
-            "index": i,
-            "next_token": normalized[i + 1][0] if i + 1 < len(normalized) else None,
-        })
+        classified.append(
+            {
+                "original": token,
+                "normalized": norm,
+                "type": token_type,
+                "index": i,
+                "next_token": normalized[i + 1][0] if i + 1 < len(normalized) else None,
+            }
+        )
         i += 1
     return classified
 
@@ -465,13 +473,26 @@ def _classify_token(token: str, norm: str) -> str:
     if token in BOOLEAN_FLAGS:
         return "boolean_flag"
     # Check for plan-related inline flags
-    if token.startswith("--plan=") or token.startswith("--plan-selection=") or token.startswith("--planning-envs=") or token.startswith("--planning-prs=") or token.startswith("--parallel-plan=") or token.startswith("--plan-parallel=") or token.startswith("--sequential-plan=") or token.startswith("--plan-sequential="):
+    if (
+        token.startswith("--plan=")
+        or token.startswith("--plan-selection=")
+        or token.startswith("--planning-envs=")
+        or token.startswith("--planning-prs=")
+        or token.startswith("--parallel-plan=")
+        or token.startswith("--plan-parallel=")
+        or token.startswith("--sequential-plan=")
+        or token.startswith("--plan-sequential=")
+    ):
         return "plan_flag"
     if token in VALUE_FLAGS or any(token.startswith(f"{f}=") for f in VALUE_FLAGS):
         return "value_flag"
     if token in PAIR_FLAGS or any(token.startswith(f"{f}=") for f in PAIR_FLAGS):
         return "pair_flag"
-    if token in SPECIAL_FLAGS or token in {"--no-parallel-trees", "--no-seed-requirements-from-base", "--no-copy-db-storage"}:
+    if token in SPECIAL_FLAGS or token in {
+        "--no-parallel-trees",
+        "--no-seed-requirements-from-base",
+        "--no-copy-db-storage",
+    }:
         return "special_flag"
     # Env-style assignments (KEY=value, no leading dashes) - only known ones
     if "=" in token and not token.startswith("-"):
@@ -493,58 +514,23 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
     for item in classified:
         token = str(item["original"])
         token_type = str(item["type"])
-        
+
         # Mode resolution with precedence
         if token_type == "mode":
-            if token in MODE_TREE_TOKENS:
-                state.mode = "trees"
-            elif token in MODE_FORCE_TREES_TOKENS:
-                state.mode = "trees"
-            elif token in MODE_MAIN_TOKENS:
-                state.mode = "main"
-                state.flags["no_resume"] = True
-            elif token in MODE_FORCE_MAIN_TOKENS:
-                state.mode = "main"
-                state.flags["no_resume"] = True
+            state.mode = apply_mode_token(token, flags=state.flags, current_mode=state.mode)
             continue
-        
+
         # Command resolution with precedence
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
                 state.command = mapped
                 state.command_explicit = True
-                if mapped == "plan":
-                    state.mode = "trees"
-                    if "sequential" in token:
-                        state.flags["sequential"] = True
-                        state.flags["parallel_trees"] = False
-                    if "parallel" in token:
-                        state.flags["parallel_trees"] = True
-                    if token == "--planning-prs":
-                        state.flags["planning_prs"] = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
             continue
-        
+
         if token_type == "command_explicit":
             if token.startswith("--command=") or token.startswith("--action="):
                 command_token = token.split("=", 1)[1]
@@ -553,26 +539,9 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
                 state.command = mapped
                 state.command_explicit = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
             continue
 
 
@@ -583,12 +552,12 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
         item = classified[i]
         token = str(item["original"])
         token_type = str(item["type"])
-        
+
         # Skip already-processed token types
         if token_type in {"mode", "command"}:
             i += 1
             continue
-        
+
         # Project handling
         if token_type == "project":
             if token in {"--project", "--projects"}:
@@ -599,7 +568,7 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 state.projects.extend(_parse_projects(token.split("=", 1)[1]))
                 i += 1
             continue
-        
+
         # Command explicit (--command/--action with value)
         if token_type == "command_explicit":
             if token in {"--command", "--action"}:
@@ -609,37 +578,20 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
                 state.command = mapped
                 state.command_explicit = True
-                if mapped in {
-                    "stop",
-                    "stop-all",
-                    "blast-all",
-                    "restart",
-                    "test",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                    "blast-worktree",
-                    "pr",
-                    "commit",
-                    "review",
-                    "migrate",
-                }:
-                    state.flags["skip_startup"] = True
-                    state.flags["load_state"] = True
-                if mapped in {"debug-pack", "debug-report", "debug-last"}:
-                    state.flags["skip_startup"] = True
+                forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
+                if forced_mode is not None:
+                    state.mode = forced_mode
                 i += 2
             else:
                 i += 1
             continue
-        
+
         # Boolean flags
         if token_type == "boolean_flag":
             state.flags[_boolean_flag_name(token)] = True
             i += 1
             continue
-        
+
         # Value flags
         if token_type == "value_flag":
             if token in VALUE_FLAGS:
@@ -653,7 +605,7 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 _store_value_flag(state.flags, flag_name, flag_value)
                 i += 1
             continue
-        
+
         # Pair flags
         if token_type == "pair_flag":
             if token in PAIR_FLAGS:
@@ -667,23 +619,23 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 _store_inline_pair_flag(state.flags, token.split("=", 1)[0], raw)
                 i += 1
             continue
-        
+
         # Special flags
         if token_type == "special_flag":
             _handle_special_flag(state.flags, token)
             i += 1
             continue
-        
+
         # Env-style assignments (KEY=value)
         if token_type == "env_assignment":
             _handle_env_assignment(state.flags, token)
             i += 1
             continue
-        
+
         # Unknown options
         if token_type == "unknown_option":
             raise RouteError(f"Unknown option: {token}")
-        
+
         # Positional args
         if token_type == "positional":
             if not state.command_explicit:
@@ -691,17 +643,17 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
             state.passthrough.append(token)
             i += 1
             continue
-        
+
         # Plan flags (inline plan commands)
         if token_type == "plan_flag":
             _handle_plan_flag(state, token)
             i += 1
             continue
-        
+
         # Unknown env assignments
         if token_type == "unknown_env_assignment":
             raise RouteError(f"Unknown option: {token}")
-        
+
         i += 1
 
 
@@ -745,18 +697,33 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["docker_temp"] = True
     elif token in {"force=true", "FORCE=true"}:
         flags["force"] = True
-    elif token in {"copy-db-storage=true", "COPY_DB_STORAGE=true", "seed-requirements-from-base=true", "SEED_REQUIREMENTS_FROM_BASE=true"}:
+    elif token in {
+        "copy-db-storage=true",
+        "COPY_DB_STORAGE=true",
+        "seed-requirements-from-base=true",
+        "SEED_REQUIREMENTS_FROM_BASE=true",
+    }:
         flags["seed_requirements_from_base"] = True
-    elif token in {"copy-db-storage=false", "COPY_DB_STORAGE=false", "seed-requirements-from-base=false", "SEED_REQUIREMENTS_FROM_BASE=false"}:
+    elif token in {
+        "copy-db-storage=false",
+        "COPY_DB_STORAGE=false",
+        "seed-requirements-from-base=false",
+        "SEED_REQUIREMENTS_FROM_BASE=false",
+    }:
         flags["seed_requirements_from_base"] = False
     elif token in {"parallel-trees=true", "PARALLEL_TREES=true", "RUN_SH_OPT_PARALLEL_TREES=true"}:
         flags["parallel_trees"] = True
     elif token in {"parallel-trees=false", "PARALLEL_TREES=false", "RUN_SH_OPT_PARALLEL_TREES=false"}:
         flags["parallel_trees"] = False
-    elif token.startswith("parallel-trees-max=") or token.startswith("PARALLEL_TREES_MAX=") or token.startswith("RUN_SH_OPT_PARALLEL_TREES_MAX="):
+    elif (
+        token.startswith("parallel-trees-max=")
+        or token.startswith("PARALLEL_TREES_MAX=")
+        or token.startswith("RUN_SH_OPT_PARALLEL_TREES_MAX=")
+    ):
         flags["parallel_trees_max"] = token.split("=", 1)[1]
     elif token.startswith("frontend-test-runner=") or token.startswith("FRONTEND_TEST_RUNNER="):
         flags["frontend_test_runner"] = token.split("=", 1)[1]
+
 
 def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
     """Handle env-style assignments (KEY=value, no leading dashes)."""
@@ -823,18 +790,19 @@ def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
         elif lowered == "false":
             flags["parallel_trees"] = False
 
+
 def _handle_plan_flag(state: _ParserState, token: str) -> None:
     """Handle plan-related inline flags."""
     state.command = "plan"
     state.command_explicit = True
     state.mode = "trees"
-    
+
     # Extract value if present
     if "=" in token:
         value = token.split("=", 1)[1].strip()
         if value:
             state.passthrough.extend(_parse_projects(value))
-    
+
     # Set flags based on token type
     if "sequential" in token:
         state.flags["sequential"] = True
@@ -843,6 +811,7 @@ def _handle_plan_flag(state: _ParserState, token: str) -> None:
         state.flags["parallel_trees"] = True
     if "planning-prs" in token or "planning_prs" in token:
         state.flags["planning_prs"] = True
+
 
 def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:
     """Phase 5: Build final Route object."""

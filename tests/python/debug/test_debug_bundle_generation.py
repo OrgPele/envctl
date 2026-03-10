@@ -25,8 +25,10 @@ class DebugBundleGenerationTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "ui.input.read.begin", "command_id": "cmd-1", "ts_mono_ns": 100}) + "\n"
-                + json.dumps({"event": "ui.input.dispatch.begin", "command_id": "cmd-1", "ts_mono_ns": 101}) + "\n",
+                json.dumps({"event": "ui.input.read.begin", "command_id": "cmd-1", "ts_mono_ns": 100})
+                + "\n"
+                + json.dumps({"event": "ui.input.dispatch.begin", "command_id": "cmd-1", "ts_mono_ns": 101})
+                + "\n",
                 encoding="utf-8",
             )
             (session_dir / "tty_context.json").write_text("{}", encoding="utf-8")
@@ -85,8 +87,10 @@ class DebugBundleGenerationTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "ui.spinner.disabled", "reason": "input_phase_guard"}) + "\n"
-                + json.dumps({"event": "ui.input.backend", "backend": "basic_input"}) + "\n",
+                json.dumps({"event": "ui.spinner.disabled", "reason": "input_phase_guard"})
+                + "\n"
+                + json.dumps({"event": "ui.input.backend", "backend": "basic_input"})
+                + "\n",
                 encoding="utf-8",
             )
             (session_dir / "tty_context.json").write_text("{}", encoding="utf-8")
@@ -223,7 +227,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertIn("launch_policy_input_owner_violation", issue_codes)
             self.assertTrue(diagnostics.get("launch_policy_violations"))
 
@@ -271,7 +277,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertIn("selector_input_inactive", issue_codes)
             probable = diagnostics.get("probable_root_causes", [])
             self.assertIn(
@@ -342,7 +350,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertIn("selector_input_low_throughput", issue_codes)
             probable = diagnostics.get("probable_root_causes", [])
             self.assertIn(
@@ -419,7 +429,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertNotIn("selector_input_low_throughput", issue_codes)
 
     def test_diagnostics_skip_read_pipeline_gap_when_driver_has_non_key_messages(self) -> None:
@@ -504,7 +516,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertNotIn("selector_read_pipeline_gap", issue_codes)
             self.assertEqual(diagnostics.get("selector_read_pipeline_gaps"), [])
 
@@ -561,7 +575,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertIn("selector_input_stalled_after_activity", issue_codes)
             probable = diagnostics.get("probable_root_causes", [])
             self.assertIn(
@@ -619,7 +635,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
                 assert diagnostics_member is not None
                 diagnostics = json.loads(diagnostics_member.read().decode("utf-8"))
 
-            issue_codes = {str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)}
+            issue_codes = {
+                str(item.get("code", "")) for item in diagnostics.get("issues", []) if isinstance(item, dict)
+            }
             self.assertIn("state_changed_without_lifecycle_event", issue_codes)
             self.assertIn("spinner_without_command_activity", issue_codes)
             probable = diagnostics.get("probable_root_causes", [])
@@ -753,7 +771,9 @@ class DebugBundleGenerationTests(unittest.TestCase):
 
             slowest_components = diagnostics.get("slowest_components", [])
             self.assertIsInstance(slowest_components, list)
-            self.assertTrue(any(str(item.get("kind", "")) == "requirement" for item in slowest_components if isinstance(item, dict)))
+            self.assertTrue(
+                any(str(item.get("kind", "")) == "requirement" for item in slowest_components if isinstance(item, dict))
+            )
 
             skip_reasons = diagnostics.get("resume_skip_reasons", {})
             self.assertIsInstance(skip_reasons, dict)
@@ -778,11 +798,33 @@ class DebugBundleGenerationTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "startup.execution", "mode": "sequential", "workers": 1, "projects": ["Main"], "ts_mono_ns": 1_000_000_000})
+                json.dumps(
+                    {
+                        "event": "startup.execution",
+                        "mode": "sequential",
+                        "workers": 1,
+                        "projects": ["Main"],
+                        "ts_mono_ns": 1_000_000_000,
+                    }
+                )
                 + "\n"
-                + json.dumps({"event": "requirements.timing.summary", "project": "Main", "duration_ms": 1200.0, "ts_mono_ns": 2_000_000_000})
+                + json.dumps(
+                    {
+                        "event": "requirements.timing.summary",
+                        "project": "Main",
+                        "duration_ms": 1200.0,
+                        "ts_mono_ns": 2_000_000_000,
+                    }
+                )
                 + "\n"
-                + json.dumps({"event": "service.timing.summary", "project": "Main", "duration_ms": 300.0, "ts_mono_ns": 2_100_000_000})
+                + json.dumps(
+                    {
+                        "event": "service.timing.summary",
+                        "project": "Main",
+                        "duration_ms": 300.0,
+                        "ts_mono_ns": 2_100_000_000,
+                    }
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -790,9 +832,23 @@ class DebugBundleGenerationTests(unittest.TestCase):
             (session_dir / "anomalies.jsonl").write_text("", encoding="utf-8")
             # Runtime event history intentionally contains huge startup timings from unrelated sessions.
             (runtime_scope / "events.jsonl").write_text(
-                json.dumps({"event": "requirements.timing.summary", "project": "Other", "duration_ms": 999999.0, "ts_mono_ns": 9_000_000_000})
+                json.dumps(
+                    {
+                        "event": "requirements.timing.summary",
+                        "project": "Other",
+                        "duration_ms": 999999.0,
+                        "ts_mono_ns": 9_000_000_000,
+                    }
+                )
                 + "\n"
-                + json.dumps({"event": "service.timing.summary", "project": "Other", "duration_ms": 888888.0, "ts_mono_ns": 9_100_000_000})
+                + json.dumps(
+                    {
+                        "event": "service.timing.summary",
+                        "project": "Other",
+                        "duration_ms": 888888.0,
+                        "ts_mono_ns": 9_100_000_000,
+                    }
+                )
                 + "\n",
                 encoding="utf-8",
             )

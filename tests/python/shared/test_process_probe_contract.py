@@ -83,9 +83,7 @@ class ProcessProbeContractTests(unittest.TestCase):
         service = SimpleNamespace(pid=101, actual_port=8000, requested_port=8000, name="svc")
         events: list[dict[str, object]] = []
 
-        runner.wait_for_pid_port = (
-            lambda _pid, _port, *, host="127.0.0.1", timeout=30.0, debug_pid_wait_group="": False
-        )  # type: ignore[assignment]
+        runner.wait_for_pid_port = lambda _pid, _port, *, host="127.0.0.1", timeout=30.0, debug_pid_wait_group="": False  # type: ignore[assignment]
         runner.wait_for_port = lambda _port, *, host="127.0.0.1", timeout=30.0: True  # type: ignore[assignment]
 
         status = probe.service_truth_status(

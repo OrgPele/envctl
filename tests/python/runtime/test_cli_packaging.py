@@ -51,6 +51,29 @@ class CliPackagingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(result.stdout.strip())
 
+    def test_regular_install_supports_install_and_uninstall_shell_path_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shell_file = Path(tmpdir) / ".zshrc"
+            shell_file.write_text("# existing\n", encoding="utf-8")
+            with self._installed_env(editable=False) as env:
+                install = subprocess.run(
+                    [str(env["script"]), "install", "--shell-file", str(shell_file)],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+                uninstall = subprocess.run(
+                    [str(env["script"]), "uninstall", "--shell-file", str(shell_file)],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+            self.assertEqual(install.returncode, 0, msg=install.stderr)
+            self.assertEqual(uninstall.returncode, 0, msg=uninstall.stderr)
+            self.assertNotIn("# >>> envctl PATH >>>", shell_file.read_text(encoding="utf-8"))
+
     @staticmethod
     def _site_packages_path() -> str:
         candidates = [path for path in site.getsitepackages() if "site-packages" in path]
@@ -75,7 +98,9 @@ class CliPackagingTests(unittest.TestCase):
                 check=False,
             )
             if bootstrap.returncode != 0:
-                raise unittest.SkipTest(f"setuptools bootstrap failed for packaging smoke test: {bootstrap.stderr.strip()}")
+                raise unittest.SkipTest(
+                    f"setuptools bootstrap failed for packaging smoke test: {bootstrap.stderr.strip()}"
+                )
             install_cmd = [
                 str(python_bin),
                 "-m",
@@ -89,8 +114,10 @@ class CliPackagingTests(unittest.TestCase):
             else:
                 install_cmd.append(str(REPO_ROOT))
             subprocess.run(install_cmd, check=True, capture_output=True, text=True, env=env)
+            runtime_env = dict(env)
+            runtime_env.pop("PYTHONPATH", None)
             yield {
-                "env": env,
+                "env": runtime_env,
                 "script": venv_dir / "bin" / "envctl",
             }
 

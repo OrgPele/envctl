@@ -75,8 +75,7 @@ class ProgressTracker:
         else:
             status = f"{self.colors.RED}{CROSS_MARK} {name}{self.colors.NC}"
             details = (
-                f"{self.colors.GREEN}{passed} passed{self.colors.NC}, "
-                f"{self.colors.RED}{failed} failed{self.colors.NC}"
+                f"{self.colors.GREEN}{passed} passed{self.colors.NC}, {self.colors.RED}{failed} failed{self.colors.NC}"
             )
 
         duration_str = format_duration(elapsed)

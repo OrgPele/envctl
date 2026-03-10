@@ -49,8 +49,6 @@ class _FakeTruthRunner:
 
     def pid_owns_port(self, _pid: int, _port: int) -> bool:
         return False
-        _ = host, timeout
-        return self.wait_for_port_overrides.get(_port, self.listener_up)
 
     def run(self, *args, **kwargs):  # noqa: ANN002, ANN003
         _ = args, kwargs
@@ -241,8 +239,6 @@ class RuntimeHealthTruthTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("Main Backend", out.getvalue())
-
-
 
     def test_dashboard_snapshot_hides_urls_after_truth_reconcile(self) -> None:
         engine = self._make_runtime_with_state(pid_running=False, listener_up=False)

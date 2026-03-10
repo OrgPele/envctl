@@ -56,21 +56,19 @@ If you want the exact screen flow and save behavior, use [First-Run Wizard](firs
 
 ## Is the Bash/shell engine still supported?
 
-It still exists, but only as a deprecated compatibility fallback.
+The supported runtime path is the Python runtime.
 
-Use it only when you explicitly need to compare Python vs shell behavior or temporarily fall back during cutover:
+To restore the latest runtime state:
 
 ```bash
-ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume
+envctl --resume
 ```
 
-The Python engine is the primary runtime and the one these docs are written for.
+These docs are written for the Python runtime.
 
-## Why does `debug-pack` fail when I force shell fallback?
+## Why does `debug-pack` fail?
 
-Because `debug-pack`, `debug-report`, and the modern debug-bundle pipeline are Python-runtime features.
-
-Switch back to Python mode before using them.
+Because `debug-pack`, `debug-report`, and the modern debug-bundle pipeline depend on Python runtime diagnostics and a captured debug session.
 
 ## Which commands are safest when I am not sure what will happen?
 

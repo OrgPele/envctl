@@ -12,10 +12,6 @@ from envctl_engine.shared.parsing import parse_bool, parse_float
 
 
 def debug_pack(runtime: Any, route: Any) -> int:
-    if parse_bool(debug_env_value(runtime.env, "ENVCTL_ENGINE_SHELL_FALLBACK"), False):
-        print("debug-pack is only available in Python runtime. Disable shell fallback and retry.")
-        return 1
-
     scope_id_value = route.flags.get("scope_id")
     explicit_scope = isinstance(scope_id_value, str) and bool(scope_id_value.strip())
     scope_id = scope_id_value if isinstance(scope_id_value, str) else runtime.config.runtime_scope_id
@@ -31,10 +27,7 @@ def debug_pack(runtime: Any, route: Any) -> int:
     if explicit_run_id is not None:
         scope_run_id = runtime._scope_latest_run_id(runtime_scope_dir)
         if isinstance(scope_run_id, str) and scope_run_id and scope_run_id != explicit_run_id:
-            print(
-                f"Note: using explicit run_id={explicit_run_id}; "
-                f"current scope run_id={scope_run_id}."
-            )
+            print(f"Note: using explicit run_id={explicit_run_id}; current scope run_id={scope_run_id}.")
     if session_id is None and run_id is None:
         latest_state = runtime.state_repository.load_latest(mode=None, strict_mode_match=False)
         if latest_state is not None and isinstance(latest_state.run_id, str) and latest_state.run_id:
@@ -274,7 +267,9 @@ def debug_report(runtime: Any, route: object) -> int:
                 python_exe = str(item.get("python_executable", "")).strip() or "unknown"
                 rich_supported = bool(item.get("rich_progress_supported", False))
                 rich_error = str(item.get("rich_progress_error", "")).strip()
-                details = f"reason={reason} backend={backend} rich_progress_supported={rich_supported} python={python_exe}"
+                details = (
+                    f"reason={reason} backend={backend} rich_progress_supported={rich_supported} python={python_exe}"
+                )
                 if rich_error:
                     details += f" rich_progress_error={rich_error}"
                 print(f"- {details}")

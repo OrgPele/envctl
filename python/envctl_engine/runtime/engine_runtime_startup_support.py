@@ -61,14 +61,18 @@ def tree_parallel_startup_config(runtime: Any, *, mode: str, route: object, proj
         if route.command == "plan":
             enabled = True
         else:
-            raw_default = runtime.env.get("RUN_SH_OPT_PARALLEL_TREES") or runtime.config.raw.get("RUN_SH_OPT_PARALLEL_TREES")
+            raw_default = runtime.env.get("RUN_SH_OPT_PARALLEL_TREES") or runtime.config.raw.get(
+                "RUN_SH_OPT_PARALLEL_TREES"
+            )
             enabled = parse_bool(raw_default, True)
     if bool(route.flags.get("sequential")):
         enabled = False
 
     raw_workers = route.flags.get("parallel_trees_max")
     if raw_workers is None:
-        raw_workers = runtime.env.get("RUN_SH_OPT_PARALLEL_TREES_MAX") or runtime.config.raw.get("RUN_SH_OPT_PARALLEL_TREES_MAX")
+        raw_workers = runtime.env.get("RUN_SH_OPT_PARALLEL_TREES_MAX") or runtime.config.raw.get(
+            "RUN_SH_OPT_PARALLEL_TREES_MAX"
+        )
     max_workers = parse_int(str(raw_workers) if raw_workers is not None else None, 4)
     max_workers = max(1, max_workers)
     workers = min(max_workers, project_count)

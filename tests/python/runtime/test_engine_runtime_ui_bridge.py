@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -86,8 +85,14 @@ class EngineRuntimeUiBridgeTests(unittest.TestCase):
         replacement_backend = object()
 
         with (
-            patch("envctl_engine.runtime.engine_runtime_ui_bridge.resolve_ui_backend_with_capabilities", return_value=new_resolution),
-            patch("envctl_engine.runtime.engine_runtime_ui_bridge.build_interactive_backend", return_value=replacement_backend),
+            patch(
+                "envctl_engine.runtime.engine_runtime_ui_bridge.resolve_ui_backend_with_capabilities",
+                return_value=new_resolution,
+            ),
+            patch(
+                "envctl_engine.runtime.engine_runtime_ui_bridge.build_interactive_backend",
+                return_value=replacement_backend,
+            ),
         ):
             resolved = bridge.current_ui_backend(runtime)
 

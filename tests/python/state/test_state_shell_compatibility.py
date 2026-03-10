@@ -21,7 +21,6 @@ class StateShellCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "legacy.state"
             state_path.write_text(
-                "#!/bin/bash\n"
                 "# envctl State File\n"
                 "export TIMESTAMP='20260224_101500'\n"
                 "export TREES_MODE='true'\n"
@@ -76,7 +75,6 @@ class StateShellCompatibilityTests(unittest.TestCase):
             pointer_json.write_text(f"{json_state_path}\n", encoding="utf-8")
 
             shell_state_path.write_text(
-                "#!/bin/bash\n"
                 "# envctl State File\n"
                 "export TIMESTAMP='20260224_101500'\n"
                 "export TREES_MODE='true'\n"
@@ -110,7 +108,6 @@ class StateShellCompatibilityTests(unittest.TestCase):
             state_path = runtime_dir / "states" / "run_legacy.state"
             state_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.write_text(
-                "#!/bin/bash\n"
                 "# envctl State File\n"
                 "export TIMESTAMP='20260224_101500'\n"
                 "export TREES_MODE='false'\n"

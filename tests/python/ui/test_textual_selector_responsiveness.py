@@ -195,7 +195,6 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("escape")
         self.assertIsNone(app.return_value)
 
-
     async def test_keyboard_navigation_recovers_after_focus_drift(self) -> None:
         options = [
             SelectorItem(
@@ -448,6 +447,7 @@ class SelectorDriverTracePolicyTests(unittest.TestCase):
             self.assertIsInstance(probe_tuple, tuple)
             self.assertEqual(len(probe_tuple), 1)
             self.assertEqual(probe_tuple[0](), {})
+
 
 class TextualSelectorFallbackRecoveryTests(unittest.TestCase):
     def test_fallback_values_prefers_selected_then_focused_then_first_visible(self) -> None:

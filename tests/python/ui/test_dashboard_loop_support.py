@@ -112,11 +112,7 @@ class DashboardLoopSupportTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         normalize_tty.assert_not_called()
-        tty_events = [
-            payload
-            for name, payload in runtime.events
-            if name == "startup.debug_tty_group"
-        ]
+        tty_events = [payload for name, payload in runtime.events if name == "startup.debug_tty_group"]
         self.assertTrue(
             any(
                 str(payload.get("group", "")) == "termios"

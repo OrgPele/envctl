@@ -63,8 +63,10 @@ class DebugBundleAnalyzerTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "ui.spinner.policy", "enabled": False, "reason": "non_tty"}) + "\n"
-                + json.dumps({"event": "ui.input.read.begin"}) + "\n",
+                json.dumps({"event": "ui.spinner.policy", "enabled": False, "reason": "non_tty"})
+                + "\n"
+                + json.dumps({"event": "ui.input.read.begin"})
+                + "\n",
                 encoding="utf-8",
             )
             (session_dir / "tty_context.json").write_text("{}", encoding="utf-8")
@@ -102,8 +104,10 @@ class DebugBundleAnalyzerTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "ui.spinner.lifecycle", "state": "start"}) + "\n"
-                + json.dumps({"event": "ui.spinner.lifecycle", "state": "fail"}) + "\n",
+                json.dumps({"event": "ui.spinner.lifecycle", "state": "start"})
+                + "\n"
+                + json.dumps({"event": "ui.spinner.lifecycle", "state": "fail"})
+                + "\n",
                 encoding="utf-8",
             )
             (session_dir / "tty_context.json").write_text("{}", encoding="utf-8")
@@ -198,14 +202,77 @@ class DebugBundleAnalyzerTests(unittest.TestCase):
             session_dir.mkdir(parents=True, exist_ok=True)
 
             (session_dir / "events.debug.jsonl").write_text(
-                json.dumps({"event": "startup.execution", "mode": "sequential", "workers": 1, "projects": ["Main"], "ts_mono_ns": 1_000_000_000}) + "\n"
-                + json.dumps({"event": "startup.phase", "phase": "project_selection", "duration_ms": 120.0, "status": "ok", "ts_mono_ns": 1_100_000_000}) + "\n"
-                + json.dumps({"event": "requirements.timing.summary", "project": "Main", "duration_ms": 90000.0, "ts_mono_ns": 2_000_000_000}) + "\n"
-                + json.dumps({"event": "service.timing.summary", "project": "Main", "duration_ms": 5000.0, "ts_mono_ns": 2_100_000_000}) + "\n"
-                + json.dumps({"event": "service.bootstrap.phase", "project": "Main", "component": "backend", "phase": "dependency_install", "duration_ms": 2500.0, "ts_mono_ns": 2_020_000_000}) + "\n"
-                + json.dumps({"event": "service.attach.phase", "project": "Main", "component": "backend", "phase": "process_launch", "duration_ms": 1800.0, "ts_mono_ns": 2_030_000_000}) + "\n"
-                + json.dumps({"event": "artifacts.write", "duration_ms": 350.0, "ts_mono_ns": 2_120_000_000}) + "\n"
-                + json.dumps({"event": "requirements.adapter", "project": "Main", "service": "postgres", "stage_durations_ms": {"probe": 70000.0}}) + "\n",
+                json.dumps(
+                    {
+                        "event": "startup.execution",
+                        "mode": "sequential",
+                        "workers": 1,
+                        "projects": ["Main"],
+                        "ts_mono_ns": 1_000_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "startup.phase",
+                        "phase": "project_selection",
+                        "duration_ms": 120.0,
+                        "status": "ok",
+                        "ts_mono_ns": 1_100_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "requirements.timing.summary",
+                        "project": "Main",
+                        "duration_ms": 90000.0,
+                        "ts_mono_ns": 2_000_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "service.timing.summary",
+                        "project": "Main",
+                        "duration_ms": 5000.0,
+                        "ts_mono_ns": 2_100_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "service.bootstrap.phase",
+                        "project": "Main",
+                        "component": "backend",
+                        "phase": "dependency_install",
+                        "duration_ms": 2500.0,
+                        "ts_mono_ns": 2_020_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "service.attach.phase",
+                        "project": "Main",
+                        "component": "backend",
+                        "phase": "process_launch",
+                        "duration_ms": 1800.0,
+                        "ts_mono_ns": 2_030_000_000,
+                    }
+                )
+                + "\n"
+                + json.dumps({"event": "artifacts.write", "duration_ms": 350.0, "ts_mono_ns": 2_120_000_000})
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "requirements.adapter",
+                        "project": "Main",
+                        "service": "postgres",
+                        "stage_durations_ms": {"probe": 70000.0},
+                    }
+                )
+                + "\n",
                 encoding="utf-8",
             )
             (session_dir / "tty_context.json").write_text("{}", encoding="utf-8")

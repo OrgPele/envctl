@@ -40,3 +40,17 @@ envctl_engine = [
   "assets/dependency_compose/*/*.yaml",
   "assets/dependency_compose/*/*/*.sql",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["E", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/python/**/*.py" = ["E402", "E501"]
+"scripts/*.py" = ["E402"]
+"python/envctl_engine/state/models.py" = ["F811"]
+"python/envctl_engine/runtime_feature_inventory.py" = ["E501"]
+"python/envctl_engine/debug/debug_bundle_diagnostics.py" = ["E501"]

@@ -49,7 +49,17 @@ class ConfigWizardTextualTests(unittest.TestCase):
             self.assertEqual(app._wizard_type, "advanced")  # noqa: SLF001
             self.assertEqual(
                 app._steps,  # noqa: SLF001
-                ["welcome", "wizard_type", "default_mode", "startup_modes", "main_profile", "trees_profile", "directories", "ports", "review"],
+                [
+                    "welcome",
+                    "wizard_type",
+                    "default_mode",
+                    "startup_modes",
+                    "main_profile",
+                    "trees_profile",
+                    "directories",
+                    "ports",
+                    "review",
+                ],
             )
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:

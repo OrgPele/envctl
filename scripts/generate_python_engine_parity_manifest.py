@@ -12,10 +12,6 @@ def build_manifest(*, generated_at: str) -> dict[str, object]:
     return {
         "generated_at": generated_at,
         "engine_default": "python",
-        "fallback": {
-            "env_var": "ENVCTL_ENGINE_SHELL_FALLBACK",
-            "description": "Set true to force shell engine fallback during migration window",
-        },
         "modes": {
             "main": {
                 "start": "python_complete",
@@ -64,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
         default="contracts/python_engine_parity_manifest.json",
         help="Manifest output path relative to repo root.",
     )
-    parser.add_argument("--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file.")
+    parser.add_argument(
+        "--stdout", action="store_true", help="Print generated JSON to stdout instead of writing to file."
+    )
     parser.add_argument(
         "--timestamp",
         default=None,

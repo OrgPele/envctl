@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import shutil as _shutil
+import sys as _sys
 import uuid
 import threading
-import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
-from envctl_engine.actions.actions_worktree import delete_worktree_path
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 from envctl_engine.debug.doctor_orchestrator import DoctorOrchestrator
@@ -104,7 +103,7 @@ from envctl_engine.runtime.engine_runtime_dashboard_truth import (
 from envctl_engine.runtime.engine_runtime_artifacts import (
     print_summary as runtime_print_summary,
     write_artifacts as runtime_write_artifacts,
-    write_shell_prune_report as runtime_write_shell_prune_report,
+    write_runtime_readiness_report as runtime_write_runtime_readiness_report,
 )
 from envctl_engine.runtime.engine_runtime_commands import (
     command_env as runtime_command_env,
@@ -134,6 +133,7 @@ from envctl_engine.runtime.engine_runtime_hooks import (
     hook_bridge_enabled as runtime_hook_bridge_enabled,
     invoke_envctl_hook as runtime_invoke_envctl_hook,
     requirements_result_from_hook_payload as runtime_requirements_result_from_hook_payload,
+    startup_hook_contract_issue as runtime_startup_hook_contract_issue,
     run_supabase_reinit as runtime_run_supabase_reinit,
     services_from_hook_payload as runtime_services_from_hook_payload,
     supabase_auto_reinit_enabled as runtime_supabase_auto_reinit_enabled,
@@ -196,46 +196,35 @@ from envctl_engine.runtime.engine_runtime_ui_bridge import (
     select_grouped_targets as bridge_select_grouped_targets,
     select_project_targets as bridge_select_project_targets,
 )
-from envctl_engine.runtime.command_resolution import CommandResolutionError, resolve_requirement_start_command, resolve_service_start_command
-from envctl_engine.runtime.command_router import MODE_FALSE_TOKENS, MODE_MAIN_TOKENS, MODE_TREE_TOKENS, Route, list_supported_commands, parse_route
+from envctl_engine.runtime.hook_migration_support import run_hook_migration as runtime_run_hook_migration
+from envctl_engine.runtime.command_router import (
+    MODE_FALSE_TOKENS,
+    MODE_MAIN_TOKENS,
+    MODE_TREE_TOKENS,
+    Route,
+    list_supported_commands,
+)
 from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
 from envctl_engine.shared.ports import PortPlanner
-from envctl_engine.planning import (
-    discover_tree_projects,
-    filter_projects_for_plan,
-    list_planning_files,
-    planning_existing_counts,
-    planning_feature_name,
-    resolve_planning_files,
-    select_projects_for_plan_files,
+from envctl_engine.shared.process_probe import (
+    ProcessProbe,
+    ProbeBackend,
+    PsutilProbeBackend as _PsutilProbeBackend,
+    psutil_available,
 )
-from envctl_engine.shared.process_probe import ProcessProbe, ProbeBackend, PsutilProbeBackend, psutil_available
-from envctl_engine.shared.parsing import parse_float_or_none
 from envctl_engine.shared.process_runner import ProcessRunner
-from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome, RequirementsOrchestrator
-from envctl_engine.requirements.common import build_container_name, container_exists, run_docker, run_result_error
-from envctl_engine.requirements.n8n import start_n8n_container
-from envctl_engine.requirements.postgres import start_postgres_container
-from envctl_engine.requirements.redis import start_redis_container
-from envctl_engine.requirements.supabase import (
-    evaluate_supabase_reliability_contract,
-    read_fingerprint as read_supabase_fingerprint,
-    start_supabase_stack,
-    write_fingerprint as write_supabase_fingerprint,
-)
+from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
 from envctl_engine.shell.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.runtime.runtime_context import RuntimeContext
-from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.shell.shell_prune import ShellPruneContractResult, evaluate_shell_prune_contract
 from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
-from envctl_engine.state import dump_state, load_legacy_shell_state, load_state, load_state_from_pointer
 from envctl_engine.state.repository import RuntimeStateRepository
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder, DebugRecorderConfig
@@ -259,7 +248,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _backend_async_driver_mismatch_error as domain_backend_async_driver_mismatch_error,
     _backend_bootstrap_strict as domain_backend_bootstrap_strict,
     _backend_has_migrations as domain_backend_has_migrations,
-    _backend_migration_retry_env_for_async_driver_mismatch as domain_backend_migration_retry_env_for_async_driver_mismatch,
+    _backend_migration_retry_env_for_async_driver_mismatch as domain_backend_migration_retry_env_for_async_driver_mismatch,  # noqa: E501
     _env_assignment_key as domain_env_assignment_key,
     _override_env_path as domain_override_env_path,
     _prepare_backend_runtime as domain_prepare_backend_runtime,
@@ -276,7 +265,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _sync_backend_env_file as domain_sync_backend_env_file,
 )
 from envctl_engine.planning.worktree_domain import (
-    _apply_setup_worktree_selection as domain_apply_setup_worktree_selection,
     _cleanup_empty_feature_root as domain_cleanup_empty_feature_root,
     _coerce_setup_entries as domain_coerce_setup_entries,
     _create_feature_worktrees as domain_create_feature_worktrees,
@@ -284,27 +272,19 @@ from envctl_engine.planning.worktree_domain import (
     _decode_planning_menu_escape as domain_decode_planning_menu_escape,
     _delete_feature_worktrees as domain_delete_feature_worktrees,
     _feature_project_candidates as domain_feature_project_candidates,
-    _initial_plan_selected_counts as domain_initial_plan_selected_counts,
-    _load_plan_selection_memory as domain_load_plan_selection_memory,
     _move_plan_to_done as domain_move_plan_to_done,
     _next_available_iteration as domain_next_available_iteration,
-    _planning_keep_plan_enabled as domain_planning_keep_plan_enabled,
     _planning_menu_apply_key as domain_planning_menu_apply_key,
     _planning_done_root as domain_planning_done_root,
     _planning_root as domain_planning_root,
     _plan_selection_memory_path as domain_plan_selection_memory_path,
     _preferred_tree_root_for_feature as domain_preferred_tree_root_for_feature,
     _project_sort_key_for_feature as domain_project_sort_key_for_feature,
-    _prompt_planning_selection as domain_prompt_planning_selection,
     _read_planning_menu_escape_sequence as domain_read_planning_menu_escape_sequence,
     _read_planning_menu_key as domain_read_planning_menu_key,
     _render_planning_selection_menu as domain_render_planning_selection_menu,
     _resolve_planning_selection_target as domain_resolve_planning_selection_target,
-    _run_planning_selection_menu as domain_run_planning_selection_menu,
-    _save_plan_selection_memory as domain_save_plan_selection_memory,
-    _select_plan_projects as domain_select_plan_projects,
     _setup_worktree_placeholder_fallback_enabled as domain_setup_worktree_placeholder_fallback_enabled,
-    _sync_plan_worktrees_from_plan_counts as domain_sync_plan_worktrees_from_plan_counts,
     _terminal_size as domain_terminal_size,
     _to_terminal_lines as domain_to_terminal_lines,
     _trees_root_for_worktree as domain_trees_root_for_worktree,
@@ -312,6 +292,11 @@ from envctl_engine.planning.worktree_domain import (
     _worktree_add_failure as domain_worktree_add_failure,
     _setup_worktree_requested as domain_setup_worktree_requested,
 )
+from envctl_engine.planning.worktree_orchestrator import PlanningWorktreeOrchestrator
+
+shutil = _shutil
+sys = _sys
+PsutilProbeBackend = _PsutilProbeBackend
 
 
 @dataclass(slots=True)
@@ -327,15 +312,17 @@ EXPLICIT_MODE_TOKENS = {token.lower() for token in MODE_TREE_TOKENS.union(MODE_M
 class PythonEngineRuntime:
     PARTIAL_COMMANDS: tuple[str, ...] = ()
 
+    _RUNTIME_CONTEXT_ATTR_MAP: dict[str, str] = {
+        "process_runner": "process_runtime",
+        "port_planner": "port_allocator",
+        "state_repository": "state_repository",
+        "terminal_ui": "terminal_ui",
+    }
+
     _coerce_setup_entries = domain_coerce_setup_entries
     _create_single_worktree = domain_create_single_worktree
-    _apply_setup_worktree_selection = domain_apply_setup_worktree_selection
     _preferred_tree_root_for_feature = domain_preferred_tree_root_for_feature
     _trees_root_for_worktree = domain_trees_root_for_worktree
-    _select_plan_projects = domain_select_plan_projects
-    _prompt_planning_selection = domain_prompt_planning_selection
-    _initial_plan_selected_counts = domain_initial_plan_selected_counts
-    _run_planning_selection_menu = domain_run_planning_selection_menu
     _render_planning_selection_menu = domain_render_planning_selection_menu
     _terminal_size = domain_terminal_size
     _truncate_text = staticmethod(domain_truncate_text)
@@ -348,10 +335,6 @@ class PythonEngineRuntime:
     _planning_root = domain_planning_root
     _planning_done_root = domain_planning_done_root
     _plan_selection_memory_path = domain_plan_selection_memory_path
-    _load_plan_selection_memory = domain_load_plan_selection_memory
-    _save_plan_selection_memory = domain_save_plan_selection_memory
-    _planning_keep_plan_enabled = domain_planning_keep_plan_enabled
-    _sync_plan_worktrees_from_plan_counts = domain_sync_plan_worktrees_from_plan_counts
     _create_feature_worktrees = domain_create_feature_worktrees
     _worktree_add_failure = domain_worktree_add_failure
     _setup_worktree_placeholder_fallback_enabled = domain_setup_worktree_placeholder_fallback_enabled
@@ -378,7 +361,9 @@ class PythonEngineRuntime:
     _run_backend_bootstrap_command = domain_run_backend_bootstrap_command
     _run_frontend_bootstrap_command = domain_run_frontend_bootstrap_command
     _run_backend_migration_step = domain_run_backend_migration_step
-    _backend_migration_retry_env_for_async_driver_mismatch = domain_backend_migration_retry_env_for_async_driver_mismatch
+    _backend_migration_retry_env_for_async_driver_mismatch = (
+        domain_backend_migration_retry_env_for_async_driver_mismatch
+    )
     _backend_async_driver_mismatch_error = staticmethod(domain_backend_async_driver_mismatch_error)
     _rewrite_database_url_to_asyncpg = staticmethod(domain_rewrite_database_url_to_asyncpg)
     _read_env_file_safe = staticmethod(domain_read_env_file_safe)
@@ -393,6 +378,15 @@ class PythonEngineRuntime:
     _print_dashboard_tests_row = domain_print_dashboard_tests_row
     _dashboard_status_badge = staticmethod(domain_dashboard_status_badge)
     _dashboard_palette = domain_dashboard_palette
+
+    def __setattr__(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+        context_attr = self._RUNTIME_CONTEXT_ATTR_MAP.get(name)
+        if context_attr is None:
+            return
+        runtime_context = self.__dict__.get("runtime_context")
+        if runtime_context is not None:
+            object.__setattr__(runtime_context, context_attr, value)
 
     def __init__(self, config: EngineConfig, *, env: dict[str, str] | None = None) -> None:
         self.config = config
@@ -463,6 +457,7 @@ class PythonEngineRuntime:
             terminal_ui=self.terminal_ui,
             emit=self._emit,
         )
+        self.planning_worktree_orchestrator = PlanningWorktreeOrchestrator(self)
         self.startup_orchestrator = StartupOrchestrator(self)
         self.resume_orchestrator = ResumeOrchestrator(self)
         self.doctor_orchestrator = DoctorOrchestrator(self)
@@ -485,6 +480,67 @@ class PythonEngineRuntime:
                 reason=self.ui_backend_resolution.reason,
                 backend=self.ui_backend_resolution.backend,
             )
+
+    def _apply_setup_worktree_selection(
+        self, route: Route, project_contexts: list[ProjectContext]
+    ) -> list[ProjectContext]:
+        return self.planning_worktree_orchestrator.apply_setup_worktree_selection(route, project_contexts)
+
+    def _select_plan_projects(self, route: Route, project_contexts: list[ProjectContext]) -> list[ProjectContext]:
+        return self.planning_worktree_orchestrator.select_plan_projects(route, project_contexts)
+
+    def _prompt_planning_selection(
+        self,
+        planning_files: list[str],
+        raw_projects: list[tuple[str, Path]],
+    ) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.prompt_planning_selection(planning_files, raw_projects)
+
+    def _initial_plan_selected_counts(
+        self,
+        *,
+        planning_files: list[str],
+        existing_counts: dict[str, int],
+    ) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.initial_plan_selected_counts(
+            planning_files=planning_files,
+            existing_counts=existing_counts,
+        )
+
+    def _run_planning_selection_menu(
+        self,
+        *,
+        planning_files: list[str],
+        selected_counts: dict[str, int],
+        existing_counts: dict[str, int],
+    ) -> dict[str, int] | None:
+        return self.planning_worktree_orchestrator.run_planning_selection_menu(
+            planning_files=planning_files,
+            selected_counts=selected_counts,
+            existing_counts=existing_counts,
+        )
+
+    def _load_plan_selection_memory(self) -> dict[str, int]:
+        return self.planning_worktree_orchestrator.load_plan_selection_memory()
+
+    def _save_plan_selection_memory(self, selected_counts: dict[str, int]) -> None:
+        self.planning_worktree_orchestrator.save_plan_selection_memory(selected_counts)
+
+    def _planning_keep_plan_enabled(self, route: Route) -> bool:
+        return self.planning_worktree_orchestrator.planning_keep_plan_enabled(route)
+
+    def _sync_plan_worktrees_from_plan_counts(
+        self,
+        *,
+        plan_counts: dict[str, int],
+        raw_projects: list[tuple[str, Path]],
+        keep_plan: bool,
+    ) -> tuple[list[tuple[str, Path]], str | None]:
+        return self.planning_worktree_orchestrator.sync_plan_worktrees_from_plan_counts(
+            plan_counts=plan_counts,
+            raw_projects=raw_projects,
+            keep_plan=keep_plan,
+        )
 
     def _ensure_legacy_lock_view(self) -> None:
         scoped_locks = self.runtime_root / "locks"
@@ -532,7 +588,6 @@ class PythonEngineRuntime:
 
     def _start(self, route: Route) -> int:
         return self.startup_orchestrator.execute(route)
-
 
     def _effective_start_mode(self, route: Route) -> str:
         return runtime_effective_start_mode(self, route)
@@ -652,13 +707,13 @@ class PythonEngineRuntime:
     def _write_artifacts(self, state: RunState, contexts: list[ProjectContext], *, errors: list[str]) -> None:
         runtime_write_artifacts(self, state, contexts, errors=errors)
 
-    def _write_shell_prune_report(
+    def _write_runtime_readiness_report(
         self,
         *,
         run_dir: Path | None = None,
-        contract_result: ShellPruneContractResult | None = None,
+        readiness_result: object | None = None,
     ) -> None:
-        runtime_write_shell_prune_report(self, run_dir=run_dir, contract_result=contract_result)
+        runtime_write_runtime_readiness_report(self, run_dir=run_dir, readiness_result=readiness_result)
 
     def _try_load_existing_state(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
         return runtime_try_load_existing_state(self, mode=mode, strict_mode_match=strict_mode_match)
@@ -668,6 +723,7 @@ class PythonEngineRuntime:
 
     def _print_summary(self, state: RunState, contexts: list[ProjectContext]) -> None:
         runtime_print_summary(self, state, contexts)
+
     def _print_help(self) -> None:
         print("envctl Python runtime")
         print("Commands: " + ", ".join(list_supported_commands()))
@@ -676,6 +732,9 @@ class PythonEngineRuntime:
 
     def _config(self, route: Route) -> int:
         return run_config_command(self, route)
+
+    def _migrate_hooks(self, route: Route) -> int:
+        return runtime_run_hook_migration(self, route)
 
     def _doctor(self) -> int:
         return self.doctor_orchestrator.execute()
@@ -709,58 +768,19 @@ class PythonEngineRuntime:
     def _evaluate_shipability(
         self,
         *,
-        shell_budget: int | None,
-        shell_partial_keep_budget: int | None,
-        shell_intentional_keep_budget: int | None,
-        shell_phase: str | None,
-        require_shell_budget_complete: bool,
+        enforce_runtime_readiness_contract: bool = True,
     ) -> object:
         return evaluate_shipability(
             repo_root=self.config.base_dir,
             check_tests=self._doctor_should_check_tests(),
-            shell_prune_max_unmigrated=shell_budget,
-            shell_prune_max_partial_keep=shell_partial_keep_budget,
-            shell_prune_max_intentional_keep=shell_intentional_keep_budget,
-            shell_prune_phase=shell_phase,
-            require_shell_budget_complete=require_shell_budget_complete,
+            enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
         )
 
     def _doctor_should_check_tests(self) -> bool:
         return self.doctor_orchestrator.doctor_should_check_tests()
 
-    def _shell_prune_max_unmigrated_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_unmigrated_budget()
-
-    def _shell_prune_max_partial_keep_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_partial_keep_budget()
-
-    def _shell_prune_max_intentional_keep_budget(self) -> int | None:
-        return self.doctor_orchestrator.shell_prune_max_intentional_keep_budget()
-
-    def _shell_prune_phase(self) -> str | None:
-        return self.doctor_orchestrator.shell_prune_phase()
-
-    def _shell_prune_budget_profile(self) -> tuple[int | None, int | None, int | None, str | None]:
-        return self.doctor_orchestrator.shell_prune_budget_profile()
-
-    def _shell_prune_budget_values_omitted(self) -> bool:
-        return self.doctor_orchestrator.shell_prune_budget_values_omitted()
-
-    def _is_shell_budget_profile_complete(
-        self,
-        *,
-        shell_budget: int | None,
-        shell_partial_keep_budget: int | None,
-        shell_intentional_keep_budget: int | None,
-    ) -> bool:
-        return self.doctor_orchestrator.is_shell_budget_profile_complete(
-            shell_budget=shell_budget,
-            shell_partial_keep_budget=shell_partial_keep_budget,
-            shell_intentional_keep_budget=shell_intentional_keep_budget,
-        )
-
-    def _enforce_runtime_shell_budget_profile(self, *, scope: str, strict_required: bool | None = None) -> bool:
-        return self.doctor_orchestrator.enforce_runtime_shell_budget_profile(
+    def _enforce_runtime_readiness_contract(self, *, scope: str, strict_required: bool | None = None) -> bool:
+        return self.doctor_orchestrator.enforce_runtime_readiness_contract(
             scope=scope,
             strict_required=strict_required,
         )
@@ -853,12 +873,14 @@ class PythonEngineRuntime:
     def _restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
         """Restore terminal state after raw input handling."""
         from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+
         RuntimeTerminalUI.restore_terminal_after_input(fd=fd, original_state=original_state)
 
     @staticmethod
     def _can_interactive_tty() -> bool:
         """Check if interactive TTY is available."""
         from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+
         return RuntimeTerminalUI._can_interactive_tty()
 
     def _build_process_probe_backend(self) -> ProbeBackend:
@@ -897,7 +919,6 @@ class PythonEngineRuntime:
 
     def _state_lookup_strict_mode_match(self, route: Route) -> bool:
         return self._route_has_explicit_mode(route)
-
 
     def _state_action(self, route: Route) -> int:
         return self.state_action_orchestrator.execute(route)
@@ -1093,10 +1114,7 @@ class PythonEngineRuntime:
         return ActionCommandOrchestrator.action_extra_env(route)
 
     def _unsupported_command(self, command: str) -> int:
-        print(
-            "Command is not yet fully implemented in the Python runtime: "
-            f"{command}."
-        )
+        print(f"Command is not yet fully implemented in the Python runtime: {command}.")
         return 1
 
     def _stop(self, route: Route) -> int:
@@ -1399,6 +1417,9 @@ class PythonEngineRuntime:
 
     def _invoke_envctl_hook(self, *, context: ProjectContext, hook_name: str) -> HookInvocationResult:
         return runtime_invoke_envctl_hook(self, context=context, hook_name=hook_name)
+
+    def _startup_hook_contract_issue(self) -> str | None:
+        return runtime_startup_hook_contract_issue(self)
 
     def _requirements_result_from_hook_payload(
         self,

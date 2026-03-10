@@ -171,10 +171,7 @@ def state_to_dict(state: RunState) -> dict[str, object]:
         },
         "requirements": {
             project: {
-                "components": {
-                    dependency_id: req.component(dependency_id)
-                    for dependency_id in dependency_ids()
-                },
+                "components": {dependency_id: req.component(dependency_id) for dependency_id in dependency_ids()},
                 "db": req.db,
                 "redis": req.redis,
                 "supabase": req.supabase,
@@ -225,7 +222,6 @@ def _validate_state_path(state_path: Path, *, allowed_root: str | None) -> None:
         raise StateValidationError("state path is outside allowed_root")
 
 
-
 def _parse_listener_pids(value: object) -> list[int] | None:
     if not isinstance(value, list):
         return None
@@ -246,8 +242,6 @@ def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         return value[1:-1]
     return value
-
-
 
 
 def _parse_shell_state_payload(raw: str) -> tuple[dict[str, str], dict[str, list[str]], dict[str, dict[str, str]]]:

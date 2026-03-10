@@ -117,9 +117,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertNotIn("Executed test action", out.getvalue())
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
             self.assertTrue(any("Executing configured test command" in message for message in status_messages))
             self.assertTrue(any("Test command finished" in message for message in status_messages))
@@ -194,9 +192,7 @@ class ActionsParityTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
             self.assertTrue(any("1/3 tests complete" in message for message in status_messages))
             self.assertTrue(any("3/3 tests complete" in message for message in status_messages))
@@ -401,7 +397,12 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(route)
                 self.assertEqual(code, 0, msg=command)
 
-            self.assertTrue(any(("envctl_engine.actions.actions_cli" in call[0]) or ("envctl_engine.actions.actions_cli" in call[0]) for call in fake_runner.run_calls))
+            self.assertTrue(
+                any(
+                    ("envctl_engine.actions.actions_cli" in call[0]) or ("envctl_engine.actions.actions_cli" in call[0])
+                    for call in fake_runner.run_calls
+                )
+            )
 
     def test_interactive_review_prints_action_output_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -439,7 +440,9 @@ class ActionsParityTests(unittest.TestCase):
             existing_line = "PR already exists: https://github.com/acme/supportopia/pull/42"
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
-                env={"ENVCTL_ACTION_PR_CMD": "sh -lc 'echo PR already exists: https://github.com/acme/supportopia/pull/42'"},
+                env={
+                    "ENVCTL_ACTION_PR_CMD": "sh -lc 'echo PR already exists: https://github.com/acme/supportopia/pull/42'"
+                },
             )
             fake_runner = _FakeRunner(returncode=0, stdout=f"{existing_line}\n")
             engine.process_runner = fake_runner  # type: ignore[assignment]
@@ -454,9 +457,7 @@ class ActionsParityTests(unittest.TestCase):
             rendered = out.getvalue()
             self.assertIn(existing_line, rendered)
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
             self.assertTrue(any(existing_line in message for message in status_messages), msg=status_messages)
 
@@ -836,9 +837,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(
                 any(
-                    "-m" in call[0]
-                    and "envctl_engine.test_output.unittest_runner" in call[0]
-                    and "discover" in call[0]
+                    "-m" in call[0] and "envctl_engine.test_output.unittest_runner" in call[0] and "discover" in call[0]
                     for call in fake_runner.run_calls
                 ),
                 msg=fake_runner.run_calls,
@@ -1265,7 +1264,10 @@ class ActionsParityTests(unittest.TestCase):
                     "envctl_engine.shared.node_tooling.shutil.which",
                     side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
                 ),
-                patch("envctl_engine.actions.action_command_orchestrator._rich_progress_available", return_value=(False, "forced_unavailable")),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                    return_value=(False, "forced_unavailable"),
+                ),
             ):
                 route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 route.flags = {**route.flags, "interactive_command": True, "batch": True}
@@ -1273,12 +1275,13 @@ class ActionsParityTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
             self.assertTrue(
-                any(message.startswith("Tests progress: running ") and "queued " in message for message in status_messages),
+                any(
+                    message.startswith("Tests progress: running ") and "queued " in message
+                    for message in status_messages
+                ),
                 msg=status_messages,
             )
             self.assertTrue(
@@ -1346,10 +1349,21 @@ class ActionsParityTests(unittest.TestCase):
                     "envctl_engine.shared.node_tooling.shutil.which",
                     side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
                 ),
-                patch("envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()),
-                patch("envctl_engine.actions.action_command_orchestrator._rich_progress_available", return_value=(True, "")),
-                patch("envctl_engine.actions.action_command_orchestrator.sys.stderr", new=SimpleNamespace(isatty=lambda: True)),
-                patch("envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup", side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs)),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                    return_value=(True, ""),
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.sys.stderr",
+                    new=SimpleNamespace(isatty=lambda: True),
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup",
+                    side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs),
+                ),
             ):
                 route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 route.flags = {**route.flags, "interactive_command": True, "batch": True}
@@ -1361,11 +1375,11 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(any(event.startswith("running:") for event in suite_events), msg=suite_events)
             self.assertTrue(any(event.startswith("done:") for event in suite_events), msg=suite_events)
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
-            self.assertFalse(any(message.startswith("Tests progress: running ") for message in status_messages), msg=status_messages)
+            self.assertFalse(
+                any(message.startswith("Tests progress: running ") for message in status_messages), msg=status_messages
+            )
 
     def test_test_action_suite_spinner_group_overrides_non_tty_policy_reason(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1427,9 +1441,17 @@ class ActionsParityTests(unittest.TestCase):
                     "envctl_engine.shared.node_tooling.shutil.which",
                     side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
                 ),
-                patch("envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()),
-                patch("envctl_engine.actions.action_command_orchestrator._rich_progress_available", return_value=(True, "")),
-                patch("envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup", side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs)),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                    return_value=(True, ""),
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup",
+                    side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs),
+                ),
             ):
                 route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 route.flags = {**route.flags, "interactive_command": True, "batch": True}
@@ -1652,16 +1674,17 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(mode_events)
             self.assertEqual(mode_events[-1].get("mode"), "parallel")
             status_messages = [
-                str(event.get("message", ""))
-                for event in engine.events
-                if event.get("event") == "ui.status"
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
             spinner_events = [
                 event
                 for event in engine.events
                 if event.get("event") == "ui.spinner.lifecycle" and event.get("component") == "action.test.parallel"
             ]
-            self.assertTrue(any(message.startswith("Tests progress: running ") for message in status_messages) or bool(spinner_events))
+            self.assertTrue(
+                any(message.startswith("Tests progress: running ") for message in status_messages)
+                or bool(spinner_events)
+            )
             self.assertFalse(any("Running bun test script" in message for message in status_messages))
             self.assertFalse(any("Running pytest suite" in message for message in status_messages))
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-from pathlib import Path
 from typing import Any
 
 from envctl_engine.config import discover_local_config_state
@@ -65,7 +64,9 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
     if mode == "trees":
         startup = getattr(runtime, "startup_orchestrator", None)
         if startup is not None:
-            preselected = set(_tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects))
+            preselected = set(
+                _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
+            )
         state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
         if state is not None:
             running = set(_state_project_names_impl(runtime=runtime, state=state))
@@ -107,7 +108,9 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         "config_file": str(local_state.config_file_path),
         "config_exists": local_state.config_file_exists,
         "config_source": local_state.config_source,
-        "legacy_source_path": str(local_state.legacy_source_path) if local_state.legacy_source_path is not None else None,
+        "legacy_source_path": str(local_state.legacy_source_path)
+        if local_state.legacy_source_path is not None
+        else None,
         "effective": managed_values_to_payload(values),
     }
     if json_output:
@@ -199,12 +202,16 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
                         {
                             "required": False,
                             "reason": "explicit_plan_selectors",
-                            "selected_projects": [project.name for project in projects if project.name in selected_names],
+                            "selected_projects": [
+                                project.name for project in projects if project.name in selected_names
+                            ],
                             "planning_files": list(plan_counts.keys()),
                         }
                     )
                 except ValueError as exc:
-                    selection_info.update({"required": True, "reason": f"invalid_plan_selection: {exc}", "selected_projects": []})
+                    selection_info.update(
+                        {"required": True, "reason": f"invalid_plan_selection: {exc}", "selected_projects": []}
+                    )
             else:
                 filtered = filter_projects_for_plan(
                     [(project.name, project.root) for project in projects],
@@ -238,14 +245,20 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
             )
         else:
             selection_info.update({"required": True, "reason": "interactive_plan_selector", "selected_projects": []})
-    elif runtime_mode == "trees" and not getattr(route, "projects", None) and not getattr(route, "passthrough_args", None):
+    elif (
+        runtime_mode == "trees"
+        and not getattr(route, "projects", None)
+        and not getattr(route, "passthrough_args", None)
+    ):
         preselected = _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
         selection_info.update({"required": True, "preselected_projects": preselected})
         if batch or not can_tty:
             selection_info.update(
                 {
                     "reason": "headless_tree_start_requires_explicit_selection",
-                    "message": "Run 'envctl --list-trees --json' and retry with '--project <tree>' or '--plan <selector>'.",
+                    "message": (
+                        "Run 'envctl --list-trees --json' and retry with '--project <tree>' or '--plan <selector>'."
+                    ),
                     "selected_projects": [],
                 }
             )
@@ -273,8 +286,12 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         state = load_auto_resume_state(runtime, runtime_mode)
         if state is not None:
             auto_resume["existing_state_found"] = True
-            selected_contexts = [project for project in projects if project.name in set(selection_info["selected_projects"])]
-            exact_match = startup._state_matches_selected_projects(runtime=runtime, state=state, contexts=selected_contexts)
+            selected_contexts = [
+                project for project in projects if project.name in set(selection_info["selected_projects"])
+            ]
+            exact_match = startup._state_matches_selected_projects(
+                runtime=runtime, state=state, contexts=selected_contexts
+            )
             subset_match = (
                 not exact_match
                 and runtime_mode == "trees"
@@ -301,9 +318,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     enabled_dependencies = []
     if startup_enabled:
         enabled_dependencies = [
-            dependency_id
-            for dependency_id in sorted(profile.dependencies)
-            if profile.dependency_enabled(dependency_id)
+            dependency_id for dependency_id in sorted(profile.dependencies) if profile.dependency_enabled(dependency_id)
         ]
     parallel_trees_enabled, parallel_trees_workers = tree_parallel_startup_config(
         runtime,

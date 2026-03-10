@@ -81,14 +81,20 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
                 process_runner=object(),
                 _emit=lambda event, **payload: events.append((event, payload)),
                 _trees_root_for_worktree=lambda _path: repo_root / "trees",
-                _blast_worktree_before_delete=lambda **kwargs: cleanup_calls.append(
-                    (str(kwargs["project_name"]), Path(kwargs["project_root"]), str(kwargs["source_command"]))
-                ) or ["cleanup warning"],
+                _blast_worktree_before_delete=lambda **kwargs: (
+                    cleanup_calls.append(
+                        (str(kwargs["project_name"]), Path(kwargs["project_root"]), str(kwargs["source_command"]))
+                    )
+                    or ["cleanup warning"]
+                ),
             )
             orchestrator = _OrchestratorStub(runtime, [target])
 
             with (
-                patch("envctl_engine.actions.action_worktree_runner.resolve_spinner_policy", return_value=SimpleNamespace(enabled=True)),
+                patch(
+                    "envctl_engine.actions.action_worktree_runner.resolve_spinner_policy",
+                    return_value=SimpleNamespace(enabled=True),
+                ),
                 patch("envctl_engine.actions.action_worktree_runner.emit_spinner_policy"),
                 patch("envctl_engine.actions.action_worktree_runner.use_spinner_policy"),
                 patch("envctl_engine.actions.action_worktree_runner.spinner", return_value=_SpinnerContext(spinner)),
@@ -126,10 +132,15 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             orchestrator = _OrchestratorStub(runtime, [target])
 
             with (
-                patch("envctl_engine.actions.action_worktree_runner.resolve_spinner_policy", return_value=SimpleNamespace(enabled=False)),
+                patch(
+                    "envctl_engine.actions.action_worktree_runner.resolve_spinner_policy",
+                    return_value=SimpleNamespace(enabled=False),
+                ),
                 patch("envctl_engine.actions.action_worktree_runner.emit_spinner_policy"),
                 patch("envctl_engine.actions.action_worktree_runner.use_spinner_policy"),
-                patch("envctl_engine.actions.action_worktree_runner.spinner", return_value=_SpinnerContext(_SpinnerStub())),
+                patch(
+                    "envctl_engine.actions.action_worktree_runner.spinner", return_value=_SpinnerContext(_SpinnerStub())
+                ),
                 patch(
                     "envctl_engine.actions.action_worktree_runner.delete_worktree_path",
                     return_value=SimpleNamespace(success=True, message="dry-run delete"),

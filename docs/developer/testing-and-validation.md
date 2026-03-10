@@ -7,8 +7,7 @@ This guide explains how the repository validates runtime behavior and what level
 The project validates behavior across several layers:
 
 - Python unit and integration tests under `tests/python/`
-- BATS end-to-end tests under `tests/bats/`
-- release/cutover gate scripts under `scripts/`
+- runtime/readiness gate scripts under `scripts/`
 - documentation/reference parity checks
 
 Each layer catches different classes of failures.
@@ -27,16 +26,16 @@ Python tests are the fastest way to validate:
 
 Use these when you are changing internal Python behavior and want tight feedback loops.
 
-## BATS Tests
+## Python Integration Tests
 
-BATS tests matter when behavior is externally visible through the CLI contract.
+Python integration and end-to-end tests matter when behavior is externally visible through the CLI contract.
 
-Typical reasons to add or update BATS coverage:
+Typical reasons to add or update this coverage:
 
 - command routing changes
 - lifecycle command behavior changes
 - parity-sensitive startup behavior
-- shell compatibility / explicit fallback behavior
+- launcher and installed CLI behavior
 - reference/doc surface expectations that are enforced externally
 
 ## Release and Governance Scripts
@@ -46,7 +45,7 @@ Scripts in `scripts/` act as validation tools and governance checks.
 Examples:
 
 - parity manifest generation and audit
-- shell ownership ledger generation/audit
+- runtime feature matrix and gap report generation
 - shipability gate checks
 - debug bundle analysis helpers
 
@@ -81,7 +80,7 @@ Expected:
 Expected:
 
 - targeted Python tests
-- BATS coverage if externally visible
+- Python integration coverage if externally visible
 - `explain-startup` or doctor validation if behavior is operator-visible
 - docs update
 
@@ -105,8 +104,7 @@ Expected:
 
 Expected:
 
-- explicit fallback validation if still supported
-- shell prune / release gate validation
+- runtime readiness / release gate validation
 - migration docs update if policy meaning changed
 
 ## Validation Commands
@@ -114,7 +112,6 @@ Expected:
 Common commands:
 
 ```bash
-bats tests/bats/*.bats
 python3.12 -m venv .venv
 .venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
 ```
@@ -152,4 +149,4 @@ For doc-heavy changes, a repository-wide markdown link check is worth running.
 - changing user-visible flags without updating reference docs
 - changing artifact semantics without updating doctor/debug expectations
 - assuming unit tests are enough for CLI-visible behavior
-- forgetting that shell fallback and cutover governance still have test implications
+- forgetting that runtime readiness and release-gate behavior still have test implications

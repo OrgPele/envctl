@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import importlib
-import io
 import os
 from types import SimpleNamespace
 import unittest
@@ -18,6 +17,7 @@ if str(PYTHON_ROOT) not in sys.path:
 
 from envctl_engine.ui.textual.screens import selector
 from envctl_engine.ui import prompt_toolkit_cursor_menu
+
 prompt_toolkit_impl = importlib.import_module("envctl_engine.ui.textual.screens.selector.prompt_toolkit_impl")
 
 
@@ -161,27 +161,32 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertEqual(actions_by_key["escape"], "cancel")
 
     def test_prompt_toolkit_selector_disabled_for_build_only(self) -> None:
-        with patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True), patch(
-            "envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True
+        with (
+            patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True),
+            patch("envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True),
         ):
             self.assertFalse(selector._prompt_toolkit_selector_enabled(build_only=True))  # noqa: SLF001
 
     def test_prompt_toolkit_selector_respects_forced_textual_backend(self) -> None:
-        with patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_BACKEND": "textual"}, clear=False), patch(
-            "envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True
-        ), patch("envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True):
+        with (
+            patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_BACKEND": "textual"}, clear=False),
+            patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True),
+            patch("envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True),
+        ):
             self.assertFalse(selector._prompt_toolkit_selector_enabled(build_only=False))  # noqa: SLF001
 
     def test_prompt_toolkit_selector_defaults_on_when_available(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "ENVCTL_UI_SELECTOR_BACKEND": "",
-                "ENVCTL_UI_PROMPT_TOOLKIT": "",
-            },
-            clear=False,
-        ), patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True), patch(
-            "envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "ENVCTL_UI_SELECTOR_BACKEND": "",
+                    "ENVCTL_UI_PROMPT_TOOLKIT": "",
+                },
+                clear=False,
+            ),
+            patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True),
+            patch("envctl_engine.ui.textual.screens.selector.prompt_toolkit_available", return_value=True),
         ):
             self.assertTrue(selector._prompt_toolkit_selector_enabled(build_only=False))  # noqa: SLF001
 
@@ -197,7 +202,9 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         ]
         with (
             patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_IMPL": ""}, clear=False),
-            patch("envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]) as textual_selector_run,
+            patch(
+                "envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]
+            ) as textual_selector_run,
             patch(
                 "envctl_engine.ui.textual.screens.selector.run_prompt_toolkit_cursor_menu",
                 return_value=SimpleNamespace(values=["alpha"], cancelled=False),
@@ -227,7 +234,7 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         ]
         with (
             patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_IMPL": ""}, clear=False),
-            patch("envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]) as textual_selector_run,
+            patch("envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]),
         ):
             values = selector._run_selector_with_impl(  # noqa: SLF001
                 prompt="Restart",
@@ -349,7 +356,9 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         ]
         with (
             patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_IMPL": "legacy"}, clear=False),
-            patch("envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]) as textual_selector_run,
+            patch(
+                "envctl_engine.ui.textual.screens.selector._run_textual_selector", return_value=["alpha"]
+            ) as textual_selector_run,
             patch("envctl_engine.ui.textual.screens.selector.run_prompt_toolkit_cursor_menu") as planning_menu_run,
         ):
             values = selector._run_selector_with_impl(  # noqa: SLF001

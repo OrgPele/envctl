@@ -15,7 +15,7 @@ from envctl_engine.ui.selection_support import (
     project_names_from_state,
     services_from_selection,
 )
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -198,6 +198,7 @@ class LifecycleCleanupOrchestrator:
 
     def _services_from_selection(self, selection: TargetSelection, state: RunState) -> set[str]:
         return services_from_selection(self.runtime, selection, state)
+
     def clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> None:
         rt = self.runtime
         if command == "stop-all":
@@ -255,11 +256,14 @@ class LifecycleCleanupOrchestrator:
             context={"component": "lifecycle_cleanup", "command": route.command, "op_id": op_id},
         )
 
-        with use_spinner_policy(spinner_policy), spinner(
-            message,
-            enabled=spinner_policy.enabled,
-            start_immediately=False,
-        ) as active_spinner:
+        with (
+            use_spinner_policy(spinner_policy),
+            spinner(
+                message,
+                enabled=spinner_policy.enabled,
+                start_immediately=False,
+            ) as active_spinner,
+        ):
             if spinner_policy.enabled:
                 active_spinner.start()
                 rt._emit(  # type: ignore[attr-defined]
@@ -577,8 +581,6 @@ class LifecycleCleanupOrchestrator:
         orchestrator_tokens = (
             "envctl_engine.runtime.cli",
             "envctl_engine.runtime.cli",
-            "/lib/engine/main.sh",
-            " lib/engine/main.sh",
             "/bin/envctl",
             " bin/envctl",
         )
@@ -621,7 +623,7 @@ class LifecycleCleanupOrchestrator:
             if not self.blast_all_matches_container(image=image, name=name):
                 continue
             is_main_container = self.blast_all_is_main_container(name)
-            remove_container_storage = (remove_main_storage if is_main_container else (not keep_worktree_storage))
+            remove_container_storage = remove_main_storage if is_main_container else (not keep_worktree_storage)
             print(f"  Nuking container: {name} ({image})")
             if remove_container_storage:
                 self.collect_container_volume_candidates(cid, volume_candidates)
@@ -645,10 +647,7 @@ class LifecycleCleanupOrchestrator:
     def blast_all_matches_container(*, image: str, name: str) -> bool:
         image_l = image.lower()
         name_l = name.lower()
-        return any(
-            token in name_l or token in image_l
-            for token in ("supabase", "n8n", "redis", "postgres")
-        )
+        return any(token in name_l or token in image_l for token in ("supabase", "n8n", "redis", "postgres"))
 
     def blast_all_volume_policy(self, route: Route | None) -> tuple[bool, bool]:
         rt = self.runtime
@@ -828,8 +827,9 @@ class LifecycleCleanupOrchestrator:
     @staticmethod
     def _state_repository(runtime: object) -> _StateRepositoryProtocol:
         runtime_context = getattr(runtime, "runtime_context", None)
-        fallback = getattr(runtime_context, "state_repository", None)
-        candidate = getattr(runtime, "state_repository", fallback)
+        candidate = getattr(runtime_context, "state_repository", None)
+        if candidate is None:
+            candidate = getattr(runtime, "state_repository", None)
         if candidate is None:
             raise RuntimeError("state repository dependency is not configured")
         return cast(_StateRepositoryProtocol, candidate)
@@ -837,8 +837,9 @@ class LifecycleCleanupOrchestrator:
     @staticmethod
     def _process_runtime(runtime: object) -> _ProcessRuntimeProtocol:
         runtime_context = getattr(runtime, "runtime_context", None)
-        fallback = getattr(runtime_context, "process_runtime", None)
-        candidate = getattr(runtime, "process_runner", fallback)
+        candidate = getattr(runtime_context, "process_runtime", None)
+        if candidate is None:
+            candidate = getattr(runtime, "process_runner", None)
         if candidate is None:
             raise RuntimeError("process runtime dependency is not configured")
         return cast(_ProcessRuntimeProtocol, candidate)

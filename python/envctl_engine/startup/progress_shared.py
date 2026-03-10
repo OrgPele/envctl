@@ -22,7 +22,9 @@ class BaseProjectSpinnerGroup:
         env: dict[str, str] | None = None,
     ) -> None:
         self._projects = [str(project).strip() for project in projects if str(project).strip()]
-        self._enabled = bool(enabled) and bool(getattr(policy, "enabled", False)) and str(getattr(policy, "backend", "")) == "rich"
+        self._enabled = (
+            bool(enabled) and bool(getattr(policy, "enabled", False)) and str(getattr(policy, "backend", "")) == "rich"
+        )
         self._style = str(getattr(policy, "style", "dots") or "dots")
         self._emit = emit if callable(emit) else None
         self._component = component

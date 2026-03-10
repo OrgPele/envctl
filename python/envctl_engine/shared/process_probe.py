@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import re
-from typing import Callable, Protocol
+from dataclasses import dataclass
 import importlib
 import importlib.util
+import re
 import time
+from typing import Callable, Protocol
 
 
 class ProbeBackend(Protocol):
@@ -152,12 +153,10 @@ class PsutilProbeBackend:
         return False
 
 
-from dataclasses import dataclass
-
-
 @dataclass
 class ProbeRecord:
     """Normalized probe record with backend, pid, listener_ports, and ownership info."""
+
     backend: str
     pid: int
     listener_ports: set[int]
@@ -181,6 +180,7 @@ class ProcessProbe:
         emit: Callable[..., None],
         fallback_enabled: bool = False,
         rebind_stale: Callable[[object, int | None], bool],
+        debug_poststart_truth_group: str = "",
     ) -> str:
         pid = getattr(service, "pid", None)
         if not isinstance(pid, int) or pid <= 0:

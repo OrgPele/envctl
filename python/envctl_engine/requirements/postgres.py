@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from envctl_engine.shared.protocols import ProcessRuntime
+
 from .adapter_base import (
     ContainerLifecycleTemplate,
     bind_safe_cleanup_enabled,
@@ -24,13 +26,18 @@ from .common import (
 )
 
 
-def start_postgres_with_retry(start, reserve_next, port: int, max_retries: int = 3) -> RetryResult:
+def start_postgres_with_retry(
+    start,
+    reserve_next,
+    port: int,
+    max_retries: int = 3,  # noqa: ANN001
+) -> RetryResult:
     return run_with_retry(initial_port=port, start=start, reserve_next=reserve_next, max_retries=max_retries)
 
 
 def start_postgres_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     project_name: str,
     port: int,
@@ -69,13 +76,15 @@ def start_postgres_container(
 
     bind_cleanup = None
     if bind_safe_cleanup_enabled(env, service_name="postgres"):
-        bind_cleanup = lambda bound_port: cleanup_envctl_owned_port_containers(
-            process_runner=process_runner,
-            project_root=project_root,
-            env=env,
-            port=bound_port,
-            allowed_prefixes=("envctl-postgres-",),
-        )
+
+        def bind_cleanup(bound_port: int) -> None:
+            cleanup_envctl_owned_port_containers(
+                process_runner=process_runner,
+                project_root=project_root,
+                env=env,
+                port=bound_port,
+                allowed_prefixes=("envctl-postgres-",),
+            )
 
     lifecycle = ContainerLifecycleTemplate(
         service_name="postgres",
@@ -137,7 +146,7 @@ def start_postgres_container(
 
 def _create_postgres_container(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     project_root: Path,
     container_name: str,
     port: int,
@@ -183,7 +192,7 @@ def _create_postgres_container(
 
 def _probe_postgres_readiness(
     *,
-    process_runner,
+    process_runner: ProcessRuntime,
     container_name: str,
     project_root: Path,
     env: Mapping[str, str] | None,

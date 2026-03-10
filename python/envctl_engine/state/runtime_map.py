@@ -54,16 +54,19 @@ def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dic
         projection[project] = {
             "backend_port": backend_port,
             "frontend_port": frontend_port,
-            "backend_url": (
-                f"http://{host}:{backend_port}" if backend_port is not None and backend_ready else None
-            ),
+            "backend_url": (f"http://{host}:{backend_port}" if backend_port is not None and backend_ready else None),
             "frontend_url": (
                 f"http://{host}:{frontend_port}" if frontend_port is not None and frontend_ready else None
             ),
-            "backend_status": getattr(backend_service, "status", "unknown") if backend_service is not None else "unknown",
-            "frontend_status": getattr(frontend_service, "status", "unknown") if frontend_service is not None else "unknown",
+            "backend_status": getattr(backend_service, "status", "unknown")
+            if backend_service is not None
+            else "unknown",
+            "frontend_status": getattr(frontend_service, "status", "unknown")
+            if frontend_service is not None
+            else "unknown",
         }
     return projection
+
 
 def build_runtime_map_without_projection(state: RunState) -> dict[str, object]:
     projects: dict[str, dict[str, object]] = {}

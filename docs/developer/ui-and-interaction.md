@@ -204,12 +204,12 @@ If an internal knob becomes necessary in normal user docs, that usually signals 
 
 ## Shell Fallback Boundary
 
-The deprecated shell fallback still exists, but the modern UI and debug story is Python-first.
+The modern UI and debug story is Python-first.
 
 Implications:
 
 - dashboard and selector evolution should be described primarily in Python-runtime docs
-- Python-only diagnostic features such as debug bundles should fail clearly under shell fallback
+- Python-only diagnostic features such as debug bundles should fail clearly when prerequisites are missing
 - user docs should mention shell only as an explicit compatibility fallback, not as a normal UI option
 
 ## Changing Dashboard Policy
@@ -248,4 +248,4 @@ Checklist:
 - documenting internal test knobs as normal user configuration
 - changing fallback behavior without updating emitted reasons or diagnostics
 - bypassing the UI bridge from unrelated runtime modules
-- forgetting that shell fallback is deprecated but still part of the compatibility story
+- forgetting to keep UX and docs aligned with the supported Python runtime path

@@ -12962,6 +12962,293 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
   - No new config/env keys.
   - No data/state migrations.
 
+## 2026-03-10 - Draft runtime facade refactor plan
+
+- Scope:
+  - Added a detailed engineering plan for refactoring the Python runtime facade and policy ownership.
+
+- Key behavior changes:
+  - None (planning only).
+  - `docs/planning/refactoring/python-runtime-facade-decoupling.md`
+
+- Files/modules touched:
+  - `docs/planning/refactoring/python-runtime-facade-decoupling.md`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - Not run (plan-only change).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - Plan includes open questions and assumptions that require confirmation before implementation.
+
+## 2026-03-10 - Expand runtime facade refactor plan into implementation-grade spec
+
+- Scope:
+  - Reworked the runtime facade refactor plan into a deeper engineering spec with explicit architecture seams, phased rollout, concrete tests, rollback strategy, and governance alignment requirements.
+
+- Key behavior changes:
+  - None (planning only).
+  - Expanded `docs/planning/refactoring/python-runtime-facade-decoupling.md` to include:
+    - verified current-behavior sections tied to code paths
+    - root-cause framing centered on runtime boundary failure and policy ownership
+    - phased workstreams for parser policy, startup, resume, actions/state, doctor/readiness, state compatibility, planning/worktree, and final runtime shrink
+    - concrete unit/integration test mapping and rollout/rollback guidance
+
+- Files/modules touched:
+  - `docs/planning/refactoring/python-runtime-facade-decoupling.md`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - Not run (plan-only change).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - This remains an implementation plan only; no runtime behavior or contract files were changed in this update.
+
+## 2026-03-10 - Centralize command policy for router and dispatch
+
+- Scope:
+  - Implemented the first safe runtime-facade refactor slice from `docs/planning/refactoring/python-runtime-facade-decoupling.md` by extracting canonical command policy into a dedicated runtime module and wiring router/dispatch to use it.
+
+- Key behavior changes:
+  - `python/envctl_engine/runtime/command_policy.py`
+    - Added the canonical source for command-family policy:
+      - implied lifecycle flags (`skip_startup`, `load_state`)
+      - main-mode `no_resume` behavior for forced-main mode tokens
+      - plan-token policy for sequential/parallel/planning-PR variants
+      - dispatch-family grouping used by runtime dispatch
+  - `python/envctl_engine/runtime/command_router.py`
+    - Replaced duplicated command/mode flag mutations in `_phase_resolve_command_mode` and `_phase_bind_flags` with calls into `command_policy.py`.
+    - Preserved existing parsing behavior and route outputs while moving ownership of policy decisions into one place.
+  - `python/envctl_engine/runtime/engine_runtime_dispatch.py`
+    - Replaced hard-coded command-family groupings with the canonical dispatch-family mapping from `command_policy.py`.
+    - Preserved existing dispatch behavior for help, inspection, debug, lifecycle, resume, doctor, dashboard, config, migrate-hooks, state actions, actions, and startup commands.
+  - `tests/python/runtime/test_command_policy_contract.py`
+    - Added characterization coverage for command-policy behavior and dispatch-family grouping.
+  - `tests/python/runtime/test_engine_runtime_dispatch.py`
+    - Added routing coverage for state-action and startup command families.
+
+- Files/modules touched:
+  - `python/envctl_engine/runtime/command_policy.py`
+  - `python/envctl_engine/runtime/command_router.py`
+  - `python/envctl_engine/runtime/engine_runtime_dispatch.py`
+  - `tests/python/runtime/test_command_policy_contract.py`
+  - `tests/python/runtime/test_engine_runtime_dispatch.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_command_policy_contract.py tests/python/runtime/test_engine_runtime_dispatch.py -q`
+    - Result: pass after implementation (`8 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_command_policy_contract.py tests/python/runtime/test_engine_runtime_dispatch.py tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_engine_runtime_startup_support.py tests/python/runtime/test_engine_runtime_env.py -q`
+    - Result: pass (`43 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_engine_runtime_real_startup.py -k "planning_prs or no_resume_flag_disables_auto_resume" -q`
+    - Result: pass (`3 passed, 118 deselected`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_lifecycle_parity.py -k "resume_skip_startup_flag_disables_restore_attempt" -q`
+    - Result: pass (`1 passed, 52 deselected`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_prereq_policy.py -q`
+    - Result: pass (`3 passed`).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No state or data migrations.
+  - No contract payload/schema changes.
+
+- Risks/notes:
+  - This batch centralizes policy ownership only; broader runtime protocol migration, orchestrator decoupling, and state-compat isolation remain follow-up work from the refactor plan.
+  - `command_router.py` and `engine_runtime_dispatch.py` still carry pre-existing basedpyright warnings unrelated to this policy extraction, but the new policy layer did not add diagnostics errors and targeted runtime behavior remains green.
+
+## 2026-03-10 - Continue runtime refactor: context routing, orchestrator facades, repository fallback cleanup, and planning spinner extraction
+
+- Scope:
+  - Implemented additional slices of the runtime-facade refactor plan across startup/resume context routing, action/state/doctor orchestrator runtime facades, state repository fallback isolation, and planning/worktree spinner lifecycle deduplication.
+
+- Key behavior changes:
+  - `python/envctl_engine/runtime/engine_runtime.py`
+    - Added runtime-context synchronization so reassignment of `process_runner`, `port_planner`, `state_repository`, and `terminal_ui` updates `runtime_context` immediately.
+  - `python/envctl_engine/startup/resume_restore_support.py`
+  - `python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py`
+  - `python/envctl_engine/startup/startup_selection_support.py`
+    - Updated dependency helper accessors to prefer `runtime_context` collaborators before falling back to legacy runtime attributes.
+  - `python/envctl_engine/state/action_orchestrator.py`
+    - Added `StateActionRuntimeFacade` and routed state load, reconciliation, emit, truthiness, selection, and project-name lookups through the facade instead of directly scattering runtime-private calls.
+  - `python/envctl_engine/debug/doctor_orchestrator.py`
+    - Added `DoctorRuntimeFacade` and routed diagnostics/readiness access through that facade while preserving doctor output, cutover events, and readiness gating behavior.
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+    - Added `ActionRuntimeFacade` and routed target discovery/selection and status emission through the facade for the covered action-selection paths.
+  - `python/envctl_engine/state/repository.py`
+    - Extracted explicit helpers for JSON state candidates, legacy shell candidates, and pointer-candidate fallback traversal out of `load_latest`, preserving precedence and exception-swallowing semantics.
+  - `python/envctl_engine/planning/worktree_domain.py`
+    - Extracted shared worktree spinner lifecycle helpers for start/success/fail/stop and applied them to both setup and sync flows.
+
+- Files/modules touched:
+  - `python/envctl_engine/runtime/engine_runtime.py`
+  - `python/envctl_engine/startup/resume_restore_support.py`
+  - `python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py`
+  - `python/envctl_engine/startup/startup_selection_support.py`
+  - `python/envctl_engine/state/action_orchestrator.py`
+  - `python/envctl_engine/debug/doctor_orchestrator.py`
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+  - `python/envctl_engine/state/repository.py`
+  - `python/envctl_engine/planning/worktree_domain.py`
+  - `tests/python/runtime/test_runtime_context_protocols.py`
+  - `tests/python/startup/test_support_module_decoupling.py`
+  - `tests/python/state/test_state_action_orchestrator_logs.py`
+  - `tests/python/actions/test_action_command_orchestrator_targets.py`
+  - `tests/python/state/test_state_repository_contract.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_runtime_context_protocols.py tests/python/startup/test_support_module_decoupling.py -q`
+    - Result: pass (`8 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_runtime_context_protocols.py tests/python/startup/test_support_module_decoupling.py tests/python/runtime/test_lifecycle_cleanup_spinner_integration.py tests/python/runtime/test_command_dispatch_matrix.py tests/python/runtime/test_lifecycle_parity.py -k "cleanup or stop_all or blast_all or resume_skip_startup_flag_disables_restore_attempt" -q`
+    - Result: pass after engine-runtime context sync fix (`14 passed, 53 deselected`).
+  - `./.venv/bin/python -m pytest tests/python/state/test_state_action_orchestrator_logs.py -q`
+    - Result: pass (`8 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_engine_runtime_command_parity.py -q`
+    - Result: pass (`50 passed`).
+  - `./.venv/bin/python -m pytest tests/python/actions/test_action_command_orchestrator_targets.py tests/python/actions/test_action_spinner_integration.py -q`
+    - Result: pass (`6 passed`).
+  - `./.venv/bin/python -m pytest tests/python/state/test_state_repository_contract.py tests/python/state/test_state_shell_compatibility.py tests/python/state/test_state_roundtrip.py -q`
+    - Result: pass (`21 passed`).
+  - `./.venv/bin/python -m pytest tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass (`22 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_command_policy_contract.py tests/python/runtime/test_engine_runtime_dispatch.py tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_engine_runtime_startup_support.py tests/python/runtime/test_engine_runtime_env.py tests/python/runtime/test_engine_runtime_real_startup.py -k "planning_prs or no_resume_flag_disables_auto_resume" tests/python/runtime/test_lifecycle_parity.py -k "cleanup or stop_all or blast_all or resume_skip_startup_flag_disables_restore_attempt" tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_runtime_context_protocols.py tests/python/startup/test_support_module_decoupling.py tests/python/actions/test_action_command_orchestrator_targets.py tests/python/actions/test_action_spinner_integration.py tests/python/state/test_state_action_orchestrator_logs.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/state/test_state_repository_contract.py tests/python/state/test_state_shell_compatibility.py tests/python/state/test_state_roundtrip.py tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass (`16 passed, 320 deselected`).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No on-disk state schema changes.
+  - No data migrations or backfills.
+
+- Risks/notes:
+  - The full refactor plan is still in progress; the most invasive remaining hotspots are broader planning/worktree separation and deeper runtime-facade shrinkage inside `engine_runtime.py`.
+  - Some changed files still have pre-existing type-analysis warnings outside the executed behavior paths, but the implemented batches are covered by the listed tests and are currently green.
+
+## 2026-03-10 - Continue planning/worktree refactor with per-target helper extraction
+
+- Scope:
+  - Further refactored `python/envctl_engine/planning/worktree_domain.py` by extracting per-target setup and per-plan sync reconciliation helpers, reducing mixed concerns inside the top-level worktree orchestration paths while preserving current behavior.
+
+- Key behavior changes:
+  - `python/envctl_engine/planning/worktree_domain.py`
+    - Added `_sync_single_plan_worktree_target(...)` to isolate one plan file’s desired-vs-existing reconciliation from `_sync_plan_worktrees_from_plan_counts(...)`.
+    - Added `_apply_multi_setup_entry(...)` and `_apply_single_setup_entry(...)` to isolate per-entry worktree setup logic from `_apply_setup_worktree_selection(...)`.
+    - Kept spinner lifecycle, archive behavior, worktree refresh timing, and include-existing selection flow unchanged.
+
+- Files/modules touched:
+  - `python/envctl_engine/planning/worktree_domain.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m pytest tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass after sync extraction (`22 passed`).
+  - `./.venv/bin/python -m pytest tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass after setup-entry extraction (`22 passed`).
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_command_policy_contract.py tests/python/runtime/test_engine_runtime_dispatch.py tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_engine_runtime_startup_support.py tests/python/runtime/test_engine_runtime_env.py tests/python/runtime/test_engine_runtime_real_startup.py -k "planning_prs or no_resume_flag_disables_auto_resume" tests/python/runtime/test_lifecycle_parity.py -k "cleanup or stop_all or blast_all or resume_skip_startup_flag_disables_restore_attempt" tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_runtime_context_protocols.py tests/python/startup/test_support_module_decoupling.py tests/python/actions/test_action_command_orchestrator_targets.py tests/python/actions/test_action_spinner_integration.py tests/python/state/test_state_action_orchestrator_logs.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/state/test_state_repository_contract.py tests/python/state/test_state_shell_compatibility.py tests/python/state/test_state_roundtrip.py tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass (`16 passed, 320 deselected`).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No state schema or file-layout changes.
+  - No migrations/backfills.
+
+- Risks/notes:
+  - Planning/worktree logic is still one of the densest remaining areas; these extractions reduce local complexity, but broader selection/presentation separation is still outstanding.
+
+## 2026-03-10 - Add local import guard and planning-worktree orchestrator delegation
+
+- Scope:
+  - Added a repo-local import guard so Python test runs from the repository root prefer `python/envctl_engine` over any globally installed `envctl_engine`, and further reduced `engine_runtime.py` planning surface by delegating planning/worktree entrypoints through a dedicated orchestrator object.
+
+- Key behavior changes:
+  - `sitecustomize.py`
+    - Prepends the repo-local `python/` directory to `sys.path` so plain `python -m unittest ...` loads the workspace code instead of a pipx-installed copy.
+  - `python/envctl_engine/planning/worktree_orchestrator.py`
+    - Added `PlanningWorktreeOrchestrator` to own planning/worktree entrypoint delegation.
+  - `python/envctl_engine/runtime/engine_runtime.py`
+    - Instantiates `planning_worktree_orchestrator` and routes `_apply_setup_worktree_selection`, `_select_plan_projects`, `_prompt_planning_selection`, `_initial_plan_selected_counts`, `_run_planning_selection_menu`, `_load_plan_selection_memory`, `_save_plan_selection_memory`, `_planning_keep_plan_enabled`, and `_sync_plan_worktrees_from_plan_counts` through it instead of relying solely on direct class-level domain rebinding.
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+    - Completed the action facade migration for startup-driven PR/test/review/migrate paths and switched facade collaborator access to dynamic properties so reassigned runtime collaborators stay live.
+
+- Files/modules touched:
+  - `sitecustomize.py`
+  - `python/envctl_engine/planning/worktree_orchestrator.py`
+  - `python/envctl_engine/runtime/engine_runtime.py`
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m unittest tests.python.runtime.test_cli_router_parity.CliRouterParityTests.test_dashed_aliases_map_to_expected_commands`
+    - Result: pass.
+  - `./.venv/bin/python -m unittest tests.python.state.test_state_repository_contract.StateRepositoryContractTests.test_save_run_writes_scoped_and_legacy_in_read_write_mode`
+    - Result: pass.
+  - `./.venv/bin/python -m unittest tests.python.actions.test_action_command_orchestrator_targets.ActionCommandTargetTests.test_runtime_facade_routes_target_dependencies`
+    - Result: pass.
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_engine_runtime_real_startup.py -k "plan_planning_prs_runs_pr_action_and_skips_startup" -q`
+    - Result: pass (`1 passed, 120 deselected`).
+  - `./.venv/bin/python -m pytest tests/python/actions/test_action_command_orchestrator_targets.py tests/python/actions/test_action_spinner_integration.py -q`
+    - Result: pass (`6 passed`).
+  - `./.venv/bin/python -m pytest tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py tests/python/runtime/test_engine_runtime_real_startup.py -k "run_planning_selection_menu or plan_selection or planning" -q`
+    - Result: planning and startup wrapper paths validated; targeted reruns used after an action-facade regression surfaced and was fixed.
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_command_policy_contract.py tests/python/runtime/test_engine_runtime_dispatch.py tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_engine_runtime_startup_support.py tests/python/runtime/test_engine_runtime_env.py tests/python/runtime/test_engine_runtime_real_startup.py -k "planning_prs or no_resume_flag_disables_auto_resume or run_planning_selection_menu or plan_selection or planning" tests/python/runtime/test_lifecycle_parity.py -k "cleanup or stop_all or blast_all or resume_skip_startup_flag_disables_restore_attempt" tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_runtime_context_protocols.py tests/python/startup/test_support_module_decoupling.py tests/python/actions/test_action_command_orchestrator_targets.py tests/python/actions/test_action_spinner_integration.py tests/python/state/test_state_action_orchestrator_logs.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/state/test_state_repository_contract.py tests/python/state/test_state_shell_compatibility.py tests/python/state/test_state_roundtrip.py tests/python/planning/test_planning_worktree_setup.py tests/python/planning/test_planning_selection.py tests/python/planning/test_planning_textual_selector.py -q`
+    - Result: pass (`16 passed, 320 deselected`).
+
+- Config/env/migrations:
+  - No new runtime config keys.
+  - No state schema migrations.
+  - `sitecustomize.py` affects local Python import resolution for repo-root test runs only.
+
+- Risks/notes:
+  - A raw `python -m unittest discover -s tests/python -p 'test_*.py'` run still drives interactive planning/textual paths and optional-rich behavior in ways that are noisy under unattended CLI execution, so the non-interactive regression suite remains the reliable verification command.
+
+## 2026-03-10 - Add phased Python cleanup runner with dry-run planning
+
+- Scope:
+  - Added a reusable Python-native cleanup runner under `scripts/python_cleanup.py` to orchestrate phased repo-wide cleanup planning and execution using Ruff, basedpyright, Vulture, and targeted pytest suites.
+  - Added unit coverage for the runner and exercised dry-run plans for safe/core/risky cleanup presets without applying real cleanup changes.
+
+- Key behavior changes:
+  - `scripts/python_cleanup.py`
+    - Supports repo-root resolution, path/preset selection, report-only dry runs by default, explicit `--execute`, optional `--fix`, and staged Ruff/basedpyright/Vulture/test planning.
+    - Includes envctl-specific cleanup presets:
+      - `safe`: `config`, `test_output`, `requirements`, `debug`
+      - `core`: `shared`, `state`
+      - `risky`: `actions`, `startup`, `runtime`, `planning`, `ui`
+    - Maps source-domain cleanup targets to the corresponding `tests/python/<domain>` test suites.
+  - `tests/python/shared/test_python_cleanup_script.py`
+    - Verifies path resolution, preset expansion, dry-run planning, fix-mode planning, and source-to-test path mapping.
+
+- Files/modules touched:
+  - `scripts/python_cleanup.py`
+  - `tests/python/shared/test_python_cleanup_script.py`
+  - `docs/changelog/main_changelog.md`
+
+- Tests run + results:
+  - `./.venv/bin/python -m unittest tests.python.shared.test_python_cleanup_script`
+    - Result: pass (`7 tests`).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset safe --json`
+    - Result: pass (dry-run report only).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset core --json`
+    - Result: pass (dry-run report only).
+  - `./.venv/bin/python scripts/python_cleanup.py --repo . --preset risky --json`
+    - Result: pass (dry-run report only).
+
+- Config/env/migrations:
+  - No runtime config/env changes.
+  - No schema or data migrations.
+  - Cleanup execution remains opt-in via `--execute`; default mode is report-only.
+
+- Risks/notes:
+  - No real cleanup commands were executed in this change set.
+  - The `risky` preset intentionally includes the most dynamic domains and should only be run after reviewing the dry-run plan and its test scope.
+
 ## 2026-03-09 - Rename `analyze` command to `review` across the app
 
 - Scope:

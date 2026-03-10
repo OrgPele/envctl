@@ -6,7 +6,6 @@ from typing import Mapping
 
 from .capabilities import interactive_tty_available, textual_importable
 from envctl_engine.shared.parsing import parse_bool
-from .terminal_session import can_interactive_tty
 
 
 @dataclass(slots=True)

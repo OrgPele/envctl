@@ -2,18 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from envctl_engine.runtime.command_router import list_supported_commands
+from .command_policy import dispatch_family_for_command
 from envctl_engine.runtime.inspection_support import dispatch_direct_inspection
 
 
 def dispatch_command(runtime: Any, route: object) -> int:
     command = str(getattr(route, "command", "")).strip()
-    if command == "help":
+    family = dispatch_family_for_command(command)
+    if family == "help":
         runtime._print_help()
         return 0
-    if command == "list-commands":
-        return dispatch_direct_inspection(runtime, route)
-    if command in {"list-targets", "list-trees", "show-config", "show-state", "explain-startup"}:
+    if family == "direct_inspection":
         return dispatch_direct_inspection(runtime, route)
     if command == "debug-pack":
         return runtime._debug_pack(route)
@@ -21,22 +20,24 @@ def dispatch_command(runtime: Any, route: object) -> int:
         return runtime._debug_last(route)
     if command == "debug-report":
         return runtime._debug_report(route)
-    if command in {"stop", "stop-all", "blast-all"}:
+    if family == "lifecycle_cleanup":
         return runtime.lifecycle_cleanup_orchestrator.execute(route)
-    if command == "resume":
+    if family == "resume":
         return runtime.resume_orchestrator.execute(route)
-    if command == "doctor":
+    if family == "doctor":
         if bool(getattr(route, "flags", {}).get("json")):
             return runtime.doctor_orchestrator.execute(json_output=True)
         return runtime.doctor_orchestrator.execute()
-    if command == "dashboard":
+    if family == "dashboard":
         return runtime.dashboard_orchestrator.execute(route)
-    if command == "config":
+    if family == "config":
         return runtime._config(route)
-    if command in {"logs", "clear-logs", "health", "errors"}:
+    if family == "migrate_hooks":
+        return runtime._migrate_hooks(route)
+    if family == "state_action":
         return runtime.state_action_orchestrator.execute(route)
-    if command in {"test", "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate"}:
+    if family == "action":
         return runtime.action_command_orchestrator.execute(route)
-    if command in {"restart", "plan", "start"}:
+    if family == "startup":
         return runtime.startup_orchestrator.execute(route)
     return runtime._unsupported_command(command)

@@ -5,7 +5,6 @@ from typing import Any
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import PortPlan, RequirementsResult
-from envctl_engine.shared.parsing import parse_int
 from envctl_engine.requirements.orchestrator import RequirementOutcome
 
 
@@ -35,13 +34,13 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
     normalized_mode = str(mode).strip().lower()
     config = runtime.config
     startup_enabled = (
-        config.startup_enabled_for_mode(normalized_mode)
-        if hasattr(config, "startup_enabled_for_mode")
-        else True
+        config.startup_enabled_for_mode(normalized_mode) if hasattr(config, "startup_enabled_for_mode") else True
     )
     if not startup_enabled:
         if _route_requires_enabled_mode(route):
-            raise RuntimeError(f"envctl runs are disabled for {normalized_mode} in .envctl. Run 'envctl config' to enable them.")
+            raise RuntimeError(
+                f"envctl runs are disabled for {normalized_mode} in .envctl. Run 'envctl config' to enable them."
+            )
         return
     if normalized_mode == "main":
         _ = main_requirements_mode(route)
@@ -145,6 +144,10 @@ def _route_is_implicit_start(route: Route | None) -> bool:
     return True
 
 
+def route_is_implicit_start(route: Route | None) -> bool:
+    return _route_is_implicit_start(route)
+
+
 def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool:
     if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(mode):
         return False
@@ -156,7 +159,9 @@ def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool
 def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
     normalized_mode = str(mode).strip().lower()
     normalized_name = str(requirement_name).strip().lower()
-    if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(normalized_mode):
+    if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(
+        normalized_mode
+    ):
         return False
     if normalized_mode == "main":
         effective_main = effective_main_requirement_flags(runtime, route)
@@ -201,7 +206,9 @@ def project_service_env(
         if not bool(component.get("enabled", False)):
             continue
         if callable(definition.env_projector):
-            env.update(definition.env_projector(runtime=runtime, context=context, requirements=requirements, route=route))
+            env.update(
+                definition.env_projector(runtime=runtime, context=context, requirements=requirements, route=route)
+            )
     env.update(runtime_env_overrides(route))
     if route is not None:
         log_profile = route.flags.get("log_profile")

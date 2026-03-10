@@ -51,10 +51,13 @@ class FrontendProjectionTests(unittest.TestCase):
 
         runtime = build_runtime_map(state)
 
-        self.assertEqual(runtime["projects"]["Tree Alpha"], {
-            "backend_port": 8111,
-            "frontend_port": 9122,
-        })
+        self.assertEqual(
+            runtime["projects"]["Tree Alpha"],
+            {
+                "backend_port": 8111,
+                "frontend_port": 9122,
+            },
+        )
         self.assertEqual(runtime["service_to_actual_port"]["Tree Alpha Frontend"], 9122)
         self.assertEqual(runtime["port_to_service"][9122], "Tree Alpha Frontend")
 

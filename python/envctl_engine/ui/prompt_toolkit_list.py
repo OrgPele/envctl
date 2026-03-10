@@ -100,19 +100,13 @@ def run_prompt_toolkit_list_selector(
         if callable(config.emit_debug):
             config.emit_debug(event, **payload)
 
-    initial_token_set = {
-        str(token).strip()
-        for token in (config.initial_tokens or [])
-        if str(token).strip()
-    }
+    initial_token_set = {str(token).strip() for token in (config.initial_tokens or []) if str(token).strip()}
     cursor = 0
     selected_indexes: set[int] = set()
     if initial_token_set:
         if config.multi:
             selected_indexes = {
-                index
-                for index, item in enumerate(rows)
-                if str(getattr(item, "token", "")).strip() in initial_token_set
+                index for index, item in enumerate(rows) if str(getattr(item, "token", "")).strip() in initial_token_set
             }
         for index, item in enumerate(rows):
             if str(getattr(item, "token", "")).strip() in initial_token_set:
@@ -160,9 +154,7 @@ def run_prompt_toolkit_list_selector(
             status_error = ""
             status_error_deadline = 0.0
         lines = [f"{bold}{cyan}{config.prompt}{reset}"]
-        lines.append(
-            f"{dim}{config.help_text_multi if config.multi else config.help_text_single}{reset}"
-        )
+        lines.append(f"{dim}{config.help_text_multi if config.multi else config.help_text_single}{reset}")
         if status_error:
             lines.append(f"{bold}{red}{status_error}{reset}")
         lines.append("")
@@ -338,6 +330,7 @@ def run_prompt_toolkit_list_selector(
             key_processor = getattr(app, "key_processor", None)
             before_key_press = getattr(key_processor, "before_key_press", None)
             if before_key_press is not None:
+
                 def _record_raw_key(key_press: object) -> None:
                     key_name = str(getattr(key_press, "key", "") or "unknown")
                     key_data = str(getattr(key_press, "data", "") or "")

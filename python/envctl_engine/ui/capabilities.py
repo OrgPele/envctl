@@ -25,7 +25,9 @@ def prompt_toolkit_disabled(env: Mapping[str, str]) -> bool:
 def prompt_toolkit_selector_enabled(env: Mapping[str, str]) -> bool:
     from envctl_engine.ui.terminal_session import can_interactive_tty, prompt_toolkit_available
 
-    backend_pref = str(env.get("ENVCTL_UI_SELECTOR_BACKEND", os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", ""))).strip().lower()
+    backend_pref = (
+        str(env.get("ENVCTL_UI_SELECTOR_BACKEND", os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", ""))).strip().lower()
+    )
     if backend_pref in {"textual", "tui"}:
         return False
     if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:

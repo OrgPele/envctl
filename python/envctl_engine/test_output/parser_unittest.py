@@ -88,13 +88,21 @@ class UnittestOutputParser(TestOutputParser):
                 continue
             if current_test is None:
                 continue
-            if stripped.startswith("Ran ") or stripped == "OK" or stripped.startswith("OK (") or stripped.startswith("FAILED ("):
+            if (
+                stripped.startswith("Ran ")
+                or stripped == "OK"
+                or stripped.startswith("OK (")
+                or stripped.startswith("FAILED (")
+            ):
                 flush()
                 continue
             if re.match(r"^(FAIL|ERROR):\s+(.+)$", stripped):
                 flush()
                 continue
-            if stripped.startswith("----------------------------------------------------------------------") and current_lines:
+            if (
+                stripped.startswith("----------------------------------------------------------------------")
+                and current_lines
+            ):
                 flush()
                 continue
             current_lines.append(line)

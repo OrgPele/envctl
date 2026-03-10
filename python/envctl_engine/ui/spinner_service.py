@@ -10,6 +10,7 @@ from typing import Callable, Mapping, TextIO
 from .color_policy import colors_enabled
 from envctl_engine.shared.parsing import parse_bool
 
+
 def _parse_int(value: object, default: int) -> int:
     if value is None:
         return default
@@ -244,7 +245,9 @@ class RichSpinnerOperation:
                 status_module = __import__("rich.status", fromlist=["Status"])
                 console_cls = getattr(console_module, "Console")
                 status_cls = getattr(status_module, "Status")
-                self._console = console_cls(file=self._stream, no_color=self._no_color, force_terminal=self._stream.isatty())
+                self._console = console_cls(
+                    file=self._stream, no_color=self._no_color, force_terminal=self._stream.isatty()
+                )
                 self._status = status_cls(self._message, spinner=self._style, console=self._console)
                 self._status.start()
                 self._started = True
@@ -257,7 +260,9 @@ class RichSpinnerOperation:
                 create_output = getattr(defaults_module, "create_output")
                 self._prompt_output = create_output(stdout=self._stream)
                 self._prompt_stop.clear()
-                self._prompt_thread = threading.Thread(target=self._prompt_render_loop, name="envctl-spinner", daemon=True)
+                self._prompt_thread = threading.Thread(
+                    target=self._prompt_render_loop, name="envctl-spinner", daemon=True
+                )
                 self._prompt_thread.start()
                 self._started = True
                 return True

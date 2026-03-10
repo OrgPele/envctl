@@ -91,10 +91,7 @@ class ProcessProbePsutilTests(unittest.TestCase):
 
         self.assertEqual(getattr(runtime.process_probe.backend, "label", ""), "psutil")
         self.assertTrue(
-            any(
-                event.get("event") == "probe.backend" and event.get("backend") == "psutil"
-                for event in runtime.events
-            )
+            any(event.get("event") == "probe.backend" and event.get("backend") == "psutil" for event in runtime.events)
         )
 
 

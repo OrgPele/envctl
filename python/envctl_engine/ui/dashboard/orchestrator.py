@@ -133,7 +133,10 @@ class DashboardOrchestrator:
 
         hidden_commands = self._dashboard_hidden_commands(state)
         if route.command in hidden_commands:
-            print(f"Command '{route.command}' is not available in this dashboard because envctl runs are disabled for this mode.")
+            print(
+                f"Command '{route.command}' is not available in this dashboard "
+                "because envctl runs are disabled for this mode."
+            )
             return True, state
 
         code = runtime_any.dispatch(route)
@@ -239,7 +242,11 @@ class DashboardOrchestrator:
     @staticmethod
     def _dashboard_hidden_commands(state: RunState) -> set[str]:
         raw = state.metadata.get("dashboard_hidden_commands")
-        hidden = {str(command).strip().lower() for command in raw if str(command).strip()} if isinstance(raw, list) else set()
+        hidden = (
+            {str(command).strip().lower() for command in raw if str(command).strip()}
+            if isinstance(raw, list)
+            else set()
+        )
         if not state.services:
             hidden.add("migrate")
         return hidden

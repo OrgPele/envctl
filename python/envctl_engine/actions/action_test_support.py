@@ -392,7 +392,9 @@ class TestSuiteSpinnerGroup:
                 return
 
 
-def is_backend_only_selection(backend_flag: object, frontend_flag: object, service_types: set[str]) -> tuple[bool, bool]:
+def is_backend_only_selection(
+    backend_flag: object, frontend_flag: object, service_types: set[str]
+) -> tuple[bool, bool]:
     include_backend = backend_flag if isinstance(backend_flag, bool) else parse_bool(backend_flag, True)
     include_frontend = frontend_flag if isinstance(frontend_flag, bool) else parse_bool(frontend_flag, True)
     if backend_flag is None and frontend_flag is None:

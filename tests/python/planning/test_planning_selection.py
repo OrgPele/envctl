@@ -43,9 +43,7 @@ class PlanningSelectionTests(unittest.TestCase):
             planning_dir = repo / "work" / "plans"
             planning_dir.mkdir(parents=True, exist_ok=True)
             available = ["backend/task.md"]
-            selection_raw = (
-                f"backend/task,work/plans/backend/task,{planning_dir / 'backend' / 'task.md'}"
-            )
+            selection_raw = f"backend/task,work/plans/backend/task,{planning_dir / 'backend' / 'task.md'}"
 
             counts = resolve_planning_files(
                 selection_raw=selection_raw,

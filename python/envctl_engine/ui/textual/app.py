@@ -27,6 +27,7 @@ class _PlainRenderable:
     def __str__(self) -> str:
         return self.plain
 
+
 def _emit(runtime: Any, event: str, **payload: object) -> None:
     candidate = getattr(runtime, "_emit", None)
     if callable(candidate):
@@ -44,7 +45,7 @@ def _dashboard_commands_help() -> str:
     return (
         "Commands: (q)uit\n"
         "  Lifecycle: (s)top | (r)estart\n"
-        "  Actions: (t)est | (p)r | (c)ommit | (a)nalyze | (m)igrate\n"
+        "  Actions: (t)est | (p)r | (c)ommit | re(v)iew | (m)igrate\n"
         "  Inspect: (l)ogs | (h)ealth | (e)rrors"
     )
 

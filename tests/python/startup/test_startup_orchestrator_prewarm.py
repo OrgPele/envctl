@@ -27,7 +27,9 @@ class _Runner:
 
 
 class _Runtime:
-    def __init__(self, *, enabled_env: dict[str, str] | None = None, docker_exists: bool = True, requirement_enabled: bool = True) -> None:
+    def __init__(
+        self, *, enabled_env: dict[str, str] | None = None, docker_exists: bool = True, requirement_enabled: bool = True
+    ) -> None:
         self.env = dict(enabled_env or {})
         self.config = SimpleNamespace(raw={})
         self.process_runner = _Runner()

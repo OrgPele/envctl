@@ -184,7 +184,9 @@ class SpinnerServicePolicyTests(unittest.TestCase):
         )
         with (
             patch("envctl_engine.ui.spinner.Spinner", _StubSpinner),
-            patch("envctl_engine.ui.spinner.resolve_spinner_policy", side_effect=AssertionError("unexpected recompute")),
+            patch(
+                "envctl_engine.ui.spinner.resolve_spinner_policy", side_effect=AssertionError("unexpected recompute")
+            ),
         ):
             with use_spinner_policy(policy), spinner("Running...", enabled=True, start_immediately=False):
                 pass

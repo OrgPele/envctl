@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
+from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
+from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime
 from envctl_engine.state.models import RunState
+from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 
-def _project_ports_text(context: Any) -> str:
+
+class _RuntimeOwner(Protocol):
+    runtime: StartupRuntime
+
+
+def project_ports_text(context: ProjectContextLike) -> str:
     return (
         f"backend={context.ports['backend'].final} "
         f"frontend={context.ports['frontend'].final} "
@@ -16,32 +24,41 @@ def _project_ports_text(context: Any) -> str:
         f"n8n={context.ports['n8n'].final}"
     )
 
-def _state_project_names(*, runtime: Any, state: RunState) -> set[str]:
+
+def state_project_names(*, runtime: StartupRuntime, state: RunState) -> set[str]:
     names = {str(name).strip() for name in state.requirements.keys() if str(name).strip()}
     for service_name in state.services:
-        project_name = runtime._project_name_from_service(service_name)  # type: ignore[attr-defined]
+        project_name = runtime._project_name_from_service(service_name)
         if isinstance(project_name, str) and project_name.strip():
             names.add(project_name.strip())
     return names
 
-def _state_matches_selected_projects(orchestrator, *, runtime: Any, state: RunState, contexts: list[Any]) -> bool:
+
+def state_matches_selected_projects(
+    orchestrator: object, *, runtime: StartupRuntime, state: RunState, contexts: list[ProjectContextLike]
+) -> bool:
+    _ = orchestrator
     selected = {str(context.name).strip() for context in contexts if str(getattr(context, "name", "")).strip()}
     if not selected:
         return False
-    state_projects = _state_project_names(runtime=runtime, state=state)
+    state_projects = state_project_names(runtime=runtime, state=state)
     if not state_projects:
         return False
     return selected == state_projects
 
 
-def _state_covers_selected_projects(orchestrator, *, runtime: Any, state: RunState, contexts: list[Any]) -> bool:
+def state_covers_selected_projects(
+    orchestrator: object, *, runtime: StartupRuntime, state: RunState, contexts: list[ProjectContextLike]
+) -> bool:
+    _ = orchestrator
     selected = {str(context.name).strip() for context in contexts if str(getattr(context, "name", "")).strip()}
     if not selected:
         return False
-    state_projects = _state_project_names(runtime=runtime, state=state)
+    state_projects = state_project_names(runtime=runtime, state=state)
     if not state_projects:
         return False
     return selected.issubset(state_projects)
+
 
 def _route_explicit_trees_mode(route: Route) -> bool:
     for token in route.raw_args:
@@ -50,7 +67,9 @@ def _route_explicit_trees_mode(route: Route) -> bool:
             return True
     return False
 
-def _trees_start_selection_required(orchestrator, *, route: Route, runtime_mode: str) -> bool:
+
+def trees_start_selection_required(orchestrator: object, *, route: Route, runtime_mode: str) -> bool:
+    _ = orchestrator
     if runtime_mode != "trees" or route.command != "start":
         return False
     if route.projects or route.passthrough_args:
@@ -61,14 +80,18 @@ def _trees_start_selection_required(orchestrator, *, route: Route, runtime_mode:
         return False
     return True
 
-def _tree_preselected_projects_from_state(orchestrator, *, runtime: Any, project_contexts: list[Any]) -> list[str]:
-    state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)  # type: ignore[attr-defined]
+
+def tree_preselected_projects_from_state(
+    orchestrator: object, *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
+) -> list[str]:
+    _ = orchestrator
+    state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
     if state is None:
         return []
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
     preselected: list[str] = []
     seen: set[str] = set()
-    for name in sorted(_state_project_names(runtime=runtime, state=state)):
+    for name in sorted(state_project_names(runtime=runtime, state=state)):
         normalized = str(name).strip().lower()
         resolved = available.get(normalized)
         if not resolved:
@@ -79,13 +102,16 @@ def _tree_preselected_projects_from_state(orchestrator, *, runtime: Any, project
         preselected.append(resolved)
     return preselected
 
-def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts: list[Any]) -> list[Any]:
-    rt: Any = orchestrator.runtime
+
+def select_start_tree_projects(
+    orchestrator: _RuntimeOwner, *, route: Route, project_contexts: list[ProjectContextLike]
+) -> list[ProjectContextLike]:
+    runtime = orchestrator.runtime
     if not project_contexts:
         return project_contexts
-    can_tty = bool(getattr(rt, "_can_interactive_tty", lambda: False)())  # type: ignore[call-arg]
+    can_tty = runtime._can_interactive_tty()
     if not can_tty:
-        rt._emit(
+        runtime._emit(
             "trees.start.selector.skipped",
             reason="non_tty",
             discovered_count=len(project_contexts),
@@ -96,17 +122,17 @@ def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts:
         )
         return []
 
-    preselected = _tree_preselected_projects_from_state(
+    preselected = tree_preselected_projects_from_state(
         orchestrator,
-        runtime=rt,
+        runtime=runtime,
         project_contexts=project_contexts,
     )
-    rt._emit(
+    runtime._emit(
         "trees.start.selector.prompt",
         discovered_count=len(project_contexts),
         preselected=preselected,
     )
-    selection = rt._select_project_targets(
+    selection = runtime._select_project_targets(
         prompt="Run worktrees for",
         projects=list(project_contexts),
         allow_all=True,
@@ -115,10 +141,10 @@ def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts:
         initial_project_names=preselected,
     )
     if selection.cancelled:
-        rt._emit("trees.start.selector.cancelled", discovered_count=len(project_contexts))
+        runtime._emit("trees.start.selector.cancelled", discovered_count=len(project_contexts))
         return []
     if selection.all_selected:
-        rt._emit(
+        runtime._emit(
             "trees.start.selector.applied",
             all_selected=True,
             selected_count=len(project_contexts),
@@ -128,23 +154,24 @@ def _select_start_tree_projects(orchestrator, *, route: Route, project_contexts:
 
     selected_names = {str(name).strip().lower() for name in selection.project_names if str(name).strip()}
     if not selected_names:
-        rt._emit("trees.start.selector.empty", discovered_count=len(project_contexts))
+        runtime._emit("trees.start.selector.empty", discovered_count=len(project_contexts))
         return []
     filtered = [context for context in project_contexts if str(context.name).strip().lower() in selected_names]
     if not filtered:
-        rt._emit(
+        runtime._emit(
             "trees.start.selector.miss",
             discovered_count=len(project_contexts),
             selected=sorted(selected_names),
         )
         return []
-    rt._emit(
+    runtime._emit(
         "trees.start.selector.applied",
         all_selected=False,
         selected_count=len(filtered),
         selected=[str(context.name) for context in filtered],
     )
     return filtered
+
 
 def _restart_include_requirements(route: Route) -> bool:
     explicit = route.flags.get("restart_include_requirements")
@@ -159,6 +186,7 @@ def _restart_include_requirements(route: Route) -> bool:
         return False
     return True
 
+
 def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
     service_filters = route.flags.get("services")
     selected: set[str] = set()
@@ -169,7 +197,9 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
         return selected
 
     if route.projects:
-        project_set = {project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()}
+        project_set = {
+            project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()
+        }
         for name in state.services:
             project = _project_name_from_service_name(name)
             if project and project.lower() in project_set:
@@ -179,7 +209,8 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
 
     return set(state.services.keys())
 
-def _restart_target_projects(*, state: RunState, route: Route, runtime: Any) -> set[str]:
+
+def restart_target_projects(*, state: RunState, route: Route, runtime: StartupRuntime) -> set[str]:
     targets: set[str] = set()
     for value in route.projects:
         if isinstance(value, str) and value.strip():
@@ -199,24 +230,28 @@ def _restart_target_projects(*, state: RunState, route: Route, runtime: Any) -> 
         return targets
 
     for service_name in state.services:
-        project = runtime._project_name_from_service(service_name)  # type: ignore[attr-defined]
+        project = runtime._project_name_from_service(service_name)
         if project:
             targets.add(project)
     return targets
 
-def _restart_target_projects_for_selected_services(*, selected_services: set[str], state: RunState, runtime: Any) -> set[str]:
+
+def restart_target_projects_for_selected_services(
+    *, selected_services: set[str], state: RunState, runtime: StartupRuntime
+) -> set[str]:
     targets: set[str] = set()
     for service_name in selected_services:
-        project = runtime._project_name_from_service(service_name)  # type: ignore[attr-defined]
+        project = runtime._project_name_from_service(service_name)
         if project:
             targets.add(project)
     if targets:
         return targets
     for service_name in state.services:
-        project = runtime._project_name_from_service(service_name)  # type: ignore[attr-defined]
+        project = runtime._project_name_from_service(service_name)
         if project:
             targets.add(project)
     return targets
+
 
 def _project_name_from_service_name(name: str) -> str | None:
     lowered = str(name).strip().lower()
@@ -225,6 +260,7 @@ def _project_name_from_service_name(name: str) -> str | None:
     if lowered.endswith(" frontend"):
         return str(name)[: -len(" Frontend")].strip()
     return None
+
 
 def _restart_service_types_for_project(
     *,
@@ -263,12 +299,23 @@ def _restart_service_types_for_project(
             return normalized.intersection(default_service_types or normalized)
     return set(default_service_types or {"backend", "frontend"})
 
-def _port_allocator(runtime: Any) -> Any:
-    runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "port_allocator", None)
-    return getattr(runtime, "port_planner", fallback)
 
-def _process_runtime(runtime: Any) -> Any:
-    runtime_context = getattr(runtime, "runtime_context", None)
-    fallback = getattr(runtime_context, "process_runtime", None)
-    return getattr(runtime, "process_runner", fallback)
+def port_allocator(runtime: object) -> PortAllocator:
+    return resolve_port_allocator(runtime)
+
+
+def process_runtime(runtime: object) -> ProcessRuntime:
+    return resolve_process_runtime(runtime)
+
+
+_project_ports_text = project_ports_text
+_state_project_names = state_project_names
+_state_matches_selected_projects = state_matches_selected_projects
+_state_covers_selected_projects = state_covers_selected_projects
+_trees_start_selection_required = trees_start_selection_required
+_tree_preselected_projects_from_state = tree_preselected_projects_from_state
+_select_start_tree_projects = select_start_tree_projects
+_restart_target_projects = restart_target_projects
+_restart_target_projects_for_selected_services = restart_target_projects_for_selected_services
+_port_allocator = port_allocator
+_process_runtime = process_runtime

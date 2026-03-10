@@ -153,14 +153,14 @@ class ProcessRunner:
         stdin: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run command with real-time streaming output and optional callback.
-        
+
         Args:
             cmd: Command to run
             cwd: Working directory
             env: Environment variables
             timeout: Timeout in seconds
             callback: Optional callback for each output line
-            
+
         Returns:
             CompletedProcess with stdout, stderr, and returncode
         """
@@ -169,11 +169,14 @@ class ProcessRunner:
         env_map = dict(env) if env is not None else None
         spinner_policy = resolve_spinner_policy(env_map)
         enabled = bool(show_spinner) and spinner_enabled(env_map)
-        with use_spinner_policy(spinner_policy), spinner(
-            "Running command...",
-            enabled=enabled,
-            start_immediately=True,
-        ) as active_spinner:
+        with (
+            use_spinner_policy(spinner_policy),
+            spinner(
+                "Running command...",
+                enabled=enabled,
+                start_immediately=True,
+            ) as active_spinner,
+        ):
             try:
                 process = subprocess.Popen(
                     list(cmd),
@@ -648,9 +651,7 @@ class ProcessRunner:
 
         if preferred_port > 0:
             upper_bound = preferred_port + max(max_delta, 0)
-            higher_or_equal = sorted(
-                port for port in ports if preferred_port <= port <= upper_bound
-            )
+            higher_or_equal = sorted(port for port in ports if preferred_port <= port <= upper_bound)
             if higher_or_equal:
                 return higher_or_equal[0]
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import importlib
-import os
 from typing import Any, Protocol, cast
 
 from .capabilities import prompt_toolkit_disabled
@@ -162,6 +161,7 @@ class FallbackMenuPresenter:
             self._emit(event, component="ui.menu.fallback", **payload)
         except Exception:
             return
+
 
 def build_menu_presenter(
     env: Mapping[str, str],

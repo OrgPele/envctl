@@ -66,7 +66,9 @@ class _FakeProcessRunner:
         if self.fail_alembic and tuple(cmd[-3:]) == ("alembic", "upgrade", "head"):
             alembic_error = self.alembic_error_text
             if not isinstance(alembic_error, str) or not alembic_error.strip():
-                alembic_error = "sqlalchemy.exc.InvalidRequestError: The asyncio extension requires an async driver to be used."
+                alembic_error = (
+                    "sqlalchemy.exc.InvalidRequestError: The asyncio extension requires an async driver to be used."
+                )
             return SimpleNamespace(
                 returncode=1,
                 stdout="",
@@ -141,7 +143,9 @@ class _FakeProcessRunner:
         return {
             "tracked_launch_count": len(self.start_background_calls),
             "active_launch_count": len(self.start_background_calls),
-            "launch_intent_counts": {"background_service": len(self.start_background_calls)} if self.start_background_calls else {},
+            "launch_intent_counts": {"background_service": len(self.start_background_calls)}
+            if self.start_background_calls
+            else {},
             "controller_input_owners": [],
             "active_controller_input_owners": [],
             "tracked_launches": [],
@@ -248,12 +252,12 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             python_bin = sys.executable
             payload.update(
                 {
-                    "ENVCTL_REQUIREMENT_POSTGRES_CMD": f"{python_bin} -c \"import sys; sys.exit(0)\"",
-                    "ENVCTL_REQUIREMENT_REDIS_CMD": f"{python_bin} -c \"import sys; sys.exit(0)\"",
-                    "ENVCTL_REQUIREMENT_N8N_CMD": f"{python_bin} -c \"import sys; sys.exit(0)\"",
-                    "ENVCTL_REQUIREMENT_SUPABASE_CMD": f"{python_bin} -c \"import sys; sys.exit(0)\"",
-                    "ENVCTL_BACKEND_START_CMD": f"{python_bin} -c \"import time; time.sleep(1)\"",
-                    "ENVCTL_FRONTEND_START_CMD": f"{python_bin} -c \"import time; time.sleep(1)\"",
+                    "ENVCTL_REQUIREMENT_POSTGRES_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    "ENVCTL_REQUIREMENT_REDIS_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    "ENVCTL_REQUIREMENT_N8N_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    "ENVCTL_REQUIREMENT_SUPABASE_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    "ENVCTL_BACKEND_START_CMD": f'{python_bin} -c "import time; time.sleep(1)"',
+                    "ENVCTL_FRONTEND_START_CMD": f'{python_bin} -c "import time; time.sleep(1)"',
                 }
             )
         if extra:
@@ -322,16 +326,16 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
             self.assertEqual(fake_runner.start_calls, [])
-            shell_report_path = runtime / "python-engine" / "shell_prune_report.json"
-            self.assertTrue(shell_report_path.is_file())
-            shell_report = json.loads(shell_report_path.read_text(encoding="utf-8"))
-            self.assertIn("passed", shell_report)
-            self.assertIn("snapshot", shell_report)
+            readiness_report_path = runtime / "python-engine" / "runtime_readiness_report.json"
+            self.assertTrue(readiness_report_path.is_file())
+            readiness_report = json.loads(readiness_report_path.read_text(encoding="utf-8"))
+            self.assertIn("passed", readiness_report)
+            self.assertIn("summary", readiness_report)
             run_state = json.loads((runtime / "python-engine" / "run_state.json").read_text(encoding="utf-8"))
             pointers = run_state.get("pointers", {})
-            self.assertIn("shell_prune_report", pointers)
-            pointer_path = Path(str(pointers.get("shell_prune_report")))
-            self.assertEqual(pointer_path.name, "shell_prune_report.json")
+            self.assertIn("runtime_readiness_report", pointers)
+            pointer_path = Path(str(pointers.get("runtime_readiness_report")))
+            self.assertEqual(pointer_path.name, "runtime_readiness_report.json")
             self.assertEqual(pointer_path.parent.name, str(run_state.get("run_id", "")))
             self.assertTrue(pointer_path.is_file())
 
@@ -417,9 +421,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 1)
             run_state = json.loads((runtime / "python-engine" / "run_state.json").read_text(encoding="utf-8"))
             pointers = run_state.get("pointers", {})
-            self.assertIn("shell_prune_report", pointers)
-            pointer_path = Path(str(pointers.get("shell_prune_report")))
-            self.assertEqual(pointer_path.name, "shell_prune_report.json")
+            self.assertIn("runtime_readiness_report", pointers)
+            pointer_path = Path(str(pointers.get("runtime_readiness_report")))
+            self.assertEqual(pointer_path.name, "runtime_readiness_report.json")
             self.assertEqual(pointer_path.parent.name, str(run_state.get("run_id", "")))
             self.assertTrue(pointer_path.is_file())
 
@@ -689,7 +693,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
 
-    def test_backend_requirements_bootstrap_installs_project_venv_dependencies_without_running_migrations_by_default(self) -> None:
+    def test_backend_requirements_bootstrap_installs_project_venv_dependencies_without_running_migrations_by_default(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -728,9 +734,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(pip_install_calls)
             self.assertTrue(
                 any(
-                    len(call[0]) >= 3
-                    and call[0][1:3] == ("-m", "venv")
-                    and str(call[0][-1]).endswith("/backend/venv")
+                    len(call[0]) >= 3 and call[0][1:3] == ("-m", "venv") and str(call[0][-1]).endswith("/backend/venv")
                     for call in fake_runner.run_calls
                 )
             )
@@ -768,7 +772,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
-            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
+            self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
@@ -809,7 +813,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
-            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
+            self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
 
@@ -867,8 +871,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             bootstrap_envs = [env for env in fake_runner.run_envs if isinstance(env, dict)]
             self.assertTrue(
                 any(
-                    env.get("DATABASE_URL")
-                    == "postgresql+psycopg2://main_user:main_pass@main.db.internal/main_db"
+                    env.get("DATABASE_URL") == "postgresql+psycopg2://main_user:main_pass@main.db.internal/main_db"
                     for env in bootstrap_envs
                 )
             )
@@ -951,8 +954,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(any(env.get("CUSTOM_BACKEND_FLAG") == "enabled" for env in backend_start_envs))
             self.assertTrue(
                 any(
-                    isinstance(env.get("APP_ENV_FILE"), str)
-                    and Path(str(env.get("APP_ENV_FILE"))).name == ".env"
+                    isinstance(env.get("APP_ENV_FILE"), str) and Path(str(env.get("APP_ENV_FILE"))).name == ".env"
                     for env in backend_start_envs
                 )
             )
@@ -1806,7 +1808,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine._command_exists = lambda _name: False
 
             plan = PortPlan(project="proj", requested=5432, assigned=5432, final=5432, source="test")
-            context = ProjectContext(name="proj", root=repo, ports={"db": plan, "redis": plan, "n8n": plan, "supabase": plan, "backend": plan, "frontend": plan})
+            context = ProjectContext(
+                name="proj",
+                root=repo,
+                ports={"db": plan, "redis": plan, "n8n": plan, "supabase": plan, "backend": plan, "frontend": plan},
+            )
 
             outcome = engine._start_requirement_component(
                 context,
@@ -1988,10 +1994,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(fake_runner.start_background_calls, [])
             self.assertTrue(
-                any(
-                    len(call[0]) >= 2 and call[0][0] == "sh" and call[0][1] == "-lc"
-                    for call in fake_runner.run_calls
-                )
+                any(len(call[0]) >= 2 and call[0][0] == "sh" and call[0][1] == "-lc" for call in fake_runner.run_calls)
             )
             self.assertIn("Planning PR mode complete; skipping service startup.", out.getvalue())
 
@@ -2120,7 +2123,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a,feature-b", "--parallel-trees", "--parallel-trees-max", "2", "--batch"], env={})
+            route = parse_route(
+                ["--plan", "feature-a,feature-b", "--parallel-trees", "--parallel-trees-max", "2", "--batch"], env={}
+            )
 
             code = engine.dispatch(route)
 
@@ -2587,7 +2592,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue((repo / "trees" / "feature-a" / "1" / ".envctl_worktree_placeholder").exists())
-            fallback_events = [event for event in engine.events if event.get("event") == "setup.worktree.placeholder_fallback"]
+            fallback_events = [
+                event for event in engine.events if event.get("event") == "setup.worktree.placeholder_fallback"
+            ]
             self.assertTrue(fallback_events)
 
     def test_plan_without_selection_and_without_planning_files_fails(self) -> None:
@@ -2980,9 +2987,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             checkpoints = [
-                event.get("checkpoint")
-                for event in engine.events
-                if event.get("event") == "ui.plan_handoff.snapshot"
+                event.get("checkpoint") for event in engine.events if event.get("event") == "ui.plan_handoff.snapshot"
             ]
             self.assertIn("plan_selector_exit", checkpoints)
             self.assertIn("startup_branch_enter", checkpoints)
@@ -3671,7 +3676,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
-            planning_files = [f"implementations/super-long-plan-name-{idx:02d}-for-rendering-check.md" for idx in range(1, 31)]
+            planning_files = [
+                f"implementations/super-long-plan-name-{idx:02d}-for-rendering-check.md" for idx in range(1, 31)
+            ]
             selected_counts = {name: 1 if idx % 5 == 0 else 0 for idx, name in enumerate(planning_files, start=1)}
             existing_counts = {planning_files[9]: 2}
 

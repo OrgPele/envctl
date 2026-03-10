@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
+
 CommandExists = Callable[[str], bool]
 
 
@@ -107,7 +108,9 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
     for candidate_root in search_roots:
         pyproject = candidate_root / "pyproject.toml"
         if pyproject.is_file():
-            python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+            python_bin = _detect_python_bin(
+                project_root=project_root, service_root=candidate_root, command_exists=command_exists
+            )
             app_ref = _detect_uvicorn_app_ref(candidate_root)
             if python_bin is not None and app_ref is not None:
                 return [

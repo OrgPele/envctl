@@ -210,14 +210,9 @@ class LifecycleParityTests(unittest.TestCase):
                 "2222 /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo --plan\n"
                 "7777 /usr/bin/node /tmp/repo/frontend/node_modules/.bin/vite\n"
                 "3333 /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo blast-all\n"
-                "4444 /bin/bash /tmp/repo/lib/engine/main.sh --tree\n"
+                "4444 /usr/bin/python -m envctl_engine.runtime.cli --tree\n"
             )
-            tracking_runner.ps_tree_stdout = (
-                "2222 1\n"
-                "7777 2222\n"
-                "3333 1\n"
-                "4444 1\n"
-            )
+            tracking_runner.ps_tree_stdout = "2222 1\n7777 2222\n3333 1\n4444 1\n"
             engine.process_runner = tracking_runner  # type: ignore[assignment]
 
             engine._blast_all_kill_orchestrator_processes()
@@ -931,7 +926,7 @@ class LifecycleParityTests(unittest.TestCase):
             dump_state(state, str(runs_dir / "run_state.json"))
             (run_dir / "runtime_map.json").write_text("{}", encoding="utf-8")
             (run_dir / "ports_manifest.json").write_text("{}", encoding="utf-8")
-            (run_dir / "shell_prune_report.json").write_text("{}", encoding="utf-8")
+            (run_dir / "runtime_readiness_report.json").write_text("{}", encoding="utf-8")
             (run_dir / ".last_state.main").write_text(str(runs_dir / "run_state.json"), encoding="utf-8")
 
             config = load_config(
@@ -948,7 +943,7 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertEqual(stop_code, 0)
             self.assertTrue(planner.released)
             self.assertFalse((run_dir / "run_state.json").exists())
-            self.assertFalse((run_dir / "shell_prune_report.json").exists())
+            self.assertFalse((run_dir / "runtime_readiness_report.json").exists())
             self.assertTrue(any(event["event"] == "cleanup.stop" for event in engine.events))
 
             (run_dir / "runs" / "run-1").mkdir(parents=True, exist_ok=True)
@@ -984,8 +979,7 @@ class LifecycleParityTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ("docker", "rm", "-f", "cid1")
-                    or call[:5] == ("docker", "rm", "-f", "-v", "cid1")
+                    call[:4] == ("docker", "rm", "-f", "cid1") or call[:5] == ("docker", "rm", "-f", "-v", "cid1")
                     for call in tracking_runner.run_calls
                 ),
                 msg=tracking_runner.run_calls,
@@ -1030,7 +1024,6 @@ class LifecycleParityTests(unittest.TestCase):
             reconciled = json.loads((run_dir / "runtime_map.json").read_text(encoding="utf-8"))
             self.assertEqual(reconciled["run_id"], "run-1")
             self.assertTrue(any(event["event"] == "state.reconcile" for event in engine.events))
-
 
     def test_resume_fails_fast_for_conflicting_main_requirement_mode_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1263,10 +1256,38 @@ class LifecycleParityTests(unittest.TestCase):
                 requirements={
                     "Main": RequirementsResult(
                         project="Main",
-                        db={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": True, "simulated": False},
-                        redis={"requested": 6379, "final": 6379, "retries": 0, "success": True, "enabled": True, "simulated": False},
-                        n8n={"requested": 5678, "final": 5678, "retries": 0, "success": True, "enabled": False, "simulated": False},
-                        supabase={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False, "simulated": False},
+                        db={
+                            "requested": 5432,
+                            "final": 5432,
+                            "retries": 0,
+                            "success": True,
+                            "enabled": True,
+                            "simulated": False,
+                        },
+                        redis={
+                            "requested": 6379,
+                            "final": 6379,
+                            "retries": 0,
+                            "success": True,
+                            "enabled": True,
+                            "simulated": False,
+                        },
+                        n8n={
+                            "requested": 5678,
+                            "final": 5678,
+                            "retries": 0,
+                            "success": True,
+                            "enabled": False,
+                            "simulated": False,
+                        },
+                        supabase={
+                            "requested": 5432,
+                            "final": 5432,
+                            "retries": 0,
+                            "success": True,
+                            "enabled": False,
+                            "simulated": False,
+                        },
                         health="healthy",
                         failures=[],
                     )
@@ -1372,7 +1393,9 @@ class LifecycleParityTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertNotIn("Warning: backend migration step failed", out.getvalue())
-            self.assertFalse(any(command[-3:] == ("alembic", "upgrade", "head") for command in restore_runner.run_calls))
+            self.assertFalse(
+                any(command[-3:] == ("alembic", "upgrade", "head") for command in restore_runner.run_calls)
+            )
 
     def test_resume_restore_does_not_reuse_requirements_when_project_root_reveals_owner_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1489,7 +1512,14 @@ class LifecycleParityTests(unittest.TestCase):
                 started_requirements.append("Main")
                 return RequirementsResult(
                     project="Main",
-                    db={"requested": 5432, "final": 5432, "retries": 0, "success": False, "enabled": False, "simulated": False},
+                    db={
+                        "requested": 5432,
+                        "final": 5432,
+                        "retries": 0,
+                        "success": False,
+                        "enabled": False,
+                        "simulated": False,
+                    },
                     redis={
                         "requested": 6380,
                         "final": 6380,
@@ -1499,8 +1529,22 @@ class LifecycleParityTests(unittest.TestCase):
                         "simulated": False,
                         "runtime_status": "healthy",
                     },
-                    supabase={"requested": 5432, "final": 5432, "retries": 0, "success": False, "enabled": False, "simulated": False},
-                    n8n={"requested": 5678, "final": 5678, "retries": 0, "success": False, "enabled": False, "simulated": False},
+                    supabase={
+                        "requested": 5432,
+                        "final": 5432,
+                        "retries": 0,
+                        "success": False,
+                        "enabled": False,
+                        "simulated": False,
+                    },
+                    n8n={
+                        "requested": 5678,
+                        "final": 5678,
+                        "retries": 0,
+                        "success": False,
+                        "enabled": False,
+                        "simulated": False,
+                    },
                     health="healthy",
                     failures=[],
                 )
@@ -1677,6 +1721,7 @@ class LifecycleParityTests(unittest.TestCase):
             )
             restore_runner = _ResumeRestoreRunner()
             engine.process_runner = restore_runner  # type: ignore[assignment]
+
             def reporting_start_requirements(context, mode, route=None):  # noqa: ANN001
                 project_update = None if route is None else route.flags.get("_spinner_update_project")
                 if callable(project_update):
@@ -1746,11 +1791,7 @@ class LifecycleParityTests(unittest.TestCase):
             succeeded_projects = {project for kind, project, _msg in group_calls if kind == "success"}
             self.assertIn("feature-a-1", succeeded_projects)
             self.assertIn("feature-b-1", succeeded_projects)
-            execution_events = [
-                event
-                for event in engine.events
-                if event.get("event") == "resume.restore.execution"
-            ]
+            execution_events = [event for event in engine.events if event.get("event") == "resume.restore.execution"]
             self.assertTrue(execution_events)
             self.assertEqual(execution_events[-1].get("mode"), "parallel")
 
@@ -1782,9 +1823,19 @@ class LifecycleParityTests(unittest.TestCase):
                 requirements={
                     "feature-a-1": RequirementsResult(
                         project="feature-a-1",
-                        redis={"enabled": True, "success": True, "final": 6384, "container_name": "envctl-redis-feature-a"},
+                        redis={
+                            "enabled": True,
+                            "success": True,
+                            "final": 6384,
+                            "container_name": "envctl-redis-feature-a",
+                        },
                         n8n={"enabled": True, "success": True, "final": 5683, "container_name": "envctl-n8n-feature-a"},
-                        supabase={"enabled": True, "success": True, "final": 5437, "container_name": "envctl-supabase-feature-a-supabase-db-1"},
+                        supabase={
+                            "enabled": True,
+                            "success": True,
+                            "final": 5437,
+                            "container_name": "envctl-supabase-feature-a-supabase-db-1",
+                        },
                     )
                 },
                 metadata={"project_roots": {"feature-a-1": str(tree)}},
@@ -1806,7 +1857,9 @@ class LifecycleParityTests(unittest.TestCase):
                 raise RuntimeError("requirements unavailable: redis failed, n8n failed")
 
             engine._start_requirements_for_project = fail_requirements  # type: ignore[method-assign]
-            errors = engine._resume_restore_missing(state, ["feature-a-1 Backend"], route=parse_route(["--resume", "--batch"], env={}))
+            errors = engine._resume_restore_missing(
+                state, ["feature-a-1 Backend"], route=parse_route(["--resume", "--batch"], env={})
+            )
 
             self.assertTrue(errors)
             requirements = state.requirements["feature-a-1"]
@@ -1940,9 +1993,7 @@ class LifecycleParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["--resume", "--trees", "--batch"], env={}))
 
             self.assertEqual(code, 0)
-            execution_event = next(
-                event for event in engine.events if event.get("event") == "resume.restore.execution"
-            )
+            execution_event = next(event for event in engine.events if event.get("event") == "resume.restore.execution")
             self.assertEqual(execution_event.get("mode"), "parallel")
             self.assertEqual(execution_event.get("workers"), 2)
 
@@ -2425,10 +2476,7 @@ class LifecycleParityTests(unittest.TestCase):
             planner = _NoopPlanner()
             engine.port_planner = planner  # type: ignore[assignment]
             runner = _TrackingRunner()
-            runner.docker_ps_stdout = (
-                "cid-main|postgres:16|envctl-postgres\n"
-                "cid-tree|redis:7|feature-a-1-redis\n"
-            )
+            runner.docker_ps_stdout = "cid-main|postgres:16|envctl-postgres\ncid-tree|redis:7|feature-a-1-redis\n"
             runner.inspect_volumes_by_cid = {
                 "cid-main": "mainvol\n",
                 "cid-tree": "treevol1\ntreevol2\n",
@@ -2443,7 +2491,16 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertIn("Main Docker volumes: keep", out_default.getvalue())
 
             self.assertIn(("docker", "rm", "-f", "cid-main"), runner.run_calls)
-            self.assertIn(("docker", "inspect", "-f", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{println .Name}}{{end}}{{end}}", "cid-tree"), runner.run_calls)
+            self.assertIn(
+                (
+                    "docker",
+                    "inspect",
+                    "-f",
+                    '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}',
+                    "cid-tree",
+                ),
+                runner.run_calls,
+            )
             self.assertIn(("docker", "rm", "-f", "-v", "cid-tree"), runner.run_calls)
             self.assertIn(("docker", "volume", "rm", "treevol1"), runner.run_calls)
             self.assertIn(("docker", "volume", "rm", "treevol2"), runner.run_calls)
@@ -2466,7 +2523,16 @@ class LifecycleParityTests(unittest.TestCase):
                     )
                 )
 
-            self.assertIn(("docker", "inspect", "-f", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{println .Name}}{{end}}{{end}}", "cid-main"), runner2.run_calls)
+            self.assertIn(
+                (
+                    "docker",
+                    "inspect",
+                    "-f",
+                    '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}',
+                    "cid-main",
+                ),
+                runner2.run_calls,
+            )
             self.assertIn(("docker", "rm", "-f", "-v", "cid-main"), runner2.run_calls)
             self.assertIn(("docker", "volume", "rm", "mainvol"), runner2.run_calls)
             self.assertNotIn(("docker", "rm", "-f", "-v", "cid-tree"), runner2.run_calls)
@@ -2564,10 +2630,7 @@ class LifecycleParityTests(unittest.TestCase):
                 "5000 /usr/bin/python -m uvicorn app.main:app\n"
                 "5001 /usr/bin/node /tmp/frontend/node_modules/vite/bin/vite.js\n"
             )
-            runner.ps_tree_stdout = (
-                "5000 1\n"
-                "5001 5000\n"
-            )
+            runner.ps_tree_stdout = "5000 1\n5001 5000\n"
             engine.process_runner = runner  # type: ignore[assignment]
 
             engine._blast_all_print_and_kill_listener_maps(
@@ -2709,7 +2772,9 @@ class LifecycleParityTests(unittest.TestCase):
                 run_id="run-healthy",
                 mode="main",
                 services={
-                    "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000),
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000
+                    ),
                 },
                 requirements={
                     "Main": RequirementsResult(

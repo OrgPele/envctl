@@ -35,7 +35,15 @@ class ConfigCommandSupportTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 code = runtime.dispatch(
                     parse_route(
-                        ["config", "--set", "ENVCTL_DEFAULT_MODE=trees", "--set", "BACKEND_DIR=api", "--set", "MAIN_STARTUP_ENABLE=false"],
+                        [
+                            "config",
+                            "--set",
+                            "ENVCTL_DEFAULT_MODE=trees",
+                            "--set",
+                            "BACKEND_DIR=api",
+                            "--set",
+                            "MAIN_STARTUP_ENABLE=false",
+                        ],
                         env={},
                     )
                 )
@@ -56,8 +64,18 @@ class ConfigCommandSupportTests(unittest.TestCase):
                 "default_mode": "trees",
                 "directories": {"backend": "api", "frontend": "web"},
                 "profiles": {
-                    "main": {"startup_enabled": False, "backend": True, "frontend": False, "dependencies": {"postgres": True, "redis": True, "supabase": False, "n8n": False}},
-                    "trees": {"startup_enabled": True, "backend": True, "frontend": True, "dependencies": {"postgres": True, "redis": True, "supabase": False, "n8n": True}},
+                    "main": {
+                        "startup_enabled": False,
+                        "backend": True,
+                        "frontend": False,
+                        "dependencies": {"postgres": True, "redis": True, "supabase": False, "n8n": False},
+                    },
+                    "trees": {
+                        "startup_enabled": True,
+                        "backend": True,
+                        "frontend": True,
+                        "dependencies": {"postgres": True, "redis": True, "supabase": False, "n8n": True},
+                    },
                 },
             }
 

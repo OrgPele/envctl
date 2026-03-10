@@ -199,7 +199,15 @@ class DashboardRenderingParityTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
-            summary = engine.runtime_root / "runs" / "run-1" / "test-results" / "run_20260302_180000" / "Main" / "failed_tests_summary.txt"
+            summary = (
+                engine.runtime_root
+                / "runs"
+                / "run-1"
+                / "test-results"
+                / "run_20260302_180000"
+                / "Main"
+                / "failed_tests_summary.txt"
+            )
             summary.parent.mkdir(parents=True, exist_ok=True)
             summary.write_text("# Generated at: now\nNo failed tests.\n", encoding="utf-8")
 
@@ -249,7 +257,15 @@ class DashboardRenderingParityTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
-            summary = engine.runtime_root / "runs" / "run-1" / "test-results" / "run_20260302_180001" / "Main" / "failed_tests_summary.txt"
+            summary = (
+                engine.runtime_root
+                / "runs"
+                / "run-1"
+                / "test-results"
+                / "run_20260302_180001"
+                / "Main"
+                / "failed_tests_summary.txt"
+            )
             summary.parent.mkdir(parents=True, exist_ok=True)
             summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
 
@@ -390,7 +406,9 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 if command[:3] == ("git", "rev-parse", "--abbrev-ref"):
                     return SimpleNamespace(returncode=0, stdout="feature/demo\n", stderr="")
                 if command[1:4] == ("pr", "list", "--head"):
-                    return SimpleNamespace(returncode=0, stdout="https://github.com/example/supportopia/pull/999\n", stderr="")
+                    return SimpleNamespace(
+                        returncode=0, stdout="https://github.com/example/supportopia/pull/999\n", stderr=""
+                    )
                 return SimpleNamespace(returncode=1, stdout="", stderr="unsupported")
 
         with tempfile.TemporaryDirectory() as tmpdir:

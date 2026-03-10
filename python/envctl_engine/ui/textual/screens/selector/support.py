@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
@@ -13,16 +12,11 @@ from typing import Any, Callable, Mapping, Sequence, cast
 
 from envctl_engine.ui.capabilities import (
     prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
-    textual_importable as _textual_importable,
+    textual_importable as _textual_importable_impl,
 )
 from envctl_engine.ui.selector_model import (
-    SelectorContext,
     SelectorItem,
-    build_grouped_selector_items,
-    build_project_selector_items,
 )
-from envctl_engine.ui.prompt_toolkit_cursor_menu import run_prompt_toolkit_cursor_menu
-from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.terminal_session import can_interactive_tty, prompt_toolkit_available
 
 
@@ -31,6 +25,7 @@ class _RowRef:
     item: SelectorItem
     selected: bool = False
     visible: bool = True
+
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
     if not callable(emit):
@@ -61,6 +56,10 @@ def _prompt_toolkit_selector_enabled(*, build_only: bool = False) -> bool:
     if build_only:
         return False
     return _prompt_toolkit_selector_enabled_impl(os.environ)
+
+
+def _textual_importable() -> bool:
+    return _textual_importable_impl()
 
 
 def _deep_debug_enabled(emit: Callable[..., None] | None) -> bool:
@@ -192,9 +191,7 @@ def _selector_driver_thread_snapshot(app: object, *, include_stack: bool) -> dic
         return snapshot
     try:
         extracted = traceback.extract_stack(frame, limit=8)
-        snapshot["input_thread_stack"] = [
-            f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in extracted
-        ]
+        snapshot["input_thread_stack"] = [f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in extracted]
     except Exception as exc:
         snapshot["input_thread_stack_error"] = type(exc).__name__
     return snapshot
@@ -536,9 +533,7 @@ def _instrument_textual_parser_keys(
     original_os_read = getattr(linux_driver_mod.os, "read", None)
     selectors_mod = getattr(linux_driver_mod, "selectors", None)
     select_selector_cls = getattr(selectors_mod, "SelectSelector", None) if selectors_mod is not None else None
-    original_selector_select = (
-        getattr(select_selector_cls, "select", None) if select_selector_cls is not None else None
-    )
+    original_selector_select = getattr(select_selector_cls, "select", None) if select_selector_cls is not None else None
 
     def _instrumented_selector_select(self: object, timeout: object = None):  # noqa: ANN001,ANN202
         if not callable(original_selector_select):
@@ -645,6 +640,7 @@ def _instrument_textual_parser_keys(
         event="ui.selector.key.driver.install",
         selector_id=selector_id,
     )
+
     def _snapshot() -> dict[str, object]:
         with stats_lock:
             read_fd_counts = dict(cast(dict[int, int], stats["read_fd_counts"]))
@@ -696,6 +692,7 @@ def _instrument_textual_parser_keys(
                 read_fd_pending_bytes[str(fd_int)] = pending
         snapshot["read_fd_pending_bytes"] = read_fd_pending_bytes
         return snapshot
+
     try:
         yield _snapshot
     finally:

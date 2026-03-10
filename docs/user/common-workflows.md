@@ -186,7 +186,7 @@ Look for:
 Use this only when you are isolating a parity issue or need an emergency rollback during cutover.
 
 ```bash
-ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume
+envctl --resume
 ```
 
 Important:

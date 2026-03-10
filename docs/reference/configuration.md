@@ -44,8 +44,7 @@ The Textual config wizard writes the canonical managed keys.
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
-| `ENVCTL_ENGINE_PYTHON_V1` | `true` (launcher default) | Enables Python runtime path in `lib/engine/main.sh`. |
-| `ENVCTL_ENGINE_SHELL_FALLBACK` | `false` | Forces the deprecated legacy shell runtime during migration/cutover. Use only as an explicit compatibility fallback. |
+| `ENVCTL_ENGINE_PYTHON_V1` | `true` (launcher default) | Enables the Python runtime path used by the launcher bridge. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
 | `ENVCTL_STATE_COMPAT_MODE` | `compat_read_write` | State repository compatibility mode (`compat_read_write`, `compat_read_only`, `scoped_only`). |

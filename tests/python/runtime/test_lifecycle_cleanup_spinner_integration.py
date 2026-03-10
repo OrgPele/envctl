@@ -152,7 +152,6 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
             _ = message, enabled, start_immediately
             raise AssertionError("spinner should not start when stop target resolution fails")
-            yield  # pragma: no cover
 
         with (
             patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.spinner", side_effect=fake_spinner),
@@ -185,8 +184,13 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         assert state is not None
 
         with (
-            patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI._can_interactive_tty", return_value=True),
-            patch("envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input") as flush_mock,
+            patch(
+                "envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI._can_interactive_tty",
+                return_value=True,
+            ),
+            patch(
+                "envctl_engine.runtime.lifecycle_cleanup_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input"
+            ) as flush_mock,
         ):
             selected = orchestrator._select_services_for_stop(state, route)
 

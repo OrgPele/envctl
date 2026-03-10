@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from envctl_engine.shared.protocols import CommandResult, ProcessRuntime
+
 
 @dataclass(slots=True)
 class RetryResult:
@@ -54,7 +56,13 @@ def is_bind_conflict(error: str | None) -> bool:
     )
 
 
-def run_with_retry(*, initial_port: int, start: Callable[[int], tuple[bool, str | None]], reserve_next: Callable[[int], int], max_retries: int = 3) -> RetryResult:
+def run_with_retry(
+    *,
+    initial_port: int,
+    start: Callable[[int], tuple[bool, str | None]],
+    reserve_next: Callable[[int], int],
+    max_retries: int = 3,
+) -> RetryResult:
     port = initial_port
     attempts = 0
     while attempts < max_retries:
@@ -83,13 +91,13 @@ def build_container_name(*, prefix: str, project_root: Path, project_name: str) 
 
 
 def run_docker(
-    process_runner,
+    process_runner: ProcessRuntime,
     args: list[str],
     *,
     cwd: Path | None = None,
     env: Mapping[str, str] | None = None,
     timeout: float = 60.0,
-) -> tuple[object | None, str | None]:
+) -> tuple[CommandResult | None, str | None]:
     try:
         result = process_runner.run(
             ["docker", *args],
@@ -98,22 +106,27 @@ def run_docker(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        return None, f"Command timed out after {timeout:.1f}s: {' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}"
+        return (
+            None,
+            "Command timed out after "
+            f"{timeout:.1f}s: "
+            f"{' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}",
+        )
     except OSError as exc:
         return None, f"docker unavailable: {exc}"
     return result, None
 
 
-def run_result_error(result: object, fallback: str) -> str:
-    stderr = getattr(result, "stderr", "")
-    stdout = getattr(result, "stdout", "")
-    returncode = getattr(result, "returncode", 1)
+def run_result_error(result: CommandResult, fallback: str) -> str:
+    stderr = result.stderr
+    stdout = result.stdout
+    returncode = result.returncode
     text = (stderr or stdout or f"exit:{returncode}").strip()
     return text or fallback
 
 
 def container_exists(
-    process_runner,
+    process_runner: ProcessRuntime,
     *,
     container_name: str,
     cwd: Path | None = None,
@@ -134,7 +147,7 @@ def container_exists(
 
 
 def container_status(
-    process_runner,
+    process_runner: ProcessRuntime,
     *,
     container_name: str,
     cwd: Path | None = None,
@@ -155,7 +168,7 @@ def container_status(
 
 
 def container_state_error(
-    process_runner,
+    process_runner: ProcessRuntime,
     *,
     container_name: str,
     cwd: Path | None = None,
@@ -176,7 +189,7 @@ def container_state_error(
 
 
 def container_host_port(
-    process_runner,
+    process_runner: ProcessRuntime,
     *,
     container_name: str,
     container_port: int,

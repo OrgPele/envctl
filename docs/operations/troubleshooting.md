@@ -129,9 +129,9 @@ Selector reliability quick checks:
 - More complete user-facing runtime/debug guidance:
   - `docs/user/python-engine-guide.md`
 
-## Python runtime vs shell fallback
+## Python Runtime Path
 - Default runtime is Python.
-- To force the deprecated shell fallback temporarily: `ENVCTL_ENGINE_SHELL_FALLBACK=true envctl --resume`.
+- `envctl` now uses the Python runtime path directly; shell fallback is no longer part of the supported troubleshooting flow.
 - Compare `run_state.json` and `runtime_map.json` artifacts between runs when debugging parity issues.
 - `debug-pack` and the modern debug-bundle flow are Python-runtime features, so switch back to Python mode before using them.
 

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import concurrent.futures
-from contextlib import nullcontext
 from pathlib import Path
-import sys
-import threading
 import time
-from typing import Any, Callable, Mapping, Protocol, cast
+from typing import Any
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.models import RunState
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -17,17 +13,7 @@ from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinne
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.startup.resume_progress import ResumeProjectSpinnerGroup
 from envctl_engine.startup.resume_restore_support import (
-    _PortAllocatorProtocol,
-    _StateRepositoryProtocol,
-    _format_project_timing_line as _format_project_timing_line_impl,
-    _port_allocator as _port_allocator_impl,
-    _requirements_reuse_decision as _requirements_reuse_decision_impl,
-    _reserve_application_service_ports as _reserve_application_service_ports_impl,
-    _restore_parallel_config as _restore_parallel_config_impl,
-    _restore_timing_enabled as _restore_timing_enabled_impl,
-    _round_ms as _round_ms_impl,
     _state_repository as _state_repository_impl,
-    _resume_terminate_aggressive as _resume_terminate_aggressive_impl,
     apply_ports_to_context as apply_ports_to_context_impl,
     context_for_project as context_for_project_impl,
     project_root as project_root_impl,
@@ -45,6 +31,11 @@ class ResumeOrchestrator:
     def execute(self, route: Route) -> int:
         rt = self.runtime
         state_repository = _state_repository_impl(rt)
+        hook_contract_issue = rt._startup_hook_contract_issue()  # type: ignore[attr-defined]
+        if hook_contract_issue:
+            print(hook_contract_issue)
+            return 1
+
         def emit_phase(phase: str, started_at: float, **extra: object) -> None:
             rt._emit(
                 "resume.phase",
@@ -69,9 +60,9 @@ class ResumeOrchestrator:
             bind_debug_run_id(state.run_id)
 
         legacy_resume = bool(state.metadata.get("legacy_state"))
-        strict_resume = rt.config.runtime_truth_mode == "strict" or legacy_resume  # type: ignore[attr-defined]
-        if not rt._enforce_runtime_shell_budget_profile(scope="resume", strict_required=strict_resume):  # type: ignore[attr-defined]
-            print("Resume blocked: strict cutover shell budget profile is incomplete.")
+        strict_resume = rt.config.runtime_truth_mode == "strict"  # type: ignore[attr-defined]
+        if not rt._enforce_runtime_readiness_contract(scope="resume", strict_required=strict_resume):  # type: ignore[attr-defined]
+            print("Resume blocked: strict runtime readiness gate is incomplete.")
             return 1
 
         try:
@@ -120,7 +111,13 @@ class ResumeOrchestrator:
                 "restore_missing",
                 restore_started,
                 status="error" if restore_errors else "ok",
-                project_count=len({rt._project_name_from_service(name) for name in missing_services if rt._project_name_from_service(name)}),  # type: ignore[attr-defined]
+                project_count=len(
+                    {
+                        rt._project_name_from_service(name)
+                        for name in missing_services
+                        if rt._project_name_from_service(name)
+                    }
+                ),  # type: ignore[attr-defined]
                 error_count=len(restore_errors),
             )
             if legacy_resume:
@@ -148,7 +145,11 @@ class ResumeOrchestrator:
             emit=rt._emit,
             runtime_map_builder=build_runtime_map,
         )
-        emit_phase("save_resume_state", save_started, project_count=len(runtime_map.get("projection", {})) if isinstance(runtime_map, dict) else 0)
+        emit_phase(
+            "save_resume_state",
+            save_started,
+            project_count=len(runtime_map.get("projection", {})) if isinstance(runtime_map, dict) else 0,
+        )
         enter_interactive = bool(rt._should_enter_resume_interactive(route))  # type: ignore[attr-defined]
 
         if not enter_interactive:

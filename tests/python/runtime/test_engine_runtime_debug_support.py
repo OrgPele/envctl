@@ -28,16 +28,30 @@ from envctl_engine.runtime.engine_runtime_debug_support import (  # noqa: E402
 
 
 class EngineRuntimeDebugSupportTests(unittest.TestCase):
-    def test_debug_pack_rejects_shell_fallback_mode(self) -> None:
-        runtime = SimpleNamespace(env={"ENVCTL_ENGINE_SHELL_FALLBACK": "1"})
+    def test_debug_pack_is_available_without_shell_runtime_mode_checks(self) -> None:
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(runtime_scope_id="repo-1", runtime_dir=Path("/tmp/runtime")),
+            runtime_root=Path("/tmp/runtime/python-engine/repo-1"),
+            state_repository=SimpleNamespace(load_latest=lambda mode=None, strict_mode_match=False: None),
+            _scope_latest_run_id=lambda scope_dir: None,
+            _latest_scope_session_id=lambda scope_dir: None,
+            _latest_debug_scope_session=lambda: None,
+            _debug_doctor_snapshot_text=lambda: "doctor snapshot\n",
+            _last_debug_bundle_path=None,
+        )
         route = SimpleNamespace(flags={})
 
-        out = io.StringIO()
-        with redirect_stdout(out):
+        with (
+            redirect_stdout(io.StringIO()),
+            patch(
+                "envctl_engine.runtime.engine_runtime_debug_support.pack_debug_bundle",
+                return_value=Path("/tmp/bundle.tar.gz"),
+            ),
+        ):
             code = debug_pack(runtime, route)
 
-        self.assertEqual(code, 1)
-        self.assertIn("only available in Python runtime", out.getvalue())
+        self.assertEqual(code, 0)
 
     def test_scope_latest_run_id_reads_run_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,8 +141,17 @@ class EngineRuntimeDebugSupportTests(unittest.TestCase):
                     "probable_root_causes": [],
                     "next_data_needed": [],
                     "launch_intent_counts": {"background_service": 2, "probe": 4},
-                    "tracked_controller_input_owners": [{"launch_intent": "interactive_child", "pid": 333, "stdin_policy": "inherit"}],
-                    "launch_policy_violations": [{"launch_intent": "background_service", "pid": 444, "stdin_policy": "inherit", "controller_input_owner_allowed": True}],
+                    "tracked_controller_input_owners": [
+                        {"launch_intent": "interactive_child", "pid": 333, "stdin_policy": "inherit"}
+                    ],
+                    "launch_policy_violations": [
+                        {
+                            "launch_intent": "background_service",
+                            "pid": 444,
+                            "stdin_policy": "inherit",
+                            "controller_input_owner_allowed": True,
+                        }
+                    ],
                 },
             ),
         ):

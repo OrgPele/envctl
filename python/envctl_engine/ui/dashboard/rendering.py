@@ -51,7 +51,9 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     dim = palette["dim"]
     separator = "=" * 56
     runs_disabled_dashboard = _dashboard_runs_disabled(state)
-    service_statuses = [str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()]
+    service_statuses = [
+        str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()
+    ]
     total_services = len(service_statuses)
     running_services = sum(1 for status in service_statuses if status in {"running", "healthy"})
     issue_services = sum(1 for status in service_statuses if status in {"stale", "unreachable"})
@@ -108,7 +110,9 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 label="Backend",
                 service=backend_service,
                 url=str(backend_url) if backend_url else None,
-                configured_not_running=bool(runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types),
+                configured_not_running=bool(
+                    runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types
+                ),
                 ok_color=green,
                 warn_color=yellow,
                 bad_color=red,
@@ -121,7 +125,9 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 label="Frontend",
                 service=frontend_service,
                 url=str(frontend_url) if frontend_url else None,
-                configured_not_running=bool(runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types),
+                configured_not_running=bool(
+                    runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types
+                ),
                 ok_color=green,
                 warn_color=yellow,
                 bad_color=red,
@@ -148,6 +154,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             reset=reset,
         )
         print("")
+
+
 def _print_dashboard_service_row(
     self: Any,
     *,
@@ -187,20 +195,16 @@ def _print_dashboard_service_row(
         if isinstance(fallback_port, int) and fallback_port > 0 and isinstance(pid, int) and pid > 0:
             url_text = f"http://localhost:{fallback_port}"
     label_text = f"{label_color}{label}{reset}"
-    print(f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}")
+    print(
+        f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}"
+    )
     log_path = getattr(service, "log_path", None)
     if isinstance(log_path, str) and log_path.strip():
         print(f"      {dim}log: {log_path}{reset}")
 
     requested = getattr(service, "requested_port", None)
     actual = getattr(service, "actual_port", None)
-    if (
-        isinstance(requested, int)
-        and requested > 0
-        and isinstance(actual, int)
-        and actual > 0
-        and requested != actual
-    ):
+    if isinstance(requested, int) and requested > 0 and isinstance(actual, int) and actual > 0 and requested != actual:
         print(f"      {dim}port: requested {requested} -> actual {actual}{reset}")
 
 

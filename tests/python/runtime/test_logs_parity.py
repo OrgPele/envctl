@@ -116,6 +116,30 @@ class LogsParityTests(unittest.TestCase):
             self.assertIn("error plain", rendered)
             self.assertNotIn("\x1b[31m", rendered)
 
+    def test_logs_does_not_require_state_truth_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            log_path = root / "backend.log"
+            log_path.write_text("line\n", encoding="utf-8")
+            runtime_obj = self._write_state(repo, runtime, log_path)
+
+            def _unexpected(*args: object, **kwargs: object) -> object:
+                raise AssertionError("logs should not reconcile runtime truth")
+
+            runtime_obj._reconcile_state_truth = _unexpected  # type: ignore[method-assign]
+            runtime_obj._requirement_truth_issues = _unexpected  # type: ignore[method-assign]
+            runtime_obj._recent_failure_messages = _unexpected  # type: ignore[method-assign]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = runtime_obj.dispatch(parse_route(["logs", "--all", "--logs-tail", "1"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertIn("line", out.getvalue())
+
     def test_logs_requires_explicit_target_when_non_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

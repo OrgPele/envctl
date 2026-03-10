@@ -9,13 +9,12 @@ Use it when you are changing command flow, startup/resume behavior, launcher han
 The active execution path is:
 
 1. `bin/envctl`
-2. `lib/envctl.sh`
-3. `lib/engine/main.sh`
-4. `python -m envctl_engine.runtime.cli`
-5. `envctl_engine.runtime.command_router.parse_route`
-6. `EngineRuntime`
-7. `engine_runtime_dispatch.dispatch_command`
-8. orchestrator or inspection handler
+2. `envctl_engine.runtime.launcher_cli`
+3. `python -m envctl_engine.runtime.cli`
+4. `envctl_engine.runtime.command_router.parse_route`
+5. `EngineRuntime`
+6. `engine_runtime_dispatch.dispatch_command`
+7. orchestrator or inspection handler
 
 Why this matters:
 
@@ -25,12 +24,12 @@ Why this matters:
 
 ## Launcher Responsibilities
 
-`lib/envctl.sh` owns:
+`envctl_engine.runtime.launcher_cli` owns:
 
 - repository root resolution
 - `--repo` handling
 - launcher-only subcommands such as `install`, `uninstall`, and launcher `doctor`
-- default Python-engine enablement unless shell fallback is explicitly forced
+- Python runtime handoff
 
 Important env exports set before the engine starts include:
 
@@ -38,23 +37,6 @@ Important env exports set before the engine starts include:
 - `RUN_ENGINE_PATH`
 - `RUN_LAUNCHER_NAME`
 - `RUN_LAUNCHER_CONTEXT`
-- `ENVCTL_ENGINE_PYTHON_V1`
-
-## Engine Selection
-
-`lib/engine/main.sh` owns runtime selection.
-
-Current behavior:
-
-- Python is the default path
-- Python requires 3.12 through 3.14
-- shell fallback is only taken when Python mode is not selected or when explicitly forced
-
-Important behavior to remember:
-
-- shell fallback is deprecated but still real
-- user docs should treat Python as primary
-- compatibility or parity work may still need the shell path to stay functional
 
 ## CLI Bootstrapping
 
@@ -386,4 +368,4 @@ Checklist:
 - adding config parsing ad hoc instead of through `EngineConfig`
 - changing startup behavior without updating `explain-startup`
 - changing resume truth behavior without checking doctor and debug surfaces
-- assuming shell fallback is gone when it is still an explicit compatibility path
+- assuming unsupported compatibility paths are still part of the active runtime contract

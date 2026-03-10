@@ -8,7 +8,6 @@ from pathlib import Path
 import threading
 import time
 import uuid
-from typing import Any
 
 from ..debug.debug_contract import DEBUG_EVENT_SCHEMA_VERSION, apply_debug_event_contract
 from ..debug.debug_utils import file_lock, hash_command, scrub_sensitive_text

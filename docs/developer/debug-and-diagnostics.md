@@ -122,14 +122,14 @@ These commands are wired through `runtime/engine_runtime_debug_support.py`.
 Important current behavior:
 
 - they are Python-runtime only
-- shell fallback should produce a clear error instead of pretending support exists
+- missing debug data or prerequisites should produce a clear error instead of pretending support exists
 - `debug-report` packages first, then summarizes
 
 If you change bundle behavior, check all three commands.
 
 ## Doctor
 
-`debug/doctor_orchestrator.py` is not just a health command. It is also a cutover and governance surface.
+`debug/doctor_orchestrator.py` is not just a health command. It is also a runtime readiness and governance surface.
 
 Doctor currently reports on:
 
@@ -138,8 +138,8 @@ Doctor currently reports on:
 - parity manifest state
 - pointer and lock health
 - synthetic state detection
-- shell migration status
-- shell prune budgets
+- runtime readiness status
+- runtime gap counts
 - recent failures
 
 That means doctor changes can affect:
@@ -155,13 +155,11 @@ Doctor and related diagnostics rely on:
 - parity manifest completeness
 - runtime truth reconciliation
 - lifecycle expectations
-- shell ownership ledger status
-- shell prune budgets
+- runtime readiness contract
 
 Relevant modules:
 
 - `runtime/engine_runtime_diagnostics.py`
-- `shell/shell_prune.py`
 - `shell/release_gate.py`
 - `debug/doctor_orchestrator.py`
 

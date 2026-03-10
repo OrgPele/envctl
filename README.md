@@ -134,7 +134,7 @@ Common settings:
 - `ENVCTL_DEFAULT_MODE` controls the default mode when no mode flag is passed (`main` or `trees`, default: `main`).
 - `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `todo/plans`).
 - Per-mode toggles control whether backend/frontend/dependencies are managed in `main` and `trees`.
-- `ENVCTL_ENGINE_SHELL_FALLBACK=true` still forces the deprecated legacy shell engine when you need an explicit compatibility escape hatch.
+- `envctl` now runs through the Python runtime path by default and in supported configurations.
 
 ---
 

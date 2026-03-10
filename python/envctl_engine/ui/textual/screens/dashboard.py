@@ -6,4 +6,3 @@ from dataclasses import dataclass
 @dataclass(slots=True)
 class DashboardScreenContext:
     title: str = "Development Environment - Interactive Mode"
-

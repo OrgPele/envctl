@@ -22,12 +22,11 @@ Determinism comes from:
 - Config precedence (`env > .envctl/.envctl.sh > defaults`).
 - Saved runtime state with resume flows.
 
-## Dual Engine Transition
-`envctl` now runs Python engine by default and keeps shell as an explicit fallback:
-- Default: launcher sets `ENVCTL_ENGINE_PYTHON_V1=true`.
-- Fallback: set `ENVCTL_ENGINE_SHELL_FALLBACK=true` to force the deprecated shell runtime during migration/cutover.
-- Python runtime enforces startup self-checks, normalizes command exit codes, and introduces typed contracts for ports/state/runtime projection.
-- The shell engine should be treated as a compatibility path, not a co-primary runtime.
+## Python Runtime Transition
+`envctl` now treats the Python engine as the sole supported runtime:
+- launcher bootstrap resolves Python and hands off to the Python runtime path
+- Python runtime enforces startup self-checks, normalizes command exit codes, and introduces typed contracts for ports/state/runtime projection
+- legacy shell files remain only as transitional implementation baggage until the dedicated shell-retirement slice deletes them
 
 For a deeper developer-oriented walkthrough of the current Python runtime surfaces, see [Python Runtime Guide](python-runtime-guide.md).
 
@@ -39,7 +38,6 @@ The Python package lives under `python/envctl_engine/`:
 - `state.py`: safe JSON state loading and deterministic merge policy.
 - `runtime_map.py`: canonical runtime projection with `port_to_service` and `service_to_actual_port`.
 - `requirements/*`: shared bind-conflict retry contract across postgres/redis/supabase/n8n.
-- `shell_adapter.py`: explicit fallback adapter to the legacy shell engine.
 
 ### Shared ownership rules
 - UI capability checks are centralized in `ui/capabilities.py`.

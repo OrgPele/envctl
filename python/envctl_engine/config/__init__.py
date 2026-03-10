@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping
 
-from envctl_engine.requirements.core import dependency_definition, dependency_definitions, dependency_port_keys, managed_enable_keys
+from envctl_engine.requirements.core import dependency_definitions, dependency_port_keys, managed_enable_keys
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
@@ -32,7 +32,6 @@ DEFAULTS: dict[str, str] = {
     "SUPABASE_MAIN_ENABLE": "false",
     "N8N_ENABLE": "true",
     "N8N_MAIN_ENABLE": "false",
-    "ENVCTL_ENGINE_SHELL_FALLBACK": "false",
     "ENVCTL_STRICT_N8N_BOOTSTRAP": "false",
     "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
     "ENVCTL_PLAN_STRICT_SELECTION": "false",
@@ -41,10 +40,6 @@ DEFAULTS: dict[str, str] = {
     "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
     "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
     "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
-    "ENVCTL_SHELL_PRUNE_MAX_UNMIGRATED": "0",
-    "ENVCTL_SHELL_PRUNE_MAX_PARTIAL_KEEP": "0",
-    "ENVCTL_SHELL_PRUNE_MAX_INTENTIONAL_KEEP": "0",
-    "ENVCTL_SHELL_PRUNE_PHASE": "cutover",
     "MAIN_STARTUP_ENABLE": "true",
     "MAIN_BACKEND_ENABLE": "true",
     "MAIN_FRONTEND_ENABLE": "true",
@@ -332,8 +327,12 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     return EngineConfig(
         base_dir=base_dir,
-        backend_dir_name=str(resolved.get("BACKEND_DIR", DEFAULTS["BACKEND_DIR"]) or DEFAULTS["BACKEND_DIR"]).strip() or DEFAULTS["BACKEND_DIR"],
-        frontend_dir_name=str(resolved.get("FRONTEND_DIR", DEFAULTS["FRONTEND_DIR"]) or DEFAULTS["FRONTEND_DIR"]).strip() or DEFAULTS["FRONTEND_DIR"],
+        backend_dir_name=str(resolved.get("BACKEND_DIR", DEFAULTS["BACKEND_DIR"]) or DEFAULTS["BACKEND_DIR"]).strip()
+        or DEFAULTS["BACKEND_DIR"],
+        frontend_dir_name=str(
+            resolved.get("FRONTEND_DIR", DEFAULTS["FRONTEND_DIR"]) or DEFAULTS["FRONTEND_DIR"]
+        ).strip()
+        or DEFAULTS["FRONTEND_DIR"],
         runtime_dir=runtime_dir,
         runtime_scope_id=runtime_scope_id,
         runtime_scope_dir=runtime_scope_dir,
@@ -433,10 +432,12 @@ def _startup_profile_from_resolved(
     mode: Literal["main", "trees"],
 ) -> StartupProfile:
     prefix = "MAIN" if mode == "main" else "TREES"
+
     def profile_bool(key: str, default: bool) -> bool:
         if key in explicit_values:
             return parse_bool(resolved.get(key), default)
         return default
+
     dependencies: dict[str, bool] = {}
     for definition in dependency_definitions():
         default = definition.enabled_by_default(mode)

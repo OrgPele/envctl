@@ -114,8 +114,7 @@ class CommandResolutionTests(unittest.TestCase):
                     service_name="backend",
                     project_root=root,
                     port=8000,
-                    env={
-                    },
+                    env={},
                     config_raw={},
                     command_exists=lambda exe: True,
                 )

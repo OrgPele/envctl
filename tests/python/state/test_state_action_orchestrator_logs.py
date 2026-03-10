@@ -69,6 +69,16 @@ class _RuntimeStub:
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
+    def test_runtime_facade_routes_state_dependencies(self) -> None:
+        state = RunState(run_id="run-0", mode="main")
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        loaded = orchestrator.runtime.load_state(Route(command="health", mode="main"))
+
+        self.assertIs(loaded, state)
+        self.assertEqual(orchestrator.runtime.project_name_from_service("Main Backend"), "Main")
+
     def test_logs_selection_filters_services(self) -> None:
         state = RunState(
             run_id="run-1",
@@ -86,7 +96,9 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         selection = TargetSelection(project_names=["alpha"])
         with (
             patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
-            patch("envctl_engine.state.action_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input") as flush_mock,
+            patch(
+                "envctl_engine.state.action_orchestrator.RuntimeTerminalUI.flush_pending_interactive_input"
+            ) as flush_mock,
             patch.object(runtime, "_select_grouped_targets", return_value=selection),
         ):
             code = orchestrator.execute(route)
@@ -105,8 +117,12 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             run_id="run-1",
             mode="main",
             services={
-                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000),
-                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd="/tmp/main", status="running", actual_port=9000),
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend", type="frontend", cwd="/tmp/main", status="running", actual_port=9000
+                ),
             },
             requirements={
                 "Main": RequirementsResult(
@@ -240,7 +256,9 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             run_id="run-1",
             mode="main",
             services={
-                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000),
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000
+                ),
             },
             requirements={
                 "Main": RequirementsResult(
@@ -270,7 +288,9 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             run_id="run-2",
             mode="main",
             services={
-                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="failed", log_path="/tmp/backend.log"),
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="failed", log_path="/tmp/backend.log"
+                ),
             },
         )
         runtime = _RuntimeStub(state)

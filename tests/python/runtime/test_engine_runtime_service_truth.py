@@ -70,7 +70,9 @@ class _RunnerStub:
 
 class EngineRuntimeServiceTruthTests(unittest.TestCase):
     def test_command_result_error_text_prefers_stderr_then_stdout(self) -> None:
-        stderr_value = command_result_error_text(result=SimpleNamespace(stderr="first\nsecond", stdout="", returncode=2))
+        stderr_value = command_result_error_text(
+            result=SimpleNamespace(stderr="first\nsecond", stdout="", returncode=2)
+        )
         stdout_value = command_result_error_text(result=SimpleNamespace(stderr="", stdout="a\nb", returncode=3))
 
         self.assertEqual(stderr_value, "second")

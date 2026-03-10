@@ -118,10 +118,7 @@ def _thread_snapshot() -> list[dict[str, object]]:
         frame = current_frames.get(thread.ident) if thread.ident is not None else None
         if frame is not None:
             extracted = traceback.extract_stack(frame)
-            stack_tail = [
-                f"{item.filename}:{item.lineno}:{item.name}"
-                for item in extracted[-5:]
-            ]
+            stack_tail = [f"{item.filename}:{item.lineno}:{item.name}" for item in extracted[-5:]]
         snapshots.append(
             {
                 "name": thread.name,

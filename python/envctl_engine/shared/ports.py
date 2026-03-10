@@ -58,15 +58,40 @@ class PortPlanner:
         self.scope_key = str(scope_key or "global").strip() or "global"
         self.max_port: Final[int] = 65000
 
-    def plan_project(self, project: str, index: int = 0, requested: dict[str, int] | None = None, sources: dict[str, str] | None = None, retries: dict[str, int] | None = None) -> dict[str, PortPlan]:
+    def plan_project(
+        self,
+        project: str,
+        index: int = 0,
+        requested: dict[str, int] | None = None,
+        sources: dict[str, str] | None = None,
+        retries: dict[str, int] | None = None,
+    ) -> dict[str, PortPlan]:
         requested = requested or {}
         sources = sources or {}
         retries = retries or {}
-        backend_requested = requested.get("backend", self._preferred_port(project, "backend", self.backend_base, index=index))
-        frontend_requested = requested.get("frontend", self._preferred_port(project, "frontend", self.frontend_base, index=index))
+        backend_requested = requested.get(
+            "backend", self._preferred_port(project, "backend", self.backend_base, index=index)
+        )
+        frontend_requested = requested.get(
+            "frontend", self._preferred_port(project, "frontend", self.frontend_base, index=index)
+        )
         return {
-            "backend": PortPlan(project=project, requested=backend_requested, assigned=backend_requested, final=backend_requested, source=sources.get("backend", "env"), retries=retries.get("backend", 0)),
-            "frontend": PortPlan(project=project, requested=frontend_requested, assigned=frontend_requested, final=frontend_requested, source=sources.get("frontend", "env"), retries=retries.get("frontend", 0)),
+            "backend": PortPlan(
+                project=project,
+                requested=backend_requested,
+                assigned=backend_requested,
+                final=backend_requested,
+                source=sources.get("backend", "env"),
+                retries=retries.get("backend", 0),
+            ),
+            "frontend": PortPlan(
+                project=project,
+                requested=frontend_requested,
+                assigned=frontend_requested,
+                final=frontend_requested,
+                source=sources.get("frontend", "env"),
+                retries=retries.get("frontend", 0),
+            ),
         }
 
     def plan_project_stack(
@@ -161,7 +186,9 @@ class PortPlanner:
                 payload = json.loads(lock_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 lock_path.unlink(missing_ok=True)
-                self._emit("port.lock.release", port=self._port_from_lock_path(lock_path), owner=None, session=self.session_id)
+                self._emit(
+                    "port.lock.release", port=self._port_from_lock_path(lock_path), owner=None, session=self.session_id
+                )
                 continue
             if payload.get("session") == self.session_id:
                 lock_path.unlink(missing_ok=True)

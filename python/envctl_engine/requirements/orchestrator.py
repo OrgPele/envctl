@@ -51,7 +51,9 @@ class RequirementsOrchestrator:
         if any(token in normalized for token in transient_tokens):
             return FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
 
-        if service_name == "n8n" and ("404" in normalized or "setup endpoint" in normalized or "owner bootstrap" in normalized):
+        if service_name == "n8n" and (
+            "404" in normalized or "setup endpoint" in normalized or "owner bootstrap" in normalized
+        ):
             if strict:
                 return FailureClass.HARD_START_FAILURE
             return FailureClass.BOOTSTRAP_SOFT_FAILURE

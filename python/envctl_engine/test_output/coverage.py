@@ -132,7 +132,7 @@ class CoverageReportHandler:
         patterns = [
             r'data-coverage="(\d+(?:\.\d+)?)"',
             r'coverage["\']?\s*:\s*(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*%\s*coverage',
+            r"(\d+(?:\.\d+)?)\s*%\s*coverage",
         ]
 
         for pattern in patterns:

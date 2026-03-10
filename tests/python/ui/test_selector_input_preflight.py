@@ -165,11 +165,7 @@ class SelectorInputPreflightTests(unittest.TestCase):
             )
 
         normalize_tty.assert_not_called()
-        tty_events = [
-            payload
-            for name, payload in runtime.events
-            if name == "startup.debug_tty_group"
-        ]
+        tty_events = [payload for name, payload in runtime.events if name == "startup.debug_tty_group"]
         self.assertTrue(
             any(
                 str(payload.get("group", "")) == "termios"
@@ -207,11 +203,7 @@ class SelectorInputPreflightTests(unittest.TestCase):
         self.assertTrue(end_events)
         self.assertFalse(bool(end_events[-1].get("normalized", True)))
         self.assertFalse(bool(end_events[-1].get("drain_enabled", True)))
-        tty_events = [
-            payload
-            for name, payload in runtime.events
-            if name == "startup.debug_tty_group"
-        ]
+        tty_events = [payload for name, payload in runtime.events if name == "startup.debug_tty_group"]
         self.assertTrue(
             any(
                 str(payload.get("group", "")) == "reader"
