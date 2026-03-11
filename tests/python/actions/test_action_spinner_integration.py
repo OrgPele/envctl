@@ -143,6 +143,60 @@ class ActionSpinnerIntegrationTests(unittest.TestCase):
         lifecycle = [item for item in runtime.events if item.get("event") == "ui.spinner.lifecycle"]
         self.assertTrue(any(item.get("state") == "fail" for item in lifecycle))
 
+    def test_action_execute_suppresses_nested_spinner_for_interactive_commands(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="commit", mode="main", flags={"all": True, "interactive_command": True})
+        spinner_calls: list[tuple[str, bool]] = []
+
+        @contextmanager
+        def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+            _ = start_immediately
+            spinner_calls.append((message, enabled))
+
+            class _SpinnerStub:
+                def start(self) -> None:
+                    return None
+
+                def update(self, _message: str) -> None:
+                    return None
+
+                def succeed(self, _message: str) -> None:
+                    return None
+
+                def fail(self, _message: str) -> None:
+                    return None
+
+            yield _SpinnerStub()
+
+        with (
+            patch.object(orchestrator, "resolve_targets", return_value=([SimpleNamespace(name="Main")], None)),
+            patch.object(orchestrator, "run_commit_action", return_value=0),
+            patch("envctl_engine.actions.action_command_orchestrator.spinner", side_effect=fake_spinner),
+            patch(
+                "envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy",
+                return_value=SpinnerPolicy(
+                    mode="auto",
+                    enabled=True,
+                    reason="",
+                    backend="rich",
+                    min_ms=0,
+                    verbose_events=False,
+                ),
+            ),
+        ):
+            code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(spinner_calls, [("Running commit for Main...", False)])
+        self.assertTrue(
+            any(
+                item.get("event") == "ui.spinner.disabled"
+                and item.get("reason") == "interactive_command_spinner_suppressed"
+                for item in runtime.events
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

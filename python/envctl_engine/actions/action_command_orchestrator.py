@@ -200,7 +200,7 @@ class ActionCommandOrchestrator:
         spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
         op_id = f"action.{route.command}"
         start_status = self._command_start_status(route.command, targets)
-        suppress_action_spinner = route.command == "test" and bool(route.flags.get("interactive_command"))
+        suppress_action_spinner = bool(route.flags.get("interactive_command"))
         action_spinner_enabled = spinner_policy.enabled and not suppress_action_spinner
         emit_spinner_policy(
             getattr(rt.raw_runtime, "_emit", None),
@@ -213,7 +213,7 @@ class ActionCommandOrchestrator:
                 component="action.command",
                 command=route.command,
                 op_id=op_id,
-                reason="interactive_test_action_spinner_suppressed",
+                reason="interactive_command_spinner_suppressed",
             )
 
         rt.emit("action.command.start", command=route.command, mode=route.mode)
