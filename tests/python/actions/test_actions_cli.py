@@ -211,6 +211,57 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("LATEST DETAIL LINE", captured_body[0])
             self.assertNotIn("commit 0", captured_body[0])
 
+    def test_pr_action_prefers_explicit_pr_body_over_main_task_and_commit_messages(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / "MAIN_TASK.md").write_text("Use me only as fallback\n", encoding="utf-8")
+            captured_body: list[str] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/custom-body\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: explicit pr body\n"
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/custom-body"]:
+                    return "abc123\x1fcommit fallback\x1fbody fallback\x1e"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    body_file = Path(command[command.index("--body-file") + 1])
+                    captured_body.append(body_file.read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/111\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_PR_BODY": "Typed PR body\n\nWith details."}, clear=False),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_body), 1)
+            self.assertEqual(captured_body[0], "Typed PR body\n\nWith details.")
+            self.assertNotIn("Use me only as fallback", captured_body[0])
+            self.assertNotIn("commit fallback", captured_body[0])
+
     def test_pr_action_interactive_mode_does_not_prompt_for_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"

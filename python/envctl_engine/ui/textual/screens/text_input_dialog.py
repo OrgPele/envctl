@@ -17,6 +17,7 @@ def run_text_input_dialog_textual(
     help_text: str,
     placeholder: str = "",
     initial_value: str = "",
+    default_button_label: str = "Use default",
     emit: Callable[..., None] | None = None,
     build_only: bool = False,
 ) -> str | None | object:
@@ -29,7 +30,17 @@ def run_text_input_dialog_textual(
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
+    from textual import events
     from textual.widgets import Button, Footer, Static, TextArea
+
+    class _DialogTextArea(TextArea):
+        async def _on_key(self, event: events.Key) -> None:
+            if event.key == "enter" and not self.text:
+                event.stop()
+                event.prevent_default()
+                self.app.exit("")
+                return
+            await super()._on_key(event)
 
     class TextInputDialogApp(App[str | None]):
         CSS = """
@@ -86,10 +97,10 @@ def run_text_input_dialog_textual(
             with Vertical(id="dialog"):
                 yield Static(title, id="dialog-title")
                 yield Static(help_text, id="dialog-help")
-                yield TextArea(initial_value, id="dialog-input")
+                yield _DialogTextArea(initial_value, id="dialog-input")
                 with Horizontal(id="dialog-buttons"):
                     yield Button("Cancel", id="cancel")
-                    yield Button("Use default", id="default")
+                    yield Button(default_button_label, id="default")
                     yield Button("Save", id="save", variant="success")
                 yield Footer()
 

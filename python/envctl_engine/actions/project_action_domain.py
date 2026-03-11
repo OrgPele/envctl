@@ -291,6 +291,10 @@ def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -
 
 
 def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, base_branch: str) -> str:
+    explicit_body = _normalize_text_block(str(context.env.get("ENVCTL_PR_BODY", "")))
+    if explicit_body:
+        return _truncate_pr_body(explicit_body, max_chars=PR_BODY_MAX_CHARS)
+
     main_task = context.project_root / "MAIN_TASK.md"
     if main_task.is_file() and _file_has_text(main_task):
         return _truncate_pr_body(_read_text(main_task), max_chars=PR_BODY_MAX_CHARS)

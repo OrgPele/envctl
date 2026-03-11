@@ -395,6 +395,19 @@ class DashboardOrchestrator:
             base_branch=base_branch,
             explicit=base_branch != default_branch,
         )
+        raw = self._prompt_pr_message(runtime_any)
+        if raw is None:
+            print(self._no_target_selected_message(route.command))
+            return None
+        message = str(raw).strip()
+        if message:
+            route.flags = {**route.flags, "pr_body": message}
+            runtime_any._emit(
+                "dashboard.pr_body.selected",
+                command="pr",
+                explicit=True,
+                length=len(message),
+            )
         return route
 
     def _default_pr_base_branch(self, runtime: Any) -> str:
@@ -746,28 +759,59 @@ class DashboardOrchestrator:
         return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))
 
     @staticmethod
-    def _prompt_commit_message(runtime: Any) -> str | None:
-        prompt_text = "Commit message (leave blank to use default)."
+    def _prompt_text_dialog(
+        runtime: Any,
+        *,
+        title: str,
+        help_text: str,
+        placeholder: str,
+        empty_prompt_text: str,
+        default_button_label: str,
+    ) -> str | None:
         dialog = getattr(runtime, "_prompt_text_input", None)
         if callable(dialog):
             return dialog(
-                title="Commit Message",
-                help_text=prompt_text,
-                placeholder="Type a commit message",
+                title=title,
+                help_text=help_text,
+                placeholder=placeholder,
                 initial_value="",
+                default_button_label=default_button_label,
             )
         result = run_text_input_dialog_textual(
-            title="Commit Message",
-            help_text=prompt_text,
-            placeholder="Type a commit message",
+            title=title,
+            help_text=help_text,
+            placeholder=placeholder,
             initial_value="",
+            default_button_label=default_button_label,
             emit=getattr(runtime, "_emit", None),
         )
         if result is not None:
             return str(result)
         return DashboardOrchestrator._read_interactive_line(
             runtime,
-            "Commit message (leave blank to use default): ",
+            empty_prompt_text,
+        )
+
+    @staticmethod
+    def _prompt_commit_message(runtime: Any) -> str | None:
+        return DashboardOrchestrator._prompt_text_dialog(
+            runtime,
+            title="Commit Message",
+            help_text="Commit message (leave blank to use default).",
+            placeholder="Type a commit message",
+            empty_prompt_text="Commit message (leave blank to use default): ",
+            default_button_label="Use changelog",
+        )
+
+    @staticmethod
+    def _prompt_pr_message(runtime: Any) -> str | None:
+        return DashboardOrchestrator._prompt_text_dialog(
+            runtime,
+            title="PR Message",
+            help_text="PR message (leave blank to use default).",
+            placeholder="Type a PR message",
+            empty_prompt_text="PR message (leave blank to use default): ",
+            default_button_label="Use MAIN_TASK.md",
         )
 
     @staticmethod

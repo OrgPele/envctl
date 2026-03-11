@@ -121,13 +121,22 @@ class _RuntimeStub:
             return self.read_responses.pop(0)
         return ""
 
-    def _prompt_text_input(self, *, title: str, help_text: str, placeholder: str, initial_value: str) -> str | None:
+    def _prompt_text_input(
+        self,
+        *,
+        title: str,
+        help_text: str,
+        placeholder: str,
+        initial_value: str,
+        default_button_label: str,
+    ) -> str | None:
         self.text_input_prompts.append(
             {
                 "title": title,
                 "help_text": help_text,
                 "placeholder": placeholder,
                 "initial_value": initial_value,
+                "default_button_label": default_button_label,
             }
         )
         if self.text_input_responses:
@@ -282,10 +291,14 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             self.assertEqual(len(runtime.pr_flow_calls), 1)
             self.assertEqual(runtime.pr_flow_calls[0]["default_branch"], "main")
             self.assertEqual(runtime.read_prompts, [])
+            self.assertEqual(len(runtime.text_input_prompts), 1)
+            self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
+            self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
             self.assertIsNotNone(runtime.last_dispatched_route)
             self.assertEqual(runtime.last_dispatched_route.command, "pr")  # type: ignore[union-attr]
             self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
             self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")  # type: ignore[union-attr]
+            self.assertNotIn("pr_body", runtime.last_dispatched_route.flags)  # type: ignore[union-attr]
 
     def test_pr_interactive_flow_uses_entered_base_branch_after_target_selection(self) -> None:
         runtime = _RuntimeStub()
@@ -654,6 +667,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(next_state.run_id, state.run_id)
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertEqual(runtime.text_input_prompts[0]["title"], "Commit Message")
+        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use changelog")
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.command, "commit")
@@ -690,6 +704,74 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.command, "commit")
         self.assertNotIn("commit_message", runtime.last_dispatched_route.flags)
+
+    def test_pr_prompts_for_message_and_uses_explicit_value_when_provided(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = ["Ship the feature in this PR"]
+        orchestrator = DashboardOrchestrator(runtime)
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
+        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "pr")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")
+        self.assertEqual(runtime.last_dispatched_route.flags.get("pr_body"), "Ship the feature in this PR")
+
+    def test_pr_blank_message_uses_existing_default_resolution(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = [""]
+        orchestrator = DashboardOrchestrator(runtime)
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "pr")
+        self.assertNotIn("pr_body", runtime.last_dispatched_route.flags)
 
     def test_project_scoped_commands_use_project_selector_when_multiple_projects_exist(self) -> None:
         runtime = _RuntimeStub()
