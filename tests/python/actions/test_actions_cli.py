@@ -91,10 +91,12 @@ class ActionsCliTests(unittest.TestCase):
                     return "feature/new-demo\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: add bounded pr body\n"
-                if args and args[0:2] == ["log", "--oneline"]:
-                    return "abc123 feat: demo\n"
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/new-demo"]:
+                    return "abc123\x1ffeat: demo\x1ffirst body line\nsecond body line\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
+                if args == ["diff", "--stat", "main...feature/new-demo"]:
+                    return " foo.py | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
                 return ""
 
             def fake_which(name: str) -> str | None:
@@ -145,26 +147,33 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("main", gh_create)
             self.assertEqual(len(captured_body), 1)
             self.assertIn("Project: Main", captured_body[0])
+            self.assertIn("## Commits", captured_body[0])
+            self.assertIn("- feat: demo (abc123)", captured_body[0])
+            self.assertIn("first body line", captured_body[0])
             self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
 
-    def test_pr_action_truncates_large_changelog_to_recent_content(self) -> None:
+    def test_pr_action_truncates_large_commit_messages_to_recent_content(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
-            changelog = repo_root / "docs" / "changelog" / "main_changelog.md"
-            changelog.parent.mkdir(parents=True, exist_ok=True)
-            changelog.write_text(
-                "OLD ENTRY\n" * 10_000 + "\nLATEST CHANGESET\nLATEST DETAIL LINE\n",
-                encoding="utf-8",
-            )
             captured_body: list[str] = []
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/huge-pr\n"
                 if args == ["log", "-1", "--pretty=%s"]:
-                    return "feat: huge changelog\n"
+                    return "feat: huge commit history\n"
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/huge-pr"]:
+                    entries = []
+                    for index in range(5000):
+                        entries.append(
+                            f"{index:06x}\x1fcommit {index}\x1fbody line {index} " + ("x" * 40) + "\x1e"
+                        )
+                    entries.append("ffffff\x1fLATEST CHANGESET\x1fLATEST DETAIL LINE\x1e")
+                    return "".join(entries)
+                if args == ["diff", "--stat", "main...feature/huge-pr"]:
+                    return ""
                 return ""
 
             def fake_which(name: str) -> str | None:
@@ -197,9 +206,10 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(captured_body), 1)
             self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
-            self.assertIn("[truncated to most recent changelog content]", captured_body[0])
+            self.assertIn("[truncated to most recent commit messages]", captured_body[0])
             self.assertIn("LATEST CHANGESET", captured_body[0])
-            self.assertNotIn("--fill", captured_body[0])
+            self.assertIn("LATEST DETAIL LINE", captured_body[0])
+            self.assertNotIn("commit 0", captured_body[0])
 
     def test_pr_action_interactive_mode_does_not_prompt_for_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -212,9 +222,11 @@ class ActionsCliTests(unittest.TestCase):
                     return "feature/no-prompt\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: promptless pr\n"
-                if args and args[0:2] == ["log", "--oneline"]:
-                    return "abc123 feat: demo\n"
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/no-prompt"]:
+                    return "abc123\x1ffeat: demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
+                    return ""
+                if args == ["diff", "--stat", "main...feature/no-prompt"]:
                     return ""
                 return ""
 
@@ -257,6 +269,102 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("--head", gh_create)
             self.assertIn("feature/no-prompt", gh_create)
 
+    def test_pr_action_prefers_main_task_for_body_when_present(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / "MAIN_TASK.md").write_text("# Main Task\n\nShip the feature.\n", encoding="utf-8")
+            captured_body: list[str] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/main-task\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: use main task body\n"
+                if args == ["diff", "--stat", "main...feature/main-task"]:
+                    return ""
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    body_file = Path(command[command.index("--body-file") + 1])
+                    captured_body.append(body_file.read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/102\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_body), 1)
+            self.assertEqual(captured_body[0], "# Main Task\n\nShip the feature.")
+            self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
+
+    def test_pr_action_truncates_main_task_body_to_github_limit(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / "MAIN_TASK.md").write_text(("line\n" * 20000) + "final line\n", encoding="utf-8")
+            captured_body: list[str] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/main-task-limit\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: truncate main task body\n"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    body_file = Path(command[command.index("--body-file") + 1])
+                    captured_body.append(body_file.read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/103\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_body), 1)
+            self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
+            self.assertTrue(captured_body[0].endswith("[truncated]"))
+
     def test_pr_action_prefers_repo_helper_over_gh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -272,8 +380,8 @@ class ActionsCliTests(unittest.TestCase):
                     return "feature/helper-demo\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: helper demo\n"
-                if args and args[0:2] == ["log", "--oneline"]:
-                    return "abc123 feat: helper demo\n"
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/helper-demo"]:
+                    return "abc123\x1ffeat: helper demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
                 return ""
@@ -403,6 +511,99 @@ class ActionsCliTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn(["push", "-u", "fork", "feature/demo"], seen_git_args)
+
+    def test_commit_action_uses_latest_changelog_h2_section_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
+            changelog.parent.mkdir(parents=True, exist_ok=True)
+            changelog.write_text(
+                "# Changelog\n\n"
+                "## Latest\n"
+                "Ship the feature\n\n"
+                "- bullet one\n"
+                "- bullet two\n\n"
+                "## Older\n"
+                "Do not use this section\n",
+                encoding="utf-8",
+            )
+            seen_git_args: list[list[str]] = []
+            captured_commit_message: list[str] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_commit_message), 1)
+            self.assertEqual(captured_commit_message[0], "Ship the feature\n\n- bullet one\n- bullet two")
+            self.assertNotIn("Do not use this section", captured_commit_message[0])
+            self.assertTrue(any(args[:2] == ["commit", "-F"] for args in seen_git_args))
+
+    def test_commit_action_truncates_large_latest_changelog_section(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
+            changelog.parent.mkdir(parents=True, exist_ok=True)
+            changelog.write_text(
+                "# Changelog\n\n"
+                "## Latest\n"
+                + ("line\n" * 10000)
+                + "final line\n\n"
+                "## Older\n"
+                "old section\n",
+                encoding="utf-8",
+            )
+            captured_commit_message: list[str] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_commit_message), 1)
+            self.assertLessEqual(len(captured_commit_message[0]), domain.COMMIT_MESSAGE_MAX_CHARS)
+            self.assertTrue(captured_commit_message[0].endswith("[truncated]"))
 
     def test_analyze_action_prefers_repo_helper_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

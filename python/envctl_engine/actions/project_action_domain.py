@@ -16,6 +16,7 @@ from envctl_engine.ui.color_policy import colors_enabled
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
+COMMIT_MESSAGE_MAX_CHARS = 16_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,10 +60,18 @@ def run_commit_action(context: ActionProjectContext) -> int:
         print(error)
         return 1
 
-    if message_file:
-        commit = _run_git(git_root, ["commit", "-F", message_file])
-    else:
-        commit = _run_git(git_root, ["commit", "-m", commit_message])
+    generated_message_file = message_file.endswith(".envctl-commit-message.txt")
+    try:
+        if message_file:
+            commit = _run_git(git_root, ["commit", "-F", message_file])
+        else:
+            commit = _run_git(git_root, ["commit", "-m", commit_message])
+    finally:
+        if generated_message_file:
+            try:
+                Path(message_file).unlink()
+            except OSError:
+                pass
     if commit.returncode != 0:
         _print_error("git commit failed", commit)
         return 1
@@ -249,7 +258,9 @@ def _resolve_commit_message(
 
     changelog = _tree_changelog_path(context)
     if changelog is not None:
-        return "", str(changelog), None
+        commit_message = _latest_changelog_commit_message(_read_text(changelog), max_chars=COMMIT_MESSAGE_MAX_CHARS)
+        if commit_message:
+            return "", str(_write_commit_message_file(commit_message)), None
 
     main_task = context.project_root / "MAIN_TASK.md"
     if main_task.is_file() and _file_has_text(main_task):
@@ -280,6 +291,10 @@ def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -
 
 
 def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, base_branch: str) -> str:
+    main_task = context.project_root / "MAIN_TASK.md"
+    if main_task.is_file() and _file_has_text(main_task):
+        return _truncate_pr_body(_read_text(main_task), max_chars=PR_BODY_MAX_CHARS)
+
     sections: list[str] = []
     metadata_lines = [
         f"Project: {context.project_name}",
@@ -289,18 +304,9 @@ def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, ba
         metadata_lines.append(f"Base: {base_branch}")
     sections.append("\n".join(metadata_lines))
 
-    changelog = _tree_changelog_path(context)
-    if changelog is not None:
-        excerpt = _recent_text_excerpt(_read_text(changelog), max_chars=PR_BODY_MAX_CHARS - 512)
-        if excerpt:
-            sections.append(f"## Changelog\n\n{excerpt}")
-    else:
-        commits = _pr_commit_summary(git_root, head_branch=head_branch, base_branch=base_branch)
-        if commits:
-            sections.append(f"## Commits\n\n{commits}")
-        diff_stat = _pr_diff_stat(git_root, head_branch=head_branch, base_branch=base_branch)
-        if diff_stat:
-            sections.append(f"## Diff Stat\n\n{diff_stat}")
+    commits = _pr_commit_messages(git_root, head_branch=head_branch, base_branch=base_branch)
+    if commits:
+        sections.append(f"## Commits\n\n{commits}")
 
     body = "\n\n".join(section.strip() for section in sections if section.strip()).strip()
     if not body:
@@ -310,10 +316,31 @@ def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, ba
     return _truncate_pr_body(body, max_chars=PR_BODY_MAX_CHARS)
 
 
-def _pr_commit_summary(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -> str:
     range_spec = f"{base_branch}..{head_branch}" if base_branch else head_branch
-    commits = _git_output(git_root, ["log", "--no-merges", "--format=- %h %s", range_spec]).strip()
-    return _truncate_pr_body(commits, max_chars=12_000) if commits else ""
+    raw = _git_output(git_root, ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", range_spec])
+    entries: list[str] = []
+    for chunk in raw.split("\x1e"):
+        normalized = chunk.strip()
+        if not normalized:
+            continue
+        parts = normalized.split("\x1f", 2)
+        short_hash = parts[0].strip() if len(parts) > 0 else ""
+        subject = " ".join((parts[1] if len(parts) > 1 else "").split()).strip()
+        body = _normalize_text_block(parts[2] if len(parts) > 2 else "")
+        if not short_hash and not subject and not body:
+            continue
+        header = f"- {subject or short_hash}"
+        if short_hash and subject:
+            header = f"- {subject} ({short_hash})"
+        entry_lines = [header]
+        if body:
+            entry_lines.append("")
+            entry_lines.extend(f"  {line}" if line else "" for line in body.splitlines())
+        entries.append("\n".join(entry_lines).strip())
+    if not entries:
+        return ""
+    return _truncate_recent_entries(entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]")
 
 
 def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
@@ -334,6 +361,63 @@ def _recent_text_excerpt(text: str, *, max_chars: int) -> str:
     if "\n" in tail:
         tail = tail.split("\n", 1)[1]
     return f"{notice}{tail}".strip()
+
+
+def _truncate_recent_entries(entries: list[str], *, max_chars: int, notice: str) -> str:
+    cleaned_entries = [entry.strip() for entry in entries if entry.strip()]
+    if not cleaned_entries:
+        return ""
+    full_text = "\n\n".join(cleaned_entries).strip()
+    if len(full_text) <= max_chars:
+        return full_text
+    notice_block = f"{notice}\n\n"
+    keep_limit = max(0, max_chars - len(notice_block))
+    kept: list[str] = []
+    current_len = 0
+    for entry in reversed(cleaned_entries):
+        extra = len(entry) + (2 if kept else 0)
+        if current_len + extra > keep_limit:
+            break
+        kept.append(entry)
+        current_len += extra
+    if not kept:
+        tail = full_text[-keep_limit:] if keep_limit else ""
+        if "\n" in tail:
+            tail = tail.split("\n", 1)[1]
+        return f"{notice_block}{tail}".strip()
+    kept.reverse()
+    return f"{notice_block}{'\n\n'.join(kept)}".strip()
+
+
+def _latest_changelog_commit_message(text: str, *, max_chars: int) -> str:
+    normalized = _normalize_text_block(text)
+    if not normalized:
+        return ""
+    lines = normalized.splitlines()
+    latest_heading = ""
+    section_lines: list[str] = []
+    inside_latest_section = False
+    for line in lines:
+        if line.startswith("## "):
+            if inside_latest_section:
+                break
+            latest_heading = line[3:].strip()
+            inside_latest_section = True
+            continue
+        if inside_latest_section:
+            section_lines.append(line)
+    if not inside_latest_section:
+        return _truncate_pr_body(normalized, max_chars=max_chars)
+    body = _normalize_text_block("\n".join(section_lines))
+    if body:
+        first_line, *rest = body.splitlines()
+        subject = first_line.strip() or latest_heading
+        remainder = "\n".join(rest).strip()
+        commit_message = subject if not remainder else f"{subject}\n\n{remainder}"
+        return _truncate_pr_body(commit_message, max_chars=max_chars)
+    if latest_heading:
+        return _truncate_pr_body(latest_heading, max_chars=max_chars)
+    return ""
 
 
 def _truncate_pr_body(text: str, *, max_chars: int) -> str:
@@ -361,6 +445,17 @@ def _read_text(path: Path) -> str:
 def _write_pr_body_file(body: str) -> Path:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".md") as handle:
         handle.write(body)
+        return Path(handle.name)
+
+
+def _write_commit_message_file(message: str) -> Path:
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        delete=False,
+        suffix=".envctl-commit-message.txt",
+    ) as handle:
+        handle.write(message)
         return Path(handle.name)
 
 

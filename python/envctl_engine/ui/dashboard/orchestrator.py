@@ -29,6 +29,8 @@ from envctl_engine.ui.selection_support import (
     service_types_from_service_names,
 )
 from envctl_engine.ui.selection_support import SimpleProject
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
 
 
 class DashboardOrchestrator:
@@ -175,6 +177,8 @@ class DashboardOrchestrator:
             return route
         if route.command == "pr":
             return self._apply_pr_selection(route, state, rt)
+        if route.command == "commit":
+            return self._apply_commit_selection(route, state, rt)
         if route.command not in self._dashboard_owned_target_selection_commands():
             return route
 
@@ -228,6 +232,36 @@ class DashboardOrchestrator:
                 route.flags = {**route.flags, "backend": False, "frontend": True}
             return route
 
+        return route
+
+    def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
+        runtime_any = cast(Any, rt)
+        route = self._apply_project_target_selection(route, state, rt)
+        if route is None:
+            return None
+        if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
+            return route
+        if isinstance(route.flags.get("commit_message_file"), str) and str(route.flags.get("commit_message_file")).strip():
+            return route
+        raw = self._prompt_commit_message(
+            runtime_any,
+        )
+        if raw is None:
+            print(self._no_target_selected_message(route.command))
+            return None
+        message = str(raw).strip()
+        if not message:
+            return route
+        route.flags = {
+            **{key: value for key, value in route.flags.items() if key != "commit_message_file"},
+            "commit_message": message,
+        }
+        runtime_any._emit(
+            "dashboard.commit_message.selected",
+            command="commit",
+            explicit=True,
+            length=len(message),
+        )
         return route
 
     @staticmethod
@@ -702,6 +736,39 @@ class DashboardOrchestrator:
             "restart": "Choose services",
         }
         return prompt_map.get(command, "Choose services")
+
+    @staticmethod
+    def _read_interactive_line(runtime: Any, prompt: str) -> str:
+        reader = getattr(runtime, "_read_interactive_command_line", None)
+        if callable(reader):
+            return str(reader(prompt))
+        env = getattr(runtime, "env", {})
+        return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))
+
+    @staticmethod
+    def _prompt_commit_message(runtime: Any) -> str | None:
+        prompt_text = "Commit message (leave blank to use default)."
+        dialog = getattr(runtime, "_prompt_text_input", None)
+        if callable(dialog):
+            return dialog(
+                title="Commit Message",
+                help_text=prompt_text,
+                placeholder="Type a commit message",
+                initial_value="",
+            )
+        result = run_text_input_dialog_textual(
+            title="Commit Message",
+            help_text=prompt_text,
+            placeholder="Type a commit message",
+            initial_value="",
+            emit=getattr(runtime, "_emit", None),
+        )
+        if result is not None:
+            return str(result)
+        return DashboardOrchestrator._read_interactive_line(
+            runtime,
+            "Commit message (leave blank to use default): ",
+        )
 
     @staticmethod
     def _sanitize_interactive_input(raw: str) -> str:

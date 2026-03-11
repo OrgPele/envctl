@@ -31,6 +31,8 @@ class _RuntimeStub:
         self.dispatch_code: int = 0
         self.read_prompts: list[str] = []
         self.read_responses: list[str] = []
+        self.text_input_prompts: list[dict[str, str]] = []
+        self.text_input_responses: list[str | None] = []
         self.pr_flow_calls: list[dict[str, object]] = []
         self.next_pr_flow_result: PrFlowResult | None = PrFlowResult(project_names=["Main"], base_branch="main")
         self.startup_orchestrator = object()
@@ -117,6 +119,19 @@ class _RuntimeStub:
         self.read_prompts.append(prompt)
         if self.read_responses:
             return self.read_responses.pop(0)
+        return ""
+
+    def _prompt_text_input(self, *, title: str, help_text: str, placeholder: str, initial_value: str) -> str | None:
+        self.text_input_prompts.append(
+            {
+                "title": title,
+                "help_text": help_text,
+                "placeholder": placeholder,
+                "initial_value": initial_value,
+            }
+        )
+        if self.text_input_responses:
+            return self.text_input_responses.pop(0)
         return ""
 
 
@@ -611,6 +626,70 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 assert runtime.last_dispatched_route is not None
                 self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
                 self.assertIsNone(runtime.last_dispatched_route.flags.get("services"))
+
+    def test_commit_prompts_for_message_and_uses_explicit_value_when_provided(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = ["Ship the feature"]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("c", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertEqual(runtime.text_input_prompts[0]["title"], "Commit Message")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "commit")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("commit_message"), "Ship the feature")
+
+    def test_commit_blank_message_uses_existing_default_resolution(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = [""]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("c", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "commit")
+        self.assertNotIn("commit_message", runtime.last_dispatched_route.flags)
 
     def test_project_scoped_commands_use_project_selector_when_multiple_projects_exist(self) -> None:
         runtime = _RuntimeStub()
