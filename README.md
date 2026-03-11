@@ -1,14 +1,10 @@
 # envctl
 
-`envctl` is a global CLI for bringing up full local environments across a main repository and many worktrees in seconds.
+envctl is a global CLI for spinning up isolated local environments for a repo and its worktrees, with their databases and dependencies, in seconds.
 
-# envctl
+Vibe coding gets messy fast when multiple implementations are running at once. Ports collide, services point at the wrong database, logs blur together, and worktrees step on each other.
 
-`envctl` is a global CLI for spinning up isolated local environments for a repo and many worktrees, complete with their databases and dependencies, in seconds.
-
-Vibe coding falls apart fast once you are no longer working on just one branch at a time. As soon as multiple implementations are running in parallel, local setup becomes the bottleneck: ports collide, services point at the wrong database, logs blur together, and one worktree can interfere with another.
-
-`envctl` fixes that by managing runtime state per worktree. It gives each environment isolated ports, correct service wiring, and a single command surface for the workflows that matter: starting and restarting services, running tests in parellel, monitoring logs and health, inspecting errors, AI reviewes, and shutting everything down cleanly.
+envctl fixes that by managing runtime state for each worktree. It keeps environments isolated and gives you one command surface to restart stacks, run tests in parallel, monitor logs and health, inspect errors, run AI reviews, and tear everything down safely. That means less manual setup, fewer mistakes, and faster iteration across many implementations.
 
 ## Quick Start
 
