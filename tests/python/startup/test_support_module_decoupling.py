@@ -10,9 +10,12 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
+from envctl_engine.startup.requirements_execution import start_requirements_for_project as requirements_start_impl  # noqa: E402
+from envctl_engine.startup.service_execution import start_project_services as service_start_impl  # noqa: E402
 from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     _maybe_prewarm_docker,
     _requirements_failure_message,
+    start_requirements_for_project,
     start_project_services,
 )
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
@@ -50,6 +53,10 @@ class _PortAllocatorStub:
 
 
 class StartupSupportModuleDecouplingTests(unittest.TestCase):
+    def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
+        self.assertIs(start_requirements_for_project, requirements_start_impl)
+        self.assertIs(start_project_services, service_start_impl)
+
     def test_tree_preselected_projects_uses_local_state_helpers(self) -> None:
         state = RunState(
             run_id="run-1",

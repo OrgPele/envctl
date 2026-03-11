@@ -7,8 +7,14 @@ import time
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
-from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.startup.finalization import (
+    build_failure_run_state,
+    build_planning_dashboard_state,
+    build_success_run_state,
+)
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
+from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -55,165 +61,189 @@ class StartupOrchestrator:
         self._last_progress_message_by_project: dict[str | None, str] = {}
 
     def execute(self, route: Route) -> int:
+        session = self._create_session(route)
+        try:
+            for phase in (
+                self._validate_route_contract,
+                self._handle_restart_prestop,
+                self._select_contexts,
+                self._resolve_disabled_startup_mode,
+                self._resolve_auto_resume,
+            ):
+                code = phase(session)
+                if code is not None:
+                    return code
+            self._prepare_execution(session)
+            self._start_selected_contexts(session)
+            self._reconcile_strict_truth(session)
+            return self._finalize_success(session)
+        except RuntimeError as exc:
+            return self._finalize_failure(session, str(exc))
+        except Exception as exc:
+            return self._finalize_failure(session, str(exc))
+
+    def _create_session(self, route: Route) -> StartupSession:
         rt = self.runtime
-        port_allocator = port_allocator_impl(rt)
-        requested_command = route.command
-        startup_started_at = time.monotonic()
-        startup_event_index = len(rt.events)
-        debug_plan_snapshot = snapshot_enabled(dict(rt.env))
-        preserved_services: dict[str, object] = {}
-        preserved_requirements: dict[str, RequirementsResult] = {}
-        initial_runtime_mode = rt._effective_start_mode(route)
+        runtime_mode = rt._effective_start_mode(route)
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command=route.command,
+            runtime_mode=runtime_mode,
+            run_id=rt._new_run_id(),
+            startup_event_index=len(rt.events),
+            debug_plan_snapshot=snapshot_enabled(dict(rt.env)),
+        )
+        rt._reset_project_startup_warnings()
+        print(f"run_id: {session.run_id}")
+        print(f"session_id: {rt._current_session_id() or 'unknown'}")
+        return session
+
+    def _validate_route_contract(self, session: StartupSession) -> int | None:
+        rt = self.runtime
         hook_contract_issue = rt._startup_hook_contract_issue()
         if hook_contract_issue:
             print(hook_contract_issue)
             return 1
         try:
-            rt._validate_mode_toggles(initial_runtime_mode, route=route)
+            rt._validate_mode_toggles(session.runtime_mode, route=session.effective_route)
         except RuntimeError as exc:
             print(str(exc))
             return 1
-        if route.command == "restart":
-            restart_lookup_mode = rt._effective_start_mode(route)
-            resumed = rt._try_load_existing_state(mode=restart_lookup_mode)
-            if resumed is not None and resumed.mode != restart_lookup_mode:
-                rt._emit(
-                    "restart.state_mode_mismatch",
-                    requested_mode=restart_lookup_mode,
-                    loaded_mode=resumed.mode,
-                    run_id=resumed.run_id,
-                )
-                resumed = None
-            if resumed is not None:
-                selected_services = _restart_selected_services_impl(state=resumed, route=route)
-                target_projects = restart_target_projects_impl(state=resumed, route=route, runtime=rt)
-                include_requirements = self._restart_include_requirements(route)
-                if include_requirements and not target_projects:
-                    target_projects = restart_target_projects_for_selected_services_impl(
-                        selected_services=selected_services,
-                        state=resumed,
-                        runtime=rt,
-                    )
-                rt._emit(
-                    "restart.selection",
-                    include_requirements=include_requirements,
-                    target_projects=sorted(target_projects),
-                    selected_services=sorted(selected_services),
-                )
-                prestop_policy = resolve_spinner_policy(dict(rt.env))
-                use_prestop_spinner = prestop_policy.enabled and not self._suppress_progress_output(route)
-                emit_spinner_policy(
-                    rt._emit,
-                    prestop_policy,
-                    context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
-                )
-                with (
-                    use_spinner_policy(prestop_policy),
-                    spinner(
-                        "Restarting services...",
-                        enabled=use_prestop_spinner,
-                    ) as prestop_spinner,
-                ):
-                    if use_prestop_spinner:
-                        rt._emit(  # type: ignore[attr-defined]
-                            "ui.spinner.lifecycle",
-                            component="startup_orchestrator",
-                            op_id="restart.prestop",
-                            state="start",
-                            message="Restarting services...",
-                        )
-                    try:
-                        rt._terminate_services_from_state(
-                            resumed,
-                            selected_services=selected_services,
-                            aggressive=False,
-                            verify_ownership=True,
-                        )
-                        for project_name, requirements in resumed.requirements.items():
-                            if include_requirements and (not target_projects or project_name in target_projects):
-                                rt._release_requirement_ports(requirements)
-                            else:
-                                preserved_requirements[project_name] = requirements
-                        preserved_services = {
-                            name: service for name, service in resumed.services.items() if name not in selected_services
-                        }
-                        if use_prestop_spinner:
-                            prestop_spinner.succeed("Restart pre-stop complete")
-                            rt._emit(  # type: ignore[attr-defined]
-                                "ui.spinner.lifecycle",
-                                component="startup_orchestrator",
-                                op_id="restart.prestop",
-                                state="success",
-                                message="Restart pre-stop complete",
-                            )
-                    except Exception:
-                        if use_prestop_spinner:
-                            prestop_spinner.fail("Restart pre-stop failed")
-                            rt._emit(  # type: ignore[attr-defined]
-                                "ui.spinner.lifecycle",
-                                component="startup_orchestrator",
-                                op_id="restart.prestop",
-                                state="fail",
-                                message="Restart pre-stop failed",
-                            )
-                        raise
-                    finally:
-                        if use_prestop_spinner:
-                            rt._emit(  # type: ignore[attr-defined]
-                                "ui.spinner.lifecycle",
-                                component="startup_orchestrator",
-                                op_id="restart.prestop",
-                                state="stop",
-                            )
-                route = Route(
-                    command="start",
-                    mode=restart_lookup_mode,
-                    raw_args=route.raw_args,
-                    passthrough_args=route.passthrough_args,
-                    projects=route.projects,
-                    flags={
-                        **route.flags,
-                        "_restart_request": True,
-                        "_restart_selected_services": sorted(selected_services),
-                        "_restart_target_projects": sorted(target_projects),
-                        "_restart_include_requirements": include_requirements,
-                    },
-                )
-
-        runtime_mode = rt._effective_start_mode(route)
-        rt._reset_project_startup_warnings()
-
-        def emit_phase(phase: str, started_at: float, **extra: object) -> None:
-            rt._emit(
-                "startup.phase",
-                command=requested_command,
-                mode=runtime_mode,
-                phase=phase,
-                duration_ms=round((time.monotonic() - started_at) * 1000.0, 2),
-                **extra,
-            )
-
-        def emit_snapshot(checkpoint: str, **extra: object) -> None:
-            if not debug_plan_snapshot:
-                return
-            emit_plan_handoff_snapshot(
-                rt._emit,
-                env=dict(rt.env),
-                checkpoint=checkpoint,
-                extra=extra or None,
-            )
 
         budget_started = time.monotonic()
-        if not rt._enforce_runtime_readiness_contract(scope=requested_command):
-            emit_phase("runtime_readiness_gate", budget_started, status="blocked")
+        if not rt._enforce_runtime_readiness_contract(scope=session.requested_command):
+            self._emit_phase(session, "runtime_readiness_gate", budget_started, status="blocked")
             print("Startup blocked: strict runtime readiness gate is incomplete.")
             return 1
-        emit_phase("runtime_readiness_gate", budget_started, status="ok")
+        self._emit_phase(session, "runtime_readiness_gate", budget_started, status="ok")
+        return None
 
-        run_id = rt._new_run_id()
-        print(f"run_id: {run_id}")
-        print(f"session_id: {rt._current_session_id() or 'unknown'}")
+    def _handle_restart_prestop(self, session: StartupSession) -> int | None:
+        rt = self.runtime
+        route = session.effective_route
+        if route.command != "restart":
+            return None
+        restart_lookup_mode = rt._effective_start_mode(route)
+        resumed = rt._try_load_existing_state(mode=restart_lookup_mode)
+        if resumed is not None and resumed.mode != restart_lookup_mode:
+            rt._emit(
+                "restart.state_mode_mismatch",
+                requested_mode=restart_lookup_mode,
+                loaded_mode=resumed.mode,
+                run_id=resumed.run_id,
+            )
+            resumed = None
+        if resumed is None:
+            session.effective_route = Route(
+                command="start",
+                mode=restart_lookup_mode,
+                raw_args=route.raw_args,
+                passthrough_args=route.passthrough_args,
+                projects=route.projects,
+                flags={**route.flags, "_restart_request": True},
+            )
+            session.runtime_mode = restart_lookup_mode
+            return None
 
+        selected_services = _restart_selected_services_impl(state=resumed, route=route)
+        target_projects = restart_target_projects_impl(state=resumed, route=route, runtime=rt)
+        include_requirements = self._restart_include_requirements(route)
+        if include_requirements and not target_projects:
+            target_projects = restart_target_projects_for_selected_services_impl(
+                selected_services=selected_services,
+                state=resumed,
+                runtime=rt,
+            )
+        rt._emit(
+            "restart.selection",
+            include_requirements=include_requirements,
+            target_projects=sorted(target_projects),
+            selected_services=sorted(selected_services),
+        )
+        prestop_policy = resolve_spinner_policy(dict(rt.env))
+        use_prestop_spinner = prestop_policy.enabled and not self._suppress_progress_output(route)
+        emit_spinner_policy(
+            rt._emit,
+            prestop_policy,
+            context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
+        )
+        with (
+            use_spinner_policy(prestop_policy),
+            spinner("Restarting services...", enabled=use_prestop_spinner) as prestop_spinner,
+        ):
+            if use_prestop_spinner:
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="restart.prestop",
+                    state="start",
+                    message="Restarting services...",
+                )
+            try:
+                rt._terminate_services_from_state(
+                    resumed,
+                    selected_services=selected_services,
+                    aggressive=False,
+                    verify_ownership=True,
+                )
+                for project_name, requirements in resumed.requirements.items():
+                    if include_requirements and (not target_projects or project_name in target_projects):
+                        rt._release_requirement_ports(requirements)
+                    else:
+                        session.preserved_requirements[project_name] = requirements
+                session.preserved_services = {
+                    name: service for name, service in resumed.services.items() if name not in selected_services
+                }
+                if use_prestop_spinner:
+                    prestop_spinner.succeed("Restart pre-stop complete")
+                    rt._emit(
+                        "ui.spinner.lifecycle",
+                        component="startup_orchestrator",
+                        op_id="restart.prestop",
+                        state="success",
+                        message="Restart pre-stop complete",
+                    )
+            except Exception:
+                if use_prestop_spinner:
+                    prestop_spinner.fail("Restart pre-stop failed")
+                    rt._emit(
+                        "ui.spinner.lifecycle",
+                        component="startup_orchestrator",
+                        op_id="restart.prestop",
+                        state="fail",
+                        message="Restart pre-stop failed",
+                    )
+                raise
+            finally:
+                if use_prestop_spinner:
+                    rt._emit(
+                        "ui.spinner.lifecycle",
+                        component="startup_orchestrator",
+                        op_id="restart.prestop",
+                        state="stop",
+                    )
+        session.effective_route = Route(
+            command="start",
+            mode=restart_lookup_mode,
+            raw_args=route.raw_args,
+            passthrough_args=route.passthrough_args,
+            projects=route.projects,
+            flags={
+                **route.flags,
+                "_restart_request": True,
+                "_restart_selected_services": sorted(selected_services),
+                "_restart_target_projects": sorted(target_projects),
+                "_restart_include_requirements": include_requirements,
+            },
+        )
+        session.runtime_mode = restart_lookup_mode
+        return None
+
+    def _select_contexts(self, session: StartupSession) -> int | None:
+        rt = self.runtime
+        route = session.effective_route
+        runtime_mode = session.runtime_mode
         selection_started = time.monotonic()
         project_contexts = rt._discover_projects(mode=runtime_mode)
         if route.command == "plan":
@@ -231,17 +261,19 @@ class StartupOrchestrator:
             project_contexts = [ctx for ctx in project_contexts if ctx.name.lower() in allow]
         duplicate_error = rt._duplicate_project_context_error(project_contexts)
         if duplicate_error:
-            emit_phase("project_selection", selection_started, status="error")
+            self._emit_phase(session, "project_selection", selection_started, status="error")
             print(duplicate_error)
             rt._emit("planning.projects.duplicate", error=duplicate_error)
             return 1
-        emit_phase(
+        self._emit_phase(
+            session,
             "project_selection",
             selection_started,
             status="ok",
             project_count=len(project_contexts),
         )
-        emit_snapshot(
+        self._emit_snapshot(
+            session,
             "plan_selector_exit",
             command=route.command,
             mode=runtime_mode,
@@ -254,58 +286,72 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
+        session.selected_contexts = list(project_contexts)
+        session.contexts_to_start = list(project_contexts)
+        return None
 
-        selected_project_contexts = list(project_contexts)
-        project_contexts_to_start = list(selected_project_contexts)
-        restored_project_names: list[str] = []
-
+    def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
+        rt = self.runtime
+        route = session.effective_route
         mode_runs_enabled = (
-            rt.config.startup_enabled_for_mode(runtime_mode) if hasattr(rt.config, "startup_enabled_for_mode") else True
+            rt.config.startup_enabled_for_mode(session.runtime_mode)
+            if hasattr(rt.config, "startup_enabled_for_mode")
+            else True
         )
-        allow_disabled_dashboard = not mode_runs_enabled and (route.command == "plan" or route_is_implicit_start(route))
-        if allow_disabled_dashboard:
-            run_state = self._build_planning_dashboard_state(
-                route=route,
-                runtime_mode=runtime_mode,
-                run_id=run_id,
-                project_contexts=selected_project_contexts,
+        allow_disabled_dashboard = not mode_runs_enabled and (
+            route.command == "plan" or route_is_implicit_start(route)
+        )
+        session.disabled_startup_mode = allow_disabled_dashboard
+        if not allow_disabled_dashboard:
+            return None
+        run_state = build_planning_dashboard_state(
+            rt,
+            route=route,
+            runtime_mode=session.runtime_mode,
+            run_id=session.run_id,
+            project_contexts=session.selected_contexts,
+            configured_service_types=self._configured_service_types_for_mode(session.runtime_mode),
+        )
+        artifacts_started = time.monotonic()
+        rt._write_artifacts(run_state, session.selected_contexts, errors=[])
+        self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+        enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
+        if route.command == "plan":
+            print(
+                "Planning mode complete; skipping service startup because "
+                f"envctl runs are disabled for {session.runtime_mode}."
             )
-            artifacts_started = time.monotonic()
-            rt._write_artifacts(run_state, selected_project_contexts, errors=[])
-            emit_phase("artifacts_write", artifacts_started, status="ok")
-            enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
-            if route.command == "plan":
-                print(
-                    "Planning mode complete; skipping service startup because "
-                    f"envctl runs are disabled for {runtime_mode}."
-                )
-            elif not enter_interactive_dashboard:
-                print(f"envctl runs are disabled for {runtime_mode}; opening dashboard without starting services.")
-            if enter_interactive_dashboard:
-                return rt._run_interactive_dashboard_loop(run_state)
-            return 0
+        elif not enter_interactive_dashboard:
+            print(f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services.")
+        if enter_interactive_dashboard:
+            return rt._run_interactive_dashboard_loop(run_state)
+        return 0
 
-        debug_orch_groups: set[str] = set()
+    def _resolve_auto_resume(self, session: StartupSession) -> int | None:
+        rt = self.runtime
+        route = session.effective_route
+        runtime_mode = session.runtime_mode
+        requested_command = session.requested_command
         if requested_command == "plan":
             raw_orch_group = str(rt.env.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
-            debug_orch_groups = {
-                token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()
-            }
-        if requested_command != "restart" and mode_runs_enabled and rt._auto_resume_start_enabled(route):
+            debug_orch_groups = {token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()}
+        else:
+            debug_orch_groups = set()
+        if requested_command != "restart" and rt._auto_resume_start_enabled(route):
             auto_resume_started = time.monotonic()
             existing_state = rt._load_auto_resume_state(runtime_mode)
             if existing_state is not None:
                 selected_project_names = {
                     str(context.name).strip()
-                    for context in selected_project_contexts
+                    for context in session.selected_contexts
                     if str(getattr(context, "name", "")).strip()
                 }
-                state_project_names = state_project_names_impl(runtime=rt, state=existing_state)
+                prior_project_names = state_project_names_impl(runtime=rt, state=existing_state)
                 exact_match = state_matches_selected_projects_impl(
                     self,
                     runtime=rt,
                     state=existing_state,
-                    contexts=selected_project_contexts,
+                    contexts=session.selected_contexts,
                 )
                 subset_match = (
                     not exact_match
@@ -314,7 +360,7 @@ class StartupOrchestrator:
                         self,
                         runtime=rt,
                         state=existing_state,
-                        contexts=selected_project_contexts,
+                        contexts=session.selected_contexts,
                     )
                 )
                 expand_match = (
@@ -322,17 +368,18 @@ class StartupOrchestrator:
                     and not subset_match
                     and runtime_mode == "trees"
                     and route.command == "plan"
-                    and bool(state_project_names)
-                    and state_project_names.issubset(selected_project_names)
+                    and bool(prior_project_names)
+                    and prior_project_names.issubset(selected_project_names)
                 )
                 if exact_match or subset_match:
-                    emit_phase(
+                    self._emit_phase(
+                        session,
                         "auto_resume_evaluate",
                         auto_resume_started,
                         status="resume",
                         match_mode="exact" if exact_match else "subset",
-                        state_project_count=len(state_project_names),
-                        selected_project_count=len(selected_project_contexts),
+                        state_project_count=len(prior_project_names),
+                        selected_project_count=len(session.selected_contexts),
                     )
                     rt._emit(
                         "state.auto_resume",
@@ -348,31 +395,29 @@ class StartupOrchestrator:
                         raw_args=route.raw_args,
                         passthrough_args=route.passthrough_args,
                         projects=route.projects,
-                        flags={
-                            **route.flags,
-                            "_resume_source_command": route.command,
-                        },
+                        flags={**route.flags, "_resume_source_command": route.command},
                     )
                     return rt._resume(resume_route)
                 if expand_match:
                     missing_services = rt._reconcile_state_truth(existing_state)
                     if not missing_services:
-                        restored_project_names = sorted(state_project_names)
-                        preserved_services = dict(existing_state.services)
-                        preserved_requirements = dict(existing_state.requirements)
-                        project_contexts_to_start = [
+                        session.resumed_context_names = sorted(prior_project_names)
+                        session.preserved_services = dict(existing_state.services)
+                        session.preserved_requirements = dict(existing_state.requirements)
+                        session.contexts_to_start = [
                             context
-                            for context in selected_project_contexts
-                            if str(context.name).strip() not in state_project_names
+                            for context in session.selected_contexts
+                            if str(context.name).strip() not in prior_project_names
                         ]
-                        emit_phase(
+                        self._emit_phase(
+                            session,
                             "auto_resume_evaluate",
                             auto_resume_started,
                             status="reuse_existing",
                             match_mode="superset",
-                            state_project_count=len(state_project_names),
-                            selected_project_count=len(selected_project_contexts),
-                            new_project_count=len(project_contexts_to_start),
+                            state_project_count=len(prior_project_names),
+                            selected_project_count=len(session.selected_contexts),
+                            new_project_count=len(session.contexts_to_start),
                         )
                         rt._emit(
                             "state.auto_resume",
@@ -381,70 +426,80 @@ class StartupOrchestrator:
                             command=route.command,
                             match_mode="superset",
                             selected_projects=sorted(selected_project_names),
-                            restored_projects=restored_project_names,
-                            new_projects=[context.name for context in project_contexts_to_start],
+                            restored_projects=session.resumed_context_names,
+                            new_projects=[context.name for context in session.contexts_to_start],
                         )
                         existing_state = None
                     else:
-                        emit_phase(
+                        self._emit_phase(
+                            session,
                             "auto_resume_evaluate",
                             auto_resume_started,
                             status="skipped",
                             reason="stale_existing_state",
-                            state_project_count=len(state_project_names),
-                            selected_project_count=len(selected_project_contexts),
+                            state_project_count=len(prior_project_names),
+                            selected_project_count=len(session.selected_contexts),
                             missing_service_count=len(missing_services),
                         )
                         rt._emit(
                             "state.auto_resume.skipped",
                             reason="stale_existing_state",
                             missing_services=missing_services,
-                            state_projects=sorted(state_project_names),
+                            state_projects=sorted(prior_project_names),
                             selected_projects=sorted(selected_project_names),
                             mode=runtime_mode,
                             command=route.command,
                         )
                         existing_state = None
                 if existing_state is not None:
-                    emit_phase(
+                    self._emit_phase(
+                        session,
                         "auto_resume_evaluate",
                         auto_resume_started,
                         status="skipped",
                         reason="project_selection_mismatch",
-                        state_project_count=len(state_project_names),
-                        selected_project_count=len(selected_project_contexts),
+                        state_project_count=len(prior_project_names),
+                        selected_project_count=len(session.selected_contexts),
                     )
                     rt._emit(
                         "state.auto_resume.skipped",
                         reason="project_selection_mismatch",
-                        state_projects=sorted(state_project_names),
+                        state_projects=sorted(prior_project_names),
                         selected_projects=sorted(selected_project_names),
                         mode=runtime_mode,
                         command=route.command,
                     )
             else:
-                emit_phase("auto_resume_evaluate", auto_resume_started, status="none")
+                self._emit_phase(session, "auto_resume_evaluate", auto_resume_started, status="none")
 
         if route.command == "plan" and bool(route.flags.get("planning_prs")):
-            rt._emit("planning.projects.start", projects=[context.name for context in project_contexts])
-            code = rt._run_pr_action(route, project_contexts)
-            rt._emit("planning.projects.finish", code=code, projects=[context.name for context in project_contexts])
+            rt._emit("planning.projects.start", projects=[context.name for context in session.selected_contexts])
+            code = rt._run_pr_action(route, session.selected_contexts)
+            rt._emit("planning.projects.finish", code=code, projects=[context.name for context in session.selected_contexts])
             if code == 0:
                 print("Planning PR mode complete; skipping service startup.")
             return code
 
-        emit_snapshot(
+        self._emit_snapshot(
+            session,
             "startup_branch_enter",
             command=requested_command,
             mode=runtime_mode,
             orch_group=sorted(debug_orch_groups) or None,
         )
+        return None
 
-        services = {}
-        requirements: dict[str, RequirementsResult] = {}
-        started_contexts: list[ProjectContextLike] = []
-        errors: list[str] = []
-        spinner_message = f"Starting {len(project_contexts_to_start)} project(s)..."
+    def _prepare_execution(self, session: StartupSession) -> None:
+        rt = self.runtime
+        route = session.effective_route
+        prewarm_started = time.monotonic()
+        self._maybe_prewarm_docker(route=route, mode=session.runtime_mode)
+        self._emit_phase(session, "docker_prewarm", prewarm_started, status="ok")
+
+    def _start_selected_contexts(self, session: StartupSession) -> None:
+        rt = self.runtime
+        route = session.effective_route
+        spinner_message = f"Starting {len(session.contexts_to_start)} project(s)..."
         spinner_policy = resolve_spinner_policy(dict(rt.env))
         use_startup_spinner = spinner_policy.enabled and not self._suppress_progress_output(route)
         emit_spinner_policy(
@@ -453,22 +508,20 @@ class StartupOrchestrator:
             context={"component": "startup_orchestrator", "op_id": "startup.execute"},
         )
         parallel_enabled, parallel_workers = rt._tree_parallel_startup_config(
-            mode=runtime_mode,
+            mode=session.runtime_mode,
             route=route,
-            project_count=len(project_contexts_to_start),
+            project_count=len(session.contexts_to_start),
         )
         rt._emit(
             "startup.execution",
             mode="parallel" if parallel_enabled else "sequential",
             workers=parallel_workers,
-            projects=[context.name for context in project_contexts_to_start],
+            projects=[context.name for context in session.contexts_to_start],
         )
-        prewarm_started = time.monotonic()
-        self._maybe_prewarm_docker(route=route, mode=runtime_mode)
-        emit_phase("docker_prewarm", prewarm_started, status="ok")
         debug_suppress_plan_progress = bool(
-            requested_command == "plan"
-            and str(rt.env.get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower() in {"1", "true", "yes", "on"}
+            session.requested_command == "plan"
+            and str(rt.env.get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower()
+            in {"1", "true", "yes", "on"}
         )
         route_for_execution = Route(
             command=route.command,
@@ -486,11 +539,12 @@ class StartupOrchestrator:
         use_project_spinner_group = (
             parallel_enabled
             and use_startup_spinner
-            and len(selected_project_contexts) > 1
+            and len(session.selected_contexts) > 1
             and str(getattr(spinner_policy, "backend", "")) == "rich"
         )
+        session.used_project_spinner_group = use_project_spinner_group
         project_spinner_group = _ProjectSpinnerGroup(
-            projects=[context.name for context in selected_project_contexts],
+            projects=[context.name for context in session.selected_contexts],
             enabled=use_project_spinner_group,
             policy=spinner_policy,
             emit=rt._emit,
@@ -503,14 +557,11 @@ class StartupOrchestrator:
 
         with (
             use_spinner_policy(spinner_policy),
-            spinner(
-                spinner_message,
-                enabled=use_single_spinner,
-            ) as active_spinner,
+            spinner(spinner_message, enabled=use_single_spinner) as active_spinner,
         ):
             if use_single_spinner:
                 route_for_execution.flags["_spinner_update"] = active_spinner.update
-                rt._emit(  # type: ignore[attr-defined]
+                rt._emit(
                     "ui.spinner.lifecycle",
                     component="startup_orchestrator",
                     op_id="startup.execute",
@@ -521,35 +572,33 @@ class StartupOrchestrator:
                 route_for_execution.flags["_spinner_update_project"] = project_spinner_group.update_project
             try:
                 with group_context:
-                    if use_project_spinner_group and restored_project_names:
-                        for project_name in restored_project_names:
+                    if use_project_spinner_group and session.resumed_context_names:
+                        for project_name in session.resumed_context_names:
                             project_spinner_group.mark_success(project_name, "restored")
                     if parallel_enabled:
-                        completed: dict[str, tuple[RequirementsResult, dict[str, ServiceRecord], list[str]]] = {}
+                        completed: dict[str, ProjectStartupResult] = {}
                         failures: list[str] = []
                         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
                             future_map = {
                                 executor.submit(
                                     rt._start_project_context,
                                     context=context,
-                                    mode=runtime_mode,
+                                    mode=session.runtime_mode,
                                     route=route_for_execution,
-                                    run_id=run_id,
+                                    run_id=session.run_id,
                                 ): context
-                                for context in project_contexts_to_start
+                                for context in session.contexts_to_start
                             }
                             for future in concurrent.futures.as_completed(future_map):
                                 context = future_map[future]
                                 try:
-                                    req_result, project_services, project_warnings = future.result()
-                                    completed[context.name] = (req_result, project_services, project_warnings)
+                                    result = future.result()
+                                    completed[context.name] = result
                                     if use_single_spinner:
-                                        done = len(restored_project_names) + len(completed)
-                                        progress_message = (
-                                            f"Started {done}/{len(selected_project_contexts)} project(s)..."
-                                        )
+                                        done = len(session.resumed_context_names) + len(completed)
+                                        progress_message = f"Started {done}/{len(session.selected_contexts)} project(s)..."
                                         active_spinner.update(progress_message)
-                                        rt._emit(  # type: ignore[attr-defined]
+                                        rt._emit(
                                             "ui.spinner.lifecycle",
                                             component="startup_orchestrator",
                                             op_id="startup.execute",
@@ -563,178 +612,105 @@ class StartupOrchestrator:
                                         )
                                     self._render_project_startup_warnings(
                                         context=context,
-                                        warnings=project_warnings,
+                                        warnings=result.warnings,
                                         route=route_for_execution,
-                                        project_spinner_group=project_spinner_group
-                                        if use_project_spinner_group
-                                        else None,
+                                        project_spinner_group=project_spinner_group if use_project_spinner_group else None,
                                     )
                                 except RuntimeError as exc:
                                     failures.append(str(exc))
                                     rt._emit("startup.project.failed", project=context.name, error=str(exc))
                                     if use_project_spinner_group:
                                         project_spinner_group.mark_failure(context.name, str(exc))
-                        for context in project_contexts_to_start:
-                            entry = completed.get(context.name)
-                            if entry is None:
+                        for context in session.contexts_to_start:
+                            result = completed.get(context.name)
+                            if result is None:
                                 continue
-                            req_result, project_services, _project_warnings = entry
-                            requirements[context.name] = req_result
-                            services.update(project_services)
-                            started_contexts.append(context)
+                            self._record_project_startup(session, context, result)
                         if failures:
                             raise RuntimeError("; ".join(failures))
                     else:
-                        for context in project_contexts_to_start:
-                            req_result, project_services, project_warnings = rt._start_project_context(
+                        for context in session.contexts_to_start:
+                            result = rt._start_project_context(
                                 context=context,
-                                mode=runtime_mode,
+                                mode=session.runtime_mode,
                                 route=route_for_execution,
-                                run_id=run_id,
+                                run_id=session.run_id,
                             )
-                            requirements[context.name] = req_result
-                            services.update(project_services)
-                            started_contexts.append(context)
+                            self._record_project_startup(session, context, result)
                             self._render_project_startup_warnings(
                                 context=context,
-                                warnings=project_warnings,
+                                warnings=result.warnings,
                                 route=route_for_execution,
                                 project_spinner_group=project_spinner_group if use_project_spinner_group else None,
                             )
-            except RuntimeError as exc:
+            except RuntimeError:
                 if use_single_spinner:
                     active_spinner.fail("Startup failed")
-                    rt._emit(  # type: ignore[attr-defined]
+                    rt._emit(
                         "ui.spinner.lifecycle",
                         component="startup_orchestrator",
                         op_id="startup.execute",
                         state="fail",
                         message="Startup failed",
                     )
-                    rt._emit(  # type: ignore[attr-defined]
+                    rt._emit(
                         "ui.spinner.lifecycle",
                         component="startup_orchestrator",
                         op_id="startup.execute",
                         state="stop",
                     )
-                exc_text = str(exc)
-                if "no free port found" in exc_text.lower():
-                    error = f"Port reservation failed: {exc_text}"
-                else:
-                    error = f"Startup failed: {exc_text}"
-                errors.append(error)
-                rt._emit("startup.failed", mode=runtime_mode, command=route.command, error=error)
-                rt._terminate_started_services(services)
-                port_allocator.release_session()
-                run_state = RunState(
-                    run_id=run_id,
-                    mode=runtime_mode,
-                    services=services,
-                    requirements=requirements,
-                    pointers={},
-                    metadata={
-                        "command": route.command,
-                        "failed": True,
-                        "repo_scope_id": rt.config.runtime_scope_id,
-                        "project_roots": {context.name: str(context.root) for context in selected_project_contexts},
-                    },
-                )
-                failed_run_dir = rt._run_dir_path(run_id)
-                run_state.pointers = {
-                    "run_state": str(failed_run_dir / "run_state.json"),
-                    "runtime_map": str(failed_run_dir / "runtime_map.json"),
-                    "ports_manifest": str(failed_run_dir / "ports_manifest.json"),
-                    "error_report": str(failed_run_dir / "error_report.json"),
-                    "events": str(failed_run_dir / "events.jsonl"),
-                    "runtime_readiness_report": str(failed_run_dir / "runtime_readiness_report.json"),
-                }
-                artifacts_started = time.monotonic()
-                rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
-                emit_phase("artifacts_write", artifacts_started, status="error")
-                print(error)
-                return 1
+                raise
             if use_single_spinner:
                 active_spinner.succeed("Startup complete")
-                rt._emit(  # type: ignore[attr-defined]
+                rt._emit(
                     "ui.spinner.lifecycle",
                     component="startup_orchestrator",
                     op_id="startup.execute",
                     state="success",
                     message="Startup complete",
                 )
-                rt._emit(  # type: ignore[attr-defined]
+                rt._emit(
                     "ui.spinner.lifecycle",
                     component="startup_orchestrator",
                     op_id="startup.execute",
                     state="stop",
                 )
-        if preserved_services:
-            services = {**preserved_services, **services}
-        if preserved_requirements:
-            requirements = {**preserved_requirements, **requirements}
 
-        run_state = RunState(
-            run_id=run_id,
-            mode=runtime_mode,
-            services=services,
-            requirements=requirements,
-            pointers={},
-            metadata={
-                "command": route.command,
-                "repo_scope_id": rt.config.runtime_scope_id,
-                "project_roots": {context.name: str(context.root) for context in selected_project_contexts},
-            },
+    def _reconcile_strict_truth(self, session: StartupSession) -> None:
+        rt = self.runtime
+        if rt.config.runtime_truth_mode != "strict":
+            return
+        run_state = build_success_run_state(rt, session)
+        reconcile_started = time.monotonic()
+        degraded_services = rt._reconcile_state_truth(run_state)
+        self._emit_phase(
+            session,
+            "post_start_reconcile",
+            reconcile_started,
+            status="degraded" if degraded_services else "ok",
+            missing_count=len(degraded_services),
         )
-        run_dir = rt._run_dir_path(run_id)
-        run_state.pointers = {
-            "run_state": str(run_dir / "run_state.json"),
-            "runtime_map": str(run_dir / "runtime_map.json"),
-            "ports_manifest": str(run_dir / "ports_manifest.json"),
-            "error_report": str(run_dir / "error_report.json"),
-            "events": str(run_dir / "events.jsonl"),
-            "runtime_readiness_report": str(run_dir / "runtime_readiness_report.json"),
-        }
+        rt._emit(
+            "state.reconcile",
+            run_id=run_state.run_id,
+            source="start.post_start",
+            missing_count=len(degraded_services),
+            missing_services=degraded_services,
+        )
+        if degraded_services:
+            session.strict_truth_failed = True
+            unique_services = sorted(set(degraded_services))
+            raise RuntimeError("service truth degraded after startup: " + ", ".join(unique_services))
 
-        if rt.config.runtime_truth_mode == "strict":
-            reconcile_started = time.monotonic()
-            degraded_services = rt._reconcile_state_truth(run_state)
-            emit_phase(
-                "post_start_reconcile",
-                reconcile_started,
-                status="degraded" if degraded_services else "ok",
-                missing_count=len(degraded_services),
-            )
-            rt._emit(
-                "state.reconcile",
-                run_id=run_state.run_id,
-                source="start.post_start",
-                missing_count=len(degraded_services),
-                missing_services=degraded_services,
-            )
-            if degraded_services:
-                unique_services = sorted(set(degraded_services))
-                error = "Startup failed: service truth degraded after startup: " + ", ".join(unique_services)
-                errors.append(error)
-                run_state.metadata["failed"] = True
-                rt._emit(
-                    "startup.failed",
-                    mode=runtime_mode,
-                    command=route.command,
-                    error=error,
-                    services=unique_services,
-                )
-                rt._terminate_started_services(services)
-                port_allocator.release_session()
-                artifacts_started = time.monotonic()
-                rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
-                emit_phase("artifacts_write", artifacts_started, status="error")
-                print(error)
-                return 1
-
+    def _finalize_success(self, session: StartupSession) -> int:
+        rt = self.runtime
+        run_state = build_success_run_state(rt, session)
         artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, selected_project_contexts, errors=errors)
-        emit_phase("artifacts_write", artifacts_started, status="ok")
-        if requirements_timing_enabled_impl(self, route) and not self._suppress_timing_output(route):
+        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+        self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+        if requirements_timing_enabled_impl(self, session.effective_route) and not self._suppress_timing_output(
+            session.effective_route
+        ):
             rt._emit(
                 "startup.debug_tty_group",
                 component="startup_orchestrator",
@@ -745,9 +721,9 @@ class StartupOrchestrator:
             )
             print_startup_summary_impl(
                 self,
-                project_contexts=selected_project_contexts,
-                start_event_index=startup_event_index,
-                startup_started_at=startup_started_at,
+                project_contexts=session.selected_contexts,
+                start_event_index=session.startup_event_index,
+                startup_started_at=session.startup_started_at,
             )
         else:
             rt._emit(
@@ -758,14 +734,14 @@ class StartupOrchestrator:
                 enabled=False,
                 detail="startup_branch",
             )
-        if startup_breakdown_enabled_impl(self, route):
+        if startup_breakdown_enabled_impl(self, session.effective_route):
             rt._emit(
                 "startup.breakdown",
-                command=requested_command,
-                mode=runtime_mode,
-                project_count=len(selected_project_contexts),
-                projects=[context.name for context in selected_project_contexts],
-                total_ms=round((time.monotonic() - startup_started_at) * 1000.0, 2),
+                command=session.requested_command,
+                mode=session.runtime_mode,
+                project_count=len(session.selected_contexts),
+                projects=[context.name for context in session.selected_contexts],
+                total_ms=round((time.monotonic() - session.startup_started_at) * 1000.0, 2),
             )
         rt._emit(
             "startup.debug_tty_group",
@@ -775,69 +751,88 @@ class StartupOrchestrator:
             enabled=True,
             detail="startup_branch",
         )
-        if not self._suppress_progress_output(route):
-            if not use_project_spinner_group:
-                rt._print_summary(run_state, selected_project_contexts)
+        if not self._suppress_progress_output(session.effective_route):
+            if session.used_project_spinner_group:
+                pass
+            else:
+                rt._print_summary(run_state, session.selected_contexts)
         else:
-            rt._emit("ui.status", message="Startup complete; refreshing dashboard...")  # type: ignore[attr-defined]
-        emit_snapshot(
+            rt._emit("ui.status", message="Startup complete; refreshing dashboard...")
+        self._emit_snapshot(
+            session,
             "before_dashboard_entry",
             source="startup_branch",
-            command=requested_command,
-            mode=runtime_mode,
+            command=session.requested_command,
+            mode=session.runtime_mode,
             service_count=len(run_state.services),
             requirement_count=len(run_state.requirements),
         )
-        if rt._should_enter_post_start_interactive(route):
+        if rt._should_enter_post_start_interactive(session.effective_route):
             return rt._run_interactive_dashboard_loop(run_state)
         return 0
 
-    def _build_planning_dashboard_state(
-        self,
-        *,
-        route: Route,
-        runtime_mode: str,
-        run_id: str,
-        project_contexts: list[ProjectContextLike],
-    ) -> RunState:
+    def _finalize_failure(self, session: StartupSession, error: str) -> int:
         rt = self.runtime
-        run_state = RunState(
-            run_id=run_id,
-            mode=runtime_mode,
-            services={},
-            requirements={},
-            pointers={},
-            metadata={
-                "command": route.command,
-                "repo_scope_id": rt.config.runtime_scope_id,
-                "project_roots": {context.name: str(context.root) for context in project_contexts},
-                "dashboard_configured_service_types": self._configured_service_types_for_mode(runtime_mode),
-                "dashboard_hidden_commands": [
-                    "stop",
-                    "restart",
-                    "stop-all",
-                    "blast-all",
-                    "logs",
-                    "clear-logs",
-                    "health",
-                    "errors",
-                ],
-                "dashboard_runs_disabled": True,
-                "dashboard_banner": (
-                    f"envctl runs are disabled for {runtime_mode}; planning and action commands remain available."
-                ),
-            },
-        )
-        run_dir = rt._run_dir_path(run_id)
-        run_state.pointers = {
-            "run_state": str(run_dir / "run_state.json"),
-            "runtime_map": str(run_dir / "runtime_map.json"),
-            "ports_manifest": str(run_dir / "ports_manifest.json"),
-            "error_report": str(run_dir / "error_report.json"),
-            "events": str(run_dir / "events.jsonl"),
-            "runtime_readiness_report": str(run_dir / "runtime_readiness_report.json"),
+        port_allocator = port_allocator_impl(rt)
+        if "no free port found" in error.lower():
+            final_error = f"Port reservation failed: {error}"
+        elif error.startswith("Startup failed:"):
+            final_error = error
+        else:
+            final_error = f"Startup failed: {error}"
+        session.failure_message = final_error
+        session.errors.append(final_error)
+        failure_payload: dict[str, object] = {
+            "mode": session.runtime_mode,
+            "command": session.effective_route.command,
+            "error": final_error,
         }
-        return run_state
+        if session.strict_truth_failed:
+            failure_payload["services"] = sorted(session.merged_services)
+        rt._emit("startup.failed", **failure_payload)
+        started_services: dict[str, ServiceRecord] = {}
+        for project_name in session.started_context_names:
+            project_services = session.services_by_project.get(project_name, {})
+            started_services.update(project_services)
+        if started_services:
+            rt._terminate_started_services(started_services)
+        port_allocator.release_session()
+        run_state = build_failure_run_state(rt, session, final_error)
+        artifacts_started = time.monotonic()
+        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+        self._emit_phase(session, "artifacts_write", artifacts_started, status="error")
+        print(final_error)
+        return 1
+
+    def _record_project_startup(
+        self,
+        session: StartupSession,
+        context: ProjectContextLike,
+        result: ProjectStartupResult,
+    ) -> None:
+        session.requirements_by_project[context.name] = result.requirements
+        session.services_by_project[context.name] = result.services
+        session.started_context_names.append(context.name)
+
+    def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
+        self.runtime._emit(
+            "startup.phase",
+            command=session.requested_command,
+            mode=session.runtime_mode,
+            phase=phase,
+            duration_ms=round((time.monotonic() - started_at) * 1000.0, 2),
+            **extra,
+        )
+
+    def _emit_snapshot(self, session: StartupSession, checkpoint: str, **extra: object) -> None:
+        if not session.debug_plan_snapshot:
+            return
+        emit_plan_handoff_snapshot(
+            self.runtime._emit,
+            env=dict(self.runtime.env),
+            checkpoint=checkpoint,
+            extra=extra or None,
+        )
 
     def _configured_service_types_for_mode(self, runtime_mode: str) -> list[str]:
         rt = self.runtime
@@ -900,7 +895,7 @@ class StartupOrchestrator:
         mode: str,
         route: Route,
         run_id: str,
-    ) -> tuple[RequirementsResult, dict[str, ServiceRecord], list[str]]:
+    ) -> ProjectStartupResult:
         return start_project_context_impl(self, context=context, mode=mode, route=route, run_id=run_id)
 
     def _requirements_for_restart_context(

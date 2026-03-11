@@ -11,6 +11,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state.models import PortPlan
@@ -626,9 +627,9 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                 lambda _requirements: release_calls.append("released")
             )
             engine._start_project_context = (  # type: ignore[method-assign]
-                lambda context, mode, route, run_id: (
-                    previous_state.requirements["Main"],
-                    {
+                lambda context, mode, route, run_id: ProjectStartupResult(
+                    requirements=previous_state.requirements["Main"],
+                    services={
                         "Main Backend": ServiceRecord(
                             name="Main Backend",
                             type="backend",
@@ -639,7 +640,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                             status="running",
                         )
                     },
-                    [],
+                    warnings=[],
                 )
             )
             engine._write_artifacts = (  # type: ignore[method-assign]

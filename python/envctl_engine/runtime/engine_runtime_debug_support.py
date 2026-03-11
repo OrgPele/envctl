@@ -66,7 +66,6 @@ def debug_pack(runtime: Any, route: Any) -> int:
         print(str(exc))
         return 1
 
-    print("bundle:")
     print(str(bundle_path))
     runtime._last_debug_bundle_path = str(bundle_path)
     try:

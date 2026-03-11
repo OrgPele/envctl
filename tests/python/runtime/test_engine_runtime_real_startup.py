@@ -17,6 +17,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
@@ -2864,9 +2865,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             def fake_start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
                 _ = mode, route, run_id
                 started_projects.append(context.name)
-                return (
-                    RequirementsResult(project=context.name, health="healthy"),
-                    {
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
                         f"{context.name} Backend": ServiceRecord(
                             name=f"{context.name} Backend",
                             type="backend",
@@ -2877,7 +2878,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                             status="running",
                         )
                     },
-                    [],
+                    warnings=[],
                 )
 
             route = parse_route(["--plan", "feature-a,feature-b", "--batch"], env={})
@@ -3016,7 +3017,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             route = parse_route(["--plan", "feature-a"], env={})
             with (
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0),
-                patch.object(engine, "_start_project_context", return_value=(requirements, services, [])),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    return_value=ProjectStartupResult(requirements=requirements, services=services, warnings=[]),
+                ),
             ):
                 code = engine.dispatch(route)
 

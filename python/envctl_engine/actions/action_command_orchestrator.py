@@ -599,8 +599,8 @@ class ActionCommandOrchestrator:
                 )
             ),
             emit_status=self._emit_status,
-            interactive_print_failures=not interactive_command,
-            emit_success_output=not stream_review_output and not interactive_pr_action,
+            interactive_print_failures=(not interactive_command) or command_name in {"pr", "review"},
+            emit_success_output=not stream_review_output,
             on_success=self._project_action_success_handler(command_name, route.mode, interactive_command),
             on_failure=self._project_action_failure_handler(command_name, route.mode),
         )
