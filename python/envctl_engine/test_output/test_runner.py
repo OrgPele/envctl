@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import inspect
 import os
 import subprocess
@@ -81,6 +82,7 @@ class TestRunner:
         instrumented_command, instrumented_env = self._instrument_command(
             command,
             test_type=test_type,
+            cwd=cwd,
             env=env,
         )
         completed = self._run_with_streaming(
@@ -235,6 +237,7 @@ class TestRunner:
         command: Sequence[str],
         *,
         test_type: str,
+        cwd: str | Path | None = None,
         env: Mapping[str, str] | None,
     ) -> tuple[list[str], dict[str, str] | None]:
         instrumented_env = self._ensure_helper_pythonpath(env)
@@ -244,6 +247,8 @@ class TestRunner:
         if test_type == "unittest":
             instrumented = self._instrument_unittest_command(command_list)
             return instrumented, instrumented_env
+        if test_type == "jest":
+            return self._instrument_vitest_command(command_list, cwd=cwd), instrumented_env
         return command_list, instrumented_env
 
     @staticmethod
@@ -289,6 +294,42 @@ class TestRunner:
                 *command[3:],
             ]
         return command
+
+    @classmethod
+    def _instrument_vitest_command(cls, command: list[str], *, cwd: str | Path | None) -> list[str]:
+        if not cls._is_vitest_command(command, cwd=cwd):
+            return command
+        reporter_path = cls._vitest_progress_reporter_path()
+        if any(str(part) == f"--reporter={reporter_path}" for part in command):
+            return command
+        rendered = " ".join(command).lower()
+        if "vitest" in rendered:
+            return [*command, "--reporter=default", f"--reporter={reporter_path}"]
+        return [*command, "--", "--reporter=default", f"--reporter={reporter_path}"]
+
+    @staticmethod
+    def _vitest_progress_reporter_path() -> str:
+        return str(Path(__file__).resolve().with_name("vitest_progress_reporter.mjs"))
+
+    @staticmethod
+    def _is_vitest_command(command: Sequence[str], *, cwd: str | Path | None) -> bool:
+        rendered = " ".join(str(part) for part in command).lower()
+        if "vitest" in rendered:
+            return True
+        if cwd is None:
+            return False
+        package_json = Path(cwd) / "package.json"
+        try:
+            payload = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        scripts = payload.get("scripts")
+        if not isinstance(scripts, dict):
+            return False
+        test_script = scripts.get("test")
+        return isinstance(test_script, str) and "vitest" in test_script.lower()
 
     @staticmethod
     def _ensure_helper_pythonpath(env: Mapping[str, str] | None) -> dict[str, str] | None:

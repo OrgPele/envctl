@@ -416,12 +416,11 @@ class DashboardLoopTests(unittest.TestCase):
         def handle_command(raw: str, current: RunState, rt: object):  # noqa: ANN001
             runtime_any = cast(Any, rt)
             normalized = raw.strip().lower()
-            if normalized == "p":
+            if normalized.startswith("p"):
                 runtime_any._emit("action.command.start", command="pr")
                 runtime_any._emit(
                     "ui.status", message="PR already exists: https://github.com/kfiramar/supportopia/pull/53"
                 )
-                runtime_any._emit("ui.status", message="PR summary written: /tmp/pr_summary_Main.md")
                 runtime_any._emit("action.command.finish", command="pr", code=0)
                 return True, current
             return False, current
@@ -443,7 +442,6 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn(("start", "Preparing pull request workflow...", True), spinner_calls)
         self.assertIn(("spin-start", ""), spinner_calls)
         self.assertIn(("update", "PR already exists: https://github.com/kfiramar/supportopia/pull/53"), spinner_calls)
-        self.assertIn(("update", "PR summary written: /tmp/pr_summary_Main.md"), spinner_calls)
         self.assertNotIn(("succeed", "pr complete"), spinner_calls)
 
     def test_dashboard_loop_suppresses_command_spinner_when_suite_group_spinner_is_enabled(self) -> None:

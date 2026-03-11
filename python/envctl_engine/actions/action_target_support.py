@@ -65,6 +65,7 @@ def execute_targeted_action(
     emit_status: Callable[[str], None],
     printer: Callable[[str], None] = print,
     interactive_print_failures: bool = True,
+    emit_success_output: bool = True,
 ) -> int:
     failures = 0
     for context in build_action_target_contexts(targets):
@@ -90,7 +91,8 @@ def execute_targeted_action(
             failures += 1
             continue
 
-        emit_action_output(completed.stdout, emit_status=emit_status, printer=printer)
+        if emit_success_output:
+            emit_action_output(completed.stdout, emit_status=emit_status, printer=printer)
         if not interactive_command:
             printer(f"{command_name} action succeeded for {context.name}.")
         emit_status(f"{command_name} succeeded for {context.name}")

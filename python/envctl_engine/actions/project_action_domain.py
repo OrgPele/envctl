@@ -85,34 +85,10 @@ def run_pr_action(context: ActionProjectContext) -> int:
         print(f"Skipping {context.project_name} (detached HEAD).")
         return 0
     base_branch = _resolve_pr_base_branch(context, git_root)
-    commits = _git_output(git_root, ["log", "--oneline", "-n", "20"]).strip()
-    if base_branch and base_branch != "unknown":
-        base_range = f"{base_branch}..HEAD"
-        commits = _git_output(git_root, ["log", "--oneline", base_range]).strip() or commits
-    status = _git_output(git_root, ["status", "--porcelain"]).strip()
-
-    output_path = _summary_output_path(context.repo_root, "pr", "pr_summary", context.project_name)
-    _write_markdown_lines(
-        output_path,
-        [
-            f"# PR Summary: {context.project_name}",
-            "",
-            f"Base: {base_branch or 'unknown'}",
-            f"Head: {head_branch}",
-            "",
-            "## Commits",
-            commits or "(no commits found)",
-            "",
-            "## Working Tree",
-            status or "(clean)",
-            "",
-        ],
-    )
 
     existing_url = existing_pr_url(git_root, head_branch)
     if existing_url:
         print(f"PR already exists: {existing_url}")
-        print(f"PR summary written: {output_path}")
         return 0
 
     helper = context.repo_root / "utils" / "create-pr.sh"
@@ -131,13 +107,11 @@ def run_pr_action(context: ActionProjectContext) -> int:
         _print_process_output(created)
         if created.returncode != 0:
             return 1
-        print(f"PR summary written: {output_path}")
         return 0
 
     gh_path = shutil.which("gh")
     if gh_path is None:
         print("gh is required for pr action when utils/create-pr.sh is unavailable")
-        print(f"PR summary written: {output_path}")
         return 1
     args = [gh_path, "pr", "create", "--fill", "--head", head_branch]
     if base_branch:
@@ -146,7 +120,6 @@ def run_pr_action(context: ActionProjectContext) -> int:
     _print_process_output(created)
     if created.returncode != 0:
         return 1
-    print(f"PR summary written: {output_path}")
     return 0
 
 
@@ -231,7 +204,7 @@ def existing_pr_url(git_root: Path, branch: str) -> str:
     if gh_path is None:
         return ""
     listed = subprocess.run(
-        [gh_path, "pr", "list", "--head", branch_name, "--state", "all", "--json", "url", "--jq", ".[0].url"],
+        [gh_path, "pr", "list", "--head", branch_name, "--state", "open", "--json", "url", "--jq", ".[0].url"],
         cwd=str(git_root),
         text=True,
         capture_output=True,
@@ -270,15 +243,6 @@ def _resolve_commit_message(
     if main_task.is_file() and _file_has_text(main_task):
         return "", str(main_task), None
 
-    if context.interactive:
-        print("Commit message: ", end="", flush=True)
-        try:
-            prompted = input().strip()
-        except EOFError:
-            prompted = ""
-        if prompted:
-            return prompted, "", None
-
     return "", "", f"MAIN_TASK.md is missing or empty and no commit message provided for {branch}."
 
 
@@ -293,19 +257,13 @@ def _resolve_analyze_mode(context: ActionProjectContext) -> str:
     explicit = str(context.env.get("ENVCTL_ANALYZE_MODE", "")).strip().lower()
     if explicit in {"single", "grouped"}:
         return explicit
-    if context.interactive and len(_analysis_iterations(context, mode="grouped")) > 1:
-        print("Analysis mode [single/grouped] (default: single): ", end="", flush=True)
-        try:
-            response = input().strip().lower()
-        except EOFError:
-            response = ""
-        if response in {"single", "grouped"}:
-            return response
     return "single"
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
     project_root = context.project_root.resolve()
+    if project_root == context.repo_root.resolve():
+        return []
     family_dir = _project_family_dir(project_root)
     if family_dir is None:
         return []
@@ -506,6 +464,17 @@ def _print_review_completion(
     stats: list[tuple[str, str]],
     tree_count: int,
 ) -> None:
+    if _print_review_completion_rich(
+        context,
+        mode=mode,
+        scope=scope,
+        output_dir=output_dir,
+        summary_path=summary_path,
+        all_in_one_path=all_in_one_path,
+        stats=stats,
+        tree_count=tree_count,
+    ):
+        return
     color = _review_colorizer(context)
     print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
     print(f"  Mode: {mode}")
@@ -528,6 +497,63 @@ def _print_review_completion(
     print(color("  Next steps", fg="green", bold=True))
     print("    1. Start with the summary file.")
     print("    2. Open the full review when you need the complete context.")
+
+
+def _print_review_completion_rich(
+    context: ActionProjectContext,
+    *,
+    mode: str,
+    scope: str,
+    output_dir: Path,
+    summary_path: Path,
+    all_in_one_path: Path,
+    stats: list[tuple[str, str]],
+    tree_count: int,
+) -> bool:
+    force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
+    if not force_rich and not sys.stdout.isatty():
+        return False
+    try:
+        from rich import box
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+    except Exception:
+        return False
+
+    console = Console(
+        file=sys.stdout,
+        no_color=not colors_enabled(context.env, stream=sys.stdout, interactive_tty=force_rich or sys.stdout.isatty()),
+        force_terminal=True,
+    )
+
+    details = Table.grid(padding=(0, 1))
+    details.add_column(style="bold")
+    details.add_column()
+    details.add_row("Mode", mode)
+    details.add_row("Scope", scope)
+    details.add_row("Trees", str(tree_count))
+    details.add_row("Output", _display_path(output_dir))
+    details.add_row("Summary", _display_path(summary_path))
+    details.add_row("Bundle", _display_path(all_in_one_path))
+    for label, value in stats:
+        details.add_row(label, value)
+
+    steps = Table.grid(padding=(0, 1))
+    steps.add_column(width=3, style="bold")
+    steps.add_column()
+    steps.add_row("1.", "Start with the summary file.")
+    steps.add_row("2.", "Open the full review when you need the complete context.")
+
+    title = Text.assemble(("Review Ready", "bold"), (": ", "bold"), (context.project_name, "cyan"))
+    body = Table.grid(padding=(1, 0))
+    body.add_row(details)
+    body.add_row(Text(""))
+    body.add_row(Text("Next steps", style="bold"))
+    body.add_row(steps)
+    console.print(Panel(body, title=title, box=box.ROUNDED, expand=True))
+    return True
 
 
 def _print_review_failure(

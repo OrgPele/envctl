@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from types import SimpleNamespace
 
@@ -244,6 +245,59 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
         self.assertEqual(events[0][0], "state.fingerprint.before_reconcile")
         self.assertEqual(events[1][0], "state.fingerprint.after_reconcile")
         self.assertEqual(anomalies, [])
+
+    def test_reconcile_state_truth_overlaps_service_and_requirement_checks(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        service_started = threading.Event()
+        requirement_started = threading.Event()
+        release_service = threading.Event()
+        service = ServiceRecord(name="Main Backend", type="backend", cwd=".", status="unknown")
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={"Main Backend": service},
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    db={"enabled": True, "success": True, "final": 5432},
+                )
+            },
+        )
+
+        def _service_truth_status(_service: object) -> str:
+            service_started.set()
+            self.assertTrue(release_service.wait(timeout=1.0))
+            return "running"
+
+        def _wait_for_port(_port: int, timeout: float) -> bool:
+            _ = timeout
+            requirement_started.set()
+            return True
+
+        runtime = SimpleNamespace(
+            _emit=lambda event_name, **payload: events.append((event_name, payload)),
+            _service_truth_status=_service_truth_status,
+            process_runner=SimpleNamespace(wait_for_port=_wait_for_port),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+            _debug_recorder=None,
+        )
+
+        result_holder: dict[str, object] = {}
+
+        def _run() -> None:
+            result_holder["failing"] = reconcile_state_truth(runtime, state)
+
+        thread = threading.Thread(target=_run)
+        thread.start()
+        self.assertTrue(service_started.wait(timeout=1.0))
+        self.assertTrue(requirement_started.wait(timeout=1.0))
+        release_service.set()
+        thread.join(timeout=1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result_holder.get("failing"), [])
+        self.assertEqual(state.requirements["Main"].db["runtime_status"], "healthy")
 
 
 if __name__ == "__main__":

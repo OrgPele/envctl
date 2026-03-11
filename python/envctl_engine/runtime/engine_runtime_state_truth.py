@@ -236,13 +236,19 @@ def reconcile_state_truth(runtime: Any, state: RunState) -> list[str]:
     services = list(state.services.values())
     worker_count = min(8, len(services))
     if worker_count <= 1:
-        for service in services:
-            status = runtime._service_truth_status(service)
-            service.status = status
-            if status not in {"running", "healthy"}:
-                failing_services.append(service.name)
+        requirements_future: concurrent.futures.Future[list[dict[str, object]]] | None = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            requirements_future = executor.submit(reconcile_requirements_truth, runtime, state)
+            for service in services:
+                status = runtime._service_truth_status(service)
+                service.status = status
+                if status not in {"running", "healthy"}:
+                    failing_services.append(service.name)
+            if requirements_future is not None:
+                requirements_future.result()
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(9, worker_count + 1)) as executor:
+            requirements_future = executor.submit(reconcile_requirements_truth, runtime, state)
             future_map = {executor.submit(runtime._service_truth_status, service): service for service in services}
             for future in concurrent.futures.as_completed(future_map):
                 service = future_map[future]
@@ -250,7 +256,7 @@ def reconcile_state_truth(runtime: Any, state: RunState) -> list[str]:
                 service.status = status
                 if status not in {"running", "healthy"}:
                     failing_services.append(service.name)
-    reconcile_requirements_truth(runtime, state)
+            requirements_future.result()
     after = state_fingerprint(state)
     runtime._emit(
         "state.fingerprint.after_reconcile",

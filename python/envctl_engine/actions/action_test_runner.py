@@ -40,6 +40,16 @@ def _format_live_progress_status(label: str, current: int, total: int) -> str:
     return f"Running {label}... {current}/{total} tests complete"
 
 
+def _format_live_progress_status_without_total(label: str, current: int, *, parsed: object | None) -> str:
+    failed = min(max(_live_failed_count(parsed), 0), max(current, 0))
+    passed = max(0, int(current) - failed)
+    return f"Running {label}... {current} tests complete • {passed} passed, {failed} failed"
+
+
+def _format_live_collection_status(label: str, discovered: int) -> str:
+    return f"Collecting {label} tests... {discovered} discovered"
+
+
 def _live_failed_count(parsed: object | None) -> int:
     if parsed is None:
         return 0
@@ -116,18 +126,12 @@ def run_test_action(
     suite_policy_enabled, suite_policy_reason = orchestrator._test_suite_spinner_policy_enabled(spinner_policy)
     use_suite_spinner_group = bool(
         interactive_command
-        and parallel
-        and len(execution_specs) > 1
         and suite_policy_enabled
         and rich_progress_supported
     )
     suite_spinner_reason = "enabled"
     if not interactive_command:
         suite_spinner_reason = "non_interactive"
-    elif not parallel:
-        suite_spinner_reason = "sequential_mode"
-    elif len(execution_specs) <= 1:
-        suite_spinner_reason = "single_suite"
     elif not suite_policy_enabled:
         suite_spinner_reason = f"suite_spinner_policy_disabled:{suite_policy_reason}"
     elif not rich_progress_supported:
@@ -142,7 +146,7 @@ def run_test_action(
         python_executable=sys.executable,
         suite_policy_reason=suite_policy_reason,
     )
-    if interactive_command and parallel and len(execution_specs) > 1 and not use_suite_spinner_group:
+    if interactive_command and not use_suite_spinner_group:
         print(f"Suite spinner rows disabled: {suite_spinner_reason}")
     rt._emit(  # type: ignore[attr-defined]
         "test.execution.mode",
@@ -235,11 +239,11 @@ def run_test_action(
         if multi_project:
             status = f"{project_name}: {status}"
         status += f" [{index}/{len(execution_specs)}]" if len(execution_specs) > 1 else ""
-        if not (interactive_command and parallel):
+        if not (interactive_command and use_suite_spinner_group):
             orchestrator._emit_status(status)
         if interactive_command:
             started_label = f"{project_name} / {suite_label}" if multi_project else suite_label
-            if not parallel:
+            if not use_suite_spinner_group:
                 index_text = orchestrator._colorize(f"[{index}/{len(execution_specs)}]", fg="yellow")
                 suite_text = orchestrator._colorize(started_label, fg="cyan", bold=True)
                 state_text = orchestrator._colorize("started", fg="blue")
@@ -248,30 +252,116 @@ def run_test_action(
                 cwd_text = orchestrator._colorize(str(Path(spec.cwd).resolve()), fg="gray")
                 print(f"      command: {command_text}")
                 print(f"      cwd: {cwd_text}")
-        progress_status: dict[str, tuple[int, int] | None] = {"last": None}
+        progress_status: dict[str, object] = {
+            "last": None,
+            "current": None,
+            "total": None,
+            "running_started": False,
+        }
 
         def emit_live_progress(current: int, total: int) -> None:
-            if total <= 0:
+            live_label = f"{project_name} / {suite_label}" if multi_project else suite_label
+            merged_current = progress_status["current"]
+            merged_total = progress_status["total"]
+
+            if current < 0:
+                if bool(progress_status["running_started"]):
+                    return
+                snapshot = ("collecting", total)
+                if progress_status["last"] == snapshot:
+                    return
+                progress_status["last"] = snapshot
+                progress_status["total"] = total
+                message = _format_live_collection_status(live_label, total)
+                if use_suite_spinner_group:
+                    suite_spinner_group.mark_progress(execution, status_text=f"{total} discovered")
+                else:
+                    orchestrator._emit_status(message)
                 return
-            snapshot = (current, total)
+            progress_status["running_started"] = True
+            if total <= 0:
+                merged_current = max(int(merged_current or 0), int(current))
+                progress_status["current"] = merged_current
+                snapshot = ("running", merged_current, 0)
+                if progress_status["last"] == snapshot:
+                    return
+                progress_status["last"] = snapshot
+                message = _format_live_progress_status_without_total(
+                    live_label,
+                    int(merged_current),
+                    parsed=runner.last_result,
+                )
+                if use_suite_spinner_group:
+                    suite_spinner_group.mark_progress(
+                        execution,
+                        status_text=f"{int(merged_current)} complete • "
+                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
+                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed",
+                    )
+                else:
+                    orchestrator._emit_status(message)
+                return
+            if int(current) == 0 and merged_current is not None and int(merged_current) > 0:
+                merged_total = int(total)
+                progress_status["total"] = merged_total
+                snapshot = ("running", int(merged_current), merged_total)
+                if progress_status["last"] == snapshot:
+                    return
+                progress_status["last"] = snapshot
+                message = _format_live_progress_status_with_counts(
+                    live_label,
+                    int(merged_current),
+                    merged_total,
+                    parsed=runner.last_result,
+                )
+                if use_suite_spinner_group:
+                    suite_spinner_group.mark_progress(
+                        execution,
+                        status_text=(
+                            f"{int(merged_current)}/{merged_total} complete • "
+                            f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
+                            f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                        ),
+                    )
+                else:
+                    orchestrator._emit_status(message)
+                return
+            merged_current = max(int(merged_current or 0), int(current))
+            merged_total = int(total)
+            progress_status["current"] = merged_current
+            progress_status["total"] = merged_total
+            snapshot = ("running", merged_current, merged_total)
             if progress_status["last"] == snapshot:
                 return
             progress_status["last"] = snapshot
-            live_label = f"{project_name} / {suite_label}" if multi_project else suite_label
-            orchestrator._emit_status(
-                _format_live_progress_status_with_counts(live_label, current, total, parsed=runner.last_result)
+            message = _format_live_progress_status_with_counts(
+                live_label,
+                merged_current,
+                merged_total,
+                parsed=runner.last_result,
             )
+            if use_suite_spinner_group:
+                suite_spinner_group.mark_progress(
+                    execution,
+                    status_text=(
+                        f"{merged_current}/{merged_total} complete • "
+                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
+                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                    ),
+                )
+            else:
+                orchestrator._emit_status(message)
 
-        if parallel:
-            with progress_lock:
+        with progress_lock:
+            if parallel:
                 progress_state["queued"] = max(0, int(progress_state["queued"]) - 1)
                 progress_state["running"] = int(progress_state["running"]) + 1
                 descriptor = f"{project_name} / {suite_label}" if multi_project else suite_label
                 progress_state["running_labels"].add(descriptor)
-                if use_suite_spinner_group:
-                    suite_spinner_group.mark_running(execution)
-                else:
-                    emit_parallel_progress_status(phase="running", execution=execution)
+            if use_suite_spinner_group:
+                suite_spinner_group.mark_running(execution)
+            elif parallel:
+                emit_parallel_progress_status(phase="running", execution=execution)
         command = [*spec.command, *args]
         started_at = time.monotonic()
         rt._emit(  # type: ignore[attr-defined]
@@ -406,8 +496,8 @@ def run_test_action(
             project=project_name,
             project_root=str(project_root),
         )
-        if parallel:
-            with progress_lock:
+        with progress_lock:
+            if parallel:
                 progress_state["running"] = max(0, int(progress_state["running"]) - 1)
                 progress_state["finished"] = int(progress_state["finished"]) + 1
                 running_descriptor = f"{project_name} / {suite_label}" if multi_project else suite_label
@@ -418,15 +508,15 @@ def run_test_action(
                     0,
                     len(execution_specs) - int(progress_state["running"]) - int(progress_state["finished"]),
                 )
-                if use_suite_spinner_group:
-                    suite_spinner_group.mark_finished(
-                        execution,
-                        success=completed.returncode == 0,
-                        duration_text=format_duration(max(duration_ms / 1000.0, 0.0)),
-                        parsed=parsed,
-                    )
-                else:
-                    emit_parallel_progress_status(phase="completed", execution=execution)
+            if use_suite_spinner_group:
+                suite_spinner_group.mark_finished(
+                    execution,
+                    success=completed.returncode == 0,
+                    duration_text=format_duration(max(duration_ms / 1000.0, 0.0)),
+                    parsed=parsed,
+                )
+            elif parallel:
+                emit_parallel_progress_status(phase="completed", execution=execution)
 
         if completed.returncode != 0:
             error = _summarize_failure_output(

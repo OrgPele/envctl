@@ -45,6 +45,19 @@ from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 
+def _stdout_is_live_terminal() -> bool:
+    streams = [getattr(sys, "stdout", None), getattr(sys, "__stdout__", None)]
+    for stream in streams:
+        if stream is None:
+            continue
+        try:
+            if bool(getattr(stream, "isatty", lambda: False)()):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 class ActionRuntimeFacade:
     def __init__(self, runtime: Any) -> None:
         self._runtime = runtime
@@ -280,6 +293,8 @@ class ActionCommandOrchestrator:
             return candidates, None
 
         if not project_selectors and not run_all:
+            if len(candidates) == 1:
+                return candidates, None
             if self._interactive_selection_allowed(route):
                 selection = cast(
                     TargetSelection,
@@ -509,6 +524,15 @@ class ActionCommandOrchestrator:
         rt = self.runtime
         raw = rt.env.get(env_key)  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
+        command_extra_env = dict(extra_env)
+        stream_review_output = bool(
+            command_name == "review"
+            and not interactive_command
+            and _stdout_is_live_terminal()
+            and hasattr(rt.process_runner, "run_streaming")  # type: ignore[attr-defined]
+        )
+        if stream_review_output:
+            command_extra_env["ENVCTL_ACTION_FORCE_RICH"] = "1"
         if raw is None and default_command is None:
             print(f"No {command_name} command configured. Set {env_key} or add repo utility script.")
             return 1
@@ -545,16 +569,33 @@ class ActionCommandOrchestrator:
                 targets,
                 route=route,
                 target=getattr(context, "target_obj"),
-                extra=extra_env,
+                extra=command_extra_env,
             ),
-            process_run=lambda command, cwd, env: rt.process_runner.run(  # type: ignore[attr-defined]
-                command,
-                cwd=cwd,
-                env=dict(env),
-                timeout=300.0,
+            process_run=lambda command, cwd, env: (
+                subprocess.CompletedProcess(
+                    args=command,
+                    returncode=(completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
+                        command,
+                        cwd=cwd,
+                        env=dict(env),
+                        timeout=300.0,
+                        show_spinner=False,
+                        echo_output=True,
+                    )).returncode,
+                    stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
+                    stderr=str(getattr(completed, "stderr", "") or ""),
+                )
+                if stream_review_output
+                else rt.process_runner.run(  # type: ignore[attr-defined]
+                    command,
+                    cwd=cwd,
+                    env=dict(env),
+                    timeout=300.0,
+                )
             ),
             emit_status=self._emit_status,
             interactive_print_failures=True,
+            emit_success_output=not stream_review_output,
         )
 
     def action_replacements(

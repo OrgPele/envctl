@@ -6,6 +6,7 @@ SELECTOR_BINDINGS = [
     ("ctrl+c", "cancel", "Cancel"),
     ("enter", "submit", "Confirm", False, True),
     ("space", "toggle", "Toggle", False, True),
+    ("a", "toggle_visible", "All", True, True),
     ("ctrl+a", "toggle_visible", "Toggle visible", False, True),
     ("/", "focus_filter", "Filter"),
     ("tab", "cycle_focus", "Focus"),
@@ -72,11 +73,11 @@ ListItem.-highlight {
     border-left: wide $accent;
 }
 .selector-row-selected.-highlight {
-    background: $accent 36%;
-    border-left: wide $accent;
+    background: $success 34%;
+    border-left: wide $success;
 }
 .selector-row-selected Label {
-    color: $text;
+    color: $success;
     text-style: bold;
 }
 .selector-row-selected.-highlight Label {

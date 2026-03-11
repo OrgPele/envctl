@@ -246,6 +246,112 @@ class ActionsParityTests(unittest.TestCase):
                 msg=status_messages,
             )
 
+    def test_interactive_test_action_live_progress_shows_collection_and_no_total_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "frontend").mkdir(parents=True, exist_ok=True)
+            (tree_root / "frontend" / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            class _ProgressRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = SimpleNamespace(
+                        counts_detected=True,
+                        passed=12,
+                        failed=0,
+                        skipped=0,
+                        errors=0,
+                        total=20,
+                    )
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None, progress_callback=None):  # noqa: ANN001
+                    _ = command, cwd, env, timeout
+                    if callable(progress_callback):
+                        progress_callback(-1, 47)
+                        progress_callback(5, 0)
+                        progress_callback(12, 20)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertTrue(any("Collecting Frontend (package test) tests... 47 discovered" in message for message in status_messages))
+            self.assertTrue(any("Running Frontend (package test)... 5 tests complete • 5 passed, 0 failed" in message for message in status_messages))
+            self.assertTrue(any("Running Frontend (package test)... 12/20 tests complete • 12 passed, 0 failed" in message for message in status_messages))
+
+    def test_interactive_test_action_ignores_late_collection_updates_after_running_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "frontend").mkdir(parents=True, exist_ok=True)
+            (tree_root / "frontend" / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            class _ProgressRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = SimpleNamespace(
+                        counts_detected=True,
+                        passed=7,
+                        failed=0,
+                        skipped=0,
+                        errors=0,
+                        total=20,
+                    )
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None, progress_callback=None):  # noqa: ANN001
+                    _ = command, cwd, env, timeout
+                    if callable(progress_callback):
+                        progress_callback(-1, 47)
+                        progress_callback(5, 0)
+                        progress_callback(-1, 52)
+                        progress_callback(0, 20)
+                        progress_callback(7, 20)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            collecting_messages = [
+                message for message in status_messages if "Collecting Frontend (package test) tests..." in message
+            ]
+            self.assertEqual(len(collecting_messages), 1, msg=status_messages)
+            self.assertFalse(any("52 discovered" in message for message in collecting_messages), msg=status_messages)
+            self.assertTrue(any("Running Frontend (package test)... 5/20 tests complete" in message for message in status_messages), msg=status_messages)
+            self.assertTrue(any("Running Frontend (package test)... 7/20 tests complete" in message for message in status_messages), msg=status_messages)
+
     def test_interactive_test_action_prints_failure_excerpt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -281,6 +387,7 @@ class ActionsParityTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-b" / "1").mkdir(parents=True, exist_ok=True)
 
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
@@ -290,12 +397,66 @@ class ActionsParityTests(unittest.TestCase):
             code = engine.dispatch(parse_route(["test"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
             self.assertEqual(code, 1)
 
+    def test_headless_test_auto_selects_single_main_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            fake_runner = _FakeRunner(returncode=0, stdout="OK\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0, msg=out.getvalue())
+            self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
+            only_cmd, only_cwd = fake_runner.run_calls[0]
+            self.assertIn("-m", only_cmd)
+            self.assertIn("envctl_engine.test_output.unittest_runner", only_cmd)
+            self.assertEqual(Path(only_cwd).resolve(), repo.resolve())
+
+    def test_headless_test_auto_selects_single_tree_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0, stdout="OK\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+
+            self.assertEqual(code, 0, msg=out.getvalue())
+            self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
+            only_cmd, only_cwd = fake_runner.run_calls[0]
+            self.assertIn("-m", only_cmd)
+            self.assertIn("envctl_engine.test_output.unittest_runner", only_cmd)
+            self.assertEqual(Path(only_cwd).resolve(), tree_root.resolve())
+
     def test_action_commands_use_shell_compatible_missing_target_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-b" / "1").mkdir(parents=True, exist_ok=True)
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             expected_messages = {
@@ -311,6 +472,87 @@ class ActionsParityTests(unittest.TestCase):
                         code = engine.dispatch(parse_route([command], env={"ENVCTL_DEFAULT_MODE": "trees"}))
                     self.assertEqual(code, 1, msg=command)
                     self.assertIn(expected, out.getvalue(), msg=command)
+
+    def test_headless_review_auto_selects_single_main_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'exit 0'"},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0, msg=out.getvalue())
+            self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
+            only_cmd, only_cwd = fake_runner.run_calls[0]
+            self.assertEqual(only_cmd, ("sh", "-lc", "exit 0"))
+            self.assertEqual(Path(only_cwd).resolve(), repo.resolve())
+
+    def test_headless_review_streams_output_on_tty_without_reprinting_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'exit 0'"},
+            )
+
+            class _StreamingRunner:
+                def __init__(self) -> None:
+                    self.run_calls: list[tuple[tuple[str, ...], str]] = []
+                    self.streaming_calls: list[tuple[tuple[str, ...], str]] = []
+
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = env, timeout
+                    self.run_calls.append((tuple(cmd), str(cwd)))
+                    return SimpleNamespace(returncode=0, stdout="SHOULD_NOT_BE_PRINTED\n", stderr="")
+
+                def run_streaming(self, cmd, *, cwd=None, env=None, timeout=None, show_spinner=True, echo_output=True):  # noqa: ANN001
+                    _ = env, timeout, show_spinner, echo_output
+                    self.streaming_calls.append((tuple(cmd), str(cwd)))
+                    print("\x1b[36mRICH_REVIEW_BLOCK\x1b[0m")
+                    return SimpleNamespace(returncode=0, stdout="RICH_REVIEW_BLOCK\n", stderr="", args=list(cmd))
+
+            fake_runner = _StreamingRunner()
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            out = StringIO()
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator._stdout_is_live_terminal", return_value=True),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0, msg=rendered)
+            self.assertEqual(fake_runner.run_calls, [])
+            self.assertEqual(len(fake_runner.streaming_calls), 1, msg=fake_runner.streaming_calls)
+            self.assertIn("RICH_REVIEW_BLOCK", rendered)
+            self.assertEqual(rendered.count("RICH_REVIEW_BLOCK"), 1, msg=rendered)
 
     def test_action_env_marks_batch_routes_non_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -447,10 +689,12 @@ class ActionsParityTests(unittest.TestCase):
                 self.assertEqual(code, 0, msg=command)
 
             self.assertTrue(
-                any(
-                    ("envctl_engine.actions.actions_cli" in call[0]) or ("envctl_engine.actions.actions_cli" in call[0])
-                    for call in fake_runner.run_calls
-                )
+                all(call[0][0] == sys.executable for call in fake_runner.run_calls),
+                msg=fake_runner.run_calls,
+            )
+            self.assertTrue(
+                all(call[0][1:3] == ("-m", "envctl_engine.actions.actions_cli") for call in fake_runner.run_calls),
+                msg=fake_runner.run_calls,
             )
 
     def test_interactive_review_prints_action_output_details(self) -> None:
@@ -477,6 +721,40 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = out.getvalue()
             self.assertIn("Review summary written: /tmp/review.md", rendered)
+
+    def test_interactive_review_prints_failure_details_and_returns_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+
+            details = (
+                "Review failed: feature-a-1\n"
+                "  Output directory\n"
+                "    /tmp/review-output\n"
+                "  Details: analyzer could not resolve docs path\n"
+            )
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'exit 1'"},
+            )
+            fake_runner = _FakeRunner(returncode=1, stderr=details)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("review action failed for feature-a-1: Review failed: feature-a-1", rendered)
+            self.assertIn("Output directory", rendered)
+            self.assertIn("/tmp/review-output", rendered)
+            self.assertIn("analyzer could not resolve docs path", rendered)
 
     def test_interactive_pr_reports_existing_pr_status_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -537,17 +815,13 @@ class ActionsParityTests(unittest.TestCase):
             fake_runner = _FakeRunner(returncode=0)
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            with patch(
-                "envctl_engine.actions.action_utils.shutil.which",
-                side_effect=lambda name: "/usr/bin/python3" if name in {"python3", "python"} else None,
-            ):
-                for command in ("pr", "commit", "review"):
-                    route = parse_route([command, "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-                    code = engine.dispatch(route)
-                    self.assertEqual(code, 0, msg=command)
+            for command in ("pr", "commit", "review"):
+                route = parse_route([command, "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+                self.assertEqual(code, 0, msg=command)
 
             self.assertTrue(
-                any(call[0][0] == "/usr/bin/python3" for call in fake_runner.run_calls),
+                all(call[0][0] == sys.executable for call in fake_runner.run_calls),
                 msg=fake_runner.run_calls,
             )
 
@@ -563,12 +837,8 @@ class ActionsParityTests(unittest.TestCase):
             fake_runner = _FakeRunner(returncode=0)
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            with patch(
-                "envctl_engine.actions.action_utils.shutil.which",
-                return_value=None,
-            ):
-                route = parse_route(["pr", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-                code = engine.dispatch(route)
+            route = parse_route(["pr", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
@@ -641,7 +911,10 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(fake_runner.run_envs)
             env = fake_runner.run_envs[0] or {}
             self.assertIn("PYTHONPATH", env)
-            self.assertIn(str(repo / "python"), env["PYTHONPATH"])
+            self.assertIn(str(PYTHON_ROOT), env["PYTHONPATH"])
+            self.assertEqual(env.get("GIT_TERMINAL_PROMPT"), "0")
+            self.assertEqual(env.get("GH_PROMPT_DISABLED"), "1")
+            self.assertEqual(env.get("GCM_INTERACTIVE"), "Never")
 
     def test_test_action_writes_failed_tests_summary_and_persists_dashboard_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1059,7 +1332,15 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(len(fake_runner.run_calls), 2, msg=fake_runner.run_calls)
             command_set = {call[0] for call in fake_runner.run_calls}
             cwd_set = {Path(call[1]).resolve() for call in fake_runner.run_calls}
-            self.assertIn(("pnpm", "run", "test"), command_set)
+            frontend_commands = [
+                command
+                for command in command_set
+                if len(command) >= 3 and command[:3] == ("pnpm", "run", "test")
+            ]
+            self.assertEqual(len(frontend_commands), 1)
+            self.assertEqual(frontend_commands[0][-3], "--")
+            self.assertEqual(frontend_commands[0][-2], "--reporter=default")
+            self.assertTrue(frontend_commands[0][-1].endswith("vitest_progress_reporter.mjs"))
             pytest_commands = [
                 command
                 for command in command_set
@@ -1430,6 +1711,226 @@ class ActionsParityTests(unittest.TestCase):
                 any(message.startswith("Tests progress: running ") for message in status_messages), msg=status_messages
             )
 
+    def test_parallel_suite_spinner_group_receives_live_progress_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "pyproject.toml").write_text(
+                "[project]\nname='backend'\nversion='1.0.0'\n",
+                encoding="utf-8",
+            )
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend" / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (repo / "frontend" / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            class _Policy:
+                enabled = True
+                backend = "rich"
+                style = "dots"
+                mode = "auto"
+                reason = ""
+                min_ms = 0
+                verbose_events = False
+
+            suite_events: list[str] = []
+
+            class _SuiteSpinnerStub:
+                def __init__(self, **kwargs) -> None:  # noqa: ANN003
+                    self.enabled = bool(kwargs.get("enabled", False))
+
+                def __enter__(self):
+                    suite_events.append("enter")
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+                    _ = exc_type, exc, tb
+                    suite_events.append("exit")
+                    return False
+
+                def mark_running(self, execution) -> None:  # noqa: ANN001
+                    suite_events.append(f"running:{int(getattr(execution, 'index', 0))}")
+
+                def mark_progress(self, execution, *, status_text: str) -> None:  # noqa: ANN001
+                    suite_events.append(f"progress:{int(getattr(execution, 'index', 0))}:{status_text}")
+
+                def mark_finished(self, execution, *, success: bool, duration_text: str, parsed: object | None) -> None:  # noqa: ANN001
+                    _ = duration_text, parsed
+                    marker = "ok" if success else "fail"
+                    suite_events.append(f"done:{int(getattr(execution, 'index', 0))}:{marker}")
+
+            class _ProgressRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = SimpleNamespace(
+                        counts_detected=True,
+                        passed=0,
+                        failed=0,
+                        skipped=0,
+                        errors=0,
+                        total=0,
+                    )
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None, progress_callback=None):  # noqa: ANN001
+                    _ = cwd, env, timeout
+                    rendered = " ".join(str(part) for part in command)
+                    if "pytest" in rendered:
+                        self.last_result = SimpleNamespace(
+                            counts_detected=True,
+                            passed=3,
+                            failed=0,
+                            skipped=0,
+                            errors=0,
+                            total=3,
+                        )
+                        if callable(progress_callback):
+                            progress_callback(1, 3)
+                            progress_callback(3, 3)
+                    else:
+                        self.last_result = SimpleNamespace(
+                            counts_detected=True,
+                            passed=5,
+                            failed=1,
+                            skipped=0,
+                            errors=0,
+                            total=6,
+                            failed_tests=["src/foo.test.ts::bar"],
+                        )
+                        if callable(progress_callback):
+                            progress_callback(-1, 6)
+                            progress_callback(2, 0)
+                            progress_callback(6, 6)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                    return_value=(True, ""),
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup",
+                    side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs),
+                ),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner),
+            ):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route.flags = {**route.flags, "interactive_command": True, "batch": True}
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertIn("enter", suite_events)
+            self.assertIn("exit", suite_events)
+            self.assertTrue(any(event == "progress:1:1/3 complete • 1 passed, 0 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(any(event == "progress:1:3/3 complete • 3 passed, 0 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(any(event == "progress:2:6 discovered" for event in suite_events), msg=suite_events)
+            self.assertTrue(any(event == "progress:2:2 complete • 1 passed, 1 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(any(event == "progress:2:6/6 complete • 5 passed, 1 failed" for event in suite_events), msg=suite_events)
+
+    def test_interactive_single_suite_uses_rich_suite_spinner_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend" / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (repo / "frontend" / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            class _Policy:
+                enabled = True
+                backend = "rich"
+                style = "dots"
+                mode = "auto"
+                reason = ""
+                min_ms = 0
+                verbose_events = False
+
+            suite_events: list[str] = []
+
+            class _SuiteSpinnerStub:
+                def __init__(self, **kwargs) -> None:  # noqa: ANN003
+                    self.enabled = bool(kwargs.get("enabled", False))
+
+                def __enter__(self):
+                    suite_events.append("enter")
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+                    _ = exc_type, exc, tb
+                    suite_events.append("exit")
+                    return False
+
+                def mark_running(self, execution) -> None:  # noqa: ANN001
+                    suite_events.append(f"running:{int(getattr(execution, 'index', 0))}")
+
+                def mark_progress(self, execution, *, status_text: str) -> None:  # noqa: ANN001
+                    suite_events.append(f"progress:{int(getattr(execution, 'index', 0))}:{status_text}")
+
+                def mark_finished(self, execution, *, success: bool, duration_text: str, parsed: object | None) -> None:  # noqa: ANN001
+                    _ = duration_text, parsed
+                    marker = "ok" if success else "fail"
+                    suite_events.append(f"done:{int(getattr(execution, 'index', 0))}:{marker}")
+
+            with (
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.resolve_spinner_policy", return_value=_Policy()
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                    return_value=(True, ""),
+                ),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator._TestSuiteSpinnerGroup",
+                    side_effect=lambda **kwargs: _SuiteSpinnerStub(**kwargs),
+                ),
+            ):
+                route = parse_route(
+                    ["test", "--project", "feature-a-1", "backend=false"],
+                    env={"ENVCTL_DEFAULT_MODE": "trees"},
+                )
+                route.flags = {**route.flags, "interactive_command": True, "batch": True}
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Test execution mode: sequential (1 suites)", rendered)
+            self.assertNotIn("Frontend (package test) started", rendered)
+            self.assertNotIn("command: ", rendered)
+            self.assertNotIn("cwd: ", rendered)
+            self.assertIn("enter", suite_events)
+            self.assertIn("exit", suite_events)
+            self.assertTrue(any(event.startswith("running:") for event in suite_events), msg=suite_events)
+            self.assertTrue(any(event.startswith("done:") for event in suite_events), msg=suite_events)
+
     def test_test_action_suite_spinner_group_overrides_non_tty_policy_reason(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1717,8 +2218,6 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = out.getvalue()
             self.assertIn("Test execution mode: parallel (2 suites)", rendered)
-            self.assertNotIn("Backend (pytest) started", rendered)
-            self.assertNotIn("Frontend (package test) started", rendered)
             mode_events = [event for event in engine.events if event.get("event") == "test.execution.mode"]
             self.assertTrue(mode_events)
             self.assertEqual(mode_events[-1].get("mode"), "parallel")
@@ -1735,7 +2234,10 @@ class ActionsParityTests(unittest.TestCase):
                 or bool(spinner_events)
             )
             self.assertFalse(any("Running bun test script" in message for message in status_messages))
-            self.assertFalse(any("Running pytest suite" in message for message in status_messages))
+            if spinner_events:
+                self.assertFalse(any("Running pytest suite" in message for message in status_messages))
+                self.assertNotIn("Backend (pytest) started", rendered)
+                self.assertNotIn("Frontend (package test) started", rendered)
 
     def test_failed_test_summary_artifacts_are_scoped_per_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1870,7 +2372,10 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
             only_cmd, only_cwd = fake_runner.run_calls[0]
-            self.assertEqual(only_cmd, ("pnpm", "run", "test"))
+            self.assertEqual(only_cmd[:3], ("pnpm", "run", "test"))
+            self.assertEqual(only_cmd[-3], "--")
+            self.assertEqual(only_cmd[-2], "--reporter=default")
+            self.assertTrue(only_cmd[-1].endswith("vitest_progress_reporter.mjs"))
             self.assertEqual(Path(only_cwd).resolve(), (repo / "frontend").resolve())
 
     def test_test_action_frontend_false_runs_backend_only(self) -> None:
@@ -1955,7 +2460,10 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
             only_cmd, only_cwd = fake_runner.run_calls[0]
-            self.assertEqual(only_cmd[-2:], ("run", "test"))
+            self.assertEqual(only_cmd[:3], ("pnpm", "run", "test"))
+            self.assertEqual(only_cmd[-3], "--")
+            self.assertEqual(only_cmd[-2], "--reporter=default")
+            self.assertTrue(only_cmd[-1].endswith("vitest_progress_reporter.mjs"))
             self.assertEqual(Path(only_cwd).resolve(), (repo / "frontend").resolve())
 
     def test_test_action_disabling_all_suites_fails(self) -> None:

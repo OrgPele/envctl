@@ -33,7 +33,7 @@ class PromptToolkitListConfig:
     emit_event: Callable[[str, object], None] | None = None
     emit_debug: Callable[[str, object], None] | None = None
     row_text: Callable[[SelectorItem], str] | None = None
-    help_text_multi: str = "UP/DOWN or j/k move  Space toggle  Enter submit  q/Esc cancel"
+    help_text_multi: str = "UP/DOWN or j/k move  Space toggle  a/Ctrl+A all  Enter submit  q/Esc cancel"
     help_text_single: str = "UP/DOWN or j/k move  Enter submit  Space select  q/Esc cancel"
     confirm_cause: str = "enter"
     cancel_cause: str = "cancel_key"
@@ -206,6 +206,22 @@ def run_prompt_toolkit_list_selector(
         _emit_key(key_name, before, cursor, handled=True)
         event.app.invalidate()  # type: ignore[attr-defined]
 
+    def _toggle_all(event: object) -> None:
+        nonlocal selected_indexes, status_error, status_error_deadline
+        before = cursor
+        status_error = ""
+        status_error_deadline = 0.0
+        if not config.multi:
+            selected_indexes = {cursor}
+            _emit_key("ctrl+a", before, cursor, handled=True)
+            event.app.invalidate()  # type: ignore[attr-defined]
+            return
+        should_select = any(index not in selected_indexes for index in range(len(rows)))
+        selected_indexes = set(range(len(rows))) if should_select else set()
+        _emit_event("ui.selection.toggle", token="__VISIBLE__", selected=should_select)
+        _emit_key("ctrl+a", before, cursor, handled=True)
+        event.app.invalidate()  # type: ignore[attr-defined]
+
     def _move(delta: int, key_name: str, event: object) -> None:
         nonlocal cursor
         before = cursor
@@ -279,6 +295,8 @@ def run_prompt_toolkit_list_selector(
         bindings.add(key_name)(lambda event, _key=key_name: _move(1, _key, event))
     bindings.add(" ")(lambda event: _toggle_current("space", event))
     bindings.add("x")(lambda event: _toggle_current("x", event))
+    bindings.add("a")(_toggle_all)
+    bindings.add("c-a")(_toggle_all)
     bindings.add("enter")(_submit)
     if config.cancel_on_escape:
         bindings.add("escape")(_cancel)

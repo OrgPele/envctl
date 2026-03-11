@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Mapping
 
+from envctl_engine.actions.action_utils import envctl_python_root
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
 
@@ -75,7 +76,10 @@ def build_action_env(
 ) -> dict[str, str]:
     env = dict(process_env)
     env.update(runtime_env)
-    python_path = str(repo_root / "python")
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GH_PROMPT_DISABLED", "1")
+    env.setdefault("GCM_INTERACTIVE", "Never")
+    python_path = str(envctl_python_root())
     existing_path = env.get("PYTHONPATH")
     if existing_path:
         paths = existing_path.split(os.pathsep)
