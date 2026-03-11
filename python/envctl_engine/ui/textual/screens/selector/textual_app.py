@@ -9,6 +9,7 @@ from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
 from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
 from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
+from envctl_engine.ui.textual.compat import handle_text_edit_key_alias
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
     SELECTOR_CSS,
@@ -602,6 +603,8 @@ def create_selector_app(
                     )
             focused_id = self._focused_widget_id()
             filter_focused = focused_id == "selector-filter"
+            if filter_focused and handle_text_edit_key_alias(widget=self.query_one("#selector-filter", Input), event=event):
+                return
             if event.key == "enter":
                 event.stop()
                 event.prevent_default()

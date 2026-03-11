@@ -12,6 +12,7 @@ from envctl_engine.ui.textual.app import (
     _route_key_to_command_input,
     _to_renderable,
 )
+from envctl_engine.ui.textual.compat import normalize_text_edit_key_alias
 
 
 class TextualDashboardRenderingSafetyTests(unittest.TestCase):
@@ -66,6 +67,51 @@ class TextualDashboardRenderingSafetyTests(unittest.TestCase):
         self.assertEqual(value, "restar")
         self.assertTrue(request_focus)
         self.assertFalse(submit)
+
+    def test_route_key_to_command_input_shift_backspace_alias_when_focus_drifted(self) -> None:
+        consumed, value, request_focus, submit = _route_key_to_command_input(
+            key="shift+backspace",
+            character=None,
+            is_printable=False,
+            focused_input=False,
+            current_value="restart",
+            dispatch_in_flight=False,
+        )
+        self.assertTrue(consumed)
+        self.assertEqual(value, "restar")
+        self.assertTrue(request_focus)
+        self.assertFalse(submit)
+
+    def test_route_key_to_command_input_modifier_backspace_alias_when_focus_drifted(self) -> None:
+        consumed, value, request_focus, submit = _route_key_to_command_input(
+            key="ctrl+shift+backspace",
+            character=None,
+            is_printable=False,
+            focused_input=False,
+            current_value="restart",
+            dispatch_in_flight=False,
+        )
+        self.assertTrue(consumed)
+        self.assertEqual(value, "restar")
+        self.assertTrue(request_focus)
+        self.assertFalse(submit)
+
+    def test_route_key_to_command_input_modifier_delete_alias_when_focus_drifted(self) -> None:
+        consumed, value, request_focus, submit = _route_key_to_command_input(
+            key="alt+delete",
+            character=None,
+            is_printable=False,
+            focused_input=False,
+            current_value="restart",
+            dispatch_in_flight=False,
+        )
+        self.assertTrue(consumed)
+        self.assertEqual(value, "restar")
+        self.assertTrue(request_focus)
+        self.assertFalse(submit)
+
+    def test_normalize_text_edit_key_alias_uses_character_fallback(self) -> None:
+        self.assertEqual(normalize_text_edit_key_alias("unknown", character="\x7f"), "backspace")
 
     def test_route_key_to_command_input_enter_requests_submit_when_value_exists(self) -> None:
         consumed, value, request_focus, submit = _route_key_to_command_input(

@@ -6,7 +6,11 @@ import time
 from typing import Callable
 
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
-from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.textual.compat import (
+    apply_textual_driver_compat,
+    handle_text_edit_key_alias,
+    textual_run_policy,
+)
 from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import (
     apply_selectable_list_index,
@@ -396,6 +400,11 @@ def select_planning_counts_textual(
             await self._toggle_model_index(model_index)
 
         async def on_key(self, event: Key) -> None:
+            if self.focused is self.query_one("#planning-filter", Input) and handle_text_edit_key_alias(
+                widget=self.query_one("#planning-filter", Input),
+                event=event,
+            ):
+                return
             if event.key != "enter":
                 return
             if self._list().has_focus:

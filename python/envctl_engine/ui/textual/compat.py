@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Any, Callable
 
 
@@ -10,6 +10,41 @@ class TextualRunPolicy:
     mouse: bool
     reason: str
     term_program: str
+
+
+def normalize_text_edit_key_alias(key: str, *, character: str | None = None) -> str:
+    normalized = str(key or "").strip().lower()
+    if character in {"\b", "\x08", "\x7f"}:
+        return "backspace"
+    parts = [part for part in normalized.split("+") if part]
+    if parts:
+        base_key = parts[-1]
+        if base_key in {"backspace", "delete"}:
+            return base_key
+    return normalized
+
+
+def handle_text_edit_key_alias(*, widget: Any, event: Any) -> bool:
+    normalized = normalize_text_edit_key_alias(
+        str(getattr(event, "key", "") or ""),
+        character=getattr(event, "character", None),
+    )
+    if normalized == "backspace":
+        action = getattr(widget, "action_delete_left", None)
+    elif normalized == "delete":
+        action = getattr(widget, "action_delete_right", None)
+    else:
+        return False
+    if not callable(action):
+        return False
+    stop = getattr(event, "stop", None)
+    if callable(stop):
+        stop()
+    prevent_default = getattr(event, "prevent_default", None)
+    if callable(prevent_default):
+        prevent_default()
+    action()
+    return True
 
 
 def textual_run_policy(*, screen: str) -> TextualRunPolicy:
