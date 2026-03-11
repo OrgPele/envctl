@@ -5,6 +5,7 @@ import hashlib
 import concurrent.futures
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any, Callable, Mapping, cast
@@ -36,6 +37,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
@@ -886,13 +888,13 @@ class ActionCommandOrchestrator:
         ]
         if failures:
             for suite_name, failed_test, error_text in failures:
-                lines.append(f"[{suite_name}]")
-                lines.append(f"- {failed_test}")
+                clean_suite_name = strip_ansi(str(suite_name)).strip()
+                clean_failed_test = strip_ansi(str(failed_test)).strip()
+                lines.append(f"[{clean_suite_name}]")
+                lines.append(f"- {clean_failed_test}")
                 if error_text:
-                    for detail in str(error_text).splitlines()[:6]:
-                        stripped = detail.rstrip()
-                        if stripped:
-                            lines.append(f"    {stripped}")
+                    for detail in self._format_summary_error_lines(str(error_text)):
+                        lines.append(f"    {detail}")
                 lines.append("")
         else:
             lines.append("No failed tests.")
@@ -997,6 +999,219 @@ class ActionCommandOrchestrator:
         if source == "configured":
             return "Configured test command"
         return source.replace("_", " ")
+
+    @staticmethod
+    def _format_summary_error_lines(error_text: str) -> list[str]:
+        cleaned = strip_ansi(error_text)
+        lines: list[str] = []
+        for raw_line in cleaned.splitlines():
+            compact = ActionCommandOrchestrator._compact_summary_line(raw_line)
+            if compact:
+                lines.append(compact)
+        if not lines:
+            return []
+
+        max_lines = 60
+        if len(lines) <= max_lines:
+            return lines
+        structured = ActionCommandOrchestrator._structured_summary_lines(lines)
+        if not structured:
+            structured = lines[:]
+        merged = structured[:]
+        seen = set(merged)
+        for line in lines:
+            if len(merged) >= max_lines:
+                break
+            if line in seen:
+                continue
+            merged.append(line)
+            seen.add(line)
+        if len(lines) > len(merged):
+            merged.append(f"... ({len(lines) - len(merged)} more lines omitted)")
+        return merged[: max_lines + 1]
+
+    @staticmethod
+    def _compact_summary_line(line: str) -> str:
+        stripped = line.strip()
+        if not stripped:
+            return ""
+        if re.fullmatch(r"[-=]{6,}", stripped):
+            return ""
+        if ActionCommandOrchestrator._looks_like_terminal_chrome(stripped):
+            return ""
+        stripped = re.sub(r"( not found in )(['\"]).*", r"\1<omitted output>", stripped)
+        stripped = re.sub(r"( not found: )(['\"]).*", r"\1<omitted output>", stripped)
+        stripped = re.sub(r"(result(?:ed)? in )(['\"]).*", r"\1<omitted output>", stripped, flags=re.IGNORECASE)
+        if len(stripped) > 220:
+            stripped = f"{stripped[:217].rstrip()}..."
+        return stripped
+
+    @staticmethod
+    def _structured_summary_lines(lines: list[str]) -> list[str]:
+        assembled: list[str] = []
+        seen: set[str] = set()
+
+        def append_block(block: list[str], *, allow_gap: bool = False) -> None:
+            nonlocal assembled
+            block = [line for line in block if line]
+            if not block:
+                return
+            if allow_gap and assembled and assembled[-1] != "...":
+                assembled.append("...")
+            for line in block:
+                if line in seen:
+                    continue
+                assembled.append(line)
+                seen.add(line)
+
+        traceback_header = next((line for line in lines if line.startswith("Traceback (most recent call last):")), "")
+        if traceback_header:
+            append_block([traceback_header])
+
+        for block in ActionCommandOrchestrator._user_code_frame_blocks(lines):
+            append_block(block, allow_gap=bool(assembled))
+
+        context_markers = ActionCommandOrchestrator._exception_context_markers(lines)
+        if context_markers:
+            append_block(context_markers, allow_gap=bool(assembled))
+
+        exception_body = ActionCommandOrchestrator._exception_body_block(lines)
+        if exception_body:
+            append_block(exception_body, allow_gap=bool(assembled))
+
+        captured_blocks = ActionCommandOrchestrator._captured_output_blocks(lines)
+        for block in captured_blocks:
+            append_block(block, allow_gap=bool(assembled))
+
+        max_lines = 24
+        if assembled:
+            return assembled[:max_lines]
+        return []
+
+    @staticmethod
+    def _user_code_frame_blocks(lines: list[str]) -> list[list[str]]:
+        blocks: list[list[str]] = []
+        file_indexes = [index for index, line in enumerate(lines) if line.startswith('File "')]
+        for index in file_indexes:
+            if not ActionCommandOrchestrator._is_user_code_frame(lines[index]):
+                continue
+            block = [lines[index]]
+            cursor = index + 1
+            while cursor < len(lines):
+                line = lines[cursor]
+                if line.startswith('File "') or ActionCommandOrchestrator._is_captured_output_header(line):
+                    break
+                if ActionCommandOrchestrator._is_exception_start(line):
+                    break
+                block.append(line)
+                cursor += 1
+            blocks.append(block[:3])
+        return blocks
+
+    @staticmethod
+    def _exception_body_block(lines: list[str]) -> list[str]:
+        start = -1
+        for index in range(len(lines) - 1, -1, -1):
+            if ActionCommandOrchestrator._is_exception_start(lines[index]):
+                start = index
+                break
+        if start < 0:
+            return []
+        block = [lines[start]]
+        cursor = start + 1
+        while cursor < len(lines):
+            line = lines[cursor]
+            if line.startswith('File "') or ActionCommandOrchestrator._is_captured_output_header(line):
+                break
+            block.append(line)
+            cursor += 1
+        return block[:5]
+
+    @staticmethod
+    def _captured_output_blocks(lines: list[str]) -> list[list[str]]:
+        blocks: list[list[str]] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if not ActionCommandOrchestrator._is_captured_output_header(line):
+                index += 1
+                continue
+            block = [line]
+            cursor = index + 1
+            while cursor < len(lines):
+                candidate = lines[cursor]
+                if ActionCommandOrchestrator._is_captured_output_header(candidate):
+                    break
+                if candidate.startswith('File "') and ActionCommandOrchestrator._is_user_code_frame(candidate):
+                    break
+                if candidate == "Traceback (most recent call last):":
+                    break
+                if ActionCommandOrchestrator._is_exception_context_marker(candidate):
+                    break
+                block.append(candidate)
+                cursor += 1
+            blocks.append(block[:5])
+            index = cursor
+        return blocks
+
+    @staticmethod
+    def _exception_context_markers(lines: list[str]) -> list[str]:
+        return [line for line in lines if ActionCommandOrchestrator._is_exception_context_marker(line)][:3]
+
+    @staticmethod
+    def _is_user_code_frame(line: str) -> bool:
+        match = re.match(r'^File "([^"]+)"', line)
+        if match is None:
+            return False
+        path = match.group(1)
+        stdlib_markers = (
+            "/Cellar/python@",
+            "/Frameworks/Python.framework/",
+            "/lib/python",
+            "/site-packages/",
+            "/asyncio/",
+            "/unittest/",
+        )
+        return not any(marker in path for marker in stdlib_markers)
+
+    @staticmethod
+    def _is_exception_start(line: str) -> bool:
+        return bool(
+            re.match(
+                r"^(?:AssertionError|[A-Za-z_][\w.]*(?:Error|Exception|Failure|Exit|Interrupt|Warning))(?:\b|:)",
+                line,
+            )
+        )
+
+    @staticmethod
+    def _is_exception_context_marker(line: str) -> bool:
+        lowered = line.strip().lower()
+        return (
+            "during handling of the above exception" in lowered
+            or "the above exception was the direct cause" in lowered
+        )
+
+    @staticmethod
+    def _is_captured_output_header(line: str) -> bool:
+        lowered = line.strip().lower()
+        return (
+            lowered.startswith("captured stdout")
+            or lowered.startswith("captured stderr")
+            or lowered.startswith("captured log")
+            or lowered in {"stdout:", "stderr:"}
+        )
+
+    @staticmethod
+    def _looks_like_terminal_chrome(line: str) -> bool:
+        if "RESULT_SERVICES=" in line or "Run tests for" in line or "Filter targets..." in line:
+            return True
+        box_chars = "╭╮╰╯│▊▎▔▁▄▅▇"
+        box_count = sum(1 for char in line if char in box_chars)
+        if box_count >= 4:
+            return True
+        if len(line) >= 40 and sum(1 for char in line if char == " ") > len(line) * 0.55 and box_count >= 1:
+            return True
+        return False
 
     def _print_test_suite_overview(self, outcomes: list[dict[str, object]]) -> None:
         if not outcomes:

@@ -8,6 +8,12 @@ from typing import Callable
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
 from envctl_engine.ui.textual.list_controller import TextualListController
+from envctl_engine.ui.textual.list_row_styles import (
+    apply_selectable_list_index,
+    focus_selectable_list,
+    selectable_list_row_classes,
+    selectable_list_row_css,
+)
 from .selector import (
     _deep_debug_enabled,
     _guard_textual_nonblocking_read,
@@ -19,6 +25,8 @@ from .selector import (
     _selector_key_trace_verbose_enabled,
     _selector_thread_stack_enabled,
 )
+
+PLANNING_ROW_STYLES_CSS = selectable_list_row_css("planning-row")
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -116,44 +124,12 @@ def select_planning_counts_textual(
             height: 1fr;
             border: round $surface;
         }
-        ListItem.-highlight {
-            background: $warning 14%;
-            border-left: wide $warning;
-            color: $text;
-        }
-        .planning-row {
-            padding: 0 1;
-            width: 100%;
-        }
-        .planning-row-selected {
-            background: $accent 18%;
-            border-left: wide $success;
-        }
-        .planning-row-unselected.-highlight {
-            background: $warning 18%;
-            border-left: wide $warning;
-        }
-        .planning-row-selected.-highlight {
-            background: $accent 30%;
-            border-left: wide $accent;
-        }
-        .planning-row-selected Label {
-            color: $success;
-            text-style: bold;
-        }
-        .planning-row-selected.-highlight Label {
-            color: $text;
-            text-style: bold underline;
-        }
-        .planning-row-unselected Label {
-            color: $text;
-        }
         #planning-actions {
             margin-top: 1;
             align-horizontal: right;
             height: auto;
         }
-        """
+        """ + PLANNING_ROW_STYLES_CSS
 
         def __init__(self) -> None:
             super().__init__()
@@ -280,20 +256,16 @@ def select_planning_counts_textual(
                     existing = f" (existing {row.existing}x)" if row.existing > 0 else ""
                     marker = "●" if row.count > 0 else "○"
                     text = f"{marker} [{row.count}x] {row.plan_file}{existing}"
-                    row_classes = [
-                        "planning-row",
-                        ("planning-row-selected" if row.count > 0 else "planning-row-unselected"),
-                    ]
                     rendered_items.append(
                         ListItem(
                             Label(text, markup=False),
                             id=f"planning-row-{idx}",
-                            classes=" ".join(row_classes),
+                            classes=selectable_list_row_classes("planning-row", selected=row.count > 0),
                         )
                     )
                 if rendered_items:
                     await list_view.extend(rendered_items)
-                list_view.index = self._controller.restore_view_index(checkpoint)
+                apply_selectable_list_index(list_view, self._controller.restore_view_index(checkpoint))
                 self._controller.finish_render()
                 self._sync_status()
                 self._sync_run_state()
@@ -367,9 +339,10 @@ def select_planning_counts_textual(
 
         def action_focus_list(self) -> None:
             list_view = self._list()
-            list_view.index = self._controller.ensure_list_index(list_view.index)
+            index = self._controller.ensure_list_index(list_view.index)
+            apply_selectable_list_index(list_view, index)
             self.query_one("#planning-filter", Input).can_focus = False
-            list_view.focus()
+            focus_selectable_list(self, list_view, index)
 
         def action_cycle_focus(self) -> None:
             next_target = self._controller.cycle_focus_target(

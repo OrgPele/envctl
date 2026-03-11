@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from envctl_engine.ui.textual.list_row_styles import selectable_list_row_css
+
 
 SELECTOR_BINDINGS = [
     ("q", "cancel", "Cancel"),
@@ -19,6 +21,7 @@ SELECTOR_BINDINGS = [
     ("w", "nav_up", "Up", False, True),
 ]
 
+SELECTOR_ROW_STYLES_CSS = selectable_list_row_css("selector-row")
 
 SELECTOR_CSS = """
 Screen {
@@ -55,38 +58,7 @@ Screen {
     align-horizontal: right;
     height: auto;
 }
-ListItem.-highlight {
-    background: $accent 8%;
-    border-left: wide $accent 35%;
-    color: $text;
-}
-.selector-row {
-    padding: 0 1;
-    width: 100%;
-}
-.selector-row-selected {
-    background: $success 22%;
-    border-left: wide $success;
-}
-.selector-row-unselected.-highlight {
-    background: $accent 18%;
-    border-left: wide $accent;
-}
-.selector-row-selected.-highlight {
-    background: $success 34%;
-    border-left: wide $success;
-}
-.selector-row-selected Label {
-    color: $success;
-    text-style: bold;
-}
-.selector-row-selected.-highlight Label {
-    color: $text;
-    text-style: bold underline;
-}
-.selector-row-unselected Label {
-    color: $text;
-}
+""" + SELECTOR_ROW_STYLES_CSS + """
 .kind-synthetic-all Label,
 .kind-synthetic-untested Label {
     color: $warning;

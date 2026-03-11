@@ -7,6 +7,9 @@ from envctl_engine.ui.capabilities import textual_importable
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
 from envctl_engine.ui.textual.list_controller import TextualListController
+from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
+from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
+from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTOR_CSS
 
 
@@ -186,14 +189,18 @@ def run_pr_flow(
             await list_view.clear()
             rows = self._rows()
             items = [
-                ListItem(Label(self._row_text(row), markup=False), classes="selector-row selector-row-selected" if row.selected else "selector-row selector-row-unselected")
+                ListItem(
+                    Label(self._row_text(row), markup=False),
+                    classes=selectable_list_row_classes("selector-row", selected=row.selected),
+                )
                 for row in rows
             ]
             if items:
                 await list_view.extend(items)
-            list_view.index = self._controller().ensure_list_index(self._current_index())
+            index = self._controller().ensure_list_index(self._current_index())
+            apply_selectable_list_index(list_view, index)
             self._set_current_index(list_view.index)
-            list_view.focus()
+            focus_selectable_list(self, list_view, index)
 
         def _sync_actions(self) -> None:
             back = self.query_one("#btn-back", Button)

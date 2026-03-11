@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-import re
+
+
+_ANSI_CSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+_ANSI_OSC_RE = re.compile(r"\x1B\].*?(?:\x07|\x1B\\)", re.DOTALL)
+_ANSI_STANDING_ESCAPE_RE = re.compile(r"\x1B[@-Z\\-_]")
+_ANSI_DCS_PM_APC_RE = re.compile(r"\x1B[P^_X].*?\x1B\\", re.DOTALL)
+_LITERAL_CSI_RE = re.compile(r"(?:\\x1b|\\033)\[[0-?]*[ -/]*[@-~]", re.IGNORECASE)
+_LITERAL_OSC_RE = re.compile(r"(?:\\x1b|\\033)\].*?(?:\\x07|(?:\\x1b|\\033)\\\\)", re.IGNORECASE | re.DOTALL)
+_LITERAL_DCS_PM_APC_RE = re.compile(r"(?:\\x1b|\\033)[P^_X].*?(?:\\x1b|\\033)\\\\", re.IGNORECASE | re.DOTALL)
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 @dataclass(slots=True)
@@ -76,5 +86,12 @@ class TestOutputParser(ABC):
 
 
 def strip_ansi(text: str) -> str:
-    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-    return ansi_escape.sub("", text)
+    cleaned = _ANSI_OSC_RE.sub("", text)
+    cleaned = _ANSI_DCS_PM_APC_RE.sub("", cleaned)
+    cleaned = _ANSI_CSI_RE.sub("", cleaned)
+    cleaned = _ANSI_STANDING_ESCAPE_RE.sub("", cleaned)
+    cleaned = _LITERAL_OSC_RE.sub("", cleaned)
+    cleaned = _LITERAL_DCS_PM_APC_RE.sub("", cleaned)
+    cleaned = _LITERAL_CSI_RE.sub("", cleaned)
+    cleaned = cleaned.replace("\r", "")
+    return _CONTROL_RE.sub("", cleaned)

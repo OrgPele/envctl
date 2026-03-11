@@ -239,7 +239,7 @@ def run_test_action(
         if multi_project:
             status = f"{project_name}: {status}"
         status += f" [{index}/{len(execution_specs)}]" if len(execution_specs) > 1 else ""
-        if not (interactive_command and use_suite_spinner_group):
+        if not use_suite_spinner_group:
             orchestrator._emit_status(status)
         if interactive_command:
             started_label = f"{project_name} / {suite_label}" if multi_project else suite_label
@@ -273,10 +273,9 @@ def run_test_action(
                 progress_status["last"] = snapshot
                 progress_status["total"] = total
                 message = _format_live_collection_status(live_label, total)
+                orchestrator._emit_status(message)
                 if use_suite_spinner_group:
                     suite_spinner_group.mark_progress(execution, status_text=f"{total} discovered")
-                else:
-                    orchestrator._emit_status(message)
                 return
             progress_status["running_started"] = True
             if total <= 0:
@@ -291,6 +290,7 @@ def run_test_action(
                     int(merged_current),
                     parsed=runner.last_result,
                 )
+                orchestrator._emit_status(message)
                 if use_suite_spinner_group:
                     suite_spinner_group.mark_progress(
                         execution,
@@ -298,8 +298,6 @@ def run_test_action(
                         f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
                         f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed",
                     )
-                else:
-                    orchestrator._emit_status(message)
                 return
             if int(current) == 0 and merged_current is not None and int(merged_current) > 0:
                 merged_total = int(total)
@@ -314,6 +312,7 @@ def run_test_action(
                     merged_total,
                     parsed=runner.last_result,
                 )
+                orchestrator._emit_status(message)
                 if use_suite_spinner_group:
                     suite_spinner_group.mark_progress(
                         execution,
@@ -323,8 +322,6 @@ def run_test_action(
                             f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
                         ),
                     )
-                else:
-                    orchestrator._emit_status(message)
                 return
             merged_current = max(int(merged_current or 0), int(current))
             merged_total = int(total)
@@ -340,6 +337,7 @@ def run_test_action(
                 merged_total,
                 parsed=runner.last_result,
             )
+            orchestrator._emit_status(message)
             if use_suite_spinner_group:
                 suite_spinner_group.mark_progress(
                     execution,
@@ -349,8 +347,6 @@ def run_test_action(
                         f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
                     ),
                 )
-            else:
-                orchestrator._emit_status(message)
 
         with progress_lock:
             if parallel:
@@ -439,7 +435,7 @@ def run_test_action(
                 total_tests=parsed.total,
             )
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
-        if interactive_command and not parallel:
+        if interactive_command and not use_suite_spinner_group:
             suite_status = "passed" if completed.returncode == 0 else "failed"
             finished_label = f"{project_name} / {suite_label}" if multi_project else suite_label
             counts_suffix = ""

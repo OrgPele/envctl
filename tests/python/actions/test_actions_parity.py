@@ -13,12 +13,14 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 actions_test_module = importlib.import_module("envctl_engine.actions.actions_test")
+action_command_orchestrator_module = importlib.import_module("envctl_engine.actions.action_command_orchestrator")
 command_router_module = importlib.import_module("envctl_engine.runtime.command_router")
 config_module = importlib.import_module("envctl_engine.config")
 engine_runtime_module = importlib.import_module("envctl_engine.runtime.engine_runtime")
 
 default_test_command = actions_test_module.default_test_command
 default_test_commands = actions_test_module.default_test_commands
+ActionCommandOrchestrator = action_command_orchestrator_module.ActionCommandOrchestrator
 parse_route = command_router_module.parse_route
 load_config = config_module.load_config
 PythonEngineRuntime = engine_runtime_module.PythonEngineRuntime
@@ -107,9 +109,13 @@ class ActionsParityTests(unittest.TestCase):
             route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
-            out = StringIO()
-            with redirect_stdout(out):
-                code = engine.dispatch(route)
+            with patch(
+                "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                return_value=(False, "forced_unavailable"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertNotIn("Executed test action", out.getvalue())
@@ -138,9 +144,13 @@ class ActionsParityTests(unittest.TestCase):
             route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
-            out = StringIO()
-            with redirect_stdout(out):
-                code = engine.dispatch(route)
+            with patch(
+                "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                return_value=(False, "forced_unavailable"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             rendered = out.getvalue()
@@ -372,9 +382,13 @@ class ActionsParityTests(unittest.TestCase):
             route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
-            out = StringIO()
-            with redirect_stdout(out):
-                code = engine.dispatch(route)
+            with patch(
+                "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                return_value=(False, "forced_unavailable"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
@@ -975,7 +989,12 @@ class ActionsParityTests(unittest.TestCase):
                         total=11,
                         failed_tests=["backend/tests/test_auth.py::test_signup_regression"],
                         error_details={
-                            "backend/tests/test_auth.py::test_signup_regression": "AssertionError: expected 201, got 500"
+                            "backend/tests/test_auth.py::test_signup_regression": (
+                                "\x1b]22;default\x07"
+                                "AssertionError: expected 201, got 500\n"
+                                "\x1b[15;72H"
+                                "\\x1b[48;2;39;39;39m \x1b[0m"
+                            )
                         },
                     )
                     return SimpleNamespace(returncode=1, stdout="", stderr="suite failed")
@@ -1005,6 +1024,9 @@ class ActionsParityTests(unittest.TestCase):
             summary_text = Path(summary_path).read_text(encoding="utf-8")
             self.assertIn("backend/tests/test_auth.py::test_signup_regression", summary_text)
             self.assertIn("AssertionError: expected 201, got 500", summary_text)
+            self.assertNotIn("\x1b", summary_text)
+            self.assertNotIn("\\x1b", summary_text)
+            self.assertNotIn("48;2;39;39;39m", summary_text)
             self.assertEqual(project_entry.get("status"), "failed")
             results_root = refreshed.metadata.get("project_test_results_root")
             self.assertEqual(results_root, str(Path(summary_path).parent.parent))
@@ -1017,6 +1039,121 @@ class ActionsParityTests(unittest.TestCase):
             rendered = dashboard_out.getvalue()
             self.assertIn("tests:", rendered)
             self.assertIn(summary_path, rendered)
+
+    def test_failed_test_summary_omits_terminal_chrome_and_separator_noise(self) -> None:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(
+            "\n".join(
+                [
+                    "----------------------------------------------------------------------",
+                    "Traceback (most recent call last):",
+                    'AssertionError: Regex didn\'t match: something not found in "\\x1b[48;2;39;39;39m..."',
+                    "  ╭────────────────────────────────────────────────────╮",
+                    "  │  Run tests for                                    │",
+                    "RESULT_SERVICES=Main Admin",
+                    "File \"/tmp/test.py\", line 10, in test_case",
+                ]
+            )
+        )
+        rendered = "\n".join(lines)
+        self.assertIn("Traceback (most recent call last):", rendered)
+        self.assertIn("AssertionError: Regex didn't match: something not found in <omitted output>", rendered)
+        self.assertIn('File "/tmp/test.py", line 10, in test_case', rendered)
+        self.assertNotIn("------", rendered)
+        self.assertNotIn("Run tests for", rendered)
+        self.assertNotIn("RESULT_SERVICES=", rendered)
+
+    def test_failed_test_summary_keeps_relevant_traceback_tail(self) -> None:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    'File "/opt/homebrew/Cellar/python@3.12/.../asyncio/runners.py", line 118, in run',
+                    "return self._loop.run_until_complete(task)",
+                    'File "/opt/homebrew/Cellar/python@3.12/.../asyncio/base_events.py", line 691, in run_until_complete',
+                    "return future.result()",
+                    'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+                    'self.assertEqual(app.return_value, ["beta"])',
+                    "AssertionError: None != ['beta']",
+                ]
+            )
+        )
+        rendered = "\n".join(lines)
+        self.assertIn("Traceback (most recent call last):", rendered)
+        self.assertIn('File "/opt/homebrew/Cellar/python@3.12/.../asyncio/runners.py", line 118, in run', rendered)
+        self.assertIn(
+            'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+            rendered,
+        )
+        self.assertIn('self.assertEqual(app.return_value, ["beta"])', rendered)
+        self.assertIn("AssertionError: None != ['beta']", rendered)
+
+    def test_failed_test_summary_keeps_captured_output_sections(self) -> None:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+                    'self.assertEqual(app.return_value, ["beta"])',
+                    "AssertionError: None != ['beta']",
+                    "Captured stdout call",
+                    "selector state before click: focused=selector-row-1",
+                    "return_value=None",
+                    "Captured stderr call",
+                    "mouse event propagated",
+                ]
+            )
+        )
+        rendered = "\n".join(lines)
+        self.assertIn("Captured stdout call", rendered)
+        self.assertIn("selector state before click: focused=selector-row-1", rendered)
+        self.assertIn("Captured stderr call", rendered)
+        self.assertIn("mouse event propagated", rendered)
+
+    def test_failed_test_summary_keeps_multiline_exception_body(self) -> None:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/python/foo.py", line 10, in explode',
+                    "raise RuntimeError('bad state')",
+                    "RuntimeError: invalid selector state",
+                    "details: selected_row=None",
+                    "details: expected token=beta",
+                ]
+            )
+        )
+        rendered = "\n".join(lines)
+        self.assertIn("RuntimeError: invalid selector state", rendered)
+        self.assertIn("details: selected_row=None", rendered)
+        self.assertIn("details: expected token=beta", rendered)
+
+    def test_failed_test_summary_keeps_multiple_user_frames_and_exception_context(self) -> None:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper',
+                    "do_the_thing()",
+                    'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+                    'self.assertEqual(app.return_value, ["beta"])',
+                    "AssertionError: None != ['beta']",
+                    "",
+                    "During handling of the above exception, another exception occurred:",
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/bar.py", line 22, in wrapper',
+                    "raise RuntimeError('wrapper failed')",
+                    "RuntimeError: wrapper failed",
+                ]
+            )
+        )
+        rendered = "\n".join(lines)
+        self.assertIn('File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered)
+        self.assertIn(
+            'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+            rendered,
+        )
+        self.assertIn("During handling of the above exception, another exception occurred:", rendered)
+        self.assertIn("RuntimeError: wrapper failed", rendered)
 
     def test_test_action_writes_passed_summary_with_no_failed_tests_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

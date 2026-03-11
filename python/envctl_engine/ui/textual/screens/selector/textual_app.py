@@ -6,6 +6,9 @@ from typing import Callable
 
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
+from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
+from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
+from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
     SELECTOR_CSS,
@@ -43,7 +46,7 @@ def create_selector_app(
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.events import Key
+    from textual.events import Click, Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
     class SelectorApp(App[list[str] | None]):
@@ -58,6 +61,8 @@ def create_selector_app(
             super().__init__()
             self._rows: list[_RowRef] = []
             self._initial_model_index: int | None = None
+            self._last_focused_model_index: int | None = None
+            self._last_user_model_index: int | None = None
             for idx, item in enumerate(options):
                 selected = str(item.token).strip() in initial_token_set
                 if selected and self._initial_model_index is None:
@@ -65,6 +70,7 @@ def create_selector_app(
                 if selected and not multi:
                     selected = self._initial_model_index == idx
                 self._rows.append(_RowRef(item=item, selected=selected, visible=True))
+            self._last_user_model_index = self._initial_model_index
             self._controller = TextualListController(
                 self._rows,
                 initial_model_index=self._initial_model_index,
@@ -131,12 +137,8 @@ def create_selector_app(
 
         @staticmethod
         def _row_classes(row: _RowRef) -> str:
-            row_classes = [
-                "selector-row",
-                ("selector-row-selected" if row.selected else "selector-row-unselected"),
-                f"kind-{row.item.kind.replace('_', '-')}",
-            ]
-            return " ".join(row_classes)
+            base_classes = selectable_list_row_classes("selector-row", selected=row.selected)
+            return f"{base_classes} kind-{row.item.kind.replace('_', '-')}"
 
         def _focused_model_index(self) -> int | None:
             return self._controller.focused_model_index(self._list().index)
@@ -194,7 +196,7 @@ def create_selector_app(
                     rendered_items.append(item_widget)
                 if rendered_items:
                     await list_view.extend(rendered_items)
-                list_view.index = self._controller.restore_view_index(checkpoint)
+                apply_selectable_list_index(list_view, self._controller.restore_view_index(checkpoint))
                 self._controller.finish_render()
                 self._initial_model_index = None
                 self._sync_status()
@@ -215,6 +217,7 @@ def create_selector_app(
                 and focused_view_index < len(self._controller.index_map)
             ):
                 focused_model_index = self._controller.index_map[focused_view_index]
+                self._last_focused_model_index = focused_model_index
                 focused_row = self._rows[focused_model_index]
                 focus_text = (
                     f"focus: {focused_view_index + 1}/{len(self._controller.index_map)} {focused_row.item.label}"
@@ -383,6 +386,9 @@ def create_selector_app(
                 self.action_focus_list(reason="key_recover")
             self.action_cursor_up()
             list_index_after = self._list().index
+            focused_model_index = self._focused_model_index()
+            if focused_model_index is not None:
+                self._last_user_model_index = focused_model_index
             self._nav_event_counter += 1
             self._last_nav_change_ns = time.monotonic_ns()
             self._idle_snapshot_bucket = -1
@@ -405,6 +411,9 @@ def create_selector_app(
                 self.action_focus_list(reason="key_recover")
             self.action_cursor_down()
             list_index_after = self._list().index
+            focused_model_index = self._focused_model_index()
+            if focused_model_index is not None:
+                self._last_user_model_index = focused_model_index
             self._nav_event_counter += 1
             self._last_nav_change_ns = time.monotonic_ns()
             self._idle_snapshot_bucket = -1
@@ -448,10 +457,11 @@ def create_selector_app(
 
         def action_focus_list(self, *, reason: str = "focus_list") -> None:
             list_view = self._list()
-            list_view.index = self._controller.ensure_list_index(list_view.index)
+            index = self._controller.ensure_list_index(list_view.index)
+            apply_selectable_list_index(list_view, index)
             self._allow_filter_focus = False
             self.query_one("#selector-filter", Input).can_focus = False
-            list_view.focus()
+            focus_selectable_list(self, list_view, index)
             self._emit_focus(reason=reason)
 
         def action_cycle_focus(self) -> None:
@@ -466,7 +476,13 @@ def create_selector_app(
         def _selected_values(self) -> list[str]:
             if multi:
                 return [row.item.token for row in self._rows if row.selected and row.visible]
+            if self._last_user_model_index is not None and self._last_user_model_index < len(self._rows):
+                row = self._rows[self._last_user_model_index]
+                if row.visible:
+                    return [row.item.token]
             row = self._focused_row()
+            if row is None and self._last_focused_model_index is not None:
+                row = self._rows[self._last_focused_model_index]
             if row is None:
                 return []
             return [row.item.token]
@@ -554,9 +570,36 @@ def create_selector_app(
             if multi:
                 await self._toggle_model_index(model_index)
             else:
-                await self._select_model_index(model_index)
-                await self.action_submit(cause="list_selected")
+                focused_model_index = self._focused_model_index()
+                if focused_model_index is not None:
+                    self._last_user_model_index = focused_model_index
+                else:
+                    self._last_user_model_index = model_index
+                # Single-select submission is driven by Enter/Run and the
+                # current focus. Re-rendering here can snap focus back to the
+                # first row during rapid PTY handoff bursts.
+                self.action_focus_list(reason="list_selected")
+                return
             self.action_focus_list(reason="list_selected")
+
+        async def on_click(self, event: Click) -> None:
+            if multi:
+                return
+            widget = getattr(event, "widget", None)
+            while widget is not None:
+                widget_id = str(getattr(widget, "id", "") or "").strip()
+                if widget_id.startswith("selector-row-"):
+                    try:
+                        model_index = int(widget_id.rsplit("-", 1)[1])
+                    except (TypeError, ValueError):
+                        return
+                    if model_index < 0 or model_index >= len(self._rows):
+                        return
+                    self._last_user_model_index = model_index
+                    event.stop()
+                    await self.action_submit(cause="mouse_click")
+                    return
+                widget = getattr(widget, "parent", None)
 
         async def on_key(self, event: Key) -> None:
             if key_trace_enabled:
@@ -575,6 +618,22 @@ def create_selector_app(
                     )
             focused_id = self._focused_widget_id()
             filter_focused = focused_id == "selector-filter"
+            if event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                await self.action_submit(cause="enter_key")
+                _emit_selector_debug(
+                    emit,
+                    enabled=deep_debug,
+                    event="ui.selector.key",
+                    selector_id=selector_id,
+                    key=event.key,
+                    focused_widget_id=focused_id,
+                    list_index_before=self._list().index,
+                    list_index_after=self._list().index,
+                    handled=True,
+                )
+                return
             if event.key == "slash" and not filter_focused:
                 event.stop()
                 event.prevent_default()
@@ -698,6 +757,10 @@ def create_selector_app(
                 focused = self._focused_model_index()
             except Exception:
                 focused = None
+            if focused is None:
+                focused = self._last_user_model_index
+            if focused is None:
+                focused = self._last_focused_model_index
             if focused is not None and focused < len(self._rows):
                 return [self._rows[focused].item.token]
             visible = [row.item.token for row in self._rows if row.visible]
