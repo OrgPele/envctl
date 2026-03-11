@@ -6,6 +6,7 @@ import unittest
 from io import StringIO
 from contextlib import redirect_stdout
 from types import SimpleNamespace
+import tempfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -65,6 +66,18 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
 
         self.assertEqual(code, 3)
         self.assertEqual(seen, ["plan"])
+
+    def test_utility_command_dispatch_routes_to_prompt_installer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = SimpleNamespace(command="install-prompts", mode="main", flags={"cli": "codex", "dry_run": True})
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = dispatch_command(runtime, route)
+
+        self.assertEqual(code, 0)
+        self.assertIn("codex: planned", buffer.getvalue())
 
 
 if __name__ == "__main__":

@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from envctl_engine.actions.action_utils import detect_repo_python
+from envctl_engine.actions.action_utils import detect_envctl_python, detect_repo_python
 
 
 def default_review_command(base_dir: Path) -> list[str] | None:
-    python_bin = detect_repo_python(base_dir)
+    _ = base_dir
+    python_bin = detect_envctl_python()
     if python_bin is None:
         return None
     return [python_bin, "-m", "envctl_engine.actions.actions_cli", "review"]

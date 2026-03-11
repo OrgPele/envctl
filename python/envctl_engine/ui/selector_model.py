@@ -91,10 +91,11 @@ def build_grouped_selector_items(context: SelectorContext) -> SelectorBuildResul
 
     concrete_services: list[SelectorItem] = []
     for service in services:
+        service_label = _format_grouped_service_label(service)
         concrete_services.append(
             SelectorItem(
                 id=f"service:{service}",
-                label=service,
+                label=service_label,
                 kind="service",
                 token=service,
                 scope_signature=(f"service:{service}",),
@@ -111,7 +112,7 @@ def build_grouped_selector_items(context: SelectorContext) -> SelectorBuildResul
         project_groups.append(
             SelectorItem(
                 id=f"project_group:{name}",
-                label=f"{name} (all)",
+                label=f"{name} - ALL",
                 kind="project_group",
                 token=f"__PROJECT__:{name}",
                 scope_signature=scoped,
@@ -135,6 +136,13 @@ def build_grouped_selector_items(context: SelectorContext) -> SelectorBuildResul
             )
 
     return _dedupe_and_filter([*concrete_services, *project_groups, *synthetic])
+
+
+def _format_grouped_service_label(service: str) -> str:
+    head, separator, tail = service.partition(" ")
+    if separator and head and tail:
+        return f"{head} - {tail}"
+    return service
 
 
 def _project_names(projects: Iterable[object]) -> list[str]:

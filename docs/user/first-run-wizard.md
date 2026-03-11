@@ -186,6 +186,36 @@ The wizard and save path currently enforce a few important rules:
 
 If save is blocked, the status line in the wizard tells you what to fix.
 
+## Service Launch Env Templates
+
+The wizard does not edit launch env aliases/templates.
+
+After the first save, `.envctl` includes user-owned sections like:
+
+```dotenv
+# >>> envctl backend launch env >>>
+DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
+REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
+# APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # extra backend alias example
+# <<< envctl backend launch env <<<
+
+# >>> envctl frontend launch env >>>
+# VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+# <<< envctl frontend launch env <<<
+```
+
+Edit those sections directly when you want to:
+
+- rename emitted launch env vars
+- add extra aliases
+- remove defaults you do not want injected
+- derive new values from earlier lines with `${VAR}`
+- scope aliases to backend-only or frontend-only launches
+
+The backend/frontend sections are service-specific.
+
+`envctl config` seeds the sections if they are missing, then preserves them as-is.
+
 ## Disabled Modes
 
 Each mode now has a master switch for envctl runs:

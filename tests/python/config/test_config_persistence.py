@@ -6,7 +6,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.config import DEFAULTS, LocalConfigState, PortDefaults, StartupProfile, _parse_envctl_text
+from envctl_engine.config import (
+    CONFIG_BACKEND_DEPENDENCY_ENV_END,
+    CONFIG_BACKEND_DEPENDENCY_ENV_START,
+    CONFIG_DEPENDENCY_ENV_END,
+    CONFIG_DEPENDENCY_ENV_START,
+    CONFIG_FRONTEND_DEPENDENCY_ENV_END,
+    CONFIG_FRONTEND_DEPENDENCY_ENV_START,
+    DEFAULTS,
+    LocalConfigState,
+    PortDefaults,
+    StartupProfile,
+    _parse_envctl_text,
+    ensure_dependency_env_section,
+    parse_dependency_env_section,
+    render_default_dependency_env_section,
+)
 from envctl_engine.config.persistence import (
     ManagedConfigValues,
     ensure_local_config_ignored,
@@ -85,6 +100,96 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertNotIn("MAIN_STARTUP_ENABLE=true", written)
             self.assertIn("MAIN_FRONTEND_ENABLE=false", written)
             self.assertNotIn("ENVCTL_DEFAULT_MODE=main", written)
+            self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_START, written)
+            self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_START, written)
+            self.assertIn("DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}", written)
+            self.assertIn("SQLAlchemy async URL", written)
+            self.assertNotIn(CONFIG_DEPENDENCY_ENV_START, written)
+
+    def test_save_local_config_preserves_dependency_env_section_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            path = repo / ".envctl"
+            dependency_section = (
+                "# >>> envctl dependency env >>>\n"
+                "# keep this comment\n"
+                "APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}?sslmode=disable\n"
+                "\n"
+                "WORKFLOW_BASE_URL=${ENVCTL_SOURCE_N8N_URL}\n"
+                "# <<< envctl dependency env <<<\n"
+            )
+            path.write_text(
+                "FOO=bar\n"
+                "# >>> envctl managed startup config >>>\n"
+                "ENVCTL_DEFAULT_MODE=main\n"
+                "# <<< envctl managed startup config <<<\n\n"
+                + dependency_section,
+                encoding="utf-8",
+            )
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=path,
+                config_file_exists=True,
+                config_source="envctl",
+                active_source_path=path,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text=path.read_text(encoding="utf-8"),
+            )
+            values = ManagedConfigValues(
+                default_mode="trees",
+                main_profile=StartupProfile(True, True, False, True, True, False, False),
+                trees_profile=StartupProfile(True, True, True, True, False, False, True),
+                port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
+            )
+
+            save_local_config(local_state=local_state, values=values)
+
+            written = path.read_text(encoding="utf-8")
+            self.assertIn(dependency_section, written)
+
+    def test_save_local_config_preserves_service_scoped_dependency_sections_without_injecting_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            path = repo / ".envctl"
+            backend_section = (
+                f"{CONFIG_BACKEND_DEPENDENCY_ENV_START}\n"
+                "APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}\n"
+                f"{CONFIG_BACKEND_DEPENDENCY_ENV_END}\n"
+            )
+            path.write_text(
+                "FOO=bar\n"
+                "# >>> envctl managed startup config >>>\n"
+                "ENVCTL_DEFAULT_MODE=main\n"
+                "# <<< envctl managed startup config <<<\n\n"
+                + backend_section,
+                encoding="utf-8",
+            )
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=path,
+                config_file_exists=True,
+                config_source="envctl",
+                active_source_path=path,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text=path.read_text(encoding="utf-8"),
+            )
+            values = ManagedConfigValues(
+                default_mode="trees",
+                main_profile=StartupProfile(True, True, False, True, True, False, False),
+                trees_profile=StartupProfile(True, True, True, True, False, False, True),
+                port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
+            )
+
+            save_local_config(local_state=local_state, values=values)
+
+            written = path.read_text(encoding="utf-8")
+            self.assertIn(backend_section, written)
+            self.assertNotIn(CONFIG_DEPENDENCY_ENV_START, written)
+            self.assertNotIn(CONFIG_FRONTEND_DEPENDENCY_ENV_START, written)
 
     def test_render_managed_block_omits_irrelevant_default_entries(self) -> None:
         values = ManagedConfigValues(
@@ -146,6 +251,111 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(example_values["ENVCTL_PLANNING_DIR"], DEFAULTS["ENVCTL_PLANNING_DIR"])
         for key, value in expected_mapping.items():
             self.assertEqual(example_values.get(key), value, msg=key)
+        example_text = example_path.read_text(encoding="utf-8")
+        self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_START, example_text)
+        self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_START, example_text)
+        self.assertIn("generic DB URL; e.g. postgresql://user:pass@host:5432/dbname", example_text)
+        self.assertIn("SQLAlchemy async URL; e.g. postgresql+asyncpg://user:pass@host:5432/dbname", example_text)
+        self.assertNotIn(CONFIG_DEPENDENCY_ENV_START, example_text)
+        self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_END, example_text)
+        self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_END, example_text)
+
+    def test_parse_dependency_env_section_reads_entries_and_line_numbers(self) -> None:
+        text = (
+            "ENVCTL_DEFAULT_MODE=main\n"
+            f"{CONFIG_DEPENDENCY_ENV_START}\n"
+            "# comment\n"
+            "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL\n"
+            "APP_DATABASE_URL=${DATABASE_URL}?sslmode=disable\n"
+            f"{CONFIG_DEPENDENCY_ENV_END}\n"
+        )
+
+        entries = parse_dependency_env_section(text)
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].name, "DATABASE_URL")
+        self.assertEqual(entries[0].line_number, 4)
+        self.assertEqual(entries[1].name, "APP_DATABASE_URL")
+        self.assertEqual(entries[1].line_number, 5)
+
+    def test_parse_dependency_env_section_rejects_invalid_lines(self) -> None:
+        text = (
+            f"{CONFIG_DEPENDENCY_ENV_START}\n"
+            "NOT_VALID\n"
+            f"{CONFIG_DEPENDENCY_ENV_END}\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "line 2"):
+            parse_dependency_env_section(text)
+
+    def test_parse_dependency_env_section_rejects_missing_marker_pair(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing closing marker"):
+            parse_dependency_env_section(f"{CONFIG_DEPENDENCY_ENV_START}\nDATABASE_URL=x\n")
+
+    def test_parse_dependency_env_section_accepts_legacy_markers(self) -> None:
+        text = (
+            "# >>> envctl dependency env >>>\n"
+            "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}\n"
+            "# <<< envctl dependency env <<<\n"
+        )
+
+        entries = parse_dependency_env_section(text)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].name, "DATABASE_URL")
+
+    def test_ensure_dependency_env_section_seeds_defaults_once(self) -> None:
+        seeded = ensure_dependency_env_section("# existing\n")
+
+        self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_START, seeded)
+        self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_START, seeded)
+        self.assertNotIn(CONFIG_DEPENDENCY_ENV_START, seeded)
+        self.assertEqual(ensure_dependency_env_section(seeded), seeded)
+
+    def test_ensure_dependency_env_section_upgrades_legacy_default_boilerplate(self) -> None:
+        legacy = (
+            "# The shared section below applies to both backend and frontend launches.\n"
+            "# The backend/frontend sections below it are service-specific.\n"
+            "# For a given service, envctl emits only the vars defined in the sections that apply to that service.\n\n"
+            "# >>> envctl dependency env >>>\n"
+            "# Primary database connection string for apps that expect a generic DB URL.\n"
+            "# Usually looks like: postgresql://user:pass@host:5432/dbname\n"
+            "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}\n"
+            "# Redis connection string for cache, queues, and pub/sub clients.\n"
+            "# Usually looks like: redis://host:6379/0\n"
+            "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}\n"
+            "# Base HTTP URL for your local n8n instance.\n"
+            "# Usually looks like: http://localhost:5678\n"
+            "N8N_URL=${ENVCTL_SOURCE_N8N_URL}\n"
+            "# Base HTTP URL for local Supabase APIs and Studio integrations.\n"
+            "# Usually looks like: http://localhost:54321\n"
+            "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}\n"
+            "# SQLAlchemy sync driver URL, commonly used by sync app/database layers.\n"
+            "# Usually looks like: postgresql+psycopg://user:pass@host:5432/dbname\n"
+            "SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}\n"
+            "# SQLAlchemy async driver URL, commonly used by async Python services.\n"
+            "# Usually looks like: postgresql+asyncpg://user:pass@host:5432/dbname\n"
+            "ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}\n"
+            "# <<< envctl dependency env <<<\n\n"
+            "# >>> envctl backend dependency env >>>\n"
+            "# Add backend-only dependency aliases/templates here.\n"
+            "# Example:\n"
+            "# APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}\n"
+            "# <<< envctl backend dependency env <<<\n\n"
+            "# >>> envctl frontend dependency env >>>\n"
+            "# Add frontend-only dependency aliases/templates here.\n"
+            "# Example:\n"
+            "# VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}\n"
+            "# <<< envctl frontend dependency env <<<\n"
+        )
+
+        upgraded = ensure_dependency_env_section(legacy)
+
+        self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_START, upgraded)
+        self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_START, upgraded)
+        self.assertNotIn("# >>> envctl dependency env >>>", upgraded)
+        self.assertNotIn("The shared section below applies to both backend and frontend launches.", upgraded)
+        self.assertIn("DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}", upgraded)
 
     def test_ignore_local_config_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

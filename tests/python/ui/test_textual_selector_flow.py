@@ -95,7 +95,7 @@ class TextualSelectorFlowTests(unittest.TestCase):
             )
 
         self.assertNotIn("All services", captured["labels"])
-        self.assertIn("Main (all)", captured["labels"])
+        self.assertIn("Main - ALL", captured["labels"])
         self.assertEqual(selection.project_names, ["Main"])
 
     def test_selector_cancel_returns_cancelled_selection(self) -> None:

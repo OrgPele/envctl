@@ -101,6 +101,14 @@ class StartupRuntime(Protocol):
     ) -> tuple[RequirementsResult, dict[str, ServiceRecord], list[str]]: ...
     def _run_dir_path(self, run_id: str) -> Path: ...
     def _project_service_env(
+        self,
+        context: ProjectContextLike,
+        *,
+        requirements: RequirementsResult,
+        route: Route | None,
+        service_name: str | None = None,
+    ) -> dict[str, str]: ...
+    def _project_service_env_internal(
         self, context: ProjectContextLike, *, requirements: RequirementsResult, route: Route | None
     ) -> dict[str, str]: ...
     def _resolve_backend_env_file(

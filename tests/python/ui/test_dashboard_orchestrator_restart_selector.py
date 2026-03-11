@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 from io import StringIO
+import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from pathlib import Path
@@ -11,19 +14,26 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
+from envctl_engine.ui.dashboard.pr_flow import PrFlowResult
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
 
 
 class _RuntimeStub:
-    def __init__(self) -> None:
-        self.config = SimpleNamespace(raw={})
+    def __init__(self, *, base_dir: Path | None = None) -> None:
+        self.config = SimpleNamespace(raw={}, base_dir=base_dir or REPO_ROOT)
         self.env: dict[str, str] = {}
         self.selection_calls: list[dict[str, object]] = []
         self.last_dispatched_route: Route | None = None
         self._latest_state: RunState | None = None
         self.next_selection = TargetSelection(project_names=["Main"])
+        self.next_selections: list[TargetSelection] = []
         self.dispatch_code: int = 0
+        self.read_prompts: list[str] = []
+        self.read_responses: list[str] = []
+        self.pr_flow_calls: list[dict[str, object]] = []
+        self.next_pr_flow_result: PrFlowResult | None = PrFlowResult(project_names=["Main"], base_branch="main")
+        self.startup_orchestrator = object()
 
     @staticmethod
     def _emit(*_args, **_kwargs):  # noqa: ANN001
@@ -73,7 +83,7 @@ class _RuntimeStub:
                 "multi": multi,
             }
         )
-        return self.next_selection
+        return self._pop_selection()
 
     def _select_project_targets(
         self,
@@ -83,6 +93,7 @@ class _RuntimeStub:
         allow_all: bool,
         allow_untested: bool,
         multi: bool,
+        initial_project_names: list[str] | None = None,
     ) -> TargetSelection:
         self.selection_calls.append(
             {
@@ -92,9 +103,21 @@ class _RuntimeStub:
                 "allow_all": allow_all,
                 "allow_untested": allow_untested,
                 "multi": multi,
+                "initial_project_names": list(initial_project_names or []),
             }
         )
+        return self._pop_selection()
+
+    def _pop_selection(self) -> TargetSelection:
+        if self.next_selections:
+            return self.next_selections.pop(0)
         return self.next_selection
+
+    def _read_interactive_command_line(self, prompt: str) -> str:
+        self.read_prompts.append(prompt)
+        if self.read_responses:
+            return self.read_responses.pop(0)
+        return ""
 
 
 class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
@@ -160,6 +183,25 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertIsNone(runtime.last_dispatched_route)
         self.assertIn("Command 'migrate' is not available in this dashboard", out.getvalue())
 
+    def test_install_prompts_is_rejected_in_dashboard_context(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(run_id="run-plan", mode="trees")
+        runtime._latest_state = state
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command(
+                "install-prompts --cli codex --dry-run",
+                state,
+                runtime,
+            )
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("Command 'install-prompts' is not available in this dashboard context.", out.getvalue())
+
     def test_restart_selector_uses_runtime_backend_selection(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
@@ -184,8 +226,116 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         updated = orchestrator._apply_restart_selection(route, state, runtime)
 
         self.assertIsNotNone(updated)
-        self.assertEqual(runtime.selection_calls[0]["prompt"], "Restart")
+        self.assertEqual(runtime.selection_calls, [])
         self.assertEqual(updated.projects, ["Main"])
+
+    def test_pr_interactive_flow_prompts_for_target_before_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "Envctl Tests"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo, check=True)
+            (repo / "README.md").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "branch", "release/2026-03-10"], cwd=repo, check=True)
+            runtime = _RuntimeStub(base_dir=repo)
+            orchestrator = DashboardOrchestrator(runtime)
+            runtime.next_pr_flow_result = PrFlowResult(project_names=["Main"], base_branch="main")
+            state = RunState(
+                run_id="run-pr",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=".",
+                        pid=100,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            runtime._latest_state = state
+            orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+
+            should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+            self.assertTrue(should_continue)
+            self.assertIs(next_state, state)
+            self.assertEqual(len(runtime.pr_flow_calls), 1)
+            self.assertEqual(runtime.pr_flow_calls[0]["default_branch"], "main")
+            self.assertEqual(runtime.read_prompts, [])
+            self.assertIsNotNone(runtime.last_dispatched_route)
+            self.assertEqual(runtime.last_dispatched_route.command, "pr")  # type: ignore[union-attr]
+            self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
+            self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")  # type: ignore[union-attr]
+
+    def test_pr_interactive_flow_uses_entered_base_branch_after_target_selection(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        runtime.next_pr_flow_result = PrFlowResult(project_names=["Main"], base_branch="release/2026-03-10")
+        state = RunState(
+            run_id="run-pr-feature",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+
+        should_continue, _next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(len(runtime.pr_flow_calls), 1)
+        self.assertEqual(runtime.read_prompts, [])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "release/2026-03-10")  # type: ignore[union-attr]
+
+    def test_pr_interactive_flow_cancels_when_no_base_branch_is_selected(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        runtime.next_pr_flow_result = PrFlowResult(
+            project_names=["Main"],
+            base_branch=None,
+            cancelled=True,
+            cancelled_step="branch",
+        )
+        state = RunState(
+            run_id="run-pr-cancelled",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("No PR base branch selected.", out.getvalue())
 
     def test_restart_selector_does_not_flush_pending_input_for_interactive_command(self) -> None:
         runtime = _RuntimeStub()
@@ -217,7 +367,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         updated = orchestrator._apply_restart_selection(route, state, runtime)
 
         self.assertIsNotNone(updated)
-        self.assertEqual(len(runtime.selection_calls), 1)
+        self.assertEqual(len(runtime.selection_calls), 0)
 
     def test_restart_selector_skips_prompt_when_all_already_selected(self) -> None:
         runtime = _RuntimeStub()
@@ -253,6 +403,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_interactive_restart_prompts_selector_for_single_project(self) -> None:
         runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["Backend", "Frontend"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -285,14 +436,16 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertEqual(len(runtime.selection_calls), 1)
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose services")
+        self.assertEqual(runtime.selection_calls[0]["projects"], ["Backend", "Frontend"])
         self.assertIsNotNone(runtime.last_dispatched_route)
         self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
         self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))  # type: ignore[union-attr]
-        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))  # type: ignore[union-attr]
+        self.assertTrue(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))  # type: ignore[union-attr]
 
     def test_restart_selector_marks_full_restart_when_all_selected(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(all_selected=True)
+        runtime.next_selection = TargetSelection(project_names=["Backend", "Frontend"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -335,7 +488,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_restart_selector_service_selection_restarts_selected_service_only(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(service_names=["Main Backend"])
+        runtime.next_selection = TargetSelection(project_names=["Backend"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -400,13 +553,15 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         for raw, expected in (("p", "pr"), ("c", "commit"), ("a", "review"), ("migrations", "migrate")):
             with self.subTest(raw=raw):
                 runtime.last_dispatched_route = None
+                if raw == "p":
+                    orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
                 should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
                 self.assertIsNotNone(runtime.last_dispatched_route)
                 self.assertEqual(runtime.last_dispatched_route.command, expected)  # type: ignore[union-attr]
 
-    def test_project_scoped_commands_use_project_selector(self) -> None:
+    def test_project_scoped_commands_auto_select_single_project(self) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(project_names=["Main"])
         orchestrator = DashboardOrchestrator(runtime)
@@ -436,30 +591,99 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        expected_prompts = {
-            "p": "Create PR for",
-            "c": "Commit changes for",
-            "a": "Review changes for",
-            "m": "Run migrations for",
-        }
-        for raw, prompt in expected_prompts.items():
+        for raw in ("p", "c", "a", "m"):
             with self.subTest(raw=raw):
                 runtime.selection_calls.clear()
+                runtime.pr_flow_calls.clear()
                 runtime.last_dispatched_route = None
+                if raw == "p":
+                    orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
                 should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
-                self.assertEqual(len(runtime.selection_calls), 1)
-                self.assertEqual(runtime.selection_calls[0]["selector"], "project")
-                self.assertEqual(runtime.selection_calls[0]["prompt"], prompt)
+                self.assertEqual(len(runtime.selection_calls), 0)
+                if raw == "p":
+                    self.assertEqual(len(runtime.pr_flow_calls), 1)
+                    self.assertEqual(runtime.pr_flow_calls[0]["initial_project_names"], ["Main"])
+                else:
+                    self.assertEqual(len(runtime.pr_flow_calls), 0)
                 self.assertIsNotNone(runtime.last_dispatched_route)
                 assert runtime.last_dispatched_route is not None
                 self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
                 self.assertIsNone(runtime.last_dispatched_route.flags.get("services"))
 
-    def test_interactive_test_prompts_grouped_selector_in_single_project_mode(self) -> None:
+    def test_project_scoped_commands_use_project_selector_when_multiple_projects_exist(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(project_names=["Main"])
+        runtime.next_selection = TargetSelection(project_names=["Feature A"])
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Feature A Backend": ServiceRecord(
+                    name="Feature A Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "Feature B Backend": ServiceRecord(
+                    name="Feature B Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8001,
+                    actual_port=8001,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("c", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(len(runtime.selection_calls), 1)
+        self.assertEqual(runtime.selection_calls[0]["selector"], "project")
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Commit changes for")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Feature A"])  # type: ignore[union-attr]
+
+    def test_interactive_test_auto_selects_single_project_in_single_project_mode(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertEqual(len(runtime.selection_calls), 0)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
+        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))  # type: ignore[union-attr]
+
+    def test_interactive_test_single_project_with_backend_and_frontend_prompts_selector(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["Backend", "Frontend"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -492,14 +716,13 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertEqual(len(runtime.selection_calls), 1)
-        self.assertEqual(runtime.selection_calls[0]["prompt"], "Run tests for")
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose services")
+        self.assertEqual(runtime.selection_calls[0]["projects"], ["Backend", "Frontend"])
         self.assertIsNotNone(runtime.last_dispatched_route)
         self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
-        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))  # type: ignore[union-attr]
 
-    def test_interactive_test_all_selection_sets_all_flag(self) -> None:
+    def test_interactive_test_single_project_auto_selects_without_selector(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(all_selected=True)
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -521,13 +744,13 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         should_continue, _next_state = orchestrator._run_interactive_command("t", state, runtime)
 
         self.assertTrue(should_continue)
-        self.assertEqual(len(runtime.selection_calls), 1)
+        self.assertEqual(len(runtime.selection_calls), 0)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
         self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))
 
-    def test_interactive_test_cancelled_selector_skips_dispatch(self) -> None:
+    def test_interactive_test_cancelled_selector_skips_dispatch_when_multiple_projects(self) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(cancelled=True)
         orchestrator = DashboardOrchestrator(runtime)
@@ -543,7 +766,16 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     requested_port=8000,
                     actual_port=8000,
                     status="running",
-                )
+                ),
+                "Docs Backend": ServiceRecord(
+                    name="Docs Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8010,
+                    actual_port=8010,
+                    status="running",
+                ),
             },
         )
         runtime._latest_state = state
@@ -557,7 +789,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_interactive_test_in_trees_prompts_selector_before_dispatch(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(project_names=["feature-a-1"])
+        runtime.next_selections = [
+            TargetSelection(project_names=["feature-a-1"]),
+            TargetSelection(project_names=["Backend", "Frontend"]),
+        ]
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -598,16 +833,20 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
-        self.assertEqual(len(runtime.selection_calls), 1)
-        self.assertEqual(runtime.selection_calls[0]["prompt"], "Run tests for")
+        self.assertEqual(len(runtime.selection_calls), 2)
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose worktrees")
+        self.assertEqual(runtime.selection_calls[1]["prompt"], "Choose services")
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.projects, ["feature-a-1"])
         self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))
 
-    def test_interactive_test_service_selection_limits_backend_frontend_flags(self) -> None:
+    def test_interactive_test_in_trees_preselects_deployed_worktrees(self) -> None:
         runtime = _RuntimeStub()
-        runtime.next_selection = TargetSelection(service_names=["feature-a-1 Frontend"])
+        runtime.next_selections = [
+            TargetSelection(project_names=["feature-a-1"]),
+            TargetSelection(project_names=["Backend", "Frontend"]),
+        ]
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -631,6 +870,47 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     actual_port=9000,
                     status="running",
                 ),
+                "feature-b-1 Backend": ServiceRecord(
+                    name="feature-b-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=102,
+                    requested_port=8010,
+                    actual_port=8010,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._tree_preselected_projects_from_state_impl",
+            return_value=["feature-b-1"],
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertEqual(len(runtime.selection_calls), 2)
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose worktrees")
+        self.assertEqual(runtime.selection_calls[0]["initial_project_names"], ["feature-b-1"])
+
+    def test_interactive_test_in_trees_auto_selects_single_project_before_dispatch(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
             },
         )
         runtime._latest_state = state
@@ -639,9 +919,62 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
+        self.assertEqual(len(runtime.selection_calls), 0)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
-        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.projects, ["feature-a-1"])
+        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("all")))
+
+    def test_interactive_test_service_selection_limits_backend_frontend_flags(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.next_selections = [
+            TargetSelection(project_names=["feature-a-1"]),
+            TargetSelection(project_names=["Frontend"]),
+        ]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "feature-a-1 Frontend": ServiceRecord(
+                    name="feature-a-1 Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+                "feature-b-1 Backend": ServiceRecord(
+                    name="feature-b-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=102,
+                    requested_port=8010,
+                    actual_port=8010,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertEqual(len(runtime.selection_calls), 2)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, ["feature-a-1"])
         self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["feature-a-1 Frontend"])
         self.assertEqual(runtime.last_dispatched_route.flags.get("backend"), False)
         self.assertEqual(runtime.last_dispatched_route.flags.get("frontend"), True)

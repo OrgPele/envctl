@@ -21,12 +21,13 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ListItem.-highlight", SELECTOR_CSS)
         self.assertIn("background: $accent 18%;", SELECTOR_CSS)
         self.assertIn("background: $success 22%;", SELECTOR_CSS)
-        self.assertIn("background: $accent 36%;", SELECTOR_CSS)
+        self.assertIn("background: $success 34%;", SELECTOR_CSS)
         self.assertIn("background: $accent 8%;", SELECTOR_CSS)
         self.assertNotIn("background: $warning 18%;", SELECTOR_CSS)
         self.assertNotIn("background: $warning 14%;", SELECTOR_CSS)
         self.assertIn("border-left: wide $accent;", SELECTOR_CSS)
         self.assertIn("border-left: wide $success;", SELECTOR_CSS)
+        self.assertIn("color: $success;", SELECTOR_CSS)
 
     async def test_arrow_navigation_moves_single_row_per_keypress(self) -> None:
         options = [

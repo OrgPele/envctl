@@ -49,9 +49,9 @@ class SelectorModelTests(unittest.TestCase):
 
         labels = [item.label for item in result.items]
         self.assertNotIn("All services", labels)
-        self.assertIn("Main (all)", labels)
-        self.assertIn("Main Backend", labels)
-        self.assertIn("Main Frontend", labels)
+        self.assertIn("Main - ALL", labels)
+        self.assertIn("Main - Backend", labels)
+        self.assertIn("Main - Frontend", labels)
 
     def test_grouped_items_suppress_project_group_when_it_matches_single_service(self) -> None:
         context = SelectorContext(
@@ -63,7 +63,7 @@ class SelectorModelTests(unittest.TestCase):
         result = build_grouped_selector_items(context)
 
         labels = [item.label for item in result.items]
-        self.assertEqual(labels, ["Main Backend"])
+        self.assertEqual(labels, ["Main - Backend"])
 
 
 if __name__ == "__main__":

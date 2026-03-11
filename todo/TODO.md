@@ -1,3 +1,3 @@
-1. add relevant prompts to codex CLI
-
-2. not only spesify it in the docs - but be able to configure what are the environment variable names that are created for each depandancy (for example postres URI or n8n URL)
+1. Improve config wizard to have good UI/UX
+2. Add more prompts to the app
+3. improve tests tracking

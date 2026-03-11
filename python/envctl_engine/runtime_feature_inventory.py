@@ -559,6 +559,23 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="List-commands is explicitly parity-tested against the shell inventory.",
     ),
+    "install-prompts": FeatureDefinition(
+        area="cli",
+        feature="Command: install envctl-managed AI CLI prompt presets into user-local directories",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/command_router.py",
+            "python/envctl_engine/runtime/prompt_install_support.py",
+            "python/envctl_engine/runtime/engine_runtime_dispatch.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_prompt_install_support.py",
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+        ),
+        parity_status="verified_python",
+        notes="Install-prompts is Python-owned and intentionally excluded from dashboard interactive command entry.",
+    ),
     "list-targets": FeatureDefinition(
         area="cli",
         feature="Command: print available project and service targets",

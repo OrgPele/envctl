@@ -105,6 +105,37 @@ class _RunStreamingWithStdinRunner:
         )
 
 
+class _RunStreamingVitestRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cwd, env, timeout, show_spinner, echo_output, stdin
+        self.calls.append({"cmd": tuple(str(part) for part in cmd), "callback": callback})
+        if callable(callback):
+            callback("ENVCTL_TEST_DISCOVERED:47")
+            callback("ENVCTL_TEST_COMPLETE:5")
+            callback("ENVCTL_TEST_TOTAL:179")
+            callback("ENVCTL_TEST_PROGRESS:6/179")
+        return subprocess.CompletedProcess(
+            args=list(cmd),
+            returncode=0,
+            stdout="Tests  179 passed (179)\n",
+            stderr="",
+        )
+
+
 class _RuntimeStreamingStub:
     def __init__(self, process_runner) -> None:  # noqa: ANN001
         self.process_runner = process_runner
@@ -279,6 +310,36 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(len(process_runner.calls), 1)
         self.assertIs(process_runner.calls[0]["stdin"], subprocess.DEVNULL)
+
+    def test_run_tests_instruments_bun_vitest_script_and_emits_progress_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            (project_root / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            process_runner = _RunStreamingVitestRunner()
+            runtime = _RuntimeStreamingStub(process_runner)
+            runner = TestRunner(runtime, verbose=False, render_output=False)
+            progress_updates: list[tuple[int, int]] = []
+
+            completed = runner.run_tests(
+                ["bun", "run", "test"],
+                cwd=project_root,
+                progress_callback=lambda current, total: progress_updates.append((current, total)),
+            )
+
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(len(process_runner.calls), 1)
+            invoked = process_runner.calls[0]["cmd"]
+            reporter_path = str(PYTHON_ROOT / "envctl_engine" / "test_output" / "vitest_progress_reporter.mjs")
+            self.assertEqual(invoked[:3], ("bun", "run", "test"))
+            self.assertEqual(invoked[-3:], ("--", "--reporter=default", f"--reporter={reporter_path}"))
+            self.assertEqual(progress_updates, [(-1, 47), (5, 0), (0, 179), (6, 179)])
+            self.assertNotIn("ENVCTL_TEST_DISCOVERED", completed.stdout)
+            self.assertNotIn("ENVCTL_TEST_COMPLETE", completed.stdout)
+            self.assertNotIn("ENVCTL_TEST_TOTAL", completed.stdout)
+            self.assertNotIn("ENVCTL_TEST_PROGRESS", completed.stdout)
 
 
 if __name__ == "__main__":

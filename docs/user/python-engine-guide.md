@@ -30,7 +30,7 @@ The Python runtime expects a repo-local `.envctl` file for normal operation.
 Behavior on first run:
 
 - If `.envctl` exists, runtime loads it.
-- If `.envctl` is missing and the command is inspect-only (`--list-commands`, `--list-targets`, `--list-trees`, `show-config`, `show-state`, `explain-startup`), runtime continues with defaults.
+- If `.envctl` is missing and the command is inspect-only or utility-safe (`--list-commands`, `--list-targets`, `--list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`), runtime continues with defaults.
 - If `.envctl` is missing and you run a normal operational command, runtime opens the Textual config wizard and writes `.envctl`.
 - If `.envctl` is missing and there is no interactive TTY, the runtime exits with an actionable error instead of guessing.
 
@@ -99,6 +99,7 @@ envctl --list-trees --json
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
+envctl install-prompts --cli codex --dry-run
 ```
 
 What each one is for:
@@ -109,6 +110,7 @@ What each one is for:
 - `show-config --json`: prints the effective managed config payload, source, and file path.
 - `show-state --json`: prints the latest saved state pointer and state payload.
 - `explain-startup --json`: explains what the runtime would do before you actually start anything.
+- `install-prompts --cli ...`: installs envctl-managed AI CLI presets into user-local directories without requiring a startup run.
 
 `explain-startup` is especially useful because it tells you:
 

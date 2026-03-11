@@ -51,6 +51,26 @@ envctl explain-startup --json
 
 These commands are safe to use before a repo-local `.envctl` exists because they do not require a normal startup run.
 
+## AI CLI Presets
+
+```bash
+envctl install-prompts --cli codex
+envctl install-prompts --cli claude --dry-run
+envctl install-prompts --cli codex,opencode --json
+envctl install-prompts --cli all
+```
+
+Behavior:
+
+- installs envctl-managed prompt/command files into user-local AI CLI directories
+- v1 supports `implement_tdd` only
+- target roots are user-local only:
+  - Codex: `~/.codex/prompts`
+  - Claude Code: `~/.claude/commands`
+  - OpenCode: `~/.config/opencode/commands`
+- existing files are backed up in-place with a timestamped `.bak-...md` name before overwrite
+- this command is available from the normal CLI, but not from dashboard interactive command mode
+
 ## High-Value Runtime Command Families
 - `dashboard`
 - `delete-worktree`
@@ -66,6 +86,7 @@ These commands are safe to use before a repo-local `.envctl` exists because they
 - `pr`
 - `commit`
 - `config`
+- `install-prompts`
 
 ## Common Command Patterns
 

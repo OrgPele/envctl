@@ -59,7 +59,7 @@ def run_prompt_toolkit_cursor_menu(
             cancel_on_escape=True,
             emit_event=lambda event, **payload: _emit(emit, event, **payload),
             emit_debug=_emit_debug,
-            help_text_multi="UP/DOWN or j/k/w/s move  Space/x toggle  Enter submit  q/Esc/Ctrl+C cancel",
+            help_text_multi="UP/DOWN or j/k/w/s move  Space/x toggle  a/Ctrl+A all  Enter submit  q/Esc/Ctrl+C cancel",
             help_text_single="UP/DOWN or j/k/w/s move  Space/x select  Enter submit  q/Esc/Ctrl+C cancel",
             confirm_cause="enter",
             cancel_cause="cancel_key",

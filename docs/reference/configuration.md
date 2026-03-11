@@ -17,6 +17,56 @@ That is true regardless of whether `envctl` was installed with `pip`, `pipx`, or
 - `envctl show-config --json` prints the effective managed config without mutating anything.
 - On missing `.envctl`, inspect-only commands can still run with defaults.
 
+## Service Launch Env Templates In `.envctl`
+
+`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
+
+```dotenv
+# >>> envctl backend launch env >>>
+DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
+APP_DATABASE_URL=${DATABASE_URL}?sslmode=disable
+REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
+# <<< envctl backend launch env <<<
+
+# >>> envctl frontend launch env >>>
+VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+# <<< envctl frontend launch env <<<
+```
+
+These sections are separate from the managed startup block:
+
+- the backend section applies only to backend launches
+- the frontend section applies only to frontend launches
+- old shared sections are still understood for compatibility, but new `.envctl` files only seed backend/frontend sections
+- `envctl config` seeds these sections when missing, but does not edit or normalize them afterward
+- for a given service, only vars defined in its applicable sections are emitted
+- you can rename, delete, add, or reorder emitted env vars manually
+- later lines can reference earlier emitted values with `${VAR}`
+- `ENVCTL_SOURCE_*` names are template-only inputs built from envctl's canonical dependency outputs
+- if a referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
+- custom aliases/templates are injected into launched processes only; backend `.env` writeback stays canonical
+- after envctl seeds the launch env sections, `envctl config` leaves them unchanged
+
+Supported template inputs include:
+
+- `ENVCTL_SOURCE_DATABASE_URL`
+- `ENVCTL_SOURCE_REDIS_URL`
+- `ENVCTL_SOURCE_N8N_URL`
+- `ENVCTL_SOURCE_SUPABASE_URL`
+- `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`
+- `ENVCTL_SOURCE_ASYNC_DATABASE_URL`
+- `ENVCTL_SOURCE_DB_HOST`
+- `ENVCTL_SOURCE_DB_PORT`
+- `ENVCTL_SOURCE_DB_USER`
+- `ENVCTL_SOURCE_DB_PASSWORD`
+- `ENVCTL_SOURCE_DB_NAME`
+- `ENVCTL_SOURCE_REDIS_PORT`
+- `ENVCTL_SOURCE_N8N_PORT`
+- `ENVCTL_SOURCE_SUPABASE_DB_PASSWORD`
+- `ENVCTL_SOURCE_SUPABASE_DB_PORT`
+
+Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
 ## Managed vs Compatibility Keys
 
 The Python config layer now has canonical managed keys such as:
@@ -35,7 +85,7 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The Textual config wizard writes the canonical managed keys.
+The Textual config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
 
 ## Core
 | Variable | Default | Purpose |

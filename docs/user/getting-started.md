@@ -139,10 +139,13 @@ That tells you:
 Important behavior from the current wizard/save path:
 
 - legacy config can be used as prefill, but `.envctl` is the canonical saved file
+- `envctl` seeds user-owned backend/frontend launch env sections into `.envctl` for manual alias/template editing
 - save validation blocks invalid port values or empty directories
 - each mode can now be disabled entirely with `MAIN_STARTUP_ENABLE=false` or `TREES_STARTUP_ENABLE=false`
 - save does not change already-running services until the next start or restart
 - `envctl` tries to add `.envctl` and `trees/` to `.gitignore` on save
+
+The launch env sections are not part of the wizard UI. Edit them directly in `.envctl` when you want to rename, remove, alias, derive, or service-scope env vars that `envctl` injects into launched backend/frontend processes.
 
 Default startup mode is `main`. To change default startup to tree mode manually:
 

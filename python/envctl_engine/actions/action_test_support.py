@@ -329,6 +329,16 @@ class TestSuiteSpinnerGroup:
         render_line = f"  - {label_render}: [blue]running[/blue]"
         self._update_line(index, plain_line=plain_line, render_line=render_line, state="update")
 
+    def mark_progress(self, execution: TestExecutionSpec, *, status_text: str) -> None:
+        index = execution.index
+        label_plain = self._labels_plain.get(index, self._descriptor(execution, render=False))
+        label_render = self._labels_render.get(index, self._descriptor(execution, render=True))
+        project_name = self._project_for_index.get(index, str(execution.project_name))
+        escaped_status = self._escape_markup(status_text)
+        plain_line = f"{project_name} / {label_plain}: {status_text}"
+        render_line = f"  - {label_render}: [blue]{escaped_status}[/blue]"
+        self._update_line(index, plain_line=plain_line, render_line=render_line, state="update")
+
     def mark_finished(
         self,
         execution: TestExecutionSpec,

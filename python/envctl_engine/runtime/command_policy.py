@@ -26,6 +26,8 @@ SKIP_STARTUP_ONLY_COMMANDS: Final[frozenset[str]] = frozenset({"debug-pack", "de
 DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
     {"list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup"}
 )
+UTILITY_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts"})
+DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts"})
 
 LIFECYCLE_CLEANUP_COMMANDS: Final[frozenset[str]] = frozenset({"stop", "stop-all", "blast-all"})
 STATE_ACTION_COMMANDS: Final[frozenset[str]] = frozenset({"logs", "clear-logs", "health", "errors"})
@@ -83,6 +85,8 @@ def dispatch_family_for_command(command: str) -> str | None:
         return "help"
     if command in DIRECT_INSPECTION_COMMANDS:
         return "direct_inspection"
+    if command in UTILITY_COMMANDS:
+        return "utility"
     if command in SKIP_STARTUP_ONLY_COMMANDS:
         return "debug"
     if command in LIFECYCLE_CLEANUP_COMMANDS:

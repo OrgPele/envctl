@@ -85,6 +85,32 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertIn("pr action failed for Main: boom", printed)
         self.assertIn("pr failed for Main: boom", emitted)
 
+    def test_execute_targeted_action_preserves_multiline_interactive_failure_details(self) -> None:
+        target = _Target(name="Main", root="/tmp/main")
+        printed: list[str] = []
+        emitted: list[str] = []
+        details = "Review failed: Main\n  Output directory\n    /tmp/review\n  Details: analyzer failed"
+
+        code = execute_targeted_action(
+            targets=[target],
+            command_name="review",
+            interactive_command=True,
+            resolve_command=lambda _context: ActionCommandResolution(command=["sh", "-lc", "exit 1"], cwd=Path("/tmp")),
+            build_env=lambda _context: {},
+            process_run=lambda _command, _cwd, _env: _Completed(returncode=1, stderr=details),
+            emit_status=emitted.append,
+            printer=printed.append,
+            interactive_print_failures=True,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(len(printed), 1)
+        self.assertIn("review action failed for Main: Review failed: Main", printed[0])
+        self.assertIn("Output directory", printed[0])
+        self.assertIn("/tmp/review", printed[0])
+        self.assertIn("analyzer failed", printed[0])
+        self.assertTrue(any("review failed for Main: Review failed: Main" in item for item in emitted))
+
     def test_execute_targeted_action_reports_success_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             target = _Target(name="Main", root=tmpdir)

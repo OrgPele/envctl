@@ -45,6 +45,7 @@ def build_manifest(*, generated_at: str) -> dict[str, object]:
             "commit": "python_complete",
             "review": "python_complete",
             "migrate": "python_complete",
+            "install-prompts": "python_complete",
             "list-commands": "python_complete",
             "list-targets": "python_complete",
             "help": "python_complete",

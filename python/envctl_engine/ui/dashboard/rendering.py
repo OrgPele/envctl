@@ -2,7 +2,9 @@ from __future__ import annotations
 
 # pyright: reportUnusedFunction=false
 
+import concurrent.futures
 from datetime import datetime
+import json
 import shutil
 import sys
 import time
@@ -76,6 +78,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         projection=projection,
         configured_service_types=configured_service_types,
     )
+    ordered_projects = sorted(projection)
+    project_prs = _dashboard_project_pr_map(self, state=state, projects=ordered_projects)
     if runs_disabled_dashboard and configured_service_total > 0:
         print(f"{bold}{cyan}Configured Services:{reset}")
         print(
@@ -90,7 +94,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         )
     print(f"{cyan}{separator}{reset}")
     project_colors = [blue, magenta, cyan, green, yellow]
-    for project_index, project in enumerate(sorted(projection)):
+    for project_index, project in enumerate(ordered_projects):
         item = projection.get(project, {})
         if not isinstance(item, dict):
             continue
@@ -100,9 +104,14 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         frontend_service = state.services.get(f"{project} Frontend")
         project_display = self._truncate_text(project, project_name_budget)
         project_color = project_colors[project_index % len(project_colors)]
-        project_pr_url = _dashboard_project_pr_url(self, state=state, project=project)
-        if project_pr_url:
-            print(f"  {bold}{project_color}{project_display}{reset} {dim}PR:{reset} {gray}{project_pr_url}{reset}")
+        project_pr = project_prs.get(project)
+        if project_pr is not None:
+            project_pr_url, project_pr_state = project_pr
+            merged_suffix = f" {dim}(merged){reset}" if project_pr_state == "merged" else ""
+            print(
+                f"  {bold}{project_color}{project_display}{reset} {dim}PR:{reset} "
+                f"{gray}{project_pr_url}{reset}{merged_suffix}"
+            )
         else:
             print(f"  {bold}{project_color}{project_display}{reset}")
         if state.services or "backend" in configured_service_types:
@@ -309,29 +318,31 @@ def _print_dashboard_tests_row(
     print(f"      {color}{icon}{reset} tests: {summary_path} {dim}({timestamp}){reset}")
 
 
-def _dashboard_project_pr_url(self: Any, *, state: RunState, project: str) -> str | None:
-    metadata_url = _dashboard_metadata_pr_url(state=state, project=project)
-    if metadata_url:
-        return metadata_url
+def _dashboard_project_pr(self: Any, *, state: RunState, project: str) -> tuple[str, str] | None:
     if not _dashboard_pr_lookup_enabled(self):
         return None
     project_root = _dashboard_project_root(self, state=state, project=project)
     if project_root is None:
         return None
-    return _dashboard_lookup_pr_url(self, project=project, project_root=project_root)
+    return _dashboard_lookup_pr(self, project=project, project_root=project_root)
 
 
-def _dashboard_metadata_pr_url(*, state: RunState, project: str) -> str | None:
-    links = state.metadata.get("project_pr_links")
-    if not isinstance(links, dict):
-        return None
-    value = links.get(project)
-    if not isinstance(value, str):
-        return None
-    url = value.strip()
-    if not url.lower().startswith(("http://", "https://")):
-        return None
-    return url
+def _dashboard_project_pr_map(self: Any, *, state: RunState, projects: list[str]) -> dict[str, tuple[str, str] | None]:
+    if not projects or not _dashboard_pr_lookup_enabled(self):
+        return {}
+    if len(projects) <= 1:
+        project = projects[0]
+        return {project: _dashboard_project_pr(self, state=state, project=project)}
+
+    results: dict[str, tuple[str, str] | None] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(projects))) as executor:
+        future_map = {
+            executor.submit(_dashboard_project_pr, self, state=state, project=project): project
+            for project in projects
+        }
+        for future in concurrent.futures.as_completed(future_map):
+            results[future_map[future]] = future.result()
+    return results
 
 
 def _dashboard_pr_lookup_enabled(self: Any) -> bool:
@@ -417,7 +428,7 @@ def _dashboard_relative_component_path(project_root: Path, component_path: Path)
     return str(relative)
 
 
-def _dashboard_lookup_pr_url(self: Any, *, project: str, project_root: Path) -> str | None:
+def _dashboard_lookup_pr(self: Any, *, project: str, project_root: Path) -> tuple[str, str] | None:
     if not project_root.exists():
         return None
 
@@ -431,16 +442,8 @@ def _dashboard_lookup_pr_url(self: Any, *, project: str, project_root: Path) -> 
         cache = {}
         setattr(self, "_dashboard_pr_url_cache", cache)
     now = time.monotonic()
-    cache_key = f"{project}|{project_root}"
-    cache_entry = cache.get(cache_key)
-    if isinstance(cache_entry, tuple) and len(cache_entry) == 2:
-        expiry_raw, cached_url = cache_entry
-        if isinstance(expiry_raw, (int, float)) and now <= float(expiry_raw):
-            return str(cached_url) if isinstance(cached_url, str) and cached_url else None
-
     gh_bin = shutil.which("gh")
     if gh_bin is None:
-        cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), None)
         return None
 
     try:
@@ -449,30 +452,75 @@ def _dashboard_lookup_pr_url(self: Any, *, project: str, project_root: Path) -> 
             cwd=project_root,
             timeout=1.5,
         )
+        head_result = run_cmd(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            timeout=1.5,
+        )
     except Exception:
-        cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), None)
         return None
     branch = _first_non_empty_line(getattr(branch_result, "stdout", ""))
+    head_oid = _first_non_empty_line(getattr(head_result, "stdout", ""))
     if int(getattr(branch_result, "returncode", 1)) != 0 or not branch or branch == "HEAD":
-        cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), None)
         return None
+    if int(getattr(head_result, "returncode", 1)) != 0 or not head_oid:
+        return None
+
+    cache_key = f"{project}|{project_root}|{branch}|{head_oid}"
+    cache_entry = cache.get(cache_key)
+    if isinstance(cache_entry, tuple) and len(cache_entry) == 2:
+        expiry_raw, cached_pr = cache_entry
+        if isinstance(expiry_raw, (int, float)) and now <= float(expiry_raw):
+            if isinstance(cached_pr, tuple) and len(cached_pr) == 2:
+                url_raw, state_raw = cached_pr
+                if isinstance(url_raw, str) and isinstance(state_raw, str):
+                    return (url_raw, state_raw)
+            return None
 
     try:
         pr_result = run_cmd(
-            [gh_bin, "pr", "list", "--head", branch, "--state", "all", "--json", "url", "--jq", ".[0].url"],
+            [gh_bin, "pr", "list", "--head", branch, "--state", "all", "--json", "url,state,mergedAt,headRefOid"],
             cwd=project_root,
             timeout=2.5,
         )
     except Exception:
         cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), None)
         return None
-    pr_url = _first_non_empty_line(getattr(pr_result, "stdout", ""))
-    if int(getattr(pr_result, "returncode", 1)) != 0 or not pr_url.lower().startswith(("http://", "https://")):
+    if int(getattr(pr_result, "returncode", 1)) != 0:
         cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), None)
         return None
+    pr_info = _select_dashboard_pr(getattr(pr_result, "stdout", ""), head_oid=head_oid)
+    cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), pr_info)
+    return pr_info
 
-    cache[cache_key] = (now + _dashboard_pr_cache_ttl_seconds(self), pr_url)
-    return pr_url
+
+def _select_dashboard_pr(raw: object, *, head_oid: str) -> tuple[str, str] | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+
+    merged_candidate: tuple[str, str] | None = None
+    normalized_head_oid = head_oid.strip()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "") or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        state = str(item.get("state", "") or "").strip().upper()
+        if state == "OPEN":
+            return (url, "active")
+        if state == "MERGED":
+            merged_at = str(item.get("mergedAt", "") or "").strip()
+            pr_head_oid = str(item.get("headRefOid", "") or "").strip()
+            if merged_at and pr_head_oid and pr_head_oid == normalized_head_oid and merged_candidate is None:
+                merged_candidate = (url, "merged")
+    return merged_candidate
 
 
 def _first_non_empty_line(value: object) -> str:

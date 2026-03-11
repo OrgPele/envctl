@@ -16,6 +16,24 @@ actions_cli = importlib.import_module("envctl_engine.actions.actions_cli")
 
 
 class ActionsCliTests(unittest.TestCase):
+    def test_existing_pr_url_ignores_closed_prs(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            git_root = Path(tmpdir)
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                self.assertIn("--state", args)
+                self.assertIn("open", args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                url = domain.existing_pr_url(git_root, "dev")
+
+        self.assertEqual(url, "")
+
     def test_pr_action_reports_existing_pr_and_skips_create(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -58,7 +76,6 @@ class ActionsCliTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn("PR already exists: https://github.com/acme/supportopia/pull/42", output)
-            self.assertIn("PR summary written:", output)
             self.assertEqual(calls, [])
 
     def test_pr_action_create_path_runs_gh_by_default_when_no_existing_pr(self) -> None:
@@ -108,10 +125,67 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertNotIn("PR already exists:", output)
             self.assertIn("https://github.com/acme/supportopia/pull/99", output)
-            self.assertIn("PR summary written:", output)
             self.assertTrue(
                 any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
             )
+            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertIn("--head", gh_create)
+            self.assertIn("feature/new-demo", gh_create)
+            self.assertIn("--base", gh_create)
+            self.assertIn("main", gh_create)
+
+    def test_pr_action_interactive_mode_does_not_prompt_for_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/no-prompt\n"
+                if args and args[0:2] == ["log", "--oneline"]:
+                    return "abc123 feat: demo\n"
+                if args == ["status", "--porcelain"]:
+                    return ""
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/101\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_ACTION_INTERACTIVE": "1"}, clear=False),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("builtins.input", side_effect=AssertionError("input() should not be called for pr action")),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("https://github.com/acme/supportopia/pull/101", output)
+            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertIn("--head", gh_create)
+            self.assertIn("feature/no-prompt", gh_create)
 
     def test_pr_action_prefers_repo_helper_over_gh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -331,6 +405,103 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse((written_dir / "summary_short.txt").exists())
             self.assertFalse((repo_root / "tree-diffs").exists())
 
+    def test_analyze_action_interactive_mode_does_not_prompt_for_analysis_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "runs" / "run-123" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            sibling_root = repo_root / "trees" / "feature-a" / "2"
+            helper = repo_root / "utils" / "analyze-tree-changes.sh"
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            project_root.mkdir(parents=True, exist_ok=True)
+            sibling_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+            (sibling_root / ".git").write_text("gitdir: /tmp/feature-a-2\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                output_dir_arg = next(arg for arg in command if arg.startswith("output-dir="))
+                output_dir = Path(output_dir_arg.split("=", 1)[1])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "summary.md").write_text("# Summary\n", encoding="utf-8")
+                (output_dir / "all.md").write_text("# Full\n", encoding="utf-8")
+                (output_dir / "summary_short.txt").write_text(
+                    "Tree Changes Analysis Summary\n"
+                    "============================\n"
+                    "Trees analyzed: 1\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="analysis ok\n", stderr="")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_ACTION_RUN_ID": "run-123",
+                        "ENVCTL_ACTION_INTERACTIVE": "1",
+                    },
+                    clear=False,
+                ),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("builtins.input", side_effect=AssertionError("input() should not be called for review action")),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+
+            self.assertEqual(code, 0)
+            self.assertTrue(calls)
+            self.assertIn("trees=1", calls[0])
+
+    def test_commit_action_interactive_mode_does_not_prompt_for_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_ACTION_INTERACTIVE": "1"}, clear=False),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("builtins.input", side_effect=AssertionError("input() should not be called for commit action")),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch(
+                    "envctl_engine.actions.project_action_domain._run_git",
+                    side_effect=lambda _git_root, args: subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="feature/demo\n" if args == ["rev-parse", "--abbrev-ref", "HEAD"] else "",
+                        stderr="",
+                    )
+                    if args == ["rev-parse", "--abbrev-ref", "HEAD"]
+                    else subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="",
+                        stderr="",
+                    )
+                    if args == ["add", "-A"]
+                    else subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="M app.py\n",
+                        stderr="",
+                    )
+                    if args == ["status", "--porcelain"]
+                    else subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected"),
+                ),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 1)
+            self.assertIn("MAIN_TASK.md is missing or empty", buffer.getvalue())
+
     def test_analyze_action_falls_back_when_helper_is_not_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -375,6 +546,54 @@ class ActionsCliTests(unittest.TestCase):
             written_path = next(Path(line.strip()) for line in output.splitlines() if line.strip().endswith(".md"))
             self.assertTrue(written_path.is_file())
             self.assertTrue(written_path.resolve().is_relative_to(runtime_root))
+            self.assertFalse((repo_root / "review").exists())
+            self.assertFalse((repo_root / "tree-diffs").exists())
+            run_mock.assert_not_called()
+
+    def test_analyze_action_for_main_repo_does_not_treat_parent_directory_as_tree_family(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir) / "projects"
+            repo_root = parent / "supportopia"
+            sibling_repo = parent / "envctl"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            helper = repo_root / "utils" / "analyze-tree-changes.sh"
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            repo_root.mkdir(parents=True, exist_ok=True)
+            sibling_repo.mkdir(parents=True, exist_ok=True)
+            (repo_root / ".git").write_text("gitdir: /tmp/supportopia\n", encoding="utf-8")
+            (sibling_repo / ".git").write_text("gitdir: /tmp/envctl\n", encoding="utf-8")
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["diff", "--stat"]:
+                    return " app.py | 2 +-\n"
+                if args == ["status", "--porcelain"]:
+                    return " M app.py\n"
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run") as run_mock,
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_analyze_action(repo_root, repo_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("Review Ready: Main", output)
+            self.assertIn("Summary file", output)
+            self.assertNotIn("No /", output)
             self.assertFalse((repo_root / "review").exists())
             self.assertFalse((repo_root / "tree-diffs").exists())
             run_mock.assert_not_called()

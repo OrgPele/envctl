@@ -39,6 +39,8 @@ envctl_engine = [
   "assets/dependency_compose/*/*.yml",
   "assets/dependency_compose/*/*.yaml",
   "assets/dependency_compose/*/*/*.sql",
+  "runtime/prompt_templates/*.md",
+  "test_output/*.mjs",
 ]
 
 [tool.ruff]
