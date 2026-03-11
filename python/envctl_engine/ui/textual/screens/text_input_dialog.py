@@ -35,6 +35,11 @@ def run_text_input_dialog_textual(
 
     class _DialogTextArea(TextArea):
         async def _on_key(self, event: events.Key) -> None:
+            if event.key == "space":
+                event.stop()
+                event.prevent_default()
+                self.insert(" ")
+                return
             if event.key == "enter" and not self.text:
                 event.stop()
                 event.prevent_default()
