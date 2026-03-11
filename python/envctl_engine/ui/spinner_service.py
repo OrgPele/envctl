@@ -223,6 +223,14 @@ class RichSpinnerOperation:
         if start_immediately:
             self.begin(self._op_id)
 
+    def _clear_current_line(self) -> None:
+        try:
+            if bool(getattr(self._stream, "isatty", lambda: False)()):
+                self._stream.write("\r\033[2K\r")
+                self._stream.flush()
+        except Exception:
+            return
+
     def _emit_lifecycle(self, state: str, message: str | None = None) -> None:
         if not callable(self._emit):
             return
@@ -330,6 +338,7 @@ class RichSpinnerOperation:
                     self._status.stop()
                 except Exception:
                     pass
+                self._clear_current_line()
             if self._started and self._policy.backend == "prompt_toolkit":
                 self._prompt_stop.set()
                 if self._prompt_thread is not None:

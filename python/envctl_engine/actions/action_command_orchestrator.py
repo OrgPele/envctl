@@ -527,6 +527,7 @@ class ActionCommandOrchestrator:
         raw = rt.env.get(env_key)  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
         command_extra_env = dict(extra_env)
+        interactive_pr_action = command_name == "pr" and interactive_command
         stream_review_output = bool(
             command_name == "review"
             and not interactive_command
@@ -597,7 +598,8 @@ class ActionCommandOrchestrator:
             ),
             emit_status=self._emit_status,
             interactive_print_failures=True,
-            emit_success_output=not stream_review_output,
+            emit_success_output=not stream_review_output and not interactive_pr_action,
+            on_success=self._project_action_success_handler(command_name, interactive_command),
         )
 
     def action_replacements(
@@ -654,6 +656,38 @@ class ActionCommandOrchestrator:
         if not text:
             return
         rt.emit("ui.status", message=text)
+
+    def _project_action_success_handler(
+        self,
+        command_name: str,
+        interactive_command: bool,
+    ) -> Callable[[ActionTargetContext, Any], None] | None:
+        if command_name != "pr":
+            return None
+
+        def handle_success(context: ActionTargetContext, completed: Any) -> None:
+            self._clear_dashboard_pr_cache()
+            if not interactive_command:
+                return
+            url = self._first_output_line(getattr(completed, "stdout", ""))
+            if url:
+                self._emit_status(f"PR created: {url}")
+
+        return handle_success
+
+    def _clear_dashboard_pr_cache(self) -> None:
+        runtime_raw = self.runtime.raw_runtime
+        cache = getattr(runtime_raw, "_dashboard_pr_url_cache", None)
+        if isinstance(cache, dict):
+            cache.clear()
+
+    @staticmethod
+    def _first_output_line(output: object) -> str:
+        for raw in str(output or "").splitlines():
+            text = raw.strip()
+            if text:
+                return text
+        return ""
 
     def _colors_enabled(self) -> bool:
         rt_env = getattr(self.runtime, "env", {})

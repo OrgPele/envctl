@@ -11,6 +11,20 @@ from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import RichSpinnerOperation, SpinnerPolicy, resolve_spinner_policy
 
 
+class _TtyStream:
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def write(self, text: str) -> None:
+        self.writes.append(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return True
+
+
 class SpinnerServicePolicyTests(unittest.TestCase):
     def test_spinner_defaults_to_dots_style(self) -> None:
         with patch("envctl_engine.ui.spinner_service._rich_available", return_value=True):
@@ -190,6 +204,68 @@ class SpinnerServicePolicyTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0].style, "bouncingbar")
         self.assertEqual(captured[0].mode, "on")
+
+    def test_rich_spinner_end_clears_current_line_before_success_output(self) -> None:
+        stream = _TtyStream()
+        printed: list[str] = []
+
+        class _StatusStub:
+            def stop(self) -> None:
+                return None
+
+        class _ConsoleStub:
+            def print(self, text: str) -> None:
+                printed.append(text)
+
+        operation = RichSpinnerOperation(
+            message="Running pr...",
+            policy=SpinnerPolicy(
+                mode="on",
+                enabled=True,
+                reason="",
+                backend="rich",
+                min_ms=0,
+                verbose_events=False,
+            ),
+            stream=stream,
+            start_immediately=False,
+        )
+        operation._started = True  # noqa: SLF001
+        operation._status = _StatusStub()  # noqa: SLF001
+        operation._console = _ConsoleStub()  # noqa: SLF001
+        operation.succeed("pr completed")
+        operation.end()
+
+        self.assertTrue(stream.writes)
+        self.assertEqual(stream.writes[0], "\r\033[2K\r")
+        self.assertTrue(any("pr completed" in item for item in printed))
+
+    def test_rich_spinner_end_clears_current_line_even_without_final_state(self) -> None:
+        stream = _TtyStream()
+
+        class _StatusStub:
+            def stop(self) -> None:
+                return None
+
+        operation = RichSpinnerOperation(
+            message="Running test...",
+            policy=SpinnerPolicy(
+                mode="on",
+                enabled=True,
+                reason="",
+                backend="rich",
+                min_ms=0,
+                verbose_events=False,
+            ),
+            stream=stream,
+            start_immediately=False,
+        )
+        operation._started = True  # noqa: SLF001
+        operation._status = _StatusStub()  # noqa: SLF001
+        operation.end()
+
+        self.assertTrue(stream.writes)
+        self.assertEqual(stream.writes[0], "\r\033[2K\r")
 
 
 if __name__ == "__main__":

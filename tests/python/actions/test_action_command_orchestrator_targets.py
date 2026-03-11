@@ -17,6 +17,9 @@ class _RuntimeStub:
     def __init__(self) -> None:
         self.env: dict[str, str] = {}
         self.config = SimpleNamespace(base_dir=Path("/tmp"), raw={})
+        self.process_runner = SimpleNamespace()
+        self._dashboard_pr_url_cache: dict[str, object] = {}
+        self._emitted: list[tuple[str, dict[str, object]]] = []
 
     def _discover_projects(self, *, mode: str):  # noqa: ANN001
         return [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta")]
@@ -33,6 +36,9 @@ class _RuntimeStub:
 
     def _select_project_targets(self, **_kwargs):  # noqa: ANN001
         return TargetSelection(cancelled=True)
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self._emitted.append((event, dict(payload)))
 
 
 class ActionCommandTargetTests(unittest.TestCase):
@@ -96,6 +102,25 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(len(targets), 2)
         flush_pending.assert_not_called()
+
+    def test_pr_success_handler_clears_dashboard_cache_and_emits_created_url_status(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        runtime._dashboard_pr_url_cache = {"stale": ("expires", None)}
+
+        handler = orchestrator._project_action_success_handler("pr", True)  # noqa: SLF001
+        self.assertIsNotNone(handler)
+
+        handler(  # type: ignore[misc]
+            SimpleNamespace(name="Main", root=Path("/tmp"), index=1, total=1, target_obj=SimpleNamespace(name="Main")),
+            SimpleNamespace(stdout="https://github.com/kfiramar/envctl/pull/21\n", stderr="", returncode=0),
+        )
+
+        self.assertEqual(runtime._dashboard_pr_url_cache, {})
+        self.assertIn(
+            ("ui.status", {"message": "PR created: https://github.com/kfiramar/envctl/pull/21"}),
+            runtime._emitted,
+        )
 
 
 if __name__ == "__main__":
