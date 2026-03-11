@@ -35,6 +35,11 @@ def run_text_input_dialog_textual(
 
     class _DialogTextArea(TextArea):
         async def _on_key(self, event: events.Key) -> None:
+            if event.key in {"shift+backspace", "ctrl+h"}:
+                event.stop()
+                event.prevent_default()
+                self.action_delete_left()
+                return
             if event.key == "space":
                 event.stop()
                 event.prevent_default()

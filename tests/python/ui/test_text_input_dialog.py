@@ -27,6 +27,26 @@ class TextInputDialogTests(unittest.IsolatedAsyncioTestCase):
             text_area = app.query_one("#dialog-input")
             self.assertEqual(getattr(text_area, "text", None), "a b")
 
+    async def test_shift_backspace_deletes_like_backspace(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_text_input_dialog_textual(
+            title="Commit Message",
+            help_text="Commit message (leave blank to use changelog).",
+            placeholder="Type a commit message",
+            default_button_label="Use changelog",
+            build_only=True,
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            await pilot.press("b")
+            await pilot.press("shift+backspace")
+            await pilot.pause()
+            text_area = app.query_one("#dialog-input")
+            self.assertEqual(getattr(text_area, "text", None), "a")
+
     async def test_enter_on_empty_text_area_uses_default_action(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
