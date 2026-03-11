@@ -133,6 +133,35 @@ class ActionTargetSupportTests(unittest.TestCase):
             self.assertIn("review action succeeded for Main.", printed)
             self.assertIn("review succeeded for Main", emitted)
 
+    def test_execute_targeted_action_invokes_success_hook_without_printing_success_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = _Target(name="Main", root=tmpdir)
+            printed: list[str] = []
+            emitted: list[str] = []
+            seen: list[tuple[str, str]] = []
+
+            code = execute_targeted_action(
+                targets=[target],
+                command_name="pr",
+                interactive_command=True,
+                resolve_command=lambda _context: ActionCommandResolution(command=["echo", "ok"], cwd=Path(tmpdir)),
+                build_env=lambda _context: {},
+                process_run=lambda _command, _cwd, _env: _Completed(
+                    returncode=0, stdout="https://github.com/acme/supportopia/pull/123\n"
+                ),
+                emit_status=emitted.append,
+                printer=printed.append,
+                emit_success_output=False,
+                on_success=lambda context, completed: seen.append(
+                    (context.name, str(getattr(completed, "stdout", "")).strip())
+                ),
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(printed, [])
+            self.assertEqual(seen, [("Main", "https://github.com/acme/supportopia/pull/123")])
+            self.assertIn("pr succeeded for Main", emitted)
+
 
 if __name__ == "__main__":
     unittest.main()

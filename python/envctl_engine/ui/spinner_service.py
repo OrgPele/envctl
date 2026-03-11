@@ -28,6 +28,10 @@ def _prompt_toolkit_available() -> bool:
     return importlib.util.find_spec("prompt_toolkit") is not None
 
 
+_SPINNER_SUCCESS_SYMBOL = "✓"
+_SPINNER_FAILURE_SYMBOL = "✗"
+
+
 @dataclass(slots=True)
 class SpinnerPolicy:
     mode: str
@@ -223,6 +227,14 @@ class RichSpinnerOperation:
         if start_immediately:
             self.begin(self._op_id)
 
+    def _clear_current_line(self) -> None:
+        try:
+            if bool(getattr(self._stream, "isatty", lambda: False)()):
+                self._stream.write("\r\033[2K\r")
+                self._stream.flush()
+        except Exception:
+            return
+
     def _emit_lifecycle(self, state: str, message: str | None = None) -> None:
         if not callable(self._emit):
             return
@@ -330,6 +342,7 @@ class RichSpinnerOperation:
                     self._status.stop()
                 except Exception:
                     pass
+                self._clear_current_line()
             if self._started and self._policy.backend == "prompt_toolkit":
                 self._prompt_stop.set()
                 if self._prompt_thread is not None:
@@ -343,7 +356,7 @@ class RichSpinnerOperation:
             if self._final_state is not None:
                 ok, message = self._final_state
                 if self._started and self._console is not None:
-                    symbol = "+" if ok else "!"
+                    symbol = _SPINNER_SUCCESS_SYMBOL if ok else _SPINNER_FAILURE_SYMBOL
                     text = f"{symbol} {message}"
                     if not self._no_color:
                         color = "green" if ok else "red"
@@ -353,7 +366,7 @@ class RichSpinnerOperation:
                     except Exception:
                         pass
                 elif self._started and self._policy.backend == "prompt_toolkit":
-                    symbol = "+" if ok else "!"
+                    symbol = _SPINNER_SUCCESS_SYMBOL if ok else _SPINNER_FAILURE_SYMBOL
                     try:
                         if self._prompt_output is not None:
                             self._prompt_output.write_raw(f"{symbol} {message}\n")

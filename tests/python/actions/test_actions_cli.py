@@ -79,14 +79,18 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_pr_action_create_path_runs_gh_by_default_when_no_existing_pr(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
             calls: list[list[str]] = []
+            captured_body: list[str] = []
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/new-demo\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: add bounded pr body\n"
                 if args and args[0:2] == ["log", "--oneline"]:
                     return "abc123 feat: demo\n"
                 if args == ["status", "--porcelain"]:
@@ -102,6 +106,8 @@ class ActionsCliTests(unittest.TestCase):
                 command = [str(token) for token in args]
                 calls.append(command)
                 if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    body_file = Path(command[command.index("--body-file") + 1])
+                    captured_body.append(body_file.read_text(encoding="utf-8"))
                     return subprocess.CompletedProcess(
                         args=command,
                         returncode=0,
@@ -129,10 +135,71 @@ class ActionsCliTests(unittest.TestCase):
                 any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
             )
             gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertNotIn("--fill", gh_create)
+            self.assertIn("--title", gh_create)
+            self.assertIn("feat: add bounded pr body", gh_create)
+            self.assertIn("--body-file", gh_create)
             self.assertIn("--head", gh_create)
             self.assertIn("feature/new-demo", gh_create)
             self.assertIn("--base", gh_create)
             self.assertIn("main", gh_create)
+            self.assertEqual(len(captured_body), 1)
+            self.assertIn("Project: Main", captured_body[0])
+            self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
+
+    def test_pr_action_truncates_large_changelog_to_recent_content(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            changelog = repo_root / "docs" / "changelog" / "main_changelog.md"
+            changelog.parent.mkdir(parents=True, exist_ok=True)
+            changelog.write_text(
+                "OLD ENTRY\n" * 10_000 + "\nLATEST CHANGESET\nLATEST DETAIL LINE\n",
+                encoding="utf-8",
+            )
+            captured_body: list[str] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/huge-pr\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: huge changelog\n"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    body_file = Path(command[command.index("--body-file") + 1])
+                    captured_body.append(body_file.read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/100\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(captured_body), 1)
+            self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
+            self.assertIn("[truncated to most recent changelog content]", captured_body[0])
+            self.assertIn("LATEST CHANGESET", captured_body[0])
+            self.assertNotIn("--fill", captured_body[0])
 
     def test_pr_action_interactive_mode_does_not_prompt_for_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -143,6 +210,8 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/no-prompt\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: promptless pr\n"
                 if args and args[0:2] == ["log", "--oneline"]:
                     return "abc123 feat: demo\n"
                 if args == ["status", "--porcelain"]:
@@ -184,6 +253,7 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("https://github.com/acme/supportopia/pull/101", output)
             gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            self.assertNotIn("--fill", gh_create)
             self.assertIn("--head", gh_create)
             self.assertIn("feature/no-prompt", gh_create)
 
@@ -200,6 +270,8 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/helper-demo\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: helper demo\n"
                 if args and args[0:2] == ["log", "--oneline"]:
                     return "abc123 feat: helper demo\n"
                 if args == ["status", "--porcelain"]:

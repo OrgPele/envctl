@@ -14,6 +14,9 @@ from typing import Mapping
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
 
+PR_BODY_MAX_CHARS = 48_000
+PR_TITLE_MAX_CHARS = 240
+
 
 @dataclass(frozen=True, slots=True)
 class ActionProjectContext:
@@ -113,14 +116,23 @@ def run_pr_action(context: ActionProjectContext) -> int:
     if gh_path is None:
         print("gh is required for pr action when utils/create-pr.sh is unavailable")
         return 1
-    args = [gh_path, "pr", "create", "--fill", "--head", head_branch]
+    title = _pr_title(context, git_root, head_branch)
+    body = _pr_body(context, git_root, head_branch, base_branch)
+    body_file = _write_pr_body_file(body)
+    args = [gh_path, "pr", "create", "--title", title, "--body-file", str(body_file), "--head", head_branch]
     if base_branch:
         args.extend(["--base", base_branch])
-    created = subprocess.run(args, cwd=str(git_root), text=True, capture_output=True, check=False)
-    _print_process_output(created)
-    if created.returncode != 0:
-        return 1
-    return 0
+    try:
+        created = subprocess.run(args, cwd=str(git_root), text=True, capture_output=True, check=False)
+        _print_process_output(created)
+        if created.returncode != 0:
+            return 1
+        return 0
+    finally:
+        try:
+            body_file.unlink()
+        except OSError:
+            pass
 
 
 def run_review_action(context: ActionProjectContext) -> int:
@@ -258,6 +270,98 @@ def _resolve_analyze_mode(context: ActionProjectContext) -> str:
     if explicit in {"single", "grouped"}:
         return explicit
     return "single"
+
+
+def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
+    subject = _git_output(git_root, ["log", "-1", "--pretty=%s"]).strip()
+    title = subject or f"{context.project_name}: {head_branch}"
+    title = " ".join(title.split())
+    return title[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
+
+
+def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, base_branch: str) -> str:
+    sections: list[str] = []
+    metadata_lines = [
+        f"Project: {context.project_name}",
+        f"Head: {head_branch}",
+    ]
+    if base_branch:
+        metadata_lines.append(f"Base: {base_branch}")
+    sections.append("\n".join(metadata_lines))
+
+    changelog = _tree_changelog_path(context)
+    if changelog is not None:
+        excerpt = _recent_text_excerpt(_read_text(changelog), max_chars=PR_BODY_MAX_CHARS - 512)
+        if excerpt:
+            sections.append(f"## Changelog\n\n{excerpt}")
+    else:
+        commits = _pr_commit_summary(git_root, head_branch=head_branch, base_branch=base_branch)
+        if commits:
+            sections.append(f"## Commits\n\n{commits}")
+        diff_stat = _pr_diff_stat(git_root, head_branch=head_branch, base_branch=base_branch)
+        if diff_stat:
+            sections.append(f"## Diff Stat\n\n{diff_stat}")
+
+    body = "\n\n".join(section.strip() for section in sections if section.strip()).strip()
+    if not body:
+        body = f"Project: {context.project_name}\nHead: {head_branch}"
+        if base_branch:
+            body += f"\nBase: {base_branch}"
+    return _truncate_pr_body(body, max_chars=PR_BODY_MAX_CHARS)
+
+
+def _pr_commit_summary(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    range_spec = f"{base_branch}..{head_branch}" if base_branch else head_branch
+    commits = _git_output(git_root, ["log", "--no-merges", "--format=- %h %s", range_spec]).strip()
+    return _truncate_pr_body(commits, max_chars=12_000) if commits else ""
+
+
+def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    diff_args = ["diff", "--stat"]
+    if base_branch:
+        diff_args.append(f"{base_branch}...{head_branch}")
+    diff_stat = _git_output(git_root, diff_args).strip()
+    return _truncate_pr_body(diff_stat, max_chars=8_000) if diff_stat else ""
+
+
+def _recent_text_excerpt(text: str, *, max_chars: int) -> str:
+    cleaned = _normalize_text_block(text)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    notice = "[truncated to most recent changelog content]\n\n"
+    tail_limit = max(0, max_chars - len(notice))
+    tail = cleaned[-tail_limit:] if tail_limit else ""
+    if "\n" in tail:
+        tail = tail.split("\n", 1)[1]
+    return f"{notice}{tail}".strip()
+
+
+def _truncate_pr_body(text: str, *, max_chars: int) -> str:
+    cleaned = _normalize_text_block(text)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    notice = "\n\n[truncated]"
+    keep = max(0, max_chars - len(notice))
+    return f"{cleaned[:keep].rstrip()}{notice}".strip()
+
+
+def _normalize_text_block(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    lines = [line.rstrip() for line in normalized.splitlines()]
+    return "\n".join(lines).strip()
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _write_pr_body_file(body: str) -> Path:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".md") as handle:
+        handle.write(body)
+        return Path(handle.name)
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
