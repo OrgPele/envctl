@@ -92,13 +92,4 @@ Project docs:
 - Later, run `envctl config` to reopen the wizard and edit it safely.
 - [`docs/reference/.envctl.example`](docs/reference/.envctl.example) is the reference file for managed keys and defaults, not the primary onboarding flow.
 
-Common settings:
-
-- `ENVCTL_DEFAULT_MODE` controls the default mode when no mode flag is passed (`main` or `trees`, default: `main`).
-- `ENVCTL_PLANNING_DIR` controls where plan files are read from (default: `todo/plans`).
-- Per-mode toggles control whether backend/frontend/dependencies are managed in `main` and `trees`.
-- `envctl` now runs through the Python runtime path by default and in supported configurations.
-
 ---
-
-`envctl` is a development control plane for running, testing, and comparing implementations at speed.
