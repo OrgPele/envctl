@@ -66,6 +66,7 @@ def debug_pack(runtime: Any, route: Any) -> int:
         print(str(exc))
         return 1
 
+    print("bundle:")
     print(str(bundle_path))
     runtime._last_debug_bundle_path = str(bundle_path)
     try:
@@ -151,12 +152,14 @@ def debug_doctor_snapshot_text(runtime: Any) -> str:
 def debug_last(runtime: Any, route: object) -> int:
     _ = route
     if runtime._last_debug_bundle_path:
+        print("bundle:")
         print(runtime._last_debug_bundle_path)
         return 0
     latest = runtime.runtime_root / "debug" / "latest_bundle"
     if latest.is_file():
         payload = latest.read_text(encoding="utf-8").strip()
         if payload:
+            print("bundle:")
             print(payload)
             return 0
     print("No debug bundle has been created yet.")
@@ -181,7 +184,8 @@ def debug_report(runtime: Any, route: object) -> int:
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc))
         return 1
-    print(f"bundle: {bundle_path}")
+    print("bundle:")
+    print(str(bundle_path))
     session_id_value = summary.get("session_id")
     session_id = session_id_value if isinstance(session_id_value, str) else ""
     session_id = session_id.strip() or "unknown"

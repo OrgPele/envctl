@@ -665,6 +665,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertEqual(runtime.text_input_prompts[0]["title"], "Commit Message")
         self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use changelog")
@@ -699,6 +700,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
@@ -731,6 +733,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
         self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
@@ -767,6 +770,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
@@ -1143,7 +1147,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
     def test_interactive_test_failure_does_not_print_generic_command_failed_banner(self) -> None:
         runtime = _RuntimeStub()
         runtime.dispatch_code = 1
-        runtime.next_selection = TargetSelection(project_names=["Main"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -1162,6 +1165,25 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
+        def failing_dispatch(route: Route) -> int:
+            runtime.last_dispatched_route = route
+            runtime._latest_state = RunState(
+                run_id="run-1",
+                mode="main",
+                services=state.services,
+                metadata={
+                    "project_test_summaries": {
+                        "Main": {
+                            "summary_path": "/tmp/runtime/test-results/run_1/Main/failed_tests_summary.txt",
+                            "status": "failed",
+                        }
+                    }
+                },
+            )
+            return 1
+
+        runtime.dispatch = failing_dispatch  # type: ignore[assignment]
+
         out = StringIO()
         with redirect_stdout(out):
             should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
@@ -1169,6 +1191,67 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertNotIn("Command failed (exit 1).", out.getvalue())
+        self.assertIn(
+            "Test failure summary for Main:\n/tmp/runtime/test-results/run_1/Main/failed_tests_summary.txt",
+            out.getvalue(),
+        )
+
+    def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.dispatch_code = 1
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+
+        def failing_dispatch(route: Route) -> int:
+            runtime.last_dispatched_route = route
+            runtime._latest_state = RunState(
+                run_id="run-1",
+                mode="main",
+                services=state.services,
+                metadata={
+                    "project_action_reports": {
+                        "Main": {
+                            "migrate": {
+                                "status": "failed",
+                                "summary": "alembic.util.exc.CommandError: migration failed\nsecond line",
+                                "report_path": "/tmp/runtime/Main_migrate.txt",
+                            }
+                        }
+                    }
+                },
+            )
+            return 1
+
+        runtime.dispatch = failing_dispatch  # type: ignore[assignment]
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("m", state, runtime)
+
+        rendered = out.getvalue()
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertIn("migrate failed for Main: alembic.util.exc.CommandError: migration failed", rendered)
+        self.assertIn(
+            "migrate failure log for Main:\n/tmp/runtime/Main_migrate.txt",
+            rendered,
+        )
+        self.assertNotIn("Command failed (exit 1).", rendered)
 
 
 if __name__ == "__main__":

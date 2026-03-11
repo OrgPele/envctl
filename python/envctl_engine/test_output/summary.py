@@ -147,7 +147,8 @@ class TestSummaryFormatter:
         print(f"  {coverage_color}{coverage:.1f}%{self.colors.NC}")
 
         if result.coverage_path:
-            print(f"  {self.colors.GRAY}Report: {result.coverage_path}{self.colors.NC}")
+            print(f"  {self.colors.GRAY}Report:{self.colors.NC}")
+            print(f"  {result.coverage_path}")
 
     def _group_by_error(self, result: TestResult) -> dict[str, list[str]]:
         """Group failed tests by error message.

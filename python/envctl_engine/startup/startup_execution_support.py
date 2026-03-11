@@ -695,8 +695,8 @@ def start_project_services(
 
     run_logs_dir = rt._run_dir_path(run_id)
     safe_project_name = context.name.replace("/", "_").replace(" ", "_")
-    backend_log_path = str(run_logs_dir / f"{safe_project_name}_backend.log")
-    frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.log")
+    backend_log_path = str(run_logs_dir / f"{safe_project_name}_backend.txt")
+    frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.txt")
     project_env_internal_builder = getattr(rt, "_project_service_env_internal", None)
     if callable(project_env_internal_builder):
         project_env_internal = project_env_internal_builder(context, requirements=requirements, route=route)

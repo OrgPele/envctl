@@ -85,6 +85,25 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertIn("pr action failed for Main: boom", printed)
         self.assertIn("pr failed for Main: boom", emitted)
 
+    def test_execute_targeted_action_reports_combined_failure_output_to_failure_hook(self) -> None:
+        target = _Target(name="Main", root="/tmp/main")
+        captured: list[str] = []
+
+        code = execute_targeted_action(
+            targets=[target],
+            command_name="migrate",
+            interactive_command=True,
+            resolve_command=lambda _context: ActionCommandResolution(command=["sh", "-lc", "exit 1"], cwd=Path("/tmp")),
+            build_env=lambda _context: {},
+            process_run=lambda _command, _cwd, _env: _Completed(returncode=1, stdout="stdout detail", stderr="stderr detail"),
+            emit_status=lambda _message: None,
+            interactive_print_failures=False,
+            on_failure=lambda _context, output: captured.append(output),
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(captured, ["stderr detail\n\nstdout:\nstdout detail"])
+
     def test_execute_targeted_action_preserves_multiline_interactive_failure_details(self) -> None:
         target = _Target(name="Main", root="/tmp/main")
         printed: list[str] = []

@@ -72,7 +72,8 @@ def _run_headless_config_command(runtime: Any, route: object) -> int:
     if bool(route.flags.get("json")):
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(f"Saved startup config: {save_result.path}")
+        print("Saved startup config:")
+        print(str(save_result.path))
         print("Config saved. Restart required for running services to adopt changes.")
         if save_result.ignore_warning:
             print(save_result.ignore_warning)

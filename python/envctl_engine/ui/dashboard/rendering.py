@@ -209,7 +209,8 @@ def _print_dashboard_service_row(
     )
     log_path = getattr(service, "log_path", None)
     if isinstance(log_path, str) and log_path.strip():
-        print(f"      {dim}log: {log_path}{reset}")
+        print(f"      {dim}log:{reset}")
+        print(f"      {log_path}")
 
     requested = getattr(service, "requested_port", None)
     actual = getattr(service, "actual_port", None)
@@ -315,7 +316,8 @@ def _print_dashboard_tests_row(
     icon = "✓" if passed else "✗"
     color = ok_color if passed else bad_color
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
-    print(f"      {color}{icon}{reset} tests: {summary_path} {dim}({timestamp}){reset}")
+    print(f"      {color}{icon}{reset} tests: {dim}({timestamp}){reset}")
+    print(f"      {summary_path}")
 
 
 def _dashboard_project_pr(self: Any, *, state: RunState, project: str) -> tuple[str, str] | None:

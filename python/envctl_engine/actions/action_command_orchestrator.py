@@ -461,6 +461,8 @@ class ActionCommandOrchestrator:
             ),
             emit_status=self._emit_status,
             interactive_print_failures=False,
+            on_success=self._project_action_success_handler("migrate", route.mode, interactive_command),
+            on_failure=self._project_action_failure_handler("migrate", route.mode),
         )
 
     def _no_target_selected_message(self, route: Route) -> str:
@@ -597,9 +599,10 @@ class ActionCommandOrchestrator:
                 )
             ),
             emit_status=self._emit_status,
-            interactive_print_failures=True,
+            interactive_print_failures=not interactive_command,
             emit_success_output=not stream_review_output and not interactive_pr_action,
-            on_success=self._project_action_success_handler(command_name, interactive_command),
+            on_success=self._project_action_success_handler(command_name, route.mode, interactive_command),
+            on_failure=self._project_action_failure_handler(command_name, route.mode),
         )
 
     def action_replacements(
@@ -660,20 +663,98 @@ class ActionCommandOrchestrator:
     def _project_action_success_handler(
         self,
         command_name: str,
+        mode: str,
         interactive_command: bool,
     ) -> Callable[[ActionTargetContext, Any], None] | None:
-        if command_name != "pr":
-            return None
-
         def handle_success(context: ActionTargetContext, completed: Any) -> None:
             self._clear_dashboard_pr_cache()
-            if not interactive_command:
+            self._persist_project_action_result(
+                command_name=command_name,
+                mode=mode,
+                project_name=context.name,
+                status="success",
+                error_output="",
+            )
+            if command_name != "pr" or not interactive_command:
                 return
             url = self._first_output_line(getattr(completed, "stdout", ""))
             if url:
                 self._emit_status(f"PR created: {url}")
 
         return handle_success
+
+    def _project_action_failure_handler(
+        self,
+        command_name: str,
+        mode: str,
+    ) -> Callable[[ActionTargetContext, str], None]:
+        def handle_failure(context: ActionTargetContext, error_output: str) -> None:
+            self._persist_project_action_result(
+                command_name=command_name,
+                mode=mode,
+                project_name=context.name,
+                status="failed",
+                error_output=error_output,
+            )
+
+        return handle_failure
+
+    def _persist_project_action_result(
+        self,
+        *,
+        command_name: str,
+        mode: str,
+        project_name: str,
+        status: str,
+        error_output: str,
+    ) -> None:
+        rt = self.runtime
+        state = rt.load_existing_state(mode=mode)
+        if state is None:
+            return
+        metadata_raw = state.metadata.get("project_action_reports")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        project_raw = metadata.get(project_name)
+        project_metadata = dict(project_raw) if isinstance(project_raw, dict) else {}
+        entry: dict[str, object] = {
+            "status": status,
+            "updated_at": datetime.now(tz=UTC).isoformat(),
+        }
+        if status == "failed":
+            clean_output = strip_ansi(str(error_output or "")).strip()
+            summary_lines = self._format_summary_error_lines(clean_output)
+            summary_text = "\n".join(summary_lines).strip() or "Command failed."
+            report_path = self._write_project_action_failure_report(
+                run_id=state.run_id,
+                project_name=project_name,
+                command_name=command_name,
+                output=clean_output,
+            )
+            entry["summary"] = summary_text
+            entry["report_path"] = str(report_path)
+        project_metadata[command_name] = entry
+        metadata[project_name] = project_metadata
+        state.metadata["project_action_reports"] = metadata
+        rt.state_repository.save_resume_state(
+            state=state,
+            emit=rt.emit,
+            runtime_map_builder=build_runtime_map,
+        )
+
+    def _write_project_action_failure_report(
+        self,
+        *,
+        run_id: str,
+        project_name: str,
+        command_name: str,
+        output: str,
+    ) -> Path:
+        results_root = self.runtime.state_repository.run_dir_path(run_id)
+        results_root.mkdir(parents=True, exist_ok=True)
+        safe_project = project_name.replace(" ", "_")
+        report_path = results_root / f"{safe_project}_{command_name}.txt"
+        report_path.write_text((output or "Command failed.").rstrip() + "\n", encoding="utf-8")
+        return report_path
 
     def _clear_dashboard_pr_cache(self) -> None:
         runtime_raw = self.runtime.raw_runtime
