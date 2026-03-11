@@ -12,7 +12,7 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 ```
 
-Use this when you want envctl to install the built-in `implement_tdd` preset into your user-local AI CLI directories.
+Use this when you want envctl to install the built-in `implement_task` preset into your user-local AI CLI directories.
 
 Current targets:
 

@@ -39,18 +39,18 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["command"], "install-prompts")
-            self.assertEqual(payload["preset"], "implement_tdd")
+            self.assertEqual(payload["preset"], "implement_task")
             self.assertTrue(payload["dry_run"])
             self.assertEqual([item["cli"] for item in payload["results"]], ["codex", "claude", "opencode"])
             self.assertTrue(all(item["status"] == "planned" for item in payload["results"]))
-            self.assertFalse((Path(tmpdir) / ".codex" / "prompts" / "implement_tdd.md").exists())
-            self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_tdd.md").exists())
-            self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_tdd.md").exists())
+            self.assertFalse((Path(tmpdir) / ".codex" / "prompts" / "implement_task.md").exists())
+            self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
+            self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
     def test_install_prompts_overwrites_existing_file_with_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_tdd.md"
+            target = home / ".codex" / "prompts" / "implement_task.md"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -66,12 +66,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["results"][0]["status"], "overwritten")
-            backup_path = home / ".codex" / "prompts" / "implement_tdd.bak-20260310-150000.md"
+            backup_path = home / ".codex" / "prompts" / "implement_task.bak-20260310-150000.md"
             self.assertEqual(payload["results"][0]["backup_path"], str(backup_path))
             self.assertEqual(backup_path.read_text(encoding="utf-8"), "old prompt\n")
             written = target.read_text(encoding="utf-8")
-            self.assertIn("description: Implement MAIN_TASK.md using strict TDD", written)
-            self.assertIn("argument-hint:", written)
+            self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
             self.assertIn("Before any implementation work, run `git add .`", written)
 
     def test_install_prompts_reports_partial_failure_for_invalid_cli_target(self) -> None:
@@ -124,31 +123,32 @@ class PromptInstallSupportTests(unittest.TestCase):
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["results"][0]["status"], "failed")
             self.assertIn("Unsupported preset", payload["results"][0]["message"])
-            self.assertIn("implement_tdd", payload["results"][0]["message"])
+            self.assertIn("implement_task", payload["results"][0]["message"])
 
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
-        self.assertIn("implement_tdd", _available_presets())
+        self.assertIn("implement_task", _available_presets())
+        self.assertIn("review_task_imp", _available_presets())
+        self.assertIn("continue_task", _available_presets())
+        self.assertIn("merge_trees_into_dev", _available_presets())
+        self.assertIn("create_plan", _available_presets())
 
     def test_renderers_produce_expected_target_shapes(self) -> None:
-        template = _load_template("implement_tdd")
+        template = _load_template("implement_task")
         codex = _render_codex_template(template)
         claude = _render_claude_template(template)
         opencode = _render_opencode_template(template)
 
-        self.assertEqual(template.name, "implement_tdd")
-        self.assertEqual(template.claude_title, "Implement MAIN_TASK.md using strict TDD")
-        self.assertEqual(template.opencode_tools, {"bash": True, "edit": True, "write": True})
+        self.assertEqual(template.name, "implement_task")
+        self.assertTrue(codex.startswith("You are implementing real code, end-to-end."))
+        self.assertIn("Authoritative spec file: MAIN_TASK.md.", codex)
+        self.assertIn("write that content into `MAIN_TASK.md` first", codex)
+        self.assertEqual(claude, codex)
+        self.assertEqual(opencode, codex)
 
-        self.assertTrue(codex.startswith("---\ndescription: "))
-        self.assertIn("argument-hint:", codex)
-        self.assertIn("Authoritative spec file: $ARGUMENTS", codex)
-        self.assertTrue(claude.startswith("# Implement MAIN_TASK.md using strict TDD"))
-        self.assertIn("Analyze the following: $ARGUMENTS", claude)
-        self.assertNotIn("agent: Sisyphus", claude)
-        self.assertTrue(opencode.startswith("---\ndescription: "))
-        self.assertIn("agent: Sisyphus", opencode)
-        self.assertIn("model: openai/gpt-5.2-codex", opencode)
-        self.assertIn("tools:", opencode)
+        merge_prompt = _load_template("merge_trees_into_dev")
+        self.assertEqual(merge_prompt.name, "merge_trees_into_dev")
+        self.assertIn("Read `MAIN_TASK.md` from branch A and branch B separately.", merge_prompt.body)
+        self.assertIn("first merge branch A into `dev`", merge_prompt.body)
 
 
 if __name__ == "__main__":

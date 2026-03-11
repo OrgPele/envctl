@@ -73,10 +73,10 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["config"], env={})
         self.assertEqual(route.command, "config")
 
-        route = parse_route(["install-prompts", "--cli", "codex,claude", "--preset", "implement_tdd", "--dry-run"], env={})
+        route = parse_route(["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={})
         self.assertEqual(route.command, "install-prompts")
         self.assertEqual(route.flags.get("cli"), "codex,claude")
-        self.assertEqual(route.flags.get("preset"), "implement_tdd")
+        self.assertEqual(route.flags.get("preset"), "implement_task")
         self.assertTrue(route.flags.get("dry_run"))
 
         route = parse_route(["health"], env={})

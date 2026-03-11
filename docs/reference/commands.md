@@ -63,7 +63,12 @@ envctl install-prompts --cli all
 Behavior:
 
 - installs envctl-managed prompt/command files into user-local AI CLI directories
-- v1 supports `implement_tdd` only
+- built-in presets:
+  - `implement_task`
+  - `review_task_imp`
+  - `continue_task`
+  - `merge_trees_into_dev`
+  - `create_plan`
 - target roots are user-local only:
   - Codex: `~/.codex/prompts`
   - Claude Code: `~/.claude/commands`
