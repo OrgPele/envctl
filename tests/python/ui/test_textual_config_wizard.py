@@ -6,10 +6,11 @@ import re
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import LocalConfigState
+from envctl_engine.config.persistence import ManagedConfigValues
+from envctl_engine.config import PortDefaults, StartupProfile
 from envctl_engine.ui.textual.screens.config_wizard import (
-    _ADVANCED_PROFILE_FIELDS,
+    _COMPONENT_FIELDS,
     _PORT_FIELDS,
     _port_input_id,
     run_config_wizard_textual,
@@ -20,22 +21,18 @@ class ConfigWizardIdTests(unittest.TestCase):
     def test_port_input_ids_are_valid_textual_identifiers(self) -> None:
         pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
         identifiers = [_port_input_id(field_name) for field_name, _ in _PORT_FIELDS]
-
         self.assertEqual(len(identifiers), len(set(identifiers)))
         self.assertTrue(all(pattern.fullmatch(identifier) for identifier in identifiers))
-        self.assertIn(_port_input_id("dependency::postgres::primary"), identifiers)
+        self.assertIn(_port_input_id("db_port_base"), identifiers)
 
     def test_port_input_id_preserves_simple_fields(self) -> None:
         self.assertEqual(_port_input_id("backend_port_base"), "port-backend_port_base")
-        self.assertEqual(_port_input_id("dependency::postgres::primary"), "port-dependency-postgres-primary")
+        self.assertEqual(_port_input_id("db_port_base"), "port-db_port_base")
 
 
 class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
-    async def test_wizard_builds_with_dependency_port_fields(self) -> None:
-        if importlib.util.find_spec("textual") is None:
-            self.skipTest("textual is not installed")
-
-        local_state = LocalConfigState(
+    def _local_state(self) -> LocalConfigState:
+        return LocalConfigState(
             base_dir=REPO_ROOT,
             config_file_path=REPO_ROOT / ".envctl",
             config_file_exists=False,
@@ -46,162 +43,237 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
             parsed_values={},
             file_text="",
         )
-        app = run_config_wizard_textual(local_state=local_state, build_only=True)
+
+    async def test_wizard_builds_with_canonical_port_fields(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
 
         async with app.run_test() as pilot:
             await pilot.pause()
-            postgres_input = app.query_one(f"#{_port_input_id('dependency::postgres::primary')}")
-            redis_input = app.query_one(f"#{_port_input_id('dependency::redis::primary')}")
-
-            self.assertEqual(getattr(postgres_input, "value", None), "5432")
+            db_input = app.query_one(f"#{_port_input_id('db_port_base')}")
+            redis_input = app.query_one(f"#{_port_input_id('redis_port_base')}")
+            self.assertEqual(getattr(db_input, "value", None), "5432")
             self.assertEqual(getattr(redis_input, "value", None), "6379")
             app.exit(None)
 
-    async def test_enter_advances_from_wizard_type_screen_with_list_focus(self) -> None:
+    async def test_enter_advances_from_default_mode_without_toggling_row(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
 
-        local_state = LocalConfigState(
-            base_dir=REPO_ROOT,
-            config_file_path=REPO_ROOT / ".envctl",
-            config_file_exists=False,
-            config_source="defaults",
-            active_source_path=None,
-            legacy_source_path=None,
-            explicit_path=None,
-            parsed_values={},
-            file_text="",
-        )
-        app = run_config_wizard_textual(local_state=local_state, build_only=True)
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
 
         async with app.run_test() as pilot:
-            await pilot.press("enter")
-            await pilot.pause()
-            self.assertEqual(app._current_step(), "wizard_type")  # noqa: SLF001
-
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app._current_step(), "default_mode")  # noqa: SLF001
-            app.exit(None)
-
-    async def test_enter_commits_highlighted_wizard_type_before_advancing(self) -> None:
-        if importlib.util.find_spec("textual") is None:
-            self.skipTest("textual is not installed")
-
-        local_state = LocalConfigState(
-            base_dir=REPO_ROOT,
-            config_file_path=REPO_ROOT / ".envctl",
-            config_file_exists=False,
-            config_source="defaults",
-            active_source_path=None,
-            legacy_source_path=None,
-            explicit_path=None,
-            parsed_values={},
-            file_text="",
-        )
-        app = run_config_wizard_textual(local_state=local_state, build_only=True)
-
-        async with app.run_test() as pilot:
-            await pilot.press("enter")
-            await pilot.pause()
             await pilot.press("down")
             await pilot.pause()
+            self.assertEqual(app.values.default_mode, "trees")  # noqa: SLF001
             await pilot.press("enter")
             await pilot.pause()
-            self.assertEqual(app._wizard_type, "advanced")  # noqa: SLF001
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            self.assertEqual(app.values.default_mode, "trees")  # noqa: SLF001
+            app.exit(None)
+
+    async def test_left_and_right_arrows_navigate_steps(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            await pilot.press("left")
+            await pilot.pause()
             self.assertEqual(app._current_step(), "default_mode")  # noqa: SLF001
-            self.assertEqual(
-                app._steps,
-                [
-                    "welcome",
-                    "wizard_type",
-                    "default_mode",
-                    "startup_modes",
-                    "main_profile",
-                    "trees_profile",
-                    "directories",
-                    "ports",
-                    "review",
-                ],
-            )  # noqa: SLF001
             app.exit(None)
 
-    async def test_advanced_startup_step_is_separate_from_profile_settings(self) -> None:
+    async def test_components_show_services_and_dependencies_together(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
 
-        local_state = LocalConfigState(
-            base_dir=REPO_ROOT,
-            config_file_path=REPO_ROOT / ".envctl",
-            config_file_exists=False,
-            config_source="defaults",
-            active_source_path=None,
-            legacy_source_path=None,
-            explicit_path=None,
-            parsed_values={},
-            file_text="",
-        )
-        app = run_config_wizard_textual(local_state=local_state, build_only=True, default_wizard_type="advanced")
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
 
         async with app.run_test() as pilot:
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press("enter")
+            await pilot.press("right")
             await pilot.pause()
-            await pilot.press("enter")
-            await pilot.pause()
-
-            self.assertEqual(app._current_step(), "startup_modes")  # noqa: SLF001
-            startup_labels = [label.render().plain for label in app.query("#config-list Label")]
-            self.assertEqual(startup_labels, ["● Main: Enabled for envctl runs", "● Trees: Enabled for envctl runs"])
-            startup_rows = list(app.query("#config-list ListItem"))
-            self.assertIn("-highlight", startup_rows[0].classes)
-
-            await pilot.press("enter")
-            await pilot.pause()
-            self.assertEqual(app._current_step(), "main_profile")  # noqa: SLF001
-            profile_labels = [label.render().plain for label in app.query("#config-list Label")]
-            self.assertNotIn("● Enabled for envctl runs", profile_labels)
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            labels = [label.render().plain for label in app.query("#config-list Label")]
+            self.assertIn("Services", labels)
+            self.assertIn("● Backend (Main + Trees)", labels)
+            self.assertIn("● Frontend (Main + Trees)", labels)
+            self.assertIn("Dependencies", labels)
+            self.assertIn("○ Postgres (Main + Trees)", labels)
+            headers = [item for item in app.query("#config-list ListItem") if "config-section-header" in item.classes]
+            self.assertEqual(len(headers), 2)
             app.exit(None)
 
-    async def test_profile_step_focuses_first_selected_row_on_entry(self) -> None:
+    async def test_components_is_second_step_after_default_mode(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
 
-        local_state = LocalConfigState(
-            base_dir=REPO_ROOT,
-            config_file_path=REPO_ROOT / ".envctl",
-            config_file_exists=False,
-            config_source="defaults",
-            active_source_path=None,
-            legacy_source_path=None,
-            explicit_path=None,
-            parsed_values={},
-            file_text="",
-        )
-        app = run_config_wizard_textual(local_state=local_state, build_only=True, default_wizard_type="advanced")
-        app.values.main_profile.backend_enable = False  # noqa: SLF001
-        app.values.main_profile.frontend_enable = False  # noqa: SLF001
-        app.values.main_profile.postgres_enable = True  # noqa: SLF001
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
 
         async with app.run_test() as pilot:
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press("enter")
+            await pilot.press("right")
             await pilot.pause()
-            await pilot.press("enter")
-            await pilot.pause()
-            await pilot.press("enter")
-            await pilot.pause()
-
-            self.assertEqual(app._current_step(), "main_profile")  # noqa: SLF001
-            list_view = app.query_one("#config-list")
-            postgres_index = next(
-                index for index, (field_name, _label) in enumerate(_ADVANCED_PROFILE_FIELDS) if field_name == "postgres"
-            )
-            self.assertEqual(list_view.index, postgres_index)
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
             app.exit(None)
 
+    async def test_space_toggles_service_rows_and_enter_only_advances(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
 
-if __name__ == "__main__":
-    unittest.main()
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertTrue(app.values.main_profile.backend_enable)  # noqa: SLF001
+            self.assertTrue(app.values.trees_profile.backend_enable)  # noqa: SLF001
+            await pilot.press("space")
+            await pilot.pause()
+            self.assertFalse(app.values.main_profile.backend_enable)  # noqa: SLF001
+            self.assertFalse(app.values.trees_profile.backend_enable)  # noqa: SLF001
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
+            self.assertFalse(app.values.main_profile.backend_enable)  # noqa: SLF001
+            self.assertFalse(app.values.trees_profile.backend_enable)  # noqa: SLF001
+            app.exit(None)
+
+    async def test_backend_only_projects_show_service_startup_step_after_components(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        initial_values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(True, True, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+        )
+        app = run_config_wizard_textual(
+            local_state=self._local_state(),
+            initial_values=initial_values,
+            build_only=True,
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "service_startup")  # noqa: SLF001
+            labels = [label.render().plain for label in app.query("#config-list Label")]
+            self.assertIn("● Main - start this service with envctl", labels)
+            self.assertIn("● Trees - start this service with envctl", labels)
+            app.exit(None)
+
+    async def test_components_split_focused_row_into_main_and_trees(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            await pilot.press("d")
+            await pilot.pause()
+            labels = [label.render().plain for label in app.query("#config-list Label")]
+            self.assertIn("○ Main - Postgres", labels)
+            self.assertIn("○ Trees - Postgres", labels)
+            self.assertNotIn("○ Postgres (Main + Trees)", labels)
+            app.exit(None)
+
+    async def test_components_start_split_when_main_and_trees_differ(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        initial_values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, True, False, False),
+            trees_profile=StartupProfile(True, True, True, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+        )
+        app = run_config_wizard_textual(
+            local_state=self._local_state(),
+            initial_values=initial_values,
+            build_only=True,
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            labels = [label.render().plain for label in app.query("#config-list Label")]
+            self.assertIn("● Main - Redis", labels)
+            self.assertIn("○ Trees - Redis", labels)
+            self.assertNotIn("● Redis (Main + Trees)", labels)
+            app.exit(None)
+
+    async def test_left_and_right_arrows_do_not_navigate_steps_inside_directory_input(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
+            backend_input = app.query_one("#directory-backend_dir_name")
+            backend_input.focus()
+            await pilot.pause()
+            await pilot.press("left")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
+            app.exit(None)
+
+    async def test_enter_on_back_button_goes_back_instead_of_next(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_config_wizard_textual(local_state=self._local_state(), build_only=True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            app.query_one("#btn-back").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "default_mode")  # noqa: SLF001
+            app.exit(None)

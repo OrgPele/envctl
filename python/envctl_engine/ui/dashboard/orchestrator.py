@@ -29,6 +29,8 @@ from envctl_engine.ui.selection_support import (
     service_types_from_service_names,
 )
 from envctl_engine.ui.selection_support import SimpleProject
+from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
 
 
 class DashboardOrchestrator:
@@ -159,22 +161,86 @@ class DashboardOrchestrator:
             command=route.command,
             code=code,
         )
-        if code != 0 and route.command not in {"test", "pr", "commit", "review", "migrate"}:
-            print(f"Command failed (exit {code}).")
-
+        refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
+        if code != 0:
+            self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
         if route.command in {"stop-all", "blast-all"}:
             return False, state
-
-        refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
         if refreshed is None:
             return False, state
         return True, refreshed
+
+    def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
+        if route.command == "test":
+            printed = self._print_test_failure_details(route, state)
+            if printed:
+                return
+        printed = self._print_project_action_failure_details(route, state)
+        if printed:
+            return
+        print(f"Command failed (exit {code}).")
+
+    def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_test_summaries")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        printed = False
+        for project_name in project_names:
+            entry = metadata.get(project_name)
+            if not isinstance(entry, dict):
+                continue
+            summary_path = str(entry.get("summary_path", "")).strip()
+            if not summary_path:
+                continue
+            print(f"Test failure summary for {project_name}:")
+            print(summary_path)
+            printed = True
+        return printed
+
+    def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_action_reports")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        printed = False
+        for project_name in project_names:
+            project_entry = metadata.get(project_name)
+            if not isinstance(project_entry, dict):
+                continue
+            action_entry = project_entry.get(route.command)
+            if not isinstance(action_entry, dict):
+                continue
+            if str(action_entry.get("status", "")).strip().lower() != "failed":
+                continue
+            summary = str(action_entry.get("summary", "")).strip()
+            report_path = str(action_entry.get("report_path", "")).strip()
+            if summary:
+                summary_lines = [line.strip() for line in summary.splitlines() if line.strip()]
+                first_line = summary_lines[0] if summary_lines else ""
+                if len(summary_lines) == 1 and len(first_line) <= 220:
+                    print(f"{route.command} failed for {project_name}: {first_line}")
+                else:
+                    if first_line:
+                        print(f"{route.command} failed for {project_name}: {first_line}")
+                    if report_path:
+                        print(f"{route.command} failure log for {project_name}:")
+                        print(report_path)
+                printed = True
+                continue
+            if report_path:
+                print(f"{route.command} failure log for {project_name}:")
+                print(report_path)
+                printed = True
+        return printed
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         if route.command == "restart":
             return route
         if route.command == "pr":
             return self._apply_pr_selection(route, state, rt)
+        if route.command == "commit":
+            return self._apply_commit_selection(route, state, rt)
         if route.command not in self._dashboard_owned_target_selection_commands():
             return route
 
@@ -228,6 +294,36 @@ class DashboardOrchestrator:
                 route.flags = {**route.flags, "backend": False, "frontend": True}
             return route
 
+        return route
+
+    def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
+        runtime_any = cast(Any, rt)
+        route = self._apply_project_target_selection(route, state, rt)
+        if route is None:
+            return None
+        if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
+            return route
+        if isinstance(route.flags.get("commit_message_file"), str) and str(route.flags.get("commit_message_file")).strip():
+            return route
+        raw = self._prompt_commit_message(
+            runtime_any,
+        )
+        if raw is None:
+            print(self._no_target_selected_message(route.command))
+            return None
+        message = str(raw).strip()
+        if not message:
+            return route
+        route.flags = {
+            **{key: value for key, value in route.flags.items() if key != "commit_message_file"},
+            "commit_message": message,
+        }
+        runtime_any._emit(
+            "dashboard.commit_message.selected",
+            command="commit",
+            explicit=True,
+            length=len(message),
+        )
         return route
 
     @staticmethod
@@ -361,6 +457,19 @@ class DashboardOrchestrator:
             base_branch=base_branch,
             explicit=base_branch != default_branch,
         )
+        raw = self._prompt_pr_message(runtime_any)
+        if raw is None:
+            print(self._no_target_selected_message(route.command))
+            return None
+        message = str(raw).strip()
+        if message:
+            route.flags = {**route.flags, "pr_body": message}
+            runtime_any._emit(
+                "dashboard.pr_body.selected",
+                command="pr",
+                explicit=True,
+                length=len(message),
+            )
         return route
 
     def _default_pr_base_branch(self, runtime: Any) -> str:
@@ -702,6 +811,64 @@ class DashboardOrchestrator:
             "restart": "Choose services",
         }
         return prompt_map.get(command, "Choose services")
+
+    @staticmethod
+    def _read_interactive_line(runtime: Any, prompt: str) -> str:
+        reader = getattr(runtime, "_read_interactive_command_line", None)
+        if callable(reader):
+            return str(reader(prompt))
+        env = getattr(runtime, "env", {})
+        return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))
+
+    @staticmethod
+    def _prompt_text_dialog(
+        runtime: Any,
+        *,
+        title: str,
+        help_text: str,
+        placeholder: str,
+        default_button_label: str,
+    ) -> str | None:
+        dialog = getattr(runtime, "_prompt_text_input", None)
+        if callable(dialog):
+            return dialog(
+                title=title,
+                help_text=help_text,
+                placeholder=placeholder,
+                initial_value="",
+                default_button_label=default_button_label,
+            )
+        result = run_text_input_dialog_textual(
+            title=title,
+            help_text=help_text,
+            placeholder=placeholder,
+            initial_value="",
+            default_button_label=default_button_label,
+            emit=getattr(runtime, "_emit", None),
+        )
+        if result is None:
+            return None
+        return str(result)
+
+    @staticmethod
+    def _prompt_commit_message(runtime: Any) -> str | None:
+        return DashboardOrchestrator._prompt_text_dialog(
+            runtime,
+            title="Commit Message",
+            help_text="Commit message (leave blank to use changelog).",
+            placeholder="Type a commit message",
+            default_button_label="Use changelog",
+        )
+
+    @staticmethod
+    def _prompt_pr_message(runtime: Any) -> str | None:
+        return DashboardOrchestrator._prompt_text_dialog(
+            runtime,
+            title="PR Message",
+            help_text="PR message (leave blank to use MAIN_TASK.md).",
+            placeholder="Type a PR message",
+            default_button_label="Use MAIN_TASK.md",
+        )
 
     @staticmethod
     def _sanitize_interactive_input(raw: str) -> str:

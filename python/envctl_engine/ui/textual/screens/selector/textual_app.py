@@ -92,6 +92,7 @@ def create_selector_app(
             self._driver_idle_snapshot_bucket = -1
             self._status_error_message = ""
             self._status_error_timer: object | None = None
+            self._suppress_list_selected_once = False
 
         def compose(self) -> ComposeResult:
             filter_input = Input(placeholder="Filter targets...", id="selector-filter")
@@ -474,18 +475,7 @@ def create_selector_app(
                 self.action_focus_filter(reason="tab_cycle")
 
         def _selected_values(self) -> list[str]:
-            if multi:
-                return [row.item.token for row in self._rows if row.selected and row.visible]
-            if self._last_user_model_index is not None and self._last_user_model_index < len(self._rows):
-                row = self._rows[self._last_user_model_index]
-                if row.visible:
-                    return [row.item.token]
-            row = self._focused_row()
-            if row is None and self._last_focused_model_index is not None:
-                row = self._rows[self._last_focused_model_index]
-            if row is None:
-                return []
-            return [row.item.token]
+            return [row.item.token for row in self._rows if row.selected and row.visible]
 
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
@@ -547,6 +537,9 @@ def create_selector_app(
             self.exit(None)
 
         async def on_list_view_selected(self, event: ListView.Selected) -> None:
+            if self._suppress_list_selected_once:
+                self._suppress_list_selected_once = False
+                return
             _emit(
                 emit,
                 "ui.selection.interaction",
@@ -570,16 +563,7 @@ def create_selector_app(
             if multi:
                 await self._toggle_model_index(model_index)
             else:
-                focused_model_index = self._focused_model_index()
-                if focused_model_index is not None:
-                    self._last_user_model_index = focused_model_index
-                else:
-                    self._last_user_model_index = model_index
-                # Single-select submission is driven by Enter/Run and the
-                # current focus. Re-rendering here can snap focus back to the
-                # first row during rapid PTY handoff bursts.
-                self.action_focus_list(reason="list_selected")
-                return
+                await self._select_model_index(model_index)
             self.action_focus_list(reason="list_selected")
 
         async def on_click(self, event: Click) -> None:
@@ -595,8 +579,8 @@ def create_selector_app(
                         return
                     if model_index < 0 or model_index >= len(self._rows):
                         return
-                    self._last_user_model_index = model_index
                     event.stop()
+                    await self._select_model_index(model_index)
                     await self.action_submit(cause="mouse_click")
                     return
                 widget = getattr(widget, "parent", None)
@@ -621,6 +605,7 @@ def create_selector_app(
             if event.key == "enter":
                 event.stop()
                 event.prevent_default()
+                self._suppress_list_selected_once = True
                 await self.action_submit(cause="enter_key")
                 _emit_selector_debug(
                     emit,

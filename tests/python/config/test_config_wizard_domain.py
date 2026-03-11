@@ -24,12 +24,11 @@ class ConfigWizardDomainTests(unittest.TestCase):
             repo = Path(tmpdir)
             (repo / ".git").mkdir(parents=True, exist_ok=True)
 
-            def fake_run_wizard(*, local_state, emit=None, default_wizard_type="simple"):  # noqa: ANN001
+            def fake_run_wizard(*, local_state, emit=None):  # noqa: ANN001
                 from envctl_engine.config.persistence import ManagedConfigValues, PortDefaults, save_local_config
                 from envctl_engine.config import StartupProfile
 
                 _ = emit
-                self.assertEqual(default_wizard_type, "simple")
                 values = ManagedConfigValues(
                     default_mode="main",
                     main_profile=StartupProfile(True, True, True, True, True, False, False),
@@ -62,14 +61,13 @@ class ConfigWizardDomainTests(unittest.TestCase):
             self.assertFalse(result.changed)
             self.assertEqual(result.message, "Configuration edit cancelled.")
 
-    def test_edit_local_config_uses_advanced_wizard_default(self) -> None:
+    def test_edit_local_config_uses_shared_wizard_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
 
-            def fake_run_wizard(*, local_state, emit=None, default_wizard_type="simple"):  # noqa: ANN001
+            def fake_run_wizard(*, local_state, emit=None):  # noqa: ANN001
                 _ = local_state, emit
-                self.assertEqual(default_wizard_type, "advanced")
                 return None
 
             with (

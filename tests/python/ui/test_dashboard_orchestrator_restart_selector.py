@@ -31,6 +31,8 @@ class _RuntimeStub:
         self.dispatch_code: int = 0
         self.read_prompts: list[str] = []
         self.read_responses: list[str] = []
+        self.text_input_prompts: list[dict[str, str]] = []
+        self.text_input_responses: list[str | None] = []
         self.pr_flow_calls: list[dict[str, object]] = []
         self.next_pr_flow_result: PrFlowResult | None = PrFlowResult(project_names=["Main"], base_branch="main")
         self.startup_orchestrator = object()
@@ -117,6 +119,28 @@ class _RuntimeStub:
         self.read_prompts.append(prompt)
         if self.read_responses:
             return self.read_responses.pop(0)
+        return ""
+
+    def _prompt_text_input(
+        self,
+        *,
+        title: str,
+        help_text: str,
+        placeholder: str,
+        initial_value: str,
+        default_button_label: str,
+    ) -> str | None:
+        self.text_input_prompts.append(
+            {
+                "title": title,
+                "help_text": help_text,
+                "placeholder": placeholder,
+                "initial_value": initial_value,
+                "default_button_label": default_button_label,
+            }
+        )
+        if self.text_input_responses:
+            return self.text_input_responses.pop(0)
         return ""
 
 
@@ -267,10 +291,14 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             self.assertEqual(len(runtime.pr_flow_calls), 1)
             self.assertEqual(runtime.pr_flow_calls[0]["default_branch"], "main")
             self.assertEqual(runtime.read_prompts, [])
+            self.assertEqual(len(runtime.text_input_prompts), 1)
+            self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
+            self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
             self.assertIsNotNone(runtime.last_dispatched_route)
             self.assertEqual(runtime.last_dispatched_route.command, "pr")  # type: ignore[union-attr]
             self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])  # type: ignore[union-attr]
             self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")  # type: ignore[union-attr]
+            self.assertNotIn("pr_body", runtime.last_dispatched_route.flags)  # type: ignore[union-attr]
 
     def test_pr_interactive_flow_uses_entered_base_branch_after_target_selection(self) -> None:
         runtime = _RuntimeStub()
@@ -611,6 +639,143 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 assert runtime.last_dispatched_route is not None
                 self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
                 self.assertIsNone(runtime.last_dispatched_route.flags.get("services"))
+
+    def test_commit_prompts_for_message_and_uses_explicit_value_when_provided(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = ["Ship the feature"]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("c", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertEqual(runtime.text_input_prompts[0]["title"], "Commit Message")
+        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use changelog")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "commit")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("commit_message"), "Ship the feature")
+
+    def test_commit_blank_message_uses_existing_default_resolution(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = [""]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("c", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "commit")
+        self.assertNotIn("commit_message", runtime.last_dispatched_route.flags)
+
+    def test_pr_prompts_for_message_and_uses_explicit_value_when_provided(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = ["Ship the feature in this PR"]
+        orchestrator = DashboardOrchestrator(runtime)
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
+        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "pr")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")
+        self.assertEqual(runtime.last_dispatched_route.flags.get("pr_body"), "Ship the feature in this PR")
+
+    def test_pr_blank_message_uses_existing_default_resolution(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.text_input_responses = [""]
+        orchestrator = DashboardOrchestrator(runtime)
+        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, state.run_id)
+        self.assertEqual(runtime.read_prompts, [])
+        self.assertEqual(len(runtime.text_input_prompts), 1)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "pr")
+        self.assertNotIn("pr_body", runtime.last_dispatched_route.flags)
 
     def test_project_scoped_commands_use_project_selector_when_multiple_projects_exist(self) -> None:
         runtime = _RuntimeStub()
@@ -982,7 +1147,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
     def test_interactive_test_failure_does_not_print_generic_command_failed_banner(self) -> None:
         runtime = _RuntimeStub()
         runtime.dispatch_code = 1
-        runtime.next_selection = TargetSelection(project_names=["Main"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -1001,6 +1165,25 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
+        def failing_dispatch(route: Route) -> int:
+            runtime.last_dispatched_route = route
+            runtime._latest_state = RunState(
+                run_id="run-1",
+                mode="main",
+                services=state.services,
+                metadata={
+                    "project_test_summaries": {
+                        "Main": {
+                            "summary_path": "/tmp/runtime/test-results/run_1/Main/failed_tests_summary.txt",
+                            "status": "failed",
+                        }
+                    }
+                },
+            )
+            return 1
+
+        runtime.dispatch = failing_dispatch  # type: ignore[assignment]
+
         out = StringIO()
         with redirect_stdout(out):
             should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
@@ -1008,6 +1191,67 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertNotIn("Command failed (exit 1).", out.getvalue())
+        self.assertIn(
+            "Test failure summary for Main:\n/tmp/runtime/test-results/run_1/Main/failed_tests_summary.txt",
+            out.getvalue(),
+        )
+
+    def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.dispatch_code = 1
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+
+        def failing_dispatch(route: Route) -> int:
+            runtime.last_dispatched_route = route
+            runtime._latest_state = RunState(
+                run_id="run-1",
+                mode="main",
+                services=state.services,
+                metadata={
+                    "project_action_reports": {
+                        "Main": {
+                            "migrate": {
+                                "status": "failed",
+                                "summary": "alembic.util.exc.CommandError: migration failed\nsecond line",
+                                "report_path": "/tmp/runtime/Main_migrate.txt",
+                            }
+                        }
+                    }
+                },
+            )
+            return 1
+
+        runtime.dispatch = failing_dispatch  # type: ignore[assignment]
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("m", state, runtime)
+
+        rendered = out.getvalue()
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertIn("migrate failed for Main: alembic.util.exc.CommandError: migration failed", rendered)
+        self.assertIn(
+            "migrate failure log for Main:\n/tmp/runtime/Main_migrate.txt",
+            rendered,
+        )
+        self.assertNotIn("Command failed (exit 1).", rendered)
 
 
 if __name__ == "__main__":

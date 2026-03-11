@@ -6,8 +6,6 @@ import re
 from typing import Callable
 
 from ....config import LocalConfigState, StartupProfile
-from ....config.profile_defaults import wizard_preset_settings
-from ....requirements.core import dependency_definitions
 from ....config.persistence import (
     ConfigSaveResult,
     ManagedConfigValues,
@@ -16,6 +14,7 @@ from ....config.persistence import (
     save_local_config,
     validate_managed_values,
 )
+from ....requirements.core import dependency_definitions
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
 from envctl_engine.ui.textual.list_row_styles import (
@@ -38,15 +37,18 @@ class ConfigWizardResult:
     save_result: ConfigSaveResult
 
 
-_ADVANCED_PROFILE_FIELDS: tuple[tuple[str, str], ...] = (
+_SERVICE_FIELDS: tuple[tuple[str, str], ...] = (
     ("backend_enable", "Backend"),
     ("frontend_enable", "Frontend"),
-    *tuple((definition.id, definition.display_name.title()) for definition in dependency_definitions()),
 )
 
-_ADVANCED_STARTUP_FIELDS: tuple[tuple[str, str], ...] = (
-    ("main", "Main: Enabled for envctl runs"),
-    ("trees", "Trees: Enabled for envctl runs"),
+_SERVICE_STARTUP_FIELDS: tuple[tuple[str, str], ...] = (
+    ("main", "Main - start this service with envctl"),
+    ("trees", "Trees - start this service with envctl"),
+)
+
+_COMPONENT_FIELDS: tuple[tuple[str, str], ...] = (
+    *tuple((definition.id, definition.display_name.title()) for definition in dependency_definitions()),
 )
 
 _DIRECTORY_FIELDS: tuple[tuple[str, str], ...] = (
@@ -57,37 +59,17 @@ _DIRECTORY_FIELDS: tuple[tuple[str, str], ...] = (
 _PORT_FIELDS: tuple[tuple[str, str], ...] = (
     ("backend_port_base", "Backend base port"),
     ("frontend_port_base", "Frontend base port"),
-    *tuple(
-        (
-            f"dependency::{definition.id}::{resource.name}",
-            resource.display_name or f"{definition.display_name} base port",
-        )
-        for definition in dependency_definitions()
-        for resource in definition.resources
-    ),
+    ("db_port_base", "Database base port"),
+    ("redis_port_base", "Redis base port"),
+    ("n8n_port_base", "n8n base port"),
     ("port_spacing", "Port spacing"),
-)
-
-_WIZARD_TYPES: tuple[tuple[str, str], ...] = (
-    ("simple", "Simple"),
-    ("advanced", "Advanced"),
-)
-
-_PRESET_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("standard", "Standard"),
-    ("apps_only", "Apps Only"),
-    ("disabled", "Disabled"),
 )
 
 _STEP_TITLES = {
     "welcome": "Welcome / Source",
-    "wizard_type": "Wizard Type",
     "default_mode": "Default Mode",
-    "main_preset": "Main Run Preset",
-    "trees_preset": "Trees Run Preset",
-    "startup_modes": "Run Enablement",
-    "main_profile": "Main Run Settings",
-    "trees_profile": "Trees Run Settings",
+    "components": "Components",
+    "service_startup": "Long-Running Service",
     "directories": "Directories",
     "ports": "Ports",
     "review": "Review / Save",
@@ -98,15 +80,15 @@ _STEP_HELP_TEXT = {
         "This wizard saves the repo-local envctl run configuration. "
         "Existing services are not changed until a later command runs."
     ),
-    "wizard_type": "Choose the shorter preset-based flow or the full advanced flow with per-mode controls.",
     "default_mode": "Pick which mode envctl should use by default when you do not pass --main or --trees.",
-    "main_preset": "Choose a simple preset for main mode. This controls what main mode is configured to run.",
-    "trees_preset": "Choose a simple preset for trees mode. This is configured independently from main mode.",
-    "startup_modes": (
-        "Turn main and trees on or off for envctl-run behavior. Detailed component settings stay configurable below."
+    "components": (
+        "Choose which services and dependencies envctl should manage. Rows apply to Main + Trees until split. "
+        "Press D to split the focused row into separate main and trees settings."
     ),
-    "main_profile": "Choose which main-mode components are configured: backend, frontend, and built-in dependencies.",
-    "trees_profile": "Choose which tree-mode components are configured: backend, frontend, and built-in dependencies.",
+    "service_startup": (
+        "This looks like a backend-only project. Choose whether envctl should keep it running automatically in "
+        "main and trees. CLI tools usually should not stay running."
+    ),
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
     "ports": "Set only the ports needed by the components currently configured in main or trees.",
     "review": "Review the generated managed .envctl block before saving it to the repository.",
@@ -162,20 +144,12 @@ def _directory_validation_message(base_dir: Path, label: str, raw: str) -> str |
     return None
 
 
-def _wizard_steps(wizard_type: str) -> list[str]:
-    if wizard_type == "advanced":
-        return [
-            "welcome",
-            "wizard_type",
-            "default_mode",
-            "startup_modes",
-            "main_profile",
-            "trees_profile",
-            "directories",
-            "ports",
-            "review",
-        ]
-    return ["welcome", "wizard_type", "default_mode", "main_preset", "trees_preset", "review"]
+def _wizard_steps(*, include_service_startup: bool) -> list[str]:
+    steps = ["welcome", "default_mode", "components"]
+    if include_service_startup:
+        steps.append("service_startup")
+    steps.extend(["directories", "ports", "review"])
+    return steps
 
 
 def _copy_profile(profile: StartupProfile) -> StartupProfile:
@@ -205,65 +179,34 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
     )
 
 
-def _preset_profile(mode: str, preset: str) -> StartupProfile:
-    settings = wizard_preset_settings(mode, preset)
-    return StartupProfile(
-        startup_enable=bool(settings["startup_enable"]),
-        backend_enable=bool(settings["backend_enable"]),
-        frontend_enable=bool(settings["frontend_enable"]),
-        dependencies=dict(settings["dependencies"]),
-    )
-
-
-def _preset_for_profile(profile: StartupProfile, *, mode: str) -> str:
-    for preset, _label in _PRESET_OPTIONS:
-        candidate = _preset_profile(mode, preset)
-        if (
-            profile.startup_enable == candidate.startup_enable
-            and profile.backend_enable == candidate.backend_enable
-            and profile.frontend_enable == candidate.frontend_enable
-            and profile.dependencies == candidate.dependencies
-        ):
-            return preset
-    return "standard"
-
-
 def _visible_directory_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
     profiles = [values.main_profile, values.trees_profile]
-    show_backend = any(profile.backend_enable for profile in profiles)
-    show_frontend = any(profile.frontend_enable for profile in profiles)
     visible: list[tuple[str, str]] = []
-    if show_backend:
+    if any(profile.backend_enable for profile in profiles):
         visible.append(("backend_dir_name", "Backend directory"))
-    if show_frontend:
+    if any(profile.frontend_enable for profile in profiles):
         visible.append(("frontend_dir_name", "Frontend directory"))
     return tuple(visible)
 
 
 def _visible_port_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
     profiles = [values.main_profile, values.trees_profile]
-    show_backend = any(profile.backend_enable for profile in profiles)
-    show_frontend = any(profile.frontend_enable for profile in profiles)
     enabled_dependencies = {
         definition.id
         for definition in dependency_definitions()
         if any(profile.dependency_enabled(definition.id) for profile in profiles)
     }
     visible: list[tuple[str, str]] = []
-    if show_backend:
+    if any(profile.backend_enable for profile in profiles):
         visible.append(("backend_port_base", "Backend base port"))
-    if show_frontend:
+    if any(profile.frontend_enable for profile in profiles):
         visible.append(("frontend_port_base", "Frontend base port"))
-    for definition in dependency_definitions():
-        if definition.id not in enabled_dependencies:
-            continue
-        for resource in definition.resources:
-            visible.append(
-                (
-                    f"dependency::{definition.id}::{resource.name}",
-                    resource.display_name or f"{definition.display_name} base port",
-                )
-            )
+    if enabled_dependencies & {"postgres", "supabase"}:
+        visible.append(("db_port_base", "Database base port"))
+    if "redis" in enabled_dependencies:
+        visible.append(("redis_port_base", "Redis base port"))
+    if "n8n" in enabled_dependencies:
+        visible.append(("n8n_port_base", "n8n base port"))
     if visible:
         visible.append(("port_spacing", "Port spacing"))
     return tuple(visible)
@@ -291,15 +234,27 @@ def run_config_wizard_textual(
     from textual.events import Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
+    @dataclass(frozen=True, slots=True)
+    class ComponentRow:
+        label: str
+        component_id: str | None = None
+        mode: str | None = None
+        kind: str = "item"
+
+        @property
+        def selectable(self) -> bool:
+            return self.kind == "item" and self.component_id is not None
+
+        @property
+        def shared(self) -> bool:
+            return self.selectable and self.mode is None
+
     class ConfigWizardApp(App[ConfigWizardResult | None]):
         BINDINGS = [
-            Binding("enter", "submit_or_next", "Next"),
             Binding("q", "cancel", "Cancel"),
             Binding("ctrl+c", "cancel", "Cancel"),
             Binding("escape", "cancel", "Cancel"),
-            Binding("up", "cursor_up", "Up"),
-            Binding("down", "cursor_down", "Down"),
-            Binding("space", "toggle_item", "Toggle"),
+            Binding("d", "toggle_component_split", "Split"),
             Binding("tab", "focus_next", "Next"),
             Binding("shift+tab", "focus_previous", "Prev"),
         ]
@@ -337,6 +292,20 @@ def run_config_wizard_textual(
         #config-list {
             height: 1fr;
             border: tall $surface;
+        }
+        .config-section-header {
+            margin-top: 1;
+            padding: 0 1;
+            background: transparent;
+            border-left: none;
+        }
+        .config-section-header Label {
+            color: $accent;
+            text-style: bold;
+        }
+        .config-section-header.-highlight {
+            background: transparent;
+            border-left: none;
         }
         #config-ports {
             height: 1fr;
@@ -387,15 +356,21 @@ def run_config_wizard_textual(
 
         def __init__(self) -> None:
             super().__init__()
+            _ = default_wizard_type
             self.step_index = 0
             self.values = _clone_values(values)
             self._save_result: ConfigSaveResult | None = None
-            self._wizard_type = default_wizard_type if default_wizard_type in {"simple", "advanced"} else "simple"
-            self._steps = _wizard_steps(self._wizard_type)
-            self._simple_presets = {
-                "main": _preset_for_profile(self.values.main_profile, mode="main"),
-                "trees": _preset_for_profile(self.values.trees_profile, mode="trees"),
+            self._steps: list[str] = []
+            self._suppress_list_selected_once = False
+            self.values.main_profile.backend_enable = bool(self.values.main_profile.backend_enable)
+            self.values.main_profile.frontend_enable = bool(self.values.main_profile.frontend_enable)
+            self.values.trees_profile.backend_enable = bool(self.values.trees_profile.backend_enable)
+            self.values.trees_profile.frontend_enable = bool(self.values.trees_profile.frontend_enable)
+            self._sync_startup_enable_flags()
+            self._split_component_fields = {
+                field_name for field_name, _label in _COMPONENT_FIELDS if self._component_values_differ(field_name)
             }
+            self._sync_steps(current_step="welcome")
 
         def compose(self) -> ComposeResult:
             with Vertical(id="config-shell"):
@@ -428,8 +403,8 @@ def run_config_wizard_textual(
                         yield Static("", id="config-review")
                 yield Static("", id="config-status")
                 with Horizontal(id="config-actions"):
-                    yield Button("Back", id="btn-back")
                     yield Button("Cancel", id="btn-cancel")
+                    yield Button("Back", id="btn-back")
                     yield Button("Next", variant="success", id="btn-next")
                 yield Footer()
 
@@ -452,23 +427,55 @@ def run_config_wizard_textual(
 
         def on_key(self, event: Key) -> None:
             if event.key == "enter":
-                current_step = self._current_step()
-                if current_step in {
-                    "wizard_type",
-                    "default_mode",
-                    "startup_modes",
-                    "main_profile",
-                    "trees_profile",
-                    "main_preset",
-                    "trees_preset",
-                }:
-                    list_view = self.query_one("#config-list", ListView)
-                    if list_view.has_focus:
-                        event.stop()
-                        self._apply_list_selection()
-                        self._advance()
-                        return
+                if self._button_has_focus():
+                    return
+                event.stop()
+                event.prevent_default()
+                self.action_submit_or_next()
+                return
+            if event.key == "right":
+                if self._text_input_has_focus():
+                    return
+                event.stop()
+                event.prevent_default()
+                self.action_submit_or_next()
+                return
+            if event.key == "left":
+                if self._text_input_has_focus():
+                    return
+                event.stop()
+                event.prevent_default()
+                self.action_go_back()
+                return
+            if event.key == "up":
+                event.stop()
+                event.prevent_default()
+                self.action_cursor_up()
+                return
+            if event.key == "down":
+                event.stop()
+                event.prevent_default()
+                self.action_cursor_down()
+                return
+            if event.key == "space":
+                event.stop()
+                event.prevent_default()
+                self.action_toggle_item()
+                return
+            if event.key == "d":
+                event.stop()
+                event.prevent_default()
+                self.action_toggle_component_split()
+                return
             _emit(emit, "ui.key", screen="config_wizard", key=event.key, character=event.character)
+
+        def _text_input_has_focus(self) -> bool:
+            focused = self.focused
+            return isinstance(focused, Input)
+
+        def _button_has_focus(self) -> bool:
+            focused = self.focused
+            return isinstance(focused, Button)
 
         def on_input_changed(self, event: Input.Changed) -> None:
             field_name = _directory_field_name_from_input_id(getattr(event.input, "id", None))
@@ -484,17 +491,44 @@ def run_config_wizard_textual(
         def _profile_for_mode(self, mode: str) -> StartupProfile:
             return self.values.trees_profile if mode == "trees" else self.values.main_profile
 
-        def _set_wizard_type(self, wizard_type: str) -> None:
-            self._wizard_type = wizard_type
-            self._steps = _wizard_steps(self._wizard_type)
-            if self.step_index >= len(self._steps):
-                self.step_index = len(self._steps) - 1
+        def _should_show_service_startup_step(self) -> bool:
+            profiles = (self.values.main_profile, self.values.trees_profile)
+            backend_enabled = any(profile.backend_enable for profile in profiles)
+            frontend_enabled = any(profile.frontend_enable for profile in profiles)
+            return backend_enabled and not frontend_enabled
+
+        def _sync_steps(self, *, current_step: str | None = None) -> None:
+            target_step = current_step
+            if target_step is None and self._steps:
+                target_step = self._steps[min(self.step_index, len(self._steps) - 1)]
+            self._steps = _wizard_steps(include_service_startup=self._should_show_service_startup_step())
+            if not self._steps:
+                self.step_index = 0
+                return
+            if target_step is None:
+                self.step_index = min(self.step_index, len(self._steps) - 1)
+                return
+            if target_step in self._steps:
+                self.step_index = self._steps.index(target_step)
+                return
+            if target_step == "service_startup":
+                fallback = "directories"
+                self.step_index = self._steps.index(fallback if fallback in self._steps else self._steps[-1])
+                return
+            self.step_index = min(self.step_index, len(self._steps) - 1)
 
         def _refresh_all(self) -> None:
-            self.query_one("#config-source", Static).update(
-                f"Path: {local_state.config_file_path} | Source: {source_label} | CLI/env overrides still apply"
-            )
+            self._sync_steps()
             current_step = self._current_step()
+            source_widget = self.query_one("#config-source", Static)
+            if current_step == "welcome":
+                source_widget.display = True
+                source_widget.update(
+                    f"Path: {local_state.config_file_path} | Source: {source_label} | CLI/env overrides still apply"
+                )
+            else:
+                source_widget.display = False
+                source_widget.update("")
             self.query_one("#config-step-title", Static).update(_STEP_TITLES[current_step])
             self.query_one("#config-step-help", Static).update(_STEP_HELP_TEXT[current_step])
             self._refresh_body()
@@ -522,7 +556,6 @@ def run_config_wizard_textual(
                     "envctl is the CLI for configuring, planning, and operating "
                     "this repository's local environments.\n\n"
                     "This wizard will guide you through:\n"
-                    "- choosing simple or advanced setup\n"
                     "- selecting the default mode (main or trees)\n"
                     "- deciding which components envctl should manage\n"
                     "- reviewing directories, ports, and the generated .envctl file\n\n"
@@ -530,25 +563,18 @@ def run_config_wizard_textual(
                     f"Starting values are loaded from: {source_label}."
                 )
                 return
-            if step == "wizard_type":
-                self._render_choice_step(list_view, selected=self._wizard_type, options=_WIZARD_TYPES)
-                return
             if step == "default_mode":
                 self._render_choice_step(
-                    list_view, selected=self.values.default_mode, options=(("main", "Main"), ("trees", "Trees"))
+                    list_view,
+                    selected=self.values.default_mode,
+                    options=(("main", "Main"), ("trees", "Trees")),
                 )
                 return
-            if step == "startup_modes":
-                self._render_startup_step(list_view)
+            if step == "components":
+                self._render_components_step(list_view)
                 return
-            if step in {"main_profile", "trees_profile"}:
-                self._render_profile_step(
-                    list_view, profile=self._profile_for_mode("main" if step == "main_profile" else "trees")
-                )
-                return
-            if step in {"main_preset", "trees_preset"}:
-                mode = "main" if step == "main_preset" else "trees"
-                self._render_choice_step(list_view, selected=self._simple_presets[mode], options=_PRESET_OPTIONS)
+            if step == "service_startup":
+                self._render_service_startup_step(list_view)
                 return
             if step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
@@ -582,41 +608,79 @@ def run_config_wizard_textual(
             list_view.clear()
             items: list[ListItem] = []
             selected_flags: list[bool] = []
-            for index, (value, label) in enumerate(options):
+            for value, label in options:
                 is_selected = selected == value
                 selected_flags.append(is_selected)
                 marker = "●" if is_selected else "○"
-                classes = selectable_list_row_classes("config-row", selected=is_selected)
-                items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
+                items.append(
+                    ListItem(
+                        Label(f"{marker} {label}", markup=False),
+                        classes=selectable_list_row_classes("config-row", selected=is_selected),
+                    )
+                )
             list_view.extend(items)
             apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
-        def _render_profile_step(self, list_view, *, profile: StartupProfile) -> None:
+        def _component_rows(self) -> list[ComponentRow]:
+            rows: list[ComponentRow] = []
+            rows.append(ComponentRow(label="Services", kind="header"))
+            for field_name, label in _SERVICE_FIELDS:
+                if field_name in self._split_component_fields:
+                    rows.append(ComponentRow(component_id=field_name, label=f"Main - {label}", mode="main"))
+                    rows.append(ComponentRow(component_id=field_name, label=f"Trees - {label}", mode="trees"))
+                else:
+                    rows.append(ComponentRow(component_id=field_name, label=label))
+            rows.append(ComponentRow(label="Dependencies", kind="header"))
+            for field_name, label in _COMPONENT_FIELDS:
+                if field_name in self._split_component_fields:
+                    rows.append(ComponentRow(component_id=field_name, label=f"Main - {label}", mode="main"))
+                    rows.append(ComponentRow(component_id=field_name, label=f"Trees - {label}", mode="trees"))
+                else:
+                    rows.append(ComponentRow(component_id=field_name, label=label))
+            return rows
+
+        def _render_components_step(self, list_view) -> None:
             list_view.clear()
             items: list[ListItem] = []
+            rows = self._component_rows()
             selected_flags: list[bool] = []
-            for field_name, label in _ADVANCED_PROFILE_FIELDS:
-                if field_name in {"backend_enable", "frontend_enable"}:
-                    enabled = bool(getattr(profile, field_name))
-                else:
-                    enabled = profile.dependency_enabled(field_name)
+            for row in rows:
+                enabled = self._component_row_enabled(row) if row.selectable else False
                 selected_flags.append(enabled)
                 marker = "●" if enabled else "○"
-                classes = selectable_list_row_classes("config-row", selected=enabled)
-                items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
+                if not row.selectable:
+                    items.append(
+                        ListItem(
+                            Label(row.label, markup=False),
+                            classes="config-section-header",
+                        )
+                    )
+                    continue
+                suffix = " (Main + Trees)" if row.shared else ""
+                items.append(
+                    ListItem(
+                        Label(f"{marker} {row.label}{suffix}", markup=False),
+                        classes=selectable_list_row_classes("config-row", selected=enabled),
+                    )
+                )
             list_view.extend(items)
-            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
+            apply_selectable_list_index(list_view, self._default_component_index(rows, selected_flags))
 
-        def _render_startup_step(self, list_view) -> None:
+        def _render_service_startup_step(self, list_view) -> None:
             list_view.clear()
             items: list[ListItem] = []
             selected_flags: list[bool] = []
-            for mode, label in _ADVANCED_STARTUP_FIELDS:
+            for mode, label in _SERVICE_STARTUP_FIELDS:
                 profile = self._profile_for_mode(mode)
-                marker = "●" if profile.startup_enable else "○"
-                selected_flags.append(profile.startup_enable)
-                classes = selectable_list_row_classes("config-row", selected=profile.startup_enable)
-                items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
+                enabled = bool(profile.startup_enable)
+                selected_flags.append(enabled)
+                marker = "●" if enabled else "○"
+                items.append(
+                    ListItem(
+                        Label(f"{marker} {label}", markup=False),
+                        classes=selectable_list_row_classes("config-row", selected=enabled),
+                    )
+                )
             list_view.extend(items)
             apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
@@ -659,15 +723,18 @@ def run_config_wizard_textual(
                 status.update(message)
                 return
             step = self._current_step()
-            if step in {"startup_modes", "main_profile", "trees_profile", "main_preset", "trees_preset", "review"}:
+            if step in {"components", "service_startup", "review"}:
                 validation = validate_managed_values(self.values)
                 if validation.valid:
-                    if step in {"main_preset", "trees_preset"}:
-                        status.update("Simple presets overwrite detailed mode settings.")
-                    elif step == "startup_modes":
+                    if step == "components":
                         status.update(
-                            "Choose whether envctl may run main and trees by default. "
-                            "Detailed service toggles stay in the next screens."
+                            "Configure components for Main + Trees together, or split a row when they should differ. "
+                            "Use Space to toggle rows, D to split/merge, and Enter only moves forward."
+                        )
+                    elif step == "service_startup":
+                        status.update(
+                            "Decide whether envctl should start this backend-only service automatically. "
+                            "Use Space to toggle rows; Enter only moves forward."
                         )
                     else:
                         status.update("Configuration is valid.")
@@ -688,24 +755,18 @@ def run_config_wizard_textual(
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 if visible_fields:
-                    status.update("Only ports for components configured in main or trees are shown.")
+                    status.update("Only canonical ports for configured components are shown.")
                 else:
                     status.update("No ports are needed for the components currently configured in main or trees.")
                 return
-            status.update("Use Enter for Next/Save, Space to toggle, Escape to cancel.")
+            status.update("Use Enter for Next/Save, Space to toggle, D to split rows, Escape to cancel.")
 
         def _focus_current_step(self) -> None:
             step = self._current_step()
-            if step in {
-                "wizard_type",
-                "default_mode",
-                "startup_modes",
-                "main_profile",
-                "trees_profile",
-                "main_preset",
-                "trees_preset",
-            }:
+            if step in {"default_mode", "components", "service_startup"}:
                 list_view = self.query_one("#config-list", ListView)
+                if step == "components":
+                    list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
                 focus_selectable_list(self, list_view, list_view.index)
             elif step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
@@ -733,12 +794,71 @@ def run_config_wizard_textual(
                 return self.values.port_defaults.backend_port_base
             if field_name == "frontend_port_base":
                 return self.values.port_defaults.frontend_port_base
+            if field_name == "db_port_base":
+                return self.values.port_defaults.db_port_base
+            if field_name == "redis_port_base":
+                return self.values.port_defaults.redis_port_base
+            if field_name == "n8n_port_base":
+                return self.values.port_defaults.n8n_port_base
             if field_name == "port_spacing":
                 return self.values.port_defaults.port_spacing
-            if field_name.startswith("dependency::"):
-                _, dependency_id, resource_name = field_name.split("::", 2)
-                return self.values.port_defaults.dependency_port(dependency_id, resource_name)
             return 0
+
+        def _sync_startup_enable_flags(self) -> None:
+            if self._should_show_service_startup_step():
+                return
+            for profile in (self.values.main_profile, self.values.trees_profile):
+                profile.startup_enable = bool(
+                    profile.backend_enable or profile.frontend_enable or any(profile.dependencies.values())
+                )
+
+        def _component_value(self, mode: str, field_name: str) -> bool:
+            profile = self._profile_for_mode(mode)
+            if field_name in {"backend_enable", "frontend_enable"}:
+                return bool(getattr(profile, field_name))
+            return profile.dependency_enabled(field_name)
+
+        def _set_component_value(self, mode: str, field_name: str, enabled: bool) -> None:
+            profile = self._profile_for_mode(mode)
+            if field_name in {"backend_enable", "frontend_enable"}:
+                setattr(profile, field_name, enabled)
+                return
+            profile.dependencies[field_name] = enabled
+
+        def _component_values_differ(self, field_name: str) -> bool:
+            return self._component_value("main", field_name) != self._component_value("trees", field_name)
+
+        def _component_row_enabled(self, row: ComponentRow) -> bool:
+            if not row.selectable:
+                return False
+            if row.shared:
+                return self._component_value("main", row.component_id or "")
+            return self._component_value(row.mode or "main", row.component_id or "")
+
+        def _default_component_index(self, rows: list[ComponentRow], selected_flags: list[bool]) -> int:
+            selected_index = selectable_list_default_index(selected_flags)
+            if 0 <= selected_index < len(rows) and rows[selected_index].selectable:
+                return selected_index
+            return next((index for index, row in enumerate(rows) if row.selectable), 0)
+
+        def _nearest_selectable_component_index(self, index: int, *, step: int) -> int:
+            rows = self._component_rows()
+            if not rows:
+                return 0
+            candidate = max(0, min(index, len(rows) - 1))
+            if rows[candidate].selectable:
+                return candidate
+            probe = candidate
+            while 0 <= probe + step < len(rows):
+                probe += step
+                if rows[probe].selectable:
+                    return probe
+            probe = candidate
+            while 0 <= probe - step < len(rows):
+                probe -= step
+                if rows[probe].selectable:
+                    return probe
+            return candidate
 
         def _directory_label(self, field_name: str) -> str:
             for candidate, label in _DIRECTORY_FIELDS:
@@ -773,41 +893,20 @@ def run_config_wizard_textual(
                     return message
             return None
 
-        def _current_profile(self) -> StartupProfile | None:
-            step = self._current_step()
-            if step == "main_profile":
-                return self.values.main_profile
-            if step == "trees_profile":
-                return self.values.trees_profile
-            return None
-
         def action_cursor_up(self) -> None:
-            if self._current_step() not in {
-                "wizard_type",
-                "default_mode",
-                "startup_modes",
-                "main_profile",
-                "trees_profile",
-                "main_preset",
-                "trees_preset",
-            }:
+            if self._current_step() not in {"default_mode", "components", "service_startup"}:
                 return
             list_view = self.query_one("#config-list", ListView)
             if list_view.index is None:
                 list_view.index = 0
-                return
-            list_view.index = max(list_view.index - 1, 0)
+            else:
+                list_view.index = max(list_view.index - 1, 0)
+            if self._current_step() == "components":
+                list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=-1)
+            self._sync_focus_driven_selection()
 
         def action_cursor_down(self) -> None:
-            if self._current_step() not in {
-                "wizard_type",
-                "default_mode",
-                "startup_modes",
-                "main_profile",
-                "trees_profile",
-                "main_preset",
-                "trees_preset",
-            }:
+            if self._current_step() not in {"default_mode", "components", "service_startup"}:
                 return
             list_view = self.query_one("#config-list", ListView)
             count = len(list_view.children)
@@ -815,57 +914,127 @@ def run_config_wizard_textual(
                 return
             if list_view.index is None:
                 list_view.index = 0
+            else:
+                list_view.index = min(list_view.index + 1, count - 1)
+            if self._current_step() == "components":
+                list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
+            self._sync_focus_driven_selection()
+
+        def _sync_focus_driven_selection(self) -> None:
+            if self._current_step() != "default_mode":
                 return
-            list_view.index = min(list_view.index + 1, count - 1)
-
-        def action_toggle_item(self) -> None:
-            self._apply_list_selection(toggle_profiles=True)
-
-        def _apply_list_selection(self, *, toggle_profiles: bool = False) -> None:
-            step = self._current_step()
             list_view = self.query_one("#config-list", ListView)
             index = list_view.index or 0
-            if step == "wizard_type":
-                self._set_wizard_type(_WIZARD_TYPES[index][0])
-                self._refresh_all()
-                return
-            if step == "default_mode":
-                self.values.default_mode = ("main", "trees")[1 if index == 1 else 0]
-                self._refresh_body()
-                self._refresh_status()
-                return
-            if step in {"main_preset", "trees_preset"}:
-                mode = "main" if step == "main_preset" else "trees"
-                preset = _PRESET_OPTIONS[index][0]
-                self._simple_presets[mode] = preset
-                if mode == "main":
-                    self.values.main_profile = _preset_profile(mode, preset)
-                else:
-                    self.values.trees_profile = _preset_profile(mode, preset)
-                self._refresh_body()
-                self._refresh_status()
-                return
-            if step == "startup_modes":
-                if not toggle_profiles:
-                    return
-                mode = _ADVANCED_STARTUP_FIELDS[index][0]
-                profile = self._profile_for_mode(mode)
-                profile.startup_enable = not profile.startup_enable
-                self._refresh_body()
-                self._refresh_status()
-                return
-            profile = self._current_profile()
-            if profile is None:
-                return
-            if not toggle_profiles:
-                return
-            field_name = _ADVANCED_PROFILE_FIELDS[index][0]
-            if field_name in {"backend_enable", "frontend_enable"}:
-                setattr(profile, field_name, not bool(getattr(profile, field_name)))
-            else:
-                profile.dependencies[field_name] = not profile.dependency_enabled(field_name)
+            self.values.default_mode = "trees" if index == 1 else "main"
             self._refresh_body()
             self._refresh_status()
+
+        def action_toggle_item(self) -> None:
+            step = self._current_step()
+            if step == "components":
+                self._toggle_components_row()
+                return
+            if step == "service_startup":
+                self._toggle_service_startup_row()
+
+        def _toggle_service_startup_row(self) -> None:
+            list_view = self.query_one("#config-list", ListView)
+            index = list_view.index or 0
+            mode, _label = _SERVICE_STARTUP_FIELDS[index]
+            profile = self._profile_for_mode(mode)
+            profile.startup_enable = not profile.startup_enable
+            self._refresh_body()
+            self._refresh_status()
+            list_view = self.query_one("#config-list", ListView)
+            apply_selectable_list_index(list_view, min(index, max(len(list_view.children) - 1, 0)))
+            focus_selectable_list(self, list_view, list_view.index)
+
+        def _toggle_components_row(self) -> None:
+            list_view = self.query_one("#config-list", ListView)
+            index = list_view.index or 0
+            rows = self._component_rows()
+            if not rows:
+                return
+            row = rows[index]
+            if not row.selectable:
+                return
+            enabled = not self._component_row_enabled(row)
+            if row.shared:
+                self._set_component_value("main", row.component_id or "", enabled)
+                self._set_component_value("trees", row.component_id or "", enabled)
+            else:
+                self._set_component_value(row.mode or "main", row.component_id or "", enabled)
+            self._sync_startup_enable_flags()
+            self._sync_steps(current_step="components")
+            self._refresh_body()
+            self._refresh_status()
+            self._refresh_actions()
+            list_view = self.query_one("#config-list", ListView)
+            apply_selectable_list_index(list_view, min(index, max(len(list_view.children) - 1, 0)))
+            focus_selectable_list(self, list_view, list_view.index)
+
+        def _toggle_component_split(self) -> None:
+            if self._current_step() != "components":
+                return
+            list_view = self.query_one("#config-list", ListView)
+            index = list_view.index or 0
+            rows = self._component_rows()
+            if not rows:
+                return
+            row = rows[index]
+            if not row.selectable:
+                return
+            component_id = row.component_id or ""
+            if component_id in self._split_component_fields:
+                if self._component_values_differ(component_id):
+                    self._refresh_status(
+                        "Main and Trees differ for this component. Make them match before merging the split rows."
+                    )
+                    return
+                self._split_component_fields.remove(component_id)
+            else:
+                self._split_component_fields.add(component_id)
+            self._refresh_body()
+            self._refresh_status()
+            list_view = self.query_one("#config-list", ListView)
+            updated_rows = self._component_rows()
+            if component_id in self._split_component_fields:
+                preferred_mode = row.mode or "main"
+                target_index = next(
+                    (
+                        candidate_index
+                        for candidate_index, candidate in enumerate(updated_rows)
+                        if candidate.component_id == component_id and candidate.mode == preferred_mode
+                    ),
+                    0,
+                )
+            else:
+                target_index = next(
+                    (
+                        candidate_index
+                        for candidate_index, candidate in enumerate(updated_rows)
+                        if candidate.component_id == component_id and candidate.shared
+                    ),
+                    0,
+                )
+            apply_selectable_list_index(list_view, target_index)
+            focus_selectable_list(self, list_view, list_view.index)
+
+        def on_list_view_selected(self, event: ListView.Selected) -> None:
+            if self._suppress_list_selected_once:
+                self._suppress_list_selected_once = False
+                return
+            step = self._current_step()
+            if step not in {"default_mode", "components", "service_startup"}:
+                return
+            list_view = self.query_one("#config-list", ListView)
+            list_view.index = event.index
+            if step == "default_mode":
+                self._sync_focus_driven_selection()
+            elif step == "components":
+                self._toggle_components_row()
+            else:
+                self._toggle_service_startup_row()
 
         def action_focus_next(self) -> None:
             self.screen.focus_next()
@@ -876,7 +1045,17 @@ def run_config_wizard_textual(
         def action_cancel(self) -> None:
             self.exit(None)
 
+        def action_go_back(self) -> None:
+            self._go_back()
+
+        def action_toggle_component_split(self) -> None:
+            self._toggle_component_split()
+
         def action_submit_or_next(self) -> None:
+            if self._current_step() in {"default_mode", "components", "service_startup"}:
+                list_view = self.query_one("#config-list", ListView)
+                if list_view.has_focus:
+                    self._suppress_list_selected_once = True
             self._advance()
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -888,7 +1067,7 @@ def run_config_wizard_textual(
                 self._go_back()
                 return
             if button_id == "btn-next":
-                self._advance()
+                self.action_submit_or_next()
 
         def _go_back(self) -> None:
             if self.step_index <= 0:
@@ -902,16 +1081,7 @@ def run_config_wizard_textual(
                 return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {
-                "startup_modes",
-                "main_profile",
-                "trees_profile",
-                "main_preset",
-                "trees_preset",
-                "directories",
-                "ports",
-                "review",
-            }:
+            if step in {"components", "service_startup", "directories", "ports", "review"}:
                 validation = validate_managed_values(self.values)
                 if not validation.valid:
                     self._refresh_status(validation.errors[0])
@@ -926,8 +1096,7 @@ def run_config_wizard_textual(
 
         def _apply_directory_inputs(self) -> bool:
             for field_name, label in _visible_directory_fields(self.values):
-                input_selector = f"#{_directory_input_id(field_name)}"
-                directory_input = self.query_one(input_selector, Input)
+                directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 raw = directory_input.value.strip()
                 directory_error = _directory_validation_message(local_state.base_dir, label, raw)
                 self._refresh_directory_validation(field_name, raw=raw)
@@ -941,8 +1110,7 @@ def run_config_wizard_textual(
         def _apply_port_inputs(self) -> bool:
             new_values: dict[str, int] = {}
             for field_name, label in _visible_port_fields(self.values):
-                input_selector = f"#{_port_input_id(field_name)}"
-                port_input = self.query_one(input_selector, Input)
+                port_input = self.query_one(f"#{_port_input_id(field_name)}", Input)
                 raw = port_input.value.strip()
                 if not raw.isdigit() or int(raw) < 1:
                     self._refresh_status(f"{label} must be a positive integer.")
@@ -954,11 +1122,15 @@ def run_config_wizard_textual(
                     self.values.port_defaults.backend_port_base = value
                 elif field_name == "frontend_port_base":
                     self.values.port_defaults.frontend_port_base = value
+                elif field_name == "db_port_base":
+                    self.values.port_defaults.dependency_ports.setdefault("postgres", {})["primary"] = value
+                    self.values.port_defaults.dependency_ports.setdefault("supabase", {})["db"] = value
+                elif field_name == "redis_port_base":
+                    self.values.port_defaults.dependency_ports.setdefault("redis", {})["primary"] = value
+                elif field_name == "n8n_port_base":
+                    self.values.port_defaults.dependency_ports.setdefault("n8n", {})["primary"] = value
                 elif field_name == "port_spacing":
                     self.values.port_defaults.port_spacing = value
-                elif field_name.startswith("dependency::"):
-                    _, dependency_id, resource_name = field_name.split("::", 2)
-                    self.values.port_defaults.dependency_ports.setdefault(dependency_id, {})[resource_name] = value
             validation = validate_managed_values(self.values)
             if not validation.valid:
                 self._refresh_status(validation.errors[0])

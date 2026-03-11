@@ -67,24 +67,35 @@ def execute_targeted_action(
     interactive_print_failures: bool = True,
     emit_success_output: bool = True,
     on_success: Callable[[ActionTargetContext, Any], None] | None = None,
+    on_failure: Callable[[ActionTargetContext, str], None] | None = None,
 ) -> int:
     failures = 0
     for context in build_action_target_contexts(targets):
         emit_status(f"Running {command_name} for {context.name} ({context.index}/{context.total})...")
         resolution = resolve_command(context)
         if resolution.command is None or resolution.cwd is None:
-            message = f"{command_name} action failed for {context.name}: {resolution.error or 'no command resolved'}"
+            raw_error = resolution.error or "no command resolved"
+            message = f"{command_name} action failed for {context.name}: {raw_error}"
+            if on_failure is not None:
+                on_failure(context, raw_error)
             if not interactive_command or interactive_print_failures:
                 printer(message)
             if interactive_command:
-                emit_status(f"{command_name} failed for {context.name}: {resolution.error or 'no command resolved'}")
+                emit_status(f"{command_name} failed for {context.name}: {raw_error}")
             failures += 1
             continue
 
         completed = process_run(resolution.command, resolution.cwd, build_env(context))
         if completed.returncode != 0:
-            error = (completed.stderr or completed.stdout or f"exit:{completed.returncode}").strip()
+            stdout = str(getattr(completed, "stdout", "") or "").strip()
+            stderr = str(getattr(completed, "stderr", "") or "").strip()
+            if stderr and stdout and stderr != stdout:
+                error = f"{stderr}\n\nstdout:\n{stdout}"
+            else:
+                error = stderr or stdout or f"exit:{completed.returncode}"
             message = f"{command_name} action failed for {context.name}: {error}"
+            if on_failure is not None:
+                on_failure(context, error)
             if not interactive_command or interactive_print_failures:
                 printer(message)
             if interactive_command:

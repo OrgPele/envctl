@@ -175,9 +175,11 @@ def print_logs(
             continue
         log_path = Path(service.log_path)
         if not log_path.is_file():
-            print(f"{service.name}: log missing at {log_path}")
+            print(f"{service.name}: log missing at")
+            print(str(log_path))
             continue
-        print(f"{service.name}: log={log_path}")
+        print(f"{service.name}: log")
+        print(str(log_path))
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         for line in lines[-tail:]:
             print(runtime._normalize_log_line(line, no_color=no_color))

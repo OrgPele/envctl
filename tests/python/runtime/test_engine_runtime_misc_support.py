@@ -122,7 +122,8 @@ class EngineRuntimeMiscSupportTests(unittest.TestCase):
                 print_logs(runtime, state, tail=1, no_color=True)
 
         rendered = out.getvalue()
-        self.assertIn("svc: log=", rendered)
+        self.assertIn("svc: log\n", rendered)
+        self.assertIn(str(log_path), rendered)
         self.assertIn("LINE2", rendered)
 
 

@@ -986,7 +986,8 @@ def _run_backend_migration_step(
                 f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})"
             )
             if backend_log_path:
-                print(f"  backend log: {backend_log_path}")
+                print("  backend log:")
+                print(f"  {backend_log_path}")
         missing_revision = _backend_missing_revision_id(message)
         if missing_revision:
             hint_text = (

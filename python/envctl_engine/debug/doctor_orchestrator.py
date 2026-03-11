@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from envctl_engine.shared.hooks import legacy_shell_hook_issue
 from envctl_engine.shared.reason_codes import GateFailureReason
@@ -88,7 +89,17 @@ class DoctorOrchestrator:
         def write_field(key: str, value: object) -> None:
             payload[key] = value
             if not json_output:
-                print(f"{key}: {value}")
+                text = str(value)
+                if (
+                    isinstance(value, (str, Path))
+                    and (key.endswith("_path") or key.endswith("_file") or "bundle" in key)
+                    and text
+                    and (text.startswith("/") or text.startswith("~"))
+                ):
+                    print(f"{key}:")
+                    print(text)
+                else:
+                    print(f"{key}: {value}")
 
         if not json_output:
             print("envctl Python runtime diagnostics")

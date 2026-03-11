@@ -190,7 +190,8 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     print(f"mode: {state_payload['mode']}")
     print(f"services: {len(state_payload['services'])}")
     print(f"requirements: {len(state_payload['requirements'])}")
-    print(f"run_state_path: {payload['run_state_path']}")
+    print("run_state_path:")
+    print(str(payload["run_state_path"]))
     return 0
 
 
