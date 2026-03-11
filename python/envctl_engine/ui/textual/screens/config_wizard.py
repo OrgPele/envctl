@@ -18,6 +18,13 @@ from ....config.persistence import (
 )
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.textual.list_row_styles import (
+    apply_selectable_list_index,
+    focus_selectable_list,
+    selectable_list_default_index,
+    selectable_list_row_classes,
+    selectable_list_row_css,
+)
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -106,6 +113,8 @@ _STEP_HELP_TEXT = {
 }
 
 _TEXTUAL_ID_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
+
+CONFIG_ROW_STYLES_CSS = selectable_list_row_css("config-row")
 
 
 def _port_input_id(field_name: str) -> str:
@@ -329,18 +338,6 @@ def run_config_wizard_textual(
             height: 1fr;
             border: tall $surface;
         }
-        .config-row-selected {
-            background: $accent 18%;
-            border-left: wide $success;
-        }
-        .config-row-selected.-highlight {
-            background: $accent 30%;
-            border-left: wide $accent;
-        }
-        .config-row-unselected.-highlight {
-            background: $warning 18%;
-            border-left: wide $warning;
-        }
         #config-ports {
             height: 1fr;
             overflow: auto;
@@ -386,7 +383,7 @@ def run_config_wizard_textual(
             align-horizontal: right;
             height: auto;
         }
-        """
+        """ + CONFIG_ROW_STYLES_CSS
 
         def __init__(self) -> None:
             super().__init__()
@@ -584,41 +581,44 @@ def run_config_wizard_textual(
         def _render_choice_step(self, list_view, *, selected: str, options: tuple[tuple[str, str], ...]) -> None:
             list_view.clear()
             items: list[ListItem] = []
-            default_index = 0
+            selected_flags: list[bool] = []
             for index, (value, label) in enumerate(options):
                 is_selected = selected == value
-                if is_selected:
-                    default_index = index
+                selected_flags.append(is_selected)
                 marker = "●" if is_selected else "○"
-                classes = "config-row-selected" if is_selected else "config-row-unselected"
+                classes = selectable_list_row_classes("config-row", selected=is_selected)
                 items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
             list_view.extend(items)
-            list_view.index = default_index
+            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _render_profile_step(self, list_view, *, profile: StartupProfile) -> None:
             list_view.clear()
             items: list[ListItem] = []
+            selected_flags: list[bool] = []
             for field_name, label in _ADVANCED_PROFILE_FIELDS:
                 if field_name in {"backend_enable", "frontend_enable"}:
                     enabled = bool(getattr(profile, field_name))
                 else:
                     enabled = profile.dependency_enabled(field_name)
+                selected_flags.append(enabled)
                 marker = "●" if enabled else "○"
-                classes = "config-row-selected" if enabled else "config-row-unselected"
+                classes = selectable_list_row_classes("config-row", selected=enabled)
                 items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
             list_view.extend(items)
-            list_view.index = 0
+            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _render_startup_step(self, list_view) -> None:
             list_view.clear()
             items: list[ListItem] = []
+            selected_flags: list[bool] = []
             for mode, label in _ADVANCED_STARTUP_FIELDS:
                 profile = self._profile_for_mode(mode)
                 marker = "●" if profile.startup_enable else "○"
-                classes = "config-row-selected" if profile.startup_enable else "config-row-unselected"
+                selected_flags.append(profile.startup_enable)
+                classes = selectable_list_row_classes("config-row", selected=profile.startup_enable)
                 items.append(ListItem(Label(f"{marker} {label}", markup=False), classes=classes))
             list_view.extend(items)
-            list_view.index = 0
+            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
@@ -705,7 +705,8 @@ def run_config_wizard_textual(
                 "main_preset",
                 "trees_preset",
             }:
-                self.query_one("#config-list", ListView).focus()
+                list_view = self.query_one("#config-list", ListView)
+                focus_selectable_list(self, list_view, list_view.index)
             elif step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
                 if visible_fields:

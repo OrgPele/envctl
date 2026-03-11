@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import LocalConfigState
 from envctl_engine.ui.textual.screens.config_wizard import (
+    _ADVANCED_PROFILE_FIELDS,
     _PORT_FIELDS,
     _port_input_id,
     run_config_wizard_textual,
@@ -153,12 +154,52 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app._current_step(), "startup_modes")  # noqa: SLF001
             startup_labels = [label.render().plain for label in app.query("#config-list Label")]
             self.assertEqual(startup_labels, ["● Main: Enabled for envctl runs", "● Trees: Enabled for envctl runs"])
+            startup_rows = list(app.query("#config-list ListItem"))
+            self.assertIn("-highlight", startup_rows[0].classes)
 
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app._current_step(), "main_profile")  # noqa: SLF001
             profile_labels = [label.render().plain for label in app.query("#config-list Label")]
             self.assertNotIn("● Enabled for envctl runs", profile_labels)
+            app.exit(None)
+
+    async def test_profile_step_focuses_first_selected_row_on_entry(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        local_state = LocalConfigState(
+            base_dir=REPO_ROOT,
+            config_file_path=REPO_ROOT / ".envctl",
+            config_file_exists=False,
+            config_source="defaults",
+            active_source_path=None,
+            legacy_source_path=None,
+            explicit_path=None,
+            parsed_values={},
+            file_text="",
+        )
+        app = run_config_wizard_textual(local_state=local_state, build_only=True, default_wizard_type="advanced")
+        app.values.main_profile.backend_enable = False  # noqa: SLF001
+        app.values.main_profile.frontend_enable = False  # noqa: SLF001
+        app.values.main_profile.postgres_enable = True  # noqa: SLF001
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            self.assertEqual(app._current_step(), "main_profile")  # noqa: SLF001
+            list_view = app.query_one("#config-list")
+            postgres_index = next(
+                index for index, (field_name, _label) in enumerate(_ADVANCED_PROFILE_FIELDS) if field_name == "postgres"
+            )
+            self.assertEqual(list_view.index, postgres_index)
             app.exit(None)
 
 

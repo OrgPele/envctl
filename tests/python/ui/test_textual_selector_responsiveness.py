@@ -9,11 +9,31 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.ui.selector_model import SelectorItem
+from envctl_engine.ui.textual.list_row_styles import selectable_list_row_css
+from envctl_engine.ui.textual.list_row_styles import selectable_list_default_index
+from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
+from envctl_engine.ui.textual.screens.config_wizard import CONFIG_ROW_STYLES_CSS
+from envctl_engine.ui.textual.screens.planning_selector import PLANNING_ROW_STYLES_CSS
 from envctl_engine.ui.textual.screens import selector
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTOR_CSS
+from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTOR_ROW_STYLES_CSS
 
 
 class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    def test_shared_list_row_styles_are_reused_across_textual_lists(self) -> None:
+        self.assertEqual(SELECTOR_ROW_STYLES_CSS, selectable_list_row_css("selector-row"))
+        self.assertEqual(PLANNING_ROW_STYLES_CSS, selectable_list_row_css("planning-row"))
+        self.assertEqual(CONFIG_ROW_STYLES_CSS, selectable_list_row_css("config-row"))
+
+    def test_shared_list_row_state_helpers_cover_classes_and_initial_focus(self) -> None:
+        self.assertEqual(selectable_list_row_classes("config-row", selected=True), "config-row config-row-selected")
+        self.assertEqual(
+            selectable_list_row_classes("planning-row", selected=False),
+            "planning-row planning-row-unselected",
+        )
+        self.assertEqual(selectable_list_default_index([False, True, False]), 1)
+        self.assertEqual(selectable_list_default_index([False, False]), 0)
+
     def test_selector_css_uses_distinct_non_warning_hover_and_selected_states(self) -> None:
         self.assertIn(".selector-row-unselected.-highlight", SELECTOR_CSS)
         self.assertIn(".selector-row-selected {", SELECTOR_CSS)

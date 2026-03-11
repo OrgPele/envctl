@@ -82,6 +82,8 @@ class UtilityConsolidationContractTests(unittest.TestCase):
         self.assertEqual(project_name_from_service_name("Worker"), "Worker")
         self.assertEqual(_default_port_value("DB_PORT"), 5432)
         self.assertEqual(strip_ansi("\x1b[31mhello\x1b[0m"), "hello")
+        self.assertEqual(strip_ansi("\x1b]22;default\x07hello\x1b[15;72H"), "hello")
+        self.assertEqual(strip_ansi("\\x1b[48;2;39;39;39m hello \\x1b[0m"), " hello ")
 
     def test_command_parsing_helpers_preserve_interactive_shell_behavior(self) -> None:
         self.assertEqual(sanitize_interactive_input("\x1b[A restart\r"), "restart")
