@@ -34,7 +34,7 @@ class PromptToolkitListConfig:
     emit_debug: Callable[[str, object], None] | None = None
     row_text: Callable[[SelectorItem], str] | None = None
     help_text_multi: str = "UP/DOWN or j/k move  Space toggle  a/Ctrl+A all  Enter submit  q/Esc cancel"
-    help_text_single: str = "UP/DOWN or j/k move  Enter submit  Space select  q/Esc cancel"
+    help_text_single: str = "UP/DOWN or j/k move  Space select  Enter submit  q/Esc cancel"
     confirm_cause: str = "enter"
     cancel_cause: str = "cancel_key"
     record_raw_keys: bool = True
@@ -233,8 +233,8 @@ def run_prompt_toolkit_list_selector(
         event.app.invalidate()  # type: ignore[attr-defined]
 
     def _submit(event: object) -> None:
-        nonlocal selected_indexes, status_error, status_error_deadline
-        if config.multi and not selected_indexes:
+        nonlocal status_error, status_error_deadline
+        if not selected_indexes:
             status_error = "No items were selected. Press Space or click to select at least one."
             status_error_deadline = time.monotonic() + status_error_timeout_seconds
             _emit_event(
@@ -254,11 +254,6 @@ def run_prompt_toolkit_list_selector(
             )
             event.app.invalidate()  # type: ignore[attr-defined]
             return
-        if not selected_indexes:
-            status_error = ""
-            status_error_deadline = 0.0
-            selected_indexes = {cursor}
-            _emit_event("ui.selection.toggle", token=str(rows[cursor].token), selected=True)
         values = [str(rows[index].token) for index in sorted(selected_indexes)]
         _emit_event(
             "ui.selection.confirm",

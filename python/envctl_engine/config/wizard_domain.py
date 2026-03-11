@@ -26,7 +26,7 @@ def ensure_local_config(
         return ConfigCommandResult(changed=False)
     _emit_local_config_event(emit, "config.bootstrap.required", local_state)
     _require_interactive_config_bootstrap(env)
-    result = _run_wizard(local_state=local_state, emit=emit, default_wizard_type="simple")
+    result = _run_wizard(local_state=local_state, emit=emit)
     if result is None:
         _emit_local_config_event(emit, "config.bootstrap.cancelled", local_state)
         raise RuntimeError("Configuration wizard cancelled. envctl requires a local .envctl file to continue.")
@@ -44,7 +44,7 @@ def edit_local_config(
     local_state = discover_local_config_state(base_dir, env.get("ENVCTL_CONFIG_FILE"))
     _emit_local_config_event(emit, "config.command.open", local_state)
     _require_interactive_config_bootstrap(env)
-    result = _run_wizard(local_state=local_state, emit=emit, default_wizard_type="advanced")
+    result = _run_wizard(local_state=local_state, emit=emit)
     if result is None:
         _emit_local_config_event(emit, "config.command.cancelled", local_state)
         return ConfigCommandResult(changed=False, message="Configuration edit cancelled.")
@@ -56,14 +56,12 @@ def _run_wizard(
     *,
     local_state: LocalConfigState,
     emit: Callable[..., None] | None = None,
-    default_wizard_type: str = "simple",
 ) -> ConfigWizardResult | None:
     initial_values = managed_values_from_local_state(local_state)
     result = run_config_wizard_textual(
         local_state=local_state,
         initial_values=initial_values,
         emit=emit,
-        default_wizard_type=default_wizard_type,
     )
     if result is None:
         return None

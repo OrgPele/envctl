@@ -139,6 +139,7 @@ def select_planning_counts_textual(
             self._event_key_counts: dict[str, int] = {}
             self._key_snapshot_timer: object | None = None
             self._shutdown_emitted = False
+            self._suppress_list_selected_once = False
 
         def compose(self) -> ComposeResult:
             filter_input = Input(placeholder="Filter planning files...", id="planning-filter")
@@ -371,6 +372,9 @@ def select_planning_counts_textual(
             self.exit(None)
 
         async def on_list_view_selected(self, event: ListView.Selected) -> None:
+            if self._suppress_list_selected_once:
+                self._suppress_list_selected_once = False
+                return
             _emit(
                 emit,
                 "ui.selection.interaction",
@@ -395,6 +399,7 @@ def select_planning_counts_textual(
             if event.key != "enter":
                 return
             if self._list().has_focus:
+                self._suppress_list_selected_once = True
                 event.stop()
                 self.action_submit()
 

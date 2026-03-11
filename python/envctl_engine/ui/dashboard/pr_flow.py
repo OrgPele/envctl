@@ -110,6 +110,7 @@ def run_pr_flow(
             )
             self._project_list_index = 0
             self._branch_list_index = 0
+            self._suppress_list_selected_once = False
 
         def compose(self) -> ComposeResult:
             with Vertical(id="selector-shell"):
@@ -254,11 +255,6 @@ def run_pr_flow(
             if self._step == "project":
                 selected_projects = self._selected_projects()
                 if not selected_projects:
-                    row = self._focused_row()
-                    if row is not None:
-                        row.selected = True
-                        selected_projects = [row.token]
-                if not selected_projects:
                     return
                 self._step = "branch"
                 self._refresh()
@@ -291,5 +287,23 @@ def run_pr_flow(
                 self._refresh()
                 return
             self.action_submit()
+
+        def on_list_view_selected(self, event: ListView.Selected) -> None:
+            if self._suppress_list_selected_once:
+                self._suppress_list_selected_once = False
+                return
+            self._set_current_index(event.index)
+            self.action_toggle()
+
+        def on_key(self, event: Key) -> None:
+            if event.key == "enter":
+                self._suppress_list_selected_once = True
+                event.stop()
+                self.action_submit()
+                return
+            if event.key == "space":
+                event.stop()
+                self.action_toggle()
+                return
 
     return PrFlowApp().run(mouse=run_policy.mouse)
