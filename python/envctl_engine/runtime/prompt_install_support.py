@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib import resources
@@ -10,7 +9,7 @@ from typing import Any, Final
 
 
 _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
-_DEFAULT_PRESET = "implement_tdd"
+_DEFAULT_PRESET = "implement_task"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
 
@@ -27,13 +26,7 @@ class PromptInstallResult:
 @dataclass(slots=True)
 class PromptTemplate:
     name: str
-    description: str
-    argument_hint: str
     body: str
-    claude_title: str
-    opencode_agent: str
-    opencode_model: str
-    opencode_tools: dict[str, bool]
 
 
 def dispatch_utility_command(runtime: Any, route: object) -> int:
@@ -140,7 +133,7 @@ def _install_prompt_for_cli(*, cli_name: str, preset: str, home: Path, dry_run: 
     try:
         template = _load_template(preset)
         rendered = _render_preset(cli_name=cli_name, template=template)
-    except (LookupError, OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except (LookupError, OSError, ValueError) as exc:
         return PromptInstallResult(
             cli=cli_name,
             path=str(target_path),
@@ -237,46 +230,11 @@ def _load_template(preset: str) -> PromptTemplate:
 
 
 def _parse_template(*, name: str, raw: str) -> PromptTemplate:
-    delimiter = "+++"
-    if not raw.startswith(f"{delimiter}\n"):
-        raise ValueError(f"Template '{name}' is missing TOML frontmatter")
-    remainder = raw[len(delimiter) + 1 :]
-    delimiter_index = remainder.find(f"\n{delimiter}\n")
-    if delimiter_index < 0:
-        raise ValueError(f"Template '{name}' is missing closing TOML frontmatter delimiter")
-    metadata_block = remainder[:delimiter_index]
-    body = remainder[delimiter_index + len(f"\n{delimiter}\n") :]
-    metadata = tomllib.loads(metadata_block)
-    description = str(metadata.get("description") or "").strip()
-    argument_hint = str(metadata.get("argument_hint") or "").strip()
-    claude_title = str(metadata.get("claude_title") or "").strip()
-    opencode_agent = str(metadata.get("opencode_agent") or "").strip()
-    opencode_model = str(metadata.get("opencode_model") or "").strip()
-    raw_tools = metadata.get("opencode_tools")
-    if not isinstance(raw_tools, dict):
-        raise ValueError(f"Template '{name}' has invalid opencode_tools metadata")
-    opencode_tools = {str(key): bool(value) for key, value in raw_tools.items()}
-    if not description:
-        raise ValueError(f"Template '{name}' is missing description metadata")
-    if not argument_hint:
-        raise ValueError(f"Template '{name}' is missing argument_hint metadata")
-    if not claude_title:
-        raise ValueError(f"Template '{name}' is missing claude_title metadata")
-    if not opencode_agent:
-        raise ValueError(f"Template '{name}' is missing opencode_agent metadata")
-    if not opencode_model:
-        raise ValueError(f"Template '{name}' is missing opencode_model metadata")
-    if not body.strip():
+    if not raw.strip():
         raise ValueError(f"Template '{name}' is missing prompt body")
     return PromptTemplate(
         name=name,
-        description=description,
-        argument_hint=argument_hint,
-        body=body.lstrip("\n"),
-        claude_title=claude_title,
-        opencode_agent=opencode_agent,
-        opencode_model=opencode_model,
-        opencode_tools=opencode_tools,
+        body=raw.lstrip("\n"),
     )
 
 
@@ -291,35 +249,15 @@ def _render_preset(*, cli_name: str, template: PromptTemplate) -> str:
 
 
 def _render_codex_template(template: PromptTemplate) -> str:
-    return (
-        "---\n"
-        f"description: {template.description}\n"
-        f"argument-hint: {template.argument_hint}\n"
-        "---\n\n"
-        f"{template.body}"
-    )
+    return template.body
 
 
 def _render_claude_template(template: PromptTemplate) -> str:
-    return (
-        f"# {template.claude_title}\n\n"
-        "Analyze the following: $ARGUMENTS\n\n"
-        f"{template.body}"
-    )
+    return template.body
 
 
 def _render_opencode_template(template: PromptTemplate) -> str:
-    tool_lines = "\n".join(f"  {tool}: {'true' if enabled else 'false'}" for tool, enabled in template.opencode_tools.items())
-    return (
-        "---\n"
-        f"description: {template.description}\n"
-        f"agent: {template.opencode_agent}\n"
-        f"model: {template.opencode_model}\n"
-        "tools:\n"
-        f"{tool_lines}\n"
-        "---\n\n"
-        f"{template.body}"
-    )
+    return template.body
 
 
 def _print_install_results(

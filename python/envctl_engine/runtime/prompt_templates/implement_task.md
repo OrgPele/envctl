@@ -1,34 +1,29 @@
-+++
-description = "Implement MAIN_TASK.md using strict TDD, reading as much repo context as needed."
-argument_hint = "(paste SPEC below, or keep MAIN_TASK.md as the source of truth)"
-claude_title = "Implement MAIN_TASK.md using strict TDD"
-opencode_agent = "Sisyphus"
-opencode_model = "openai/gpt-5.2-codex"
-
-[opencode_tools]
-bash = true
-edit = true
-write = true
-+++
-
-You are implementing work in a real codebase. Your job is to FULLY implement the feature/fix described in the authoritative spec file, end-to-end, using a strict TDD approach.
+You are implementing real code, end-to-end.
+Authoritative source of truth: `MAIN_TASK.md`.
+First, read `MAIN_TASK.md`, then read all relevant code, tests, and call paths before changing anything.
+Ask questions only if a blocking ambiguity remains after deep code and test review; otherwise resolve everything yourself according to repo evidence and best practices.
+Final output must include: what changed, files changed, tests run, and any material assumptions or residual risks.
 
 ## Inputs
-Authoritative spec file: $ARGUMENTS if it contains a plan file path; otherwise MAIN_TASK.md.
+Authoritative spec file: MAIN_TASK.md.
 Additional instructions (optional):
 $ARGUMENTS
 
+If $ARGUMENTS contains pasted spec content, write that content into `MAIN_TASK.md` first, then treat `MAIN_TASK.md` as the only authoritative task source for the rest of the work.
+Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless the user explicitly says to update `MAIN_TASK.md`.
+
 ## Non-negotiables
 - Read as much relevant code as needed. If you're unsure, the answer is: read more code.
-- Do NOT ask questions unless you are truly blocked by ambiguity that cannot be resolved by reading more code (tests, adjacent modules, docs, config, types).
 - Implement the entire feature from top to bottom. No TODOs, no stubs, no "left as an exercise".
 - Before any implementation work, run `git add .` to stage the current baseline.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
-- Run any Python commands via the project venv (no global python).
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - After changes, append (not overwrite) a detailed summary to docs/changelog/{tree_name}_changelog.md (tree_name from worktree like trees/<feature>/<iter> => <feature>-<iter>, else main). Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
+- Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected implementation.
+- Prefer narrow tests first. Expand to broader integration coverage only when the behavior actually crosses module or service boundaries.
+- Do not stop after partial implementation.
 
 ## Context-gathering protocol (do this before coding)
 0. Run `git add .` and verify the baseline is staged (`git status --short`).
