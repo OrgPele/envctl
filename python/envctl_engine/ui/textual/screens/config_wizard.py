@@ -16,7 +16,11 @@ from ....config.persistence import (
 )
 from ....requirements.core import dependency_definitions
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
-from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.textual.compat import (
+    apply_textual_driver_compat,
+    handle_text_edit_key_alias,
+    textual_run_policy,
+)
 from envctl_engine.ui.textual.list_row_styles import (
     apply_selectable_list_index,
     focus_selectable_list,
@@ -426,6 +430,8 @@ def run_config_wizard_textual(
             _emit(emit, "ui.screen.exit", screen="config_wizard")
 
         def on_key(self, event: Key) -> None:
+            if self._text_input_has_focus() and handle_text_edit_key_alias(widget=self.focused, event=event):
+                return
             if event.key == "enter":
                 if self._button_has_focus():
                     return

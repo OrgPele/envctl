@@ -16,7 +16,7 @@ from ...debug.debug_utils import hash_command
 from ...state.models import RunState
 from ..command_aliases import normalize_interactive_command
 from ..capabilities import textual_importable as _textual_importable
-from .compat import apply_textual_driver_compat, textual_run_policy
+from .compat import apply_textual_driver_compat, normalize_text_edit_key_alias, textual_run_policy
 from .state_bridge import render_dashboard_snapshot
 
 
@@ -75,7 +75,7 @@ def _route_key_to_command_input(
 ) -> tuple[bool, str, bool, bool]:
     if dispatch_in_flight or focused_input:
         return False, current_value, False, False
-    normalized_key = str(key or "").strip().lower()
+    normalized_key = normalize_text_edit_key_alias(str(key or "").strip().lower(), character=character)
     if normalized_key in {"enter", "return"}:
         has_value = bool(str(current_value or "").strip())
         return True, current_value, True, has_value

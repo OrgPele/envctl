@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Callable
 
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
-from envctl_engine.ui.textual.compat import apply_textual_driver_compat, textual_run_policy
+from envctl_engine.ui.textual.compat import (
+    apply_textual_driver_compat,
+    handle_text_edit_key_alias,
+    textual_run_policy,
+)
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -35,6 +39,8 @@ def run_text_input_dialog_textual(
 
     class _DialogTextArea(TextArea):
         async def _on_key(self, event: events.Key) -> None:
+            if handle_text_edit_key_alias(widget=self, event=event):
+                return
             if event.key == "space":
                 event.stop()
                 event.prevent_default()
