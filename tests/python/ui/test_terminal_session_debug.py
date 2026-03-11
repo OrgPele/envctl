@@ -116,6 +116,33 @@ class TerminalSessionDebugTests(unittest.TestCase):
         self.assertEqual(second, "xh")
         terminal_session_module._PUSHBACK_BYTES.clear()
 
+    def test_basic_input_reader_preserves_immediate_arrow_burst_for_next_consumer(self) -> None:
+        terminal_session_module._PUSHBACK_BYTES.clear()
+        script = textwrap.dedent(
+            """
+            from envctl_engine.ui.terminal_session import TerminalSession, consume_preserved_input
+
+            session = TerminalSession({}, prefer_basic_input=True)
+            command = session.read_command_line("Enter command: ")
+            preserved = consume_preserved_input()
+            print("CMD=" + repr(command), flush=True)
+            print("PRESERVED=" + repr(preserved), flush=True)
+            """
+        )
+
+        output = self._run_in_pty(
+            script,
+            [
+                (0.2, b"t\r"),
+                (0.3, b"\x1b[B" * 3),
+            ],
+            timeout=4.0,
+        )
+
+        self.assertIn("CMD='t'", output)
+        self.assertIn("PRESERVED=b'\\x1b[B\\x1b[B\\x1b[B'", output)
+        terminal_session_module._PUSHBACK_BYTES.clear()
+
     def test_discard_stale_control_sequences_preserves_printable_input(self) -> None:
         terminal_session_module._PUSHBACK_BYTES.clear()
         reads = [b"\x1b", b"[", b"B", b"t"]
