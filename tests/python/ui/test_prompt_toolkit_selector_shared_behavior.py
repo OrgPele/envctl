@@ -57,7 +57,15 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 token="alpha",
                 scope_signature=("service:alpha",),
                 section="Services",
-            )
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+                section="Services",
+            ),
         ]
 
         with patch(
@@ -99,7 +107,15 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 token="alpha",
                 scope_signature=("service:alpha",),
                 section="Services",
-            )
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+                section="Services",
+            ),
         ]
         app_state = {"invalidated_after_enter": False}
 
@@ -222,7 +238,7 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
         )
         self.assertTrue(app_state["invalidated_after_enter"])
 
-    def test_runner_blocks_enter_without_explicit_single_selection(self) -> None:
+    def test_runner_submits_focused_row_on_enter_in_single_mode(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         debug_events: list[tuple[str, dict[str, object]]] = []
         options = [
@@ -233,7 +249,15 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 token="alpha",
                 scope_signature=("service:alpha",),
                 section="Services",
-            )
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+                section="Services",
+            ),
         ]
 
         class _FakeBinding:
@@ -267,6 +291,7 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
             def run(self) -> PromptToolkitListResult | None:
                 handlers = {binding.keys[0].key: binding.handler for binding in self.key_bindings.bindings}
                 event = types.SimpleNamespace(app=self)
+                handlers["down"](event)
                 handlers["enter"](event)
                 if self.result is None:
                     handlers["q"](event)
@@ -330,9 +355,9 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(result, PromptToolkitListResult(values=None, cancelled=True))
+        self.assertEqual(result, PromptToolkitListResult(values=["beta"], cancelled=False))
         self.assertIn(
-            ("ui.selection.confirm", {"prompt": "Restart", "multi": False, "selected_count": 0, "blocked": True}),
+            ("ui.selection.confirm", {"prompt": "Restart", "multi": False, "selected_count": 1}),
             events,
         )
         self.assertIn(
@@ -340,8 +365,8 @@ class PromptToolkitSelectorSharedBehaviorTests(unittest.TestCase):
                 "ui.selector.submit",
                 {
                     "selector_id": "restart",
-                    "selected_count": 0,
-                    "blocked": True,
+                    "selected_count": 1,
+                    "blocked": False,
                     "cancelled": False,
                     "cause": "enter",
                 },

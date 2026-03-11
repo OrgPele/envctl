@@ -234,6 +234,8 @@ def run_prompt_toolkit_list_selector(
 
     def _submit(event: object) -> None:
         nonlocal status_error, status_error_deadline
+        if not selected_indexes and not config.multi and 0 <= cursor < len(rows):
+            selected_indexes.add(cursor)
         if not selected_indexes:
             status_error = "No items were selected. Press Space or click to select at least one."
             status_error_deadline = time.monotonic() + status_error_timeout_seconds

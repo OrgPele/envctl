@@ -482,6 +482,13 @@ def create_selector_app(
             if self.query_one("#selector-filter", Input).has_focus:
                 self.action_focus_list(reason="submit_from_filter")
             values = self._selected_values()
+            if not values and not multi:
+                focused = self._focused_model_index()
+                if focused is not None and 0 <= focused < len(self._rows):
+                    row = self._rows[focused]
+                    if row.visible:
+                        values = [row.item.token]
+                        row.selected = True
             if not values:
                 self._show_status_error("No items were selected. Press Space or click to select at least one.")
                 _emit(
