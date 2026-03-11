@@ -38,14 +38,15 @@ def dispatch_utility_command(runtime: Any, route: object) -> int:
 
 def run_install_prompts_command(runtime: Any, route: object) -> int:
     flags = getattr(route, "flags", {})
+    passthrough_args = list(getattr(route, "passthrough_args", []) or [])
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
     raw_cli = str(flags.get("cli") or "").strip()
-    preset = str(flags.get("preset") or _DEFAULT_PRESET).strip() or _DEFAULT_PRESET
+    preset_label, presets, preset_error = _resolve_presets(flags=flags, passthrough_args=passthrough_args)
 
-    if preset not in _available_presets():
+    if preset_error is not None:
         return _print_install_results(
-            preset=preset,
+            preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
             results=[
@@ -54,14 +55,14 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                     path="",
                     status="failed",
                     backup_path=None,
-                    message=_unsupported_preset_message(preset),
+                    message=preset_error,
                 )
             ],
         )
 
     if not raw_cli:
         return _print_install_results(
-            preset=preset,
+            preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
             results=[
@@ -89,13 +90,34 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
         )
     results: list[PromptInstallResult] = list(invalid_results)
     for cli_name in selected_clis:
-        results.append(_install_prompt_for_cli(cli_name=cli_name, preset=preset, home=home, dry_run=dry_run))
+        for preset in presets:
+            results.append(_install_prompt_for_cli(cli_name=cli_name, preset=preset, home=home, dry_run=dry_run))
     return _print_install_results(
-        preset=preset,
+        preset=preset_label,
         dry_run=dry_run,
         json_output=json_output,
         results=results,
     )
+
+
+def _resolve_presets(
+    *,
+    flags: dict[str, object],
+    passthrough_args: list[str],
+) -> tuple[str, list[str], str | None]:
+    raw_flag_preset = str(flags.get("preset") or "").strip()
+    positional_args = [str(token).strip() for token in passthrough_args if str(token).strip()]
+    if len(positional_args) > 1:
+        extras = ", ".join(positional_args[1:])
+        return "", [], f"Unexpected extra arguments for install-prompts: {extras}"
+    raw_preset = raw_flag_preset or (positional_args[0] if positional_args else _DEFAULT_PRESET)
+    preset = raw_preset.strip() or _DEFAULT_PRESET
+    available = sorted(_available_presets())
+    if preset == "all":
+        return "all", available, None
+    if preset not in available:
+        return preset, [], _unsupported_preset_message(preset)
+    return preset, [preset], None
 
 
 def _normalize_cli_targets(raw_cli: str) -> tuple[list[str], list[PromptInstallResult]]:
