@@ -7,6 +7,26 @@ from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_di
 
 
 class TextInputDialogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_space_inserts_literal_space_into_text_area(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        app = run_text_input_dialog_textual(
+            title="Commit Message",
+            help_text="Commit message (leave blank to use changelog).",
+            placeholder="Type a commit message",
+            default_button_label="Use changelog",
+            build_only=True,
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            await pilot.press("space")
+            await pilot.press("b")
+            await pilot.pause()
+            text_area = app.query_one("#dialog-input")
+            self.assertEqual(getattr(text_area, "text", None), "a b")
+
     async def test_enter_on_empty_text_area_uses_default_action(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
@@ -23,4 +43,3 @@ class TextInputDialogTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app.return_value, "")
-
