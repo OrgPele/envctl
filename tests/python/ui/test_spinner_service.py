@@ -238,7 +238,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
 
         self.assertTrue(stream.writes)
         self.assertEqual(stream.writes[0], "\r\033[2K\r")
-        self.assertTrue(any("pr completed" in item for item in printed))
+        self.assertTrue(any("pr completed" in item and "✓" in item for item in printed))
 
     def test_rich_spinner_end_clears_current_line_even_without_final_state(self) -> None:
         stream = _TtyStream()
@@ -266,6 +266,38 @@ class SpinnerServicePolicyTests(unittest.TestCase):
 
         self.assertTrue(stream.writes)
         self.assertEqual(stream.writes[0], "\r\033[2K\r")
+
+    def test_prompt_toolkit_spinner_uses_checkmark_success_marker(self) -> None:
+        class _PromptOutputStub:
+            def __init__(self) -> None:
+                self.raw: list[str] = []
+
+            def write_raw(self, text: str) -> None:
+                self.raw.append(text)
+
+            def flush(self) -> None:
+                return None
+
+        output = _PromptOutputStub()
+        operation = RichSpinnerOperation(
+            message="Running commit...",
+            policy=SpinnerPolicy(
+                mode="on",
+                enabled=True,
+                reason="",
+                backend="prompt_toolkit",
+                min_ms=0,
+                verbose_events=False,
+            ),
+            start_immediately=False,
+        )
+        operation._started = True  # noqa: SLF001
+        operation._prompt_output = output  # noqa: SLF001
+        operation.succeed("commit complete")
+        operation.end()
+
+        self.assertTrue(output.raw)
+        self.assertIn("✓ commit complete\n", output.raw)
 
 
 if __name__ == "__main__":
