@@ -47,6 +47,53 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
+    def test_install_prompts_positional_all_installs_every_preset_for_selected_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "all", "--dry-run"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            rendered = buffer.getvalue()
+            self.assertIn("Would install implement_task for codex", rendered)
+            self.assertIn("Would install review_task_imp for codex", rendered)
+            self.assertIn("Would install continue_task for codex", rendered)
+            self.assertIn("Would install merge_trees_into_dev for codex", rendered)
+            self.assertIn("Would install create_plan for codex", rendered)
+            self.assertEqual(rendered.count("codex: planned "), 5)
+
+    def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "all", "--dry-run", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["preset"], "all")
+            self.assertEqual(
+                [item["path"] for item in payload["results"]],
+                [
+                    str(Path(tmpdir) / ".codex" / "prompts" / "continue_task.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "create_plan.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "implement_task.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "merge_trees_into_dev.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "review_task_imp.md"),
+                ],
+            )
+
     def test_install_prompts_overwrites_existing_file_with_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
