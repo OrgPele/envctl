@@ -28,6 +28,10 @@ def _prompt_toolkit_available() -> bool:
     return importlib.util.find_spec("prompt_toolkit") is not None
 
 
+_SPINNER_SUCCESS_SYMBOL = "✓"
+_SPINNER_FAILURE_SYMBOL = "✗"
+
+
 @dataclass(slots=True)
 class SpinnerPolicy:
     mode: str
@@ -352,7 +356,7 @@ class RichSpinnerOperation:
             if self._final_state is not None:
                 ok, message = self._final_state
                 if self._started and self._console is not None:
-                    symbol = "+" if ok else "!"
+                    symbol = _SPINNER_SUCCESS_SYMBOL if ok else _SPINNER_FAILURE_SYMBOL
                     text = f"{symbol} {message}"
                     if not self._no_color:
                         color = "green" if ok else "red"
@@ -362,7 +366,7 @@ class RichSpinnerOperation:
                     except Exception:
                         pass
                 elif self._started and self._policy.backend == "prompt_toolkit":
-                    symbol = "+" if ok else "!"
+                    symbol = _SPINNER_SUCCESS_SYMBOL if ok else _SPINNER_FAILURE_SYMBOL
                     try:
                         if self._prompt_output is not None:
                             self._prompt_output.write_raw(f"{symbol} {message}\n")
