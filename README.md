@@ -3,8 +3,6 @@
 </p>
 
 <h1 align="center">
-  envctl
-  <br>
   <small>Create, test, compare, and spin up full worktree environments with their databases in seconds</small>
 </h1>
 
