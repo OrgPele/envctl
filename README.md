@@ -7,7 +7,7 @@
 </h1>
 
 <p align="center">
-  Reinvent your coding workflow. Create many worktrees with correctly wired supporting services (databases, Redis, Supabase, n8n and more) then manage everything from one CLI including runing frontend/backend managing logs, testing all trees and more!
+  Reinvent your coding workflow. Spin up many worktrees with correctly wired apps and supporting services, automatic port allocation to avoid conflicts, isolated databases, Redis, Supabase, n8n. one CLI to rule all running frontends and backends, viewing logs, and testing every tree in parallel.
 </p>
 
 <p align="center">
