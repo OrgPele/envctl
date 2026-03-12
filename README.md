@@ -1,10 +1,41 @@
-# envctl
+<p align="center">
+  <img src="docs/assets/envctl-logo.png" alt="envctl" width="820">
+</p>
 
-envctl is a global CLI for spinning up isolated local environments for a repo and its worktrees, with their databases and dependencies, in seconds.
+<h1 align="center">
+  envctl
+  <br>
+  <small>Create, test, compare, and spin up full worktree environments with their databases in seconds</small>
+</h1>
 
-Vibe coding gets messy fast when multiple implementations are running at once. Ports collide, services point at the wrong database, logs blur together, and worktrees step on each other.
+<p align="center">
+  Reinvent your vibe-coding workflow. Create many worktrees with correctly wired supporting services (databases, Redis, Supabase, n8n and more) then manage everything from one CLI including runing frontend/backend managing logs, testing all trees and more!
+</p>
 
-envctl fixes that by managing runtime state for each worktree. It keeps environments isolated and gives you one command surface to restart stacks, run tests in parallel, monitor logs and health, inspect errors, run AI reviews, and tear everything down safely. That means less manual setup, fewer mistakes, and faster iteration across many implementations.
+<p align="center">
+  <a href="https://github.com/kfiramar/envctl/releases/tag/1.1.0"><img src="https://img.shields.io/badge/release-1.1.0-2ea043" alt="Release 1.1.0"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12--3.14-3776AB" alt="Python 3.12-3.14"></a>
+  <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-readable-0969DA" alt="Documentation"></a>
+  <a href="docs/changelog/main_changelog.md"><img src="https://img.shields.io/badge/changelog-main-7A3EFF" alt="Changelog"></a>
+  <a href="docs/developer/contributing.md"><img src="https://img.shields.io/badge/contributing-guide-F97316" alt="Contributing"></a>
+  <a href="docs/license.md"><img src="https://img.shields.io/badge/license-MIT-8B949E" alt="License"></a>
+</p>
+
+<p align="center">
+  <a href="docs/README.md"><strong>README</strong></a>
+  ·
+  <a href="docs/user/getting-started.md"><strong>Getting Started</strong></a>
+  ·
+  <a href="docs/developer/contributing.md"><strong>Contributing</strong></a>
+  ·
+  <a href="docs/license.md"><strong>License</strong></a>
+</p>
+
+`envctl` is a global CLI for orchestrating full local development environments across one repository and many worktrees. It starts apps, assigns safe ports, wires dependencies, keeps each environment isolated, and gives you one place to operate the whole system.
+
+This is the point where normal local development usually starts breaking down: two backends want the same port, one frontend points at the wrong API, a shared Redis or database leaks across branches, logs are split across terminals, and parallel implementations become difficult to compare safely.
+
+`envctl` turns that into a deterministic workflow. It tracks runtime state per worktree, keeps service and dependency wiring isolated, and gives you a single command surface for startup, tests, logs, health, inspection, PR/review flows, and teardown. The result is faster iteration, fewer environment mistakes, and a much better base for both human and AI-assisted development.
 
 ## Quick Start
 

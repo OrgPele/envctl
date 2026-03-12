@@ -1,5 +1,7 @@
 # License
 
-This repository currently does not include a `LICENSE` file.
+This project is licensed under the MIT License.
 
-Until a license file is added, all rights are reserved by default.
+See the repository license file:
+
+- [LICENSE](../LICENSE)
