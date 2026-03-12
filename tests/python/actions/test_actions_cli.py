@@ -89,13 +89,17 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/new-demo\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/new-demo", "origin/main"]:
+                    return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: add bounded pr body\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/new-demo"]:
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/new-demo"]:
                     return "abc123\x1ffeat: demo\x1ffirst body line\nsecond body line\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
-                if args == ["diff", "--stat", "main...feature/new-demo"]:
+                if args == ["diff", "--stat", "origin/main...feature/new-demo"]:
                     return " foo.py | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
                 return ""
 
@@ -146,10 +150,10 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("--base", gh_create)
             self.assertIn("main", gh_create)
             self.assertEqual(len(captured_body), 1)
-            self.assertIn("Project: Main", captured_body[0])
-            self.assertIn("## Commits", captured_body[0])
             self.assertIn("- feat: demo (abc123)", captured_body[0])
             self.assertIn("first body line", captured_body[0])
+            self.assertNotIn("Project: Main", captured_body[0])
+            self.assertNotIn("## Commits", captured_body[0])
             self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
 
     def test_pr_action_truncates_large_commit_messages_to_recent_content(self) -> None:
@@ -162,9 +166,13 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/huge-pr\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/huge-pr", "origin/main"]:
+                    return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: huge commit history\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/huge-pr"]:
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/huge-pr"]:
                     entries = []
                     for index in range(5000):
                         entries.append(
@@ -172,7 +180,7 @@ class ActionsCliTests(unittest.TestCase):
                         )
                     entries.append("ffffff\x1fLATEST CHANGESET\x1fLATEST DETAIL LINE\x1e")
                     return "".join(entries)
-                if args == ["diff", "--stat", "main...feature/huge-pr"]:
+                if args == ["diff", "--stat", "origin/main...feature/huge-pr"]:
                     return ""
                 return ""
 
@@ -222,9 +230,13 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/custom-body\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/custom-body", "origin/main"]:
+                    return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: explicit pr body\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/custom-body"]:
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/custom-body"]:
                     return "abc123\x1fcommit fallback\x1fbody fallback\x1e"
                 return ""
 
@@ -271,13 +283,17 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/no-prompt\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/no-prompt", "origin/main"]:
+                    return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: promptless pr\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/no-prompt"]:
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/no-prompt"]:
                     return "abc123\x1ffeat: demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
-                if args == ["diff", "--stat", "main...feature/no-prompt"]:
+                if args == ["diff", "--stat", "origin/main...feature/no-prompt"]:
                     return ""
                 return ""
 
@@ -331,9 +347,11 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/main-task\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: use main task body\n"
-                if args == ["diff", "--stat", "main...feature/main-task"]:
+                if args == ["diff", "--stat", "origin/main...feature/main-task"]:
                     return ""
                 return ""
 
@@ -380,6 +398,8 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/main-task-limit\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: truncate main task body\n"
                 return ""
@@ -429,9 +449,13 @@ class ActionsCliTests(unittest.TestCase):
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return "feature/helper-demo\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/helper-demo", "origin/main"]:
+                    return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: helper demo\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "main..feature/helper-demo"]:
+                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/helper-demo"]:
                     return "abc123\x1ffeat: helper demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""

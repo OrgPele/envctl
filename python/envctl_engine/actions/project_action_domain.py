@@ -299,29 +299,14 @@ def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, ba
     if main_task.is_file() and _file_has_text(main_task):
         return _truncate_pr_body(_read_text(main_task), max_chars=PR_BODY_MAX_CHARS)
 
-    sections: list[str] = []
-    metadata_lines = [
-        f"Project: {context.project_name}",
-        f"Head: {head_branch}",
-    ]
-    if base_branch:
-        metadata_lines.append(f"Base: {base_branch}")
-    sections.append("\n".join(metadata_lines))
-
     commits = _pr_commit_messages(git_root, head_branch=head_branch, base_branch=base_branch)
     if commits:
-        sections.append(f"## Commits\n\n{commits}")
-
-    body = "\n\n".join(section.strip() for section in sections if section.strip()).strip()
-    if not body:
-        body = f"Project: {context.project_name}\nHead: {head_branch}"
-        if base_branch:
-            body += f"\nBase: {base_branch}"
-    return _truncate_pr_body(body, max_chars=PR_BODY_MAX_CHARS)
+        return _truncate_pr_body(commits, max_chars=PR_BODY_MAX_CHARS)
+    return ""
 
 
 def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -> str:
-    range_spec = f"{base_branch}..{head_branch}" if base_branch else head_branch
+    range_spec = _pr_commit_range(git_root, head_branch=head_branch, base_branch=base_branch)
     raw = _git_output(git_root, ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", range_spec])
     entries: list[str] = []
     for chunk in raw.split("\x1e"):
@@ -350,9 +335,37 @@ def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -
 def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
     diff_args = ["diff", "--stat"]
     if base_branch:
-        diff_args.append(f"{base_branch}...{head_branch}")
+        diff_args.append(_pr_compare_range(git_root, head_branch=head_branch, base_branch=base_branch))
     diff_stat = _git_output(git_root, diff_args).strip()
     return _truncate_pr_body(diff_stat, max_chars=8_000) if diff_stat else ""
+
+
+def _pr_commit_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    head_ref = head_branch or "HEAD"
+    if not base_branch:
+        return head_ref
+    base_ref = _pr_base_ref(git_root, base_branch)
+    merge_base = _git_output(git_root, ["merge-base", head_ref, base_ref]).strip()
+    if merge_base:
+        return f"{merge_base}..{head_ref}"
+    return f"{base_ref}..{head_ref}"
+
+
+def _pr_compare_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    head_ref = head_branch or "HEAD"
+    if not base_branch:
+        return head_ref
+    base_ref = _pr_base_ref(git_root, base_branch)
+    return f"{base_ref}...{head_ref}"
+
+
+def _pr_base_ref(git_root: Path, base_branch: str) -> str:
+    remote_candidate = f"origin/{base_branch}"
+    if _git_output(git_root, ["rev-parse", "--verify", remote_candidate]).strip():
+        return remote_candidate
+    if _git_output(git_root, ["rev-parse", "--verify", base_branch]).strip():
+        return base_branch
+    return base_branch
 
 
 def _recent_text_excerpt(text: str, *, max_chars: int) -> str:
