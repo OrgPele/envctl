@@ -1,3 +1,39 @@
+## 2026-03-12 - envctl 1.1.0 release
+
+### Scope
+Cut the `1.1.0` release with a focus on making `envctl` materially easier to use for real multi-worktree development: better test ergonomics, cleaner dashboard flows, improved config UX, prompt installer cleanup, and more reliable runtime behavior.
+
+### Key behavior changes
+- Failed-only test reruns:
+  - `envctl test --failed`
+  - dashboard `t` flow support for failed-only reruns
+  - backend reruns from saved pytest/unittest identifiers where supported
+  - frontend reruns from saved failed files
+  - stale git-state protection and safer failed-test manifest handling
+- Dashboard and action UX:
+  - cleaner selector behavior and scope selection
+  - improved test-result summaries and failure artifact links
+  - better spinner/final-status handling
+  - clearer action failure reporting
+- Config wizard improvements:
+  - more coherent advanced-only flow
+  - cleaner component/dependency configuration
+  - better copy, navigation, and backend-only long-running-service handling
+- Prompt tooling updates:
+  - simplified built-in prompt templates
+  - corrected `install-prompts all` behavior
+  - clearer `MAIN_TASK.md` and plan-oriented prompt flows
+- Runtime/startup reliability:
+  - better startup/resume handling
+  - clearer Docker/dependency failure messages
+  - improved path/log rendering and interactive output behavior
+
+### Verification
+- Release artifacts built successfully:
+  - `dist/envctl-1.1.0-py3-none-any.whl`
+  - `dist/envctl-1.1.0.tar.gz`
+- GitHub release published for `1.1.0`
+
 ## 2026-03-09 - Review tree-diffs moved into runtime `/tmp` scope
 
 ### Scope
