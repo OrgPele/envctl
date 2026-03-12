@@ -7,7 +7,7 @@
 </h1>
 
 <p align="center">
-  Reinvent your coding workflow. Spin up many worktrees with correctly wired apps and supporting services, automatic port allocation to avoid conflicts, isolated databases, Redis, Supabase, n8n. one CLI to rule all running frontends and backends, viewing logs, and testing every tree in parallel.
+  Reinvent your vibe-coding workflow. Spin up many worktrees with correctly wired apps and supporting services, automatic port allocation to avoid conflicts, isolated databases, Redis, Supabase, n8n. one CLI to rule all running frontends and backends, viewing logs, and testing every tree in parallel.
 </p>
 
 <p align="center">
