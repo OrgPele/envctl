@@ -4,6 +4,17 @@ This guide is the fastest path to a first successful `envctl` run in a real repo
 
 If you already know the basics and just want repeatable command sequences, jump to [Common Workflows](common-workflows.md).
 
+## Supported Today
+
+`envctl` currently documents and supports:
+
+- the Python runtime as the primary runtime path
+- repositories with Python backends and JavaScript frontends
+- worktree-based development driven by `todo/plans/...`
+- built-in local service wiring for databases, Redis, Supabase, and n8n
+
+If your repo fits that shape, the rest of this guide is the supported path.
+
 ## 1. Install
 
 If `pipx` is not installed yet, follow the official pipx installation guide first:

@@ -35,6 +35,8 @@ This is the point where normal local development usually starts breaking down: t
 
 `envctl` turns that into a deterministic workflow. It tracks runtime state per worktree, keeps service and dependency wiring isolated, and gives you a single command surface for startup, tests, logs, health, inspection, PR/review flows, and teardown. The result is faster iteration, fewer environment mistakes, and a much better base for both human and AI-assisted development.
 
+> **Currently supported stack:** the documented runtime is the Python engine. `envctl` currently supports Python backends, JavaScript frontends, multi-worktree orchestration, and built-in local service wiring for databases plus Redis, Supabase, and n8n.
+
 ## Quick Start
 
 ```bash

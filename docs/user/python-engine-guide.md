@@ -4,6 +4,13 @@ This guide explains the runtime users actually operate day to day: startup, resu
 
 ## Runtime Overview
 
+Current supported stack for this guide:
+
+- Python runtime only
+- Python backends and JavaScript frontends
+- built-in local service wiring for databases, Redis, Supabase, and n8n
+- worktree orchestration from `todo/plans/...`
+
 The supported runtime path is the Python runtime.
 
 In practice, that means:
