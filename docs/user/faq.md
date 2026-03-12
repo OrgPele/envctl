@@ -7,14 +7,8 @@ No.
 Install `envctl` once so the launcher is on your `PATH` in every shell, then use it against any target repo:
 
 ```bash
-pipx install .
+pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
-```
-
-or:
-
-```bash
-python -m pip install --user .
 ```
 
 Then use it against any target repo:
@@ -42,6 +36,17 @@ If `.envctl` is missing:
 
 If you are troubleshooting a real run, you almost always want `envctl --doctor`.
 
+## What is the recommended install path?
+
+Use `pipx`:
+
+```bash
+pipx install "git+https://github.com/kfiramar/envctl.git"
+pipx ensurepath
+```
+
+Use editable/source installs only when you are developing `envctl` itself.
+
 ## Why did `envctl` open a config wizard?
 
 Because you ran a normal operational command in a repository that does not yet have a repo-local `.envctl`.
@@ -56,15 +61,7 @@ If you want the exact screen flow and save behavior, use [First-Run Wizard](firs
 
 ## Is the Bash/shell engine still supported?
 
-The supported runtime path is the Python runtime.
-
-To restore the latest runtime state:
-
-```bash
-envctl --resume
-```
-
-These docs are written for the Python runtime.
+The supported runtime path is the Python runtime, and these docs are written for that path.
 
 ## Why does `debug-pack` fail?
 

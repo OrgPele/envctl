@@ -1,81 +1,61 @@
 # Python Engine Guide
 
-This guide is for people using `envctl` day to day after the first install.
+This guide explains the runtime users actually operate day to day: startup, resume, inspection commands, artifacts, diagnostics, and the current interactive UI surface.
 
-It focuses on the Python runtime that users actually operate: guided setup, inspection commands, start/resume behavior, runtime artifacts, and diagnostics.
+## Runtime Overview
 
-## What Matters to Most Users
-
-The Python runtime is the primary runtime behind `envctl`.
+The supported runtime path is the Python runtime.
 
 In practice, that means:
 
-- first-run setup is guided through a config wizard
-- inspection commands let you see what will happen before startup
-- resume is state-aware and truth-aware
-- diagnostics such as `--doctor`, `--debug-pack`, and `--debug-report` are part of the normal operating surface
-
-Temporary fallback is still available:
-
-```bash
-envctl --resume
-```
-
-The current docs in this repository assume Python runtime behavior unless noted otherwise.
+- first-run setup happens through the config wizard
+- inspection commands show what the runtime will do before startup
+- resume is saved-state-aware and live-truth-aware
+- diagnostics such as `--doctor`, `--debug-pack`, and `--debug-report` are part of the normal surface
 
 ## First Run and Local Config
 
-The Python runtime expects a repo-local `.envctl` file for normal operation.
+The Python runtime expects a repo-local `.envctl` for normal operational commands.
 
-Behavior on first run:
+Behavior:
 
-- If `.envctl` exists, runtime loads it.
-- If `.envctl` is missing and the command is inspect-only or utility-safe (`--list-commands`, `--list-targets`, `--list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`), runtime continues with defaults.
-- If `.envctl` is missing and you run a normal operational command, runtime opens the Textual config wizard and writes `.envctl`.
-- If `.envctl` is missing and there is no interactive TTY, the runtime exits with an actionable error instead of guessing.
-
-What the wizard actually covers:
-
-1. welcome and source
-2. wizard type (`simple` or `advanced`)
-3. default mode
-4. per-mode startup presets in the simple flow, or per-mode startup settings in the advanced flow
-5. port defaults in the advanced flow
-6. review and save
-
-Use [First-Run Wizard](first-run-wizard.md) if you want the guided setup story in detail.
+- if `.envctl` exists, runtime loads it
+- if `.envctl` is missing and the command is inspect-only or utility-safe, runtime continues with defaults
+- if `.envctl` is missing and you run a normal operational command interactively, runtime opens the setup wizard and writes `.envctl`
+- if `.envctl` is missing and there is no interactive TTY, runtime exits with a clear error instead of guessing
 
 Useful commands:
 
 ```bash
-# Interactive editor / bootstrap
 envctl config
-
-# Headless config save from JSON
-printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
-
-# Inspect the effective managed config without creating .envctl
 envctl show-config --json
+printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
 
-Notes:
+The current wizard flow is:
 
-- `.envctl` is for orchestration settings, not app secrets.
-- Legacy config files such as `.envctl.sh` can still prefill the new config flow.
-- The Python config layer now has canonical managed keys like `MAIN_STARTUP_ENABLE`, `MAIN_POSTGRES_ENABLE`, and `TREES_REDIS_ENABLE`, but older compatibility aliases such as `POSTGRES_MAIN_ENABLE` and `REDIS_MAIN_ENABLE` are still accepted where relevant.
+1. `Welcome / Source`
+2. `Default Mode`
+3. `Components`
+4. optional `Long-Running Service`
+5. `Directories`
+6. `Ports`
+7. `Review / Save`
+
+For the full setup story, see [First-Run Wizard](first-run-wizard.md).
 
 ## Startup Modes
 
-`envctl` still centers around two runtime modes:
+`envctl` has two runtime modes:
 
-- `main`: operate on the repository root as one environment.
-- `trees`: operate on planned or existing worktrees.
+- `main`: operate on the repository root as one environment
+- `trees`: operate on planned or existing worktrees
 
 Mode selection order:
 
-1. Explicit CLI mode flags win.
-2. `ENVCTL_DEFAULT_MODE` from environment or `.envctl` fills in the default.
-3. Built-in default is `main`.
+1. explicit CLI mode flags
+2. `ENVCTL_DEFAULT_MODE` from environment or `.envctl`
+3. built-in default `main`
 
 Examples:
 
@@ -88,9 +68,9 @@ envctl --plan
 
 `plan` always resolves into `trees` mode.
 
-## Startup Selection and Inspection
+## Inspection Commands
 
-These are the commands to use before you start anything.
+These commands are safe to run before startup:
 
 ```bash
 envctl --list-commands
@@ -102,65 +82,49 @@ envctl explain-startup --json
 envctl install-prompts --cli codex --dry-run
 ```
 
-What each one is for:
+What they are for:
 
-- `--list-commands`: prints the supported Python runtime command surface.
-- `--list-targets --json`: shows discovered projects and the ports they would receive.
-- `--list-trees --json`: same idea, but tree-focused.
-- `show-config --json`: prints the effective managed config payload, source, and file path.
-- `show-state --json`: prints the latest saved state pointer and state payload.
-- `explain-startup --json`: explains what the runtime would do before you actually start anything.
-- `install-prompts --cli ...`: installs envctl-managed AI CLI presets into user-local directories without requiring a startup run.
+- `--list-commands`: show the supported runtime command surface
+- `--list-targets --json`: show discovered projects and targetable scopes
+- `--list-trees --json`: show discovered worktrees / planning targets
+- `show-config --json`: print effective config source and values
+- `show-state --json`: print the latest saved runtime state
+- `explain-startup --json`: show what startup would do before anything runs
+- `install-prompts --cli ...`: install built-in AI prompt presets without requiring a startup run
 
-`explain-startup` is especially useful because it tells you:
+## Runtime Artifacts
 
-- selected mode
-- whether startup is enabled for that mode
-- whether interactive selection is required
-- whether auto-resume would happen
-- which services and built-in dependencies are enabled
-- whether tree startup would run in parallel
-
-## What Gets Written During a Run
-
-The Python runtime writes scoped artifacts under:
+The runtime writes scoped artifacts under:
 
 ```text
 ${RUN_SH_RUNTIME_DIR:-/tmp/envctl-runtime}/python-engine/<scope-id>/
 ```
 
-Typical files:
+Common files:
 
-- `run_state.json`: latest canonical state for the current scope
-- `runtime_map.json`: project/service/URL projection
-- `ports_manifest.json`: requested vs assigned vs final ports
-- `error_report.json`: structured recent failures
-- `events.jsonl`: structured runtime events
-- `runtime_readiness_report.json`: latest runtime readiness contract result
-- `runs/<run-id>/...`: immutable per-run artifact set
-- `debug/session-*/...`: debug flight recorder session data
+- `run_state.json`
+- `runtime_map.json`
+- `ports_manifest.json`
+- `error_report.json`
+- `events.jsonl`
+- `runs/<run-id>/...`
+- `debug/session-*/...`
 
-The user-facing reason these files matter:
+User-facing meaning:
 
 - `run_state.json` powers resume and state-aware commands
-- `runtime_map.json` is the quickest machine-readable view of projects, ports, and URLs
+- `runtime_map.json` is the quickest machine-readable map of projects, services, ports, and URLs
 - `error_report.json` and `events.jsonl` are the first places to look during triage
-
-Important detail:
-
-- The scope root is the authoritative Python runtime location.
-- The runtime also maintains a compatibility view under the broader `python-engine` root so old consumers and migration tooling can still find expected files.
+- `runs/<run-id>/...` contains immutable per-run logs, test artifacts, summaries, and debug evidence
 
 ## Resume Behavior
 
-Resume in Python runtime is stricter than the old shell path.
-
 On `envctl --resume`, the runtime:
 
-1. Loads the latest compatible state for the requested mode.
-2. Reconciles saved services against live process/listener truth.
-3. Optionally restores missing services.
-4. Rewrites `run_state.json` and `runtime_map.json` with the reconciled result.
+1. loads the latest compatible saved state
+2. reconciles saved services against live process/listener truth
+3. optionally restores missing services
+4. rewrites the state with the reconciled result
 
 Useful inspection:
 
@@ -169,62 +133,26 @@ envctl show-state --json
 envctl explain-startup --json
 ```
 
-Useful behavior to know:
-
-- Resume is blocked when strict cutover gates are not satisfied.
-- Legacy shell state can still be read, but it is marked as legacy and handled more conservatively.
-- If the runtime detects synthetic placeholder state in strict mode, commands such as `dashboard` and cutover diagnostics will fail loudly instead of pretending the run is healthy.
-
 ## Doctor and Diagnostics
 
-There are two different "doctor" surfaces:
+There are two different doctor surfaces:
 
-- `envctl doctor --repo /path`: installed-command verification for a target repo.
-- `envctl --doctor`: Python runtime diagnostics for the current repo and scope.
-
-The runtime doctor surfaces:
-
-- runtime paths
-- active debug mode
-- latest debug bundle
-- parity manifest status
-- runtime readiness contract status
-- pointer and lock health
-- synthetic-state detection
-- recent structured failures
+- `envctl doctor --repo /path`: installed-command verification for a target repo
+- `envctl --doctor`: runtime diagnostics for the current repo and scope
 
 Examples:
 
 ```bash
-# Installed-command verification
 envctl doctor --repo /absolute/path/to/repo
-
-# Runtime-level
 envctl --doctor
 envctl --doctor --json
 ```
 
-If you are explicitly using the clone-compatibility wrapper from an envctl source checkout, `./bin/envctl doctor --repo ...` remains available too.
-
-Recommended install expectation:
-
-- end users install `envctl` once with `pipx install ...` or `python -m pip install --user ...`
-- supported Python versions are 3.12 through 3.14
-- the `envctl` command should then be available in every shell
-- editable virtualenv installs are mainly for contributors working on `envctl` itself
-
-The runtime doctor is also where cutover gates show up. In practice, that means it will tell you whether:
-
-- the Python parity manifest is complete
-- runtime truth reconciliation is clean
-- lifecycle expectations are satisfied
-- runtime readiness report shows no blocking gaps
-
-If you are trying to understand why the repo is still considered migration-gated, `envctl --doctor --json` is the command to start with.
+The runtime doctor surfaces state, runtime health, pointers, readiness, and recent structured failures.
 
 ## User-Level Debug Workflow
 
-For most users, the right debug workflow is short:
+Start with:
 
 ```bash
 envctl show-config --json
@@ -237,48 +165,61 @@ If the issue is interactive, timing-related, or hard to reproduce:
 
 ```bash
 ENVCTL_DEBUG_UI_MODE=deep envctl
+envctl --debug-pack
 envctl --debug-report
 envctl --debug-last
 ```
 
-That is usually enough to answer:
+That usually answers:
 
 - what config is active
 - what startup decision `envctl` is making
 - what state was saved
-- whether doctor already sees pointer, gate, or runtime-health problems
-- where the latest debug bundle lives if deeper analysis is needed
-
-For deeper runbooks, use [Troubleshooting](../operations/troubleshooting.md).
-
-For the full internal debug architecture and bundle model, use [Debug and Diagnostics](../developer/debug-and-diagnostics.md).
+- whether doctor already sees pointer or runtime-health problems
+- where the latest debug bundle lives
 
 ## Interactive UI Behavior
 
-There are now two separate interactive concerns:
+There are two different interactive concerns:
 
 - dashboard backend
-- target selector implementation
+- selector implementation
 
-Current runtime behavior:
+Current behavior:
 
-- `ENVCTL_UI_BACKEND=auto` keeps the legacy interactive dashboard by default.
-- `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` makes `auto` prefer the Textual dashboard when Textual is available.
-- `ENVCTL_UI_BACKEND=textual` explicitly requests the Textual dashboard.
-- `ENVCTL_UI_BACKEND=legacy` explicitly requests the legacy dashboard.
-- `ENVCTL_UI_BACKEND=non_interactive` forces snapshot-only behavior.
+- `ENVCTL_UI_BACKEND=auto` keeps the legacy interactive dashboard by default
+- `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` makes `auto` prefer the Textual dashboard when available
+- `ENVCTL_UI_BACKEND=textual` explicitly requests the Textual dashboard
+- `ENVCTL_UI_BACKEND=legacy` explicitly requests the legacy dashboard
+- `ENVCTL_UI_BACKEND=non_interactive` forces snapshot-only behavior
 
-Selector behavior is different:
+Selector behavior is separate:
 
-- dashboard target selectors default to the Textual plan-style selector
-- `ENVCTL_UI_SELECTOR_IMPL=planning_style` enables the prompt-toolkit rollback path
+- dashboard target selectors default to the Textual selector
+- `ENVCTL_UI_SELECTOR_IMPL=planning_style` enables the prompt-toolkit fallback path
 - `ENVCTL_UI_SELECTOR_IMPL=legacy` is only a compatibility alias and still resolves to the Textual selector path
 
-This split is intentional: selectors have already moved further toward Textual than the dashboard loop itself.
+## Failed-Only Test Reruns
 
-## Recommended User Flows
+`envctl test --failed` reruns only the saved failed tests/files for the selected targets.
 
-### Headless start with inspection first
+Behavior:
+
+- backend reruns use saved exact test identifiers when the runtime could extract them
+- frontend reruns use saved failed files
+- reruns fail closed if the saved git state is stale
+- if the prior full run failed before envctl could derive rerunnable selectors, the rerun path explains that instead of pretending no full run occurred
+
+Useful forms:
+
+```bash
+envctl test --failed
+envctl test --failed --skip-startup --load-state
+```
+
+## Recommended Flows
+
+Headless start with inspection first:
 
 ```bash
 envctl show-config --json
@@ -286,7 +227,7 @@ envctl explain-startup --json
 envctl --headless --resume
 ```
 
-### Tree planning flow
+Tree planning flow:
 
 ```bash
 envctl --list-trees --json
@@ -296,7 +237,7 @@ envctl logs --all --logs-follow
 envctl test --all
 ```
 
-### Runtime triage flow
+Runtime triage flow:
 
 ```bash
 envctl show-state --json
@@ -304,22 +245,9 @@ envctl --doctor --json
 envctl --debug-report
 ```
 
-### Startup latency triage
-
-```bash
-ENVCTL_DEBUG_UI_MODE=deep \
-ENVCTL_DEBUG_RESTORE_TIMING=1 \
-ENVCTL_DEBUG_REQUIREMENTS_TRACE=1 \
-ENVCTL_DEBUG_DOCKER_COMMAND_TIMING=1 \
-ENVCTL_DEBUG_STARTUP_BREAKDOWN=1 \
-envctl --headless
-
-envctl --debug-report
-```
-
 ## Related Guides
 
-- [First-Run Wizard](first-run-wizard.md)
 - [Getting Started](getting-started.md)
 - [Common Workflows](common-workflows.md)
+- [Planning and Worktrees](planning-and-worktrees.md)
 - [Troubleshooting](../operations/troubleshooting.md)

@@ -45,8 +45,8 @@ N8N_PORT_BASE=5678
 MAIN_STARTUP_ENABLE=true
 MAIN_BACKEND_ENABLE=true
 MAIN_FRONTEND_ENABLE=true
-MAIN_POSTGRES_ENABLE=false
-MAIN_REDIS_ENABLE=false
+MAIN_POSTGRES_ENABLE=true
+MAIN_REDIS_ENABLE=true
 MAIN_SUPABASE_ENABLE=false
 MAIN_N8N_ENABLE=false
 
@@ -58,10 +58,10 @@ MAIN_N8N_ENABLE=false
 TREES_STARTUP_ENABLE=true
 TREES_BACKEND_ENABLE=true
 TREES_FRONTEND_ENABLE=true
-TREES_POSTGRES_ENABLE=false
-TREES_REDIS_ENABLE=false
+TREES_POSTGRES_ENABLE=true
+TREES_REDIS_ENABLE=true
 TREES_SUPABASE_ENABLE=false
-TREES_N8N_ENABLE=false
+TREES_N8N_ENABLE=true
 
 # ==========================================
 # Service launch env templates
@@ -71,7 +71,6 @@ TREES_N8N_ENABLE=false
 # Backend goes only to the backend process. Frontend goes only to the frontend process.
 # `${ENVCTL_SOURCE_*}` values come from envctl-managed dependencies.
 # >>> envctl backend launch env >>>
-# Env injected into the backend process.
 DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
 REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 N8N_URL=${ENVCTL_SOURCE_N8N_URL}  # n8n base URL; e.g. http://localhost:5678
@@ -82,7 +81,6 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 # <<< envctl backend launch env <<<
 
 # >>> envctl frontend launch env >>>
-# Env injected into the frontend process.
 # VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
 

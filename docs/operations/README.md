@@ -1,26 +1,26 @@
 # Operations
 
-This section is for debugging, incident response, and runtime diagnostics.
+This section is for runtime troubleshooting, diagnostics, and recovery.
 
-Start here when a run is already failing, slow, interactive in a bad way, or otherwise surprising.
+Start here when a run is failing, slow, interactive in a bad way, or otherwise surprising.
 
-## Runbooks
+## Start Here
 
 - [Troubleshooting](troubleshooting.md)
 
-## Most Common Starting Points
+## What This Section Covers
 
-- Generic runtime triage: [Troubleshooting](troubleshooting.md)
-- Interactive selector/dashboard issues: [Interactive Selector Key Throughput Investigation (Paused)](../incidents/interactive-selector-key-throughput-readme.md)
-- Post-plan dashboard/input regressions: [Post-Plan Dashboard Input Handoff](../incidents/post-plan-dashboard-input-handoff.md)
+- installation and PATH verification for the supported package-installed command
+- startup and resume diagnostics
+- port-state and Docker/requirements issues
+- interactive dashboard and selector issues
+- debug bundle capture and reporting
 
-## Investigations and Incident Write-Ups
+## Historical Incident Write-Ups
+
+Incident write-ups are kept separately for maintainers and deeper historical context:
 
 - [Incident Index](../incidents/README.md)
-- [Interactive Selector Key Throughput Investigation (Paused)](../incidents/interactive-selector-key-throughput-readme.md)
-- [Service Launch IO Ownership](../incidents/service-launch-io-ownership.md)
-- [Post-Plan Dashboard Input Handoff](../incidents/post-plan-dashboard-input-handoff.md)
-- [Post-Plan Dashboard Input Investigation](../incidents/post-plan-dashboard-input-investigation.md)
 
 ## Related Sections
 

@@ -29,7 +29,6 @@ Recommended practice:
 envctl --plan
 envctl --sequential-plan
 envctl --parallel-plan
-envctl --planning-prs
 envctl --keep-plan
 ```
 
@@ -38,7 +37,6 @@ What these do:
 - `--plan`: plan and run using the default parallel path
 - `--sequential-plan`: plan and run one-by-one
 - `--parallel-plan`: explicit alias for the parallel path
-- `--planning-prs`: planning-oriented PR flow
 - `--keep-plan`: keep planning files in place after execution
 
 Before using any of them in automation, inspect first:
@@ -145,6 +143,7 @@ This avoids interactive plan selection and makes the run reproducible.
 - mixing ad hoc tree naming with plan-file naming
 - skipping `--list-trees --json` when automation needs stable target discovery
 - forgetting that `--plan` always resolves into `trees` mode
+- forgetting that `envctl test --all` and `envctl test --failed` can run across all selected trees after startup
 
 ## Related Guides
 

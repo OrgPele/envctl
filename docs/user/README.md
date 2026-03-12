@@ -3,7 +3,7 @@
 This section is for people using `envctl` to:
 
 - bring up a local environment quickly
-- run and compare multiple implementations or worktrees
+- run and compare multiple worktrees in parallel
 - inspect what `envctl` will do before it starts anything
 - debug real runs when startup or interaction goes wrong
 
@@ -30,8 +30,8 @@ This section is for people using `envctl` to:
 
 ## Important Runtime Note
 
-- The Python engine is the primary runtime and the one these guides are written for.
-- The supported runtime path is the Python runtime.
+- The Python runtime is the supported runtime path.
+- These guides assume the package-installed `envctl` command is on your `PATH`.
 
 ## Related Sections
 

@@ -1,176 +1,126 @@
 # Getting Started
 
-This guide is for a first successful run in a real repository.
+This guide is the fastest path to a first successful `envctl` run in a real repository.
 
 If you already know the basics and just want repeatable command sequences, jump to [Common Workflows](common-workflows.md).
 
-What this guide optimizes for:
-
-- a safe first run with minimal guessing
-- understanding which file to create and which commands are inspection-only
-- reaching one known-good operating loop quickly
-
 ## 1. Install
 
-Recommended install paths if you want `envctl` available in every shell:
+If `pipx` is not installed yet, follow the official pipx installation guide first:
+
+- [pipx installation](https://pipx.pypa.io/stable/installation/)
+
+Recommended end-user install:
 
 ```bash
-# Preferred: isolated user-level CLI on your PATH
-pipx install .
+pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
 ```
 
-```bash
-# Current-user install
-python -m pip install --user .
-```
+Why this is the default:
 
-```bash
-# System-managed install if that is how you manage Python CLIs
-python -m pip install .
-```
+- installs `envctl` once for your user account
+- keeps it available in every shell
+- avoids mixing `envctl` itself into each target repo's virtualenv
+- matches the supported user-facing install path across the docs
 
-```bash
-# VCS install from Git
-pipx install "git+https://github.com/kfiramar/envctl.git"
-python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
-```
-
-Uninstall:
-
-```bash
-python -m pip uninstall envctl
-pipx uninstall envctl
-```
-
-What this install flow does:
-
-- installs `envctl` as a normal command-line tool
-- makes `envctl` available across shells once your user PATH is set up
-- leaves your target repositories separate from the `envctl` source repository
-- gives you one consistent command surface across repos
-
-Important Python note:
-
-- `envctl` currently supports Python 3.12 through 3.14
-- `pipx` uses its own default interpreter, not your currently activated virtualenv
-- if `pipx` defaults to an unsupported Python, install with `--python <supported-python>`
-
-Contributor note:
-
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e .
-```
-
-Use editable install when you are developing `envctl` itself. That is not the primary end-user install story.
-
-Repo-clone compatibility still exists if you explicitly want the old shell-wrapper flow:
-
-```bash
-./bin/envctl install
-./bin/envctl uninstall
-```
-
-Treat that wrapper flow as compatibility-only. The primary story is the package-installed `envctl` command on your PATH.
-
-## 2. Verify the Command Works
+To verify installation:
 
 ```bash
 envctl --help
 envctl doctor --repo /absolute/path/to/repo
 ```
 
-If `envctl --help` works and `envctl doctor --repo ...` can resolve a target repo, the command is installed correctly.
+Important notes:
 
-## 3. Repository Detection
+- supported Python versions are 3.12 through 3.14
+- `pipx` uses its own interpreter, not your currently activated virtualenv
+- if `pipx` picks an unsupported interpreter, reinstall with `--python <supported-python>`
 
-A valid repo root is any git repository root (`.git` directory or `.git` file).
+Contributor note:
 
-You can run:
-- Inside any subdirectory of a repo (auto-detection).
-- From anywhere with `--repo <path>`.
+- if you are developing `envctl` itself, use the editable install documented in [Contributing](../developer/contributing.md)
+- source/editable install is not the primary end-user path
 
-## 4. Create or Bootstrap Project Config
+## 2. Pick a Repository
 
-Best default: let `envctl` create the repo-local `.envctl` for you.
+`envctl` operates on a git repository root.
 
-If `.envctl` is missing and you run a normal operational command in an interactive terminal, `envctl` opens a guided setup wizard automatically.
+You can:
 
-The wizard now opens in the simple flow for first-run bootstrap:
+- run inside any subdirectory of the repo and let `envctl` auto-detect it
+- run from anywhere with `--repo /absolute/path/to/repo`
 
-1. where `.envctl` will be written and which source is being used for prefill
-2. whether you want the simple or advanced wizard
-3. your default run mode (`main` or `trees`)
-4. a run preset for main mode
-5. a run preset for trees mode
-6. review and save
-
-The advanced flow adds a separate run-enable step for `main` and `trees`, followed by backend/frontend toggles, dependency toggles, a directories screen, and a ports screen. The directories and ports screens only show fields for components currently enabled for envctl runs.
-
-That flow is described in more detail in [First-Run Wizard](first-run-wizard.md).
-
-Typical first-run path:
+Examples:
 
 ```bash
-envctl show-config --json
+cd /path/to/your-project
 envctl --resume
 ```
 
-If you prefer to create the file yourself instead of using the wizard:
-
 ```bash
-cp /path/to/envctl/docs/reference/.envctl.example /path/to/your-project/.envctl
+envctl --repo /absolute/path/to/your-project --resume
 ```
 
-Recommended first check before editing anything:
+## 3. Let envctl Create `.envctl`
+
+Best default: let `envctl` bootstrap the repo-local `.envctl` for you.
+
+If `.envctl` is missing and you run a normal operational command in an interactive terminal, `envctl` opens the setup wizard automatically.
+
+Useful inspection commands before that first run:
 
 ```bash
 envctl show-config --json
+envctl explain-startup --json
 ```
 
-That tells you:
+Those commands tell you:
 
 - where `envctl` expects the config file
 - whether it already exists
 - which defaults are active
-- which managed values will be used if you proceed
+- what startup decision the runtime would make
 
-Important behavior from the current wizard/save path:
+If you prefer manual setup, use the reference example in [`.envctl.example`](../reference/.envctl.example). For most users, the wizard is the right path.
 
-- legacy config can be used as prefill, but `.envctl` is the canonical saved file
-- `envctl` seeds user-owned backend/frontend launch env sections into `.envctl` for manual alias/template editing
-- save validation blocks invalid port values or empty directories
-- each mode can now be disabled entirely with `MAIN_STARTUP_ENABLE=false` or `TREES_STARTUP_ENABLE=false`
-- save does not change already-running services until the next start or restart
-- `envctl` tries to add `.envctl` and `trees/` to `.gitignore` on save
+## 4. First Interactive Run
 
-The launch env sections are not part of the wizard UI. Edit them directly in `.envctl` when you want to rename, remove, alias, derive, or service-scope env vars that `envctl` injects into launched backend/frontend processes.
-
-Default startup mode is `main`. To change default startup to tree mode manually:
+Typical first-run path:
 
 ```bash
-# .envctl
-ENVCTL_DEFAULT_MODE="trees"
+envctl --main
 ```
 
-Manual config is optional, but if you need it, here is a minimal explicit services example:
+or, if you are starting from plans/worktrees:
 
 ```bash
-# .envctl
-ENVCTL_SERVICE_1="API Server | backend  | backend  | 8000 |      | logs/api"
-ENVCTL_SERVICE_2="Web App    | frontend | frontend | 3000 | 8000 | logs/web"
+envctl --plan
 ```
 
-Service format:
+If `.envctl` is missing, the wizard opens and guides you through:
 
-```text
-"DisplayName | DirectoryPath | ServiceType | Port | BackendPort | LogDirectory"
-```
+1. `Welcome / Source`
+2. `Default Mode`
+3. `Components`
+4. optional `Long-Running Service`
+5. `Directories`
+6. `Ports`
+7. `Review / Save`
 
-## 5. First Successful Run
+The wizard:
 
-For a safe first run, inspect first and then start:
+- writes the repo-local `.envctl`
+- validates directories and ports before save
+- configures services and dependencies for `main` and `trees`
+- seeds user-owned backend/frontend launch env sections into `.envctl`
+- does not change already running services until a later start or restart
+
+See [First-Run Wizard](first-run-wizard.md) for the full step-by-step guide.
+
+## 5. First Successful Operating Loop
+
+After config exists, this is the safest normal loop:
 
 ```bash
 envctl show-config --json
@@ -182,15 +132,15 @@ envctl test --all
 envctl stop-all
 ```
 
-Why this is the recommended sequence:
+Why this works well:
 
-- `show-config` confirms the config source and effective values
-- `explain-startup` shows the runtime decision before anything starts
-- `--resume` is the fastest normal path after previous runs
-- `dashboard`, `logs`, and `test` cover the common operating loop
-- `stop-all` gives you a clean way to exit without leaving the repo in an unknown state
+- `show-config` confirms the active config
+- `explain-startup` shows what the runtime is about to do
+- `--resume` is the fastest normal start path after previous runs
+- `dashboard`, `logs`, and `test` cover the common daily loop
+- `stop-all` gives you a clean shutdown
 
-If you want a clean startup instead of resume:
+If you want a fresh start instead of resume:
 
 ```bash
 envctl --main --no-resume
@@ -198,13 +148,7 @@ envctl --main --no-resume
 
 ## 6. Worktree / Planning Flow
 
-Start from planning files and run `--plan` first.
-
-1. Put plan files under `ENVCTL_PLANNING_DIR` (default: `todo/plans`).
-2. Run `envctl --plan` to create/start worktrees from those plans.
-3. Use dashboard, logs, and tests to inspect and compare results.
-
-Example:
+If your workflow centers on multiple implementations, start from plan files:
 
 ```bash
 mkdir -p todo/plans/backend
@@ -214,48 +158,22 @@ PLAN
 
 envctl --plan
 envctl dashboard
-```
-
-When the repository already has many plan files or trees, follow up with:
-
-```bash
-envctl --list-trees --json
 envctl test --all
-envctl errors --all
 ```
 
-## 7. If Something Feels Wrong
+Use this flow when you want:
 
-Start with the low-cost inspection commands:
+- many worktrees running side by side
+- safe port allocation across them
+- isolated supporting services such as databases, Redis, Supabase, and n8n
+- one place to compare logs, tests, and health
 
-```bash
-envctl show-config --json
-envctl show-state --json
-envctl explain-startup --json
-envctl --doctor --json
-```
+For more on planning layout and worktree flows, see [Planning and Worktrees](planning-and-worktrees.md).
 
-If the issue is interactive, timing-related, or hard to reproduce:
+## 7. Where to Go Next
 
-```bash
-ENVCTL_DEBUG_UI_MODE=deep envctl
-envctl --debug-report
-```
-
-For deeper help:
-
-- [First-Run Wizard](first-run-wizard.md)
-- [Common Workflows](common-workflows.md)
-- [FAQ](faq.md)
-- [Python Engine Guide](python-engine-guide.md)
-- [Operations](../operations/README.md)
-
-## Runtime Note
-
-These docs assume the Python runtime.
-
-To restore the latest runtime state directly:
-
-```bash
-envctl --resume
-```
+- Need the exact wizard behavior: [First-Run Wizard](first-run-wizard.md)
+- Want copy-pasteable day-to-day flows: [Common Workflows](common-workflows.md)
+- Want command and flag reference: [Commands](../reference/commands.md)
+- Need configuration details: [Configuration](../reference/configuration.md)
+- Something is broken: [Troubleshooting](../operations/troubleshooting.md)

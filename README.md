@@ -7,7 +7,7 @@
 </h1>
 
 <p align="center">
-  Reinvent your coding workflow. Spin up many worktrees with correctly wired apps and supporting services, automatic port allocation to avoid conflicts, isolated databases, Redis, Supabase, n8n. one CLI to rule all running frontends and backends, viewing logs, and testing every tree in parallel.
+  Reinvent your coding workflow. Spin up many worktrees with correctly wired apps and supporting services, automatic port allocation to avoid conflicts, isolated databases, Redis, Supabase, and n8n, then manage everything from one CLI with logs, health checks, and parallel testing across trees.
 </p>
 
 <p align="center">
@@ -42,16 +42,13 @@ This is the point where normal local development usually starts breaking down: t
 pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
 
-# Or install for the current user
-python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
-
 # 2) Go to a target repo
 cd /path/to/your-project
 
-# 3a) Start the main repo environment
-#     Use this when you want one repo-local environment.
+# 3a) Start one repo-local environment
 #     If .envctl is missing, envctl opens the guided setup wizard.
 envctl --main
+
 # 3b) Or work from plans and let envctl manage worktrees for you
 #     Use this when you want parallel implementations side by side.
 mkdir -p todo/plans/backend
@@ -62,15 +59,15 @@ PLAN
 envctl --plan
 ```
 
-That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven trees.
+That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven worktrees.
 
 ## What envctl Is For
 
 `envctl` is built to:
 
-- bring up a repo-local environment quickly
-- run and compare multiple implementations or worktrees
-- keep startup, logs, tests, and inspection behind one CLI
+- create and manage many worktrees with isolated local services
+- run and compare multiple implementations side by side
+- keep startup, logs, tests, inspection, and health checks behind one CLI
 - support high-throughput human and AI-assisted development workflows
 
 ## Docs

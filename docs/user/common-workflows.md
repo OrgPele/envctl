@@ -63,6 +63,7 @@ envctl --plan
 envctl dashboard
 envctl logs --all --logs-follow
 envctl test --all
+envctl test --failed
 ```
 
 Good follow-up commands:
@@ -80,6 +81,7 @@ envctl show-config --json
 envctl explain-startup --json
 envctl --headless --resume
 envctl test --all --skip-startup --load-state
+envctl test --failed --skip-startup --load-state
 ```
 
 Why this is the preferred automation shape:
@@ -112,6 +114,7 @@ Use this after a `--plan` run or any trees-mode session.
 
 ```bash
 envctl test --all
+envctl test --failed
 envctl errors --all
 envctl logs --all --logs-tail 300
 ```
@@ -119,6 +122,7 @@ envctl logs --all --logs-tail 300
 When the goal is comparison rather than deep debugging, this is usually enough:
 
 - `test --all` for pass/fail differences
+- `test --failed` for quick follow-up reruns after a full suite has already persisted failures
 - `errors --all` for quick failure triage
 - `logs --all --logs-tail 300` for a compact comparison sample
 
@@ -180,20 +184,6 @@ Look for:
 - `slowest_components`
 - `startup_breakdown`
 - `requirements_stage_hotspots`
-
-## Force the Deprecated Shell Fallback
-
-Use this only when you are isolating a parity issue or need an emergency rollback during cutover.
-
-```bash
-envctl --resume
-```
-
-Important:
-
-- this is a deprecated compatibility path
-- modern diagnostics such as `debug-pack` are Python-runtime features
-- switch back to Python mode before filing or analyzing new runtime bugs
 
 ## Multi-Repo Control
 

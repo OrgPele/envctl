@@ -28,13 +28,11 @@ That sequence answers four different questions:
 
 ## Installed command is missing or wrong
 - Verify the install:
-  - `python -m pip show envctl`
+  - `command -v envctl`
   - `pipx list`
 - Reinstall the package if needed:
-  - `pipx install .`
+  - `pipx install "git+https://github.com/kfiramar/envctl.git"`
   - `pipx ensurepath`
-  - `python -m pip install --user .`
-  - `python -m pip install .`
 - If `pipx` says it is using an unsupported Python version, point it at a supported one explicitly with `--python`.
 - `pipx` does not automatically reuse the Python from your activated `.venv`.
 - If you intentionally use the clone-compatibility wrapper, use:
@@ -130,10 +128,9 @@ Selector reliability quick checks:
   - `docs/user/python-engine-guide.md`
 
 ## Python Runtime Path
-- Default runtime is Python.
-- `envctl` now uses the Python runtime path directly; shell fallback is no longer part of the supported troubleshooting flow.
-- Compare `run_state.json` and `runtime_map.json` artifacts between runs when debugging parity issues.
-- `debug-pack` and the modern debug-bundle flow are Python-runtime features, so switch back to Python mode before using them.
+- The supported runtime path is Python.
+- Compare `run_state.json` and `runtime_map.json` artifacts between runs when debugging state or parity issues.
+- `debug-pack` and the modern debug-bundle flow are Python-runtime features.
 
 ## Wrong services are starting
 - If `ENVCTL_SERVICE_<N>` is set, auto-discovery is disabled.
