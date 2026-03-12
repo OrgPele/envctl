@@ -6,6 +6,7 @@ Runtime note:
 
 - The Python runtime is the supported runtime path.
 - These docs assume the package-installed `envctl` command on your `PATH`.
+- The current supported user-facing stack is Python backends, JavaScript frontends, and built-in local service wiring for databases, Redis, Supabase, and n8n.
 
 ## Start Here
 
