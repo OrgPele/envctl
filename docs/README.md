@@ -4,16 +4,16 @@ This documentation set is organized by audience and task rather than as one flat
 
 Runtime note:
 
-- The Python engine is the primary and documented runtime.
-- The supported runtime path is the Python runtime.
+- The Python runtime is the supported runtime path.
+- These docs assume the package-installed `envctl` command on your `PATH`.
 
 ## Start Here
 
-- First successful run: [User Getting Started](user/getting-started.md)
+- First successful run: [Getting Started](user/getting-started.md)
 - Guided setup wizard: [First-Run Wizard](user/first-run-wizard.md)
 - Copy-pasteable daily flows: [Common Workflows](user/common-workflows.md)
 - Quick answers and common confusion points: [FAQ](user/faq.md)
-- Troubleshooting and incident response: [Operations](operations/README.md)
+- Troubleshooting and diagnostics: [Operations](operations/README.md)
 
 ## User Docs
 
@@ -52,7 +52,6 @@ Runtime note:
 
 ## Planning, History, and Meta
 
-- [Planning and Roadmaps](planning/README.md)
-- [Python Engine Migration Ops](planning/refactoring/envctl-python-engine-migration-operations.md)
+- [Planning and Roadmaps](../todo/plans/README.md)
 - [Changelog](changelog/README.md)
 - [License](license.md)

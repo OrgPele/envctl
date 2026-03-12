@@ -10,9 +10,10 @@ Use it when you want a task recipe more than a conceptual explanation.
 envctl install-prompts --cli codex
 envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
+envctl install-prompts --cli all --preset all
 ```
 
-Use this when you want envctl to install the built-in `implement_task` preset into your user-local AI CLI directories.
+Use this when you want `envctl` to install built-in prompt presets into your user-local AI CLI directories.
 
 Current targets:
 
@@ -26,12 +27,21 @@ Notes:
 - `--dry-run` shows what would be written without mutating anything
 - this command is intentionally unavailable inside dashboard interactive mode
 
+Current built-in presets:
+
+- `implement_task`
+- `review_task_imp`
+- `continue_task`
+- `merge_trees_into_dev`
+- `create_plan`
+
 ## Parallel Implementation Loop
 
 ```bash
 envctl --plan
 envctl dashboard
 envctl logs --all --logs-follow
+envctl test --all
 ```
 
 Use this to run many implementations at the same time and inspect behavior in one place.
@@ -40,6 +50,7 @@ Use this to run many implementations at the same time and inspect behavior in on
 
 ```bash
 envctl test --all
+envctl test --failed
 envctl errors --all
 envctl logs --all --logs-tail 300
 ```
@@ -75,6 +86,7 @@ Use non-interactive mode for scripts/agents:
 ```bash
 envctl --headless --resume
 envctl test --all --skip-startup --load-state
+envctl test --failed --skip-startup --load-state
 ```
 
 Recommended pattern for safer automation:

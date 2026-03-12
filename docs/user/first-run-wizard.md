@@ -1,202 +1,150 @@
 # First-Run Wizard
 
-This guide explains the run-configuration wizard that appears the first time you run `envctl` in a repository without a local `.envctl`.
+This guide explains the setup wizard that appears when you run `envctl` in a repository without a local `.envctl`.
 
-For most users, this wizard is the right way to get started. It is faster and safer than hand-writing config from scratch.
+For most users, this is the right way to bootstrap the repo. It is safer and faster than writing config from scratch.
 
 ## When the Wizard Opens
 
 The wizard opens when all of the following are true:
 
-- you run a normal operational command such as `envctl --resume`, `envctl --main`, or `envctl --plan`
+- you run a normal operational command such as `envctl --main`, `envctl --resume`, or `envctl --plan`
 - the repository does not already have a local `.envctl`
 - you are in a real interactive terminal
 
-If you only run inspection commands such as `envctl show-config --json` or `envctl explain-startup --json`, the wizard does not open.
+Inspection-only commands such as `envctl show-config --json` and `envctl explain-startup --json` do not open the wizard.
 
-If there is no interactive TTY, `envctl` fails with a clear message instead of guessing a config.
+If there is no interactive TTY, `envctl` fails with a clear message instead of guessing configuration.
 
 ## What the Wizard Does
 
-The wizard writes a managed run config to the repo-local `.envctl`.
+The wizard writes the managed startup configuration into the repo-local `.envctl`.
 
 It is designed to:
 
-- guide you through the minimum choices needed for a good first run
-- prefill from existing config when possible
-- validate values before saving
-- keep running services unchanged until your next start or restart
+- guide you through the minimum decisions needed for a good first run
+- validate directories and ports before save
+- configure services and dependencies for both `main` and `trees`
+- seed user-owned launch env sections into `.envctl`
+- leave already running services unchanged until a later start or restart
 
-On save, `envctl` also tries to add `.envctl` and `trees/` to the repo `.gitignore` so local orchestration config and generated worktrees stay untracked.
+On save, `envctl` also tries to add `.envctl` and `trees/` to the repo `.gitignore`.
 
 ## The Actual Steps
 
-The wizard now has two flows:
-
-### Simple Wizard
-
-Used by default during first-run bootstrap.
+The current wizard flow is:
 
 1. `Welcome / Source`
-2. `Wizard Type`
-3. `Default Mode`
-4. `Main Run Preset`
-5. `Trees Run Preset`
-6. `Review / Save`
+2. `Default Mode`
+3. `Components`
+4. optional `Long-Running Service`
+5. `Directories`
+6. `Ports`
+7. `Review / Save`
 
-### Advanced Wizard
-
-Used by default when you open `envctl config` to edit an existing `.envctl`.
-
-1. `Welcome / Source`
-2. `Wizard Type`
-3. `Default Mode`
-4. `Run Enablement`
-5. `Main Run Settings`
-6. `Trees Run Settings`
-7. `Directories`
-8. `Ports`
-9. `Review / Save`
-
-That means the wizard is still opinionated around how `envctl` is actually used, but the first-run path is now shorter.
+There is no simple/advanced split in the current UI.
 
 ## Step 1: Welcome / Source
 
-The first screen tells you:
+This screen explains:
 
 - where `.envctl` will be written
-- whether values are starting from defaults, an existing `.envctl`, or a legacy config import
-- that CLI and environment overrides still apply on top
-- that saving does not change already-running services immediately
+- which source is being used for prefill
+- that existing services are not changed immediately
 
-If you are migrating from older repo config, this screen is where `envctl` makes that prefill behavior explicit.
+It is the orientation step before any config choices are made.
 
-## Step 2: Wizard Type
-
-You choose between:
-
-- `Simple`
-- `Advanced`
-
-Simple is the onboarding path.
-
-Advanced exposes run enablement, the full per-mode run profile, directory configuration, and port configuration.
-
-## Step 3: Default Mode
+## Step 2: Default Mode
 
 You choose the default run mode:
 
 - `Main`
 - `Trees`
 
-Use `Main` when your normal workflow is one repo root environment.
+This controls what happens when you run `envctl` without an explicit mode flag.
 
-Use `Trees` when your normal workflow is worktree-heavy and comparison-oriented.
+Use `Main` when your default workflow is one repo-local environment.
 
-This setting controls what happens when you run `envctl` without explicitly passing a mode flag.
+Use `Trees` when your default workflow is worktree-heavy and comparison-oriented.
 
-## Step 4: Main Run Preset or Run Enablement
+## Step 3: Components
 
-In the simple wizard, main mode is configured by preset:
+This is the main configuration screen.
 
-- `Standard`: envctl runs enabled, backend on, frontend on, dependency defaults for main mode
-- `Apps Only`: envctl runs enabled, backend on, frontend on, built-in dependencies off
-- `Disabled`: envctl runs disabled for main mode
+It contains:
 
-For a brand-new config, the wizard starts with no requirements selected by default.
+- a `Services` section
+- a `Dependencies` section
 
-In the advanced wizard, this step is separate and only controls whether each mode is enabled for `envctl` runs:
+Rows apply to `Main + Trees` together by default. That means one row can configure both modes at once until you decide they should differ.
 
-- `Main: Enabled for envctl runs`
-- `Trees: Enabled for envctl runs`
+Examples of rows:
 
-The detailed backend, frontend, and dependency toggles come later.
+- `Backend (Main + Trees)`
+- `Frontend (Main + Trees)`
+- `Postgres (Main + Trees)`
+- `Redis (Main + Trees)`
+- `Supabase (Main + Trees)`
+- `n8n (Main + Trees)`
 
-In the simple wizard, step 5 is `Trees Run Preset`.
+Important behavior:
 
-In the advanced wizard, step 5 is `Main Run Settings`.
+- press `Space` to toggle the focused row
+- press `D` to split the focused row into separate `Main` and `Trees` settings
+- press `D` again on split rows to merge them back when values match
 
-Trees mode works the same way as main mode in the simple flow, but it is configured independently.
+This is where you decide which services and dependencies `envctl` should manage.
 
-In the advanced wizard, the next screen is `Main Run Settings`, which exposes:
+## Step 4: Long-Running Service
 
-- `Backend`
-- `Frontend`
-- built-in dependency toggles
+This step appears only for backend-only projects.
 
-Those toggles define what main mode should run when envctl runs are enabled.
+It asks whether `envctl` should keep that backend running automatically in `main` and `trees`.
 
-## Step 6: Trees Run Settings
+This exists because backend-only repos are not always long-running apps. Some are CLI or one-shot tooling repos and should not be auto-started.
 
-The advanced `Trees Run Settings` screen works the same way as main mode, but it is configured independently.
+If your project has both backend and frontend, this screen is skipped.
 
-This matters because many teams want different defaults in tree mode than in main mode. For example:
+## Step 5: Directories
 
-- lighter main-mode defaults for local work
-- fuller tree-mode defaults for side-by-side comparison
+This screen only shows the directories needed for the components currently configured in `main` or `trees`.
 
-When envctl runs are disabled in the earlier `Run Enablement` step, these detailed toggles stay editable so you can stage future settings without enabling the mode yet.
-
-## Step 7: Directories
-
-This step appears only in the advanced wizard.
-
-This screen only shows the directories that matter for components currently enabled for envctl runs:
+Possible fields:
 
 - backend directory
 - frontend directory
 
-If you disabled frontend everywhere, you will not be prompted for a frontend directory.
+If a component is not configured, its directory field is not shown.
 
-## Step 8: Ports
+## Step 6: Ports
 
-This step appears only in the advanced wizard.
+This screen only shows the canonical ports needed for the components currently configured in `main` or `trees`.
 
-This screen only shows the port fields that matter for components currently enabled for envctl runs:
+Possible fields:
 
 - backend base port
 - frontend base port
-- dependency base ports
+- database base port
+- Redis base port
+- n8n base port
 - port spacing
 
-The wizard validates this step before letting you continue.
+The wizard validates these before allowing save.
 
-In practice, this is where you fix most first-run conflicts if your repo does not use the common `backend` / `frontend` layout or standard ports.
+## Step 7: Review / Save
 
-## Step 9: Review / Save
+The final screen shows the managed `.envctl` block that will be written.
 
-The final screen shows the managed config block that will be written.
+This is your last chance to confirm the exact saved values before the file is updated.
 
-It also reminds you that:
+## Launch Env Sections
 
-- CLI and environment overrides still apply above the file
-- `.envctl` and `trees/` will be added to `.gitignore` when possible
-
-This is the last chance to confirm the exact saved values before the file is written.
-
-## Built-In Validation Rules
-
-The wizard and save path currently enforce a few important rules:
-
-- default mode must be `main` or `trees`
-- backend and frontend directory names must not be empty
-- ports must be positive integers
-- each mode enabled for envctl runs must enable at least one component
-- a single mode cannot enable both PostgreSQL and Supabase at the same time
-
-If save is blocked, the status line in the wizard tells you what to fix.
-
-## Service Launch Env Templates
-
-The wizard does not edit launch env aliases/templates.
-
-After the first save, `.envctl` includes user-owned sections like:
+After the first save, `.envctl` also includes user-owned launch env sections like:
 
 ```dotenv
 # >>> envctl backend launch env >>>
 DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
 REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
-# APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # extra backend alias example
 # <<< envctl backend launch env <<<
 
 # >>> envctl frontend launch env >>>
@@ -204,66 +152,42 @@ REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 # <<< envctl frontend launch env <<<
 ```
 
-Edit those sections directly when you want to:
+These sections are not part of the wizard UI.
+
+Edit them directly when you want to:
 
 - rename emitted launch env vars
-- add extra aliases
+- add aliases
 - remove defaults you do not want injected
-- derive new values from earlier lines with `${VAR}`
-- scope aliases to backend-only or frontend-only launches
+- derive values from earlier lines with `${VAR}`
+- scope vars to backend-only or frontend-only launches
 
-The backend/frontend sections are service-specific.
+`envctl config` seeds these sections when missing, then preserves them as-is.
 
-`envctl config` seeds the sections if they are missing, then preserves them as-is.
+## Validation Rules
 
-## Disabled Modes
+The wizard/save path currently enforces these user-visible rules:
 
-Each mode now has a master switch for envctl runs:
+- default mode must be `main` or `trees`
+- required directory fields must not be empty
+- directory paths must exist and be directories
+- ports must be positive integers
+- a single mode cannot enable both PostgreSQL and Supabase at the same time
 
-- `MAIN_STARTUP_ENABLE`
-- `TREES_STARTUP_ENABLE`
+If save is blocked, the status line explains what to fix.
 
-If a mode is disabled:
+## Keyboard Behavior
 
-- `show-config --json` still reports its saved detailed settings
-- `explain-startup --json` reports `startup_enabled: false`
-- `start`, `resume`, and `restart` for that mode are blocked until you re-enable that mode for envctl runs
+Current wizard behavior:
 
-## Best Practice
-
-For a clean first run:
-
-```bash
-envctl show-config --json
-envctl --resume
-```
-
-If `.envctl` does not exist yet, the second command opens the wizard and guides you through setup.
-
-After saving, continue with:
-
-```bash
-envctl explain-startup --json
-envctl dashboard
-```
-
-## When to Skip the Wizard
-
-You may want to skip the interactive wizard when:
-
-- you are automating setup in scripts
-- you already know the exact config shape you want
-- you are editing config over SSH or in a non-interactive environment
-
-In those cases, use:
-
-- [`docs/reference/.envctl.example`](../reference/.envctl.example) as a starting point
-- `envctl config --stdin-json`
-- `envctl config --set KEY=VALUE`
+- `Enter` moves to `Next` / `Save`
+- `Space` toggles rows
+- `D` splits or merges component rows
+- `Left` / `Right` move between steps, except when a text input is focused
+- inside text inputs, `Left` / `Right` move the cursor normally
 
 ## Related Guides
 
 - [Getting Started](getting-started.md)
+- [Configuration](../reference/configuration.md)
 - [Common Workflows](common-workflows.md)
-- [Python Engine Guide](python-engine-guide.md)
-- [Configuration Reference](../reference/configuration.md)
