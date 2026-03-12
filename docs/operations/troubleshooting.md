@@ -39,6 +39,22 @@ That sequence answers four different questions:
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
 
+## Required external tools are missing
+- `envctl` itself installs through `pipx`, but some workflows rely on system tools:
+  - `git` for repo/worktree/action flows
+  - `docker` for built-in local services such as databases, Redis, Supabase, and n8n
+  - `gh` for PR creation
+  - `poetry` for backend repos that manage Python dependencies with Poetry
+  - `bun`, `pnpm`, `yarn`, or `npm` for frontend install/test/dev commands
+- `envctl` bootstraps target repo dependencies from the repo itself, so `pytest` is usually part of the backend project's own dependencies rather than a separate global prerequisite
+- Check availability with:
+  - `git --version`
+  - `docker --version`
+  - `gh --version`
+  - `poetry --version`
+  - `bun --version` / `pnpm --version` / `yarn --version` / `npm --version`
+- If one of these is missing, install it separately and retry the affected workflow.
+
 ## Port collisions or stale reservations
 - Run `envctl --doctor`.
 - Run `envctl --clear-port-state`.

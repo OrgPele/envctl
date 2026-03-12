@@ -48,6 +48,19 @@ Important notes:
 - `pipx` uses its own interpreter, not your currently activated virtualenv
 - if `pipx` picks an unsupported interpreter, reinstall with `--python <supported-python>`
 
+System tools you may also need at runtime:
+
+- `git` for repository detection, worktrees, commits, reviews, and PR preparation
+- `docker` for built-in local services such as databases, Redis, Supabase, and n8n
+- `gh` for GitHub PR flows
+- `poetry` for backend repositories that manage Python dependencies with Poetry
+- one JavaScript package manager for frontend repos:
+  - `bun`, `pnpm`, `yarn`, or `npm`, depending on the project
+
+`envctl` bootstraps target-repo dependencies when needed, so `pytest` is usually provided by the backend project itself rather than installed separately for `envctl`.
+
+`envctl` does not require every tool for every repo. The exact requirement depends on which workflows and services you actually use.
+
 Contributor note:
 
 - if you are developing `envctl` itself, use the editable install documented in [Contributing](../developer/contributing.md)

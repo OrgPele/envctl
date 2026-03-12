@@ -47,6 +47,22 @@ pipx ensurepath
 
 Use editable/source installs only when you are developing `envctl` itself.
 
+## Does `envctl` need any external system tools?
+
+Yes, depending on the workflow.
+
+`pipx` installs the Python package dependencies for `envctl` itself, but some workflows still rely on system tools:
+
+- `git` for repository detection, worktrees, commits, reviews, and PR preparation
+- `docker` for built-in local services such as databases, Redis, Supabase, and n8n
+- `gh` for GitHub PR flows
+- `poetry` for backend repos that use Poetry
+- `bun`, `pnpm`, `yarn`, or `npm` for frontend repos
+
+If one of those tools is missing, install it separately and retry the affected workflow.
+
+`envctl` installs target project dependencies when the repo needs them, so in Python repos `pytest` is normally provided by the backend project's own dependencies rather than as a separate global prerequisite for `envctl`.
+
 ## Why did `envctl` open a config wizard?
 
 Because you ran a normal operational command in a repository that does not yet have a repo-local `.envctl`.
