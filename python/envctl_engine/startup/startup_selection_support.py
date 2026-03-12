@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
+from envctl_engine.planning import list_planning_files, planning_existing_counts, select_projects_for_plan_files
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime
@@ -86,9 +88,9 @@ def tree_preselected_projects_from_state(
 ) -> list[str]:
     _ = orchestrator
     state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
-    if state is None:
-        return []
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
+    if state is None:
+        return _tree_preselected_projects_from_plans(runtime=runtime, project_contexts=project_contexts)
     preselected: list[str] = []
     seen: set[str] = set()
     for name in sorted(state_project_names(runtime=runtime, state=state)):
@@ -100,7 +102,43 @@ def tree_preselected_projects_from_state(
             continue
         seen.add(resolved.lower())
         preselected.append(resolved)
-    return preselected
+    if preselected:
+        return preselected
+    return _tree_preselected_projects_from_plans(runtime=runtime, project_contexts=project_contexts)
+
+
+def _tree_preselected_projects_from_plans(
+    *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
+) -> list[str]:
+    config = getattr(runtime, "config", None)
+    planning_dir = getattr(config, "planning_dir", None)
+    if not isinstance(planning_dir, Path):
+        return []
+    try:
+        planning_files = list_planning_files(planning_dir)
+    except Exception:
+        return []
+    if not planning_files:
+        return []
+
+    projects = [
+        (str(context.name).strip(), getattr(context, "root"))
+        for context in project_contexts
+        if str(getattr(context, "name", "")).strip()
+    ]
+    existing_counts = planning_existing_counts(projects=projects, planning_files=planning_files)
+    plan_counts = {
+        plan_file: int(existing_counts.get(plan_file, 0))
+        for plan_file in planning_files
+        if int(existing_counts.get(plan_file, 0)) > 0
+    }
+    if not plan_counts:
+        return []
+    try:
+        selected = select_projects_for_plan_files(projects=projects, plan_counts=plan_counts)  # type: ignore[arg-type]
+    except Exception:
+        return []
+    return [name for name, _root in selected if str(name).strip()]
 
 
 def select_start_tree_projects(

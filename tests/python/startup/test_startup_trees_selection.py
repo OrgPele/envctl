@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from pathlib import Path
+import tempfile
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -111,6 +112,33 @@ class StartupTreesSelectionTests(unittest.TestCase):
         assert runtime.selection_kwargs is not None
         self.assertEqual(runtime.selection_kwargs.get("prompt"), "Run worktrees for")
         self.assertEqual(runtime.selection_kwargs.get("initial_project_names"), ["alpha", "gamma"])
+
+    def test_select_start_tree_projects_preselects_projects_backed_by_existing_plans(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning_dir = root / "todo" / "plans" / "implementations"
+            planning_dir.mkdir(parents=True, exist_ok=True)
+            (planning_dir / "alpha.md").write_text("# alpha\n", encoding="utf-8")
+            (planning_dir / "gamma.md").write_text("# gamma\n", encoding="utf-8")
+            runtime = _RuntimeStub(can_tty=True)
+            runtime.selection = TargetSelection(project_names=["implementations_alpha-1"])
+            runtime.config = SimpleNamespace(planning_dir=root / "todo" / "plans")
+            orchestrator = StartupOrchestrator(runtime)
+
+            contexts = [
+                SimpleNamespace(name="implementations_alpha-1", root=root / "trees" / "alpha" / "1"),
+                SimpleNamespace(name="implementations_beta-1", root=root / "trees" / "beta" / "1"),
+                SimpleNamespace(name="implementations_gamma-1", root=root / "trees" / "gamma" / "1"),
+            ]
+            selected = orchestrator._select_start_tree_projects(route=self._trees_route(), project_contexts=contexts)
+
+            self.assertEqual([ctx.name for ctx in selected], ["implementations_alpha-1"])
+            self.assertIsNotNone(runtime.selection_kwargs)
+            assert runtime.selection_kwargs is not None
+            self.assertEqual(
+                runtime.selection_kwargs.get("initial_project_names"),
+                ["implementations_alpha-1", "implementations_gamma-1"],
+            )
 
     def test_select_start_tree_projects_requires_explicit_selection_without_tty(self) -> None:
         runtime = _RuntimeStub(can_tty=False)

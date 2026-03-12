@@ -15,6 +15,26 @@ class PytestOutputParser(TestOutputParser):
         super().__init__()
         self._lines: list[str] = []
 
+    @staticmethod
+    def _is_valid_pytest_nodeid(value: str) -> bool:
+        candidate = value.strip()
+        if not candidate:
+            return False
+        if " - " in candidate:
+            return False
+        if "\n" in candidate or "\r" in candidate:
+            return False
+        if ".py" not in candidate:
+            return False
+        if "::" not in candidate:
+            return False
+        if candidate.startswith("file or directory not found:"):
+            return False
+        suffix = candidate.split(".py", 1)[1]
+        if not suffix.startswith("::"):
+            return False
+        return True
+
     @override
     def parse_line(self, line: str) -> None:
         """Parse a single line of pytest output.
@@ -60,7 +80,9 @@ class PytestOutputParser(TestOutputParser):
         # Format: "FAILED tests/test_auth.py::test_login - AssertionError"
         match = re.match(r"FAILED\s+(.+?)\s*(?:-\s*(.+))?$", line)
         if match:
-            test_name = match.group(1)
+            test_name = match.group(1).strip()
+            if not self._is_valid_pytest_nodeid(test_name):
+                return
             error_msg = match.group(2) or "Unknown error"
             if test_name not in self.result.failed_tests:
                 self.result.failed_tests.append(test_name)
@@ -74,9 +96,11 @@ class PytestOutputParser(TestOutputParser):
             line: Line starting with "ERROR ".
         """
         # Format: "ERROR tests/test_setup.py::setup_module"
-        match = re.match(r"ERROR\s+(.+)$", line)
+        match = re.match(r"ERROR\s+(.+?)(?:\s*-\s*(.+))?$", line)
         if match:
-            test_name = match.group(1)
+            test_name = match.group(1).strip()
+            if not self._is_valid_pytest_nodeid(test_name):
+                return
             if test_name not in self.result.failed_tests:
                 self.result.failed_tests.append(test_name)
             if test_name not in self.result.error_details:

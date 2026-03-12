@@ -79,8 +79,11 @@ def run_test_action(
     rt = orchestrator.runtime
     run_all = bool(route.flags.get("all"))
     untested = bool(route.flags.get("untested"))
+    failed_only = bool(route.flags.get("failed"))
     project_names = [str(getattr(target, "name")) for target in targets if hasattr(target, "name")]
-    orchestrator._emit_status(orchestrator._test_scope_status(project_names, run_all=run_all, untested=untested))
+    orchestrator._emit_status(
+        orchestrator._test_scope_status(project_names, run_all=run_all, untested=untested, failed=failed_only)
+    )
     interactive_command = bool(route.flags.get("interactive_command"))
     backend_flag = route.flags.get("backend")
     frontend_flag = route.flags.get("frontend")
@@ -90,6 +93,7 @@ def run_test_action(
     target_contexts = orchestrator._test_target_contexts(targets)
     try:
         execution_specs = orchestrator._build_test_execution_specs(
+            route=route,
             raw=raw,
             targets=targets,
             target_contexts=target_contexts,
@@ -201,7 +205,7 @@ def run_test_action(
         if execution is None:
             orchestrator._emit_status(f"{prefix}{details}")
             return
-        suite_label = orchestrator._suite_display_name(execution.spec.source)
+        suite_label = orchestrator._suite_display_name(execution.spec.source, failed_only=failed_only)
         descriptor = f"{execution.project_name} / {suite_label}" if multi_project else suite_label
         orchestrator._emit_status(f"{prefix} • {phase}: {descriptor}{details}")
 
@@ -215,7 +219,7 @@ def run_test_action(
         enabled=use_suite_spinner_group,
         policy=spinner_policy,
         emit=getattr(rt, "_emit", None),
-        suite_label_resolver=orchestrator._suite_display_name,
+            suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
         multi_project=multi_project,
         env=getattr(rt, "env", {}),
     )
@@ -229,7 +233,7 @@ def run_test_action(
         resolved_source = execution.resolved_source
         project_name = execution.project_name
         project_root = execution.project_root
-        suite_label = orchestrator._suite_display_name(spec.source)
+        suite_label = orchestrator._suite_display_name(spec.source, failed_only=failed_only)
         status = orchestrator._test_execution_status(
             spec.command,
             args=args,
@@ -478,6 +482,14 @@ def run_test_action(
                 "returncode": completed.returncode,
                 "duration_ms": duration_ms,
                 "parsed": parsed,
+                "failed_only": failed_only,
+                "failure_summary": _summarize_failure_output(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                    returncode=int(getattr(completed, "returncode", 1)),
+                )
+                if completed.returncode != 0
+                else "",
             }
         )
         rt._emit(  # type: ignore[attr-defined]
@@ -546,7 +558,7 @@ def run_test_action(
                     failures.append(f"{label}: {error or 'unknown test failure'}")
                     break
 
-    orchestrator._persist_test_summary_artifacts(
+    summary_metadata = orchestrator._persist_test_summary_artifacts(
         route=route,
         targets=targets,
         outcomes=suite_outcomes,
@@ -558,9 +570,9 @@ def run_test_action(
             orchestrator._emit_status(f"Test command failed: {message}")
         else:
             print(f"test action failed: {message}")
-        orchestrator._print_test_suite_overview(suite_outcomes)
+        orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)
         return 1
-    orchestrator._print_test_suite_overview(suite_outcomes)
+    orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)
     if interactive_command:
         orchestrator._emit_status(f"Test command finished for {len(targets)} target(s)")
     else:

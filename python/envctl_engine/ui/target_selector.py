@@ -33,6 +33,7 @@ class TargetSelector:
         allow_untested: bool,
         multi: bool,
         initial_project_names: Sequence[str] | None = None,
+        exclusive_project_name: str | None = None,
     ) -> TargetSelection:
         _ = self._env, self._menu
         return select_project_targets_textual(
@@ -42,6 +43,7 @@ class TargetSelector:
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
             emit=self._emit,
         )
 

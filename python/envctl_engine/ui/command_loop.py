@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 import shlex
 import sys
@@ -33,6 +34,7 @@ def run_dashboard_command_loop(
     if not _call_or_default_can_interactive_tty(can_interactive_tty):
         rt._print_dashboard_snapshot(state)
         return 0
+    setattr(rt, "_dashboard_command_loop_active", True)
 
     session = TerminalSession(
         getattr(rt, "env", {}),
@@ -261,11 +263,20 @@ def run_dashboard_command_loop(
                 if str(spinner_anomaly.get("severity", "")).lower() in {"high", "critical"}:
                     _emit_auto_pack(rt, reason="spinner_anomaly")
 
+            _consume_post_dashboard_prompt(
+                runtime=rt,
+                session=session,
+                read_command_line=read_command_line,
+            )
+
             if not should_continue:
                 print("Exiting interactive mode (services continue running).")
                 rt._emit("ui.command_loop.exit", reason="user_exit")
                 return 0
     finally:
+        with suppress(Exception):
+            setattr(rt, "_dashboard_command_loop_active", False)
+            setattr(rt, "_dashboard_return_prompt", None)
         _restore_terminal_on_loop_exit(rt)
 
 
@@ -303,6 +314,37 @@ def _call_or_default_flush(candidate: Callable[[], None] | None) -> None:
     from .dashboard.terminal_ui import RuntimeTerminalUI
 
     RuntimeTerminalUI.flush_pending_interactive_input()
+
+
+def _consume_post_dashboard_prompt(
+    *,
+    runtime: Any,
+    session: Any,
+    read_command_line: Callable[[str], str] | None,
+) -> None:
+    prompt = str(getattr(runtime, "_dashboard_return_prompt", "") or "").strip()
+    if not prompt:
+        return
+    with suppress(Exception):
+        setattr(runtime, "_dashboard_return_prompt", None)
+    runtime._emit("ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="post_command_input")
+    runtime._emit("ui.input.read.begin", component="ui.command_loop", prompt_kind="post_command")
+    try:
+        if read_command_line is not None:
+            raw = read_command_line(prompt)
+        else:
+            raw = session.read_command_line(prompt)
+        runtime._emit(
+            "ui.input.read.end",
+            component="ui.command_loop",
+            prompt_kind="post_command",
+            bytes_read=len(raw.encode("utf-8", errors="ignore")),
+        )
+    except EOFError:
+        runtime._emit("ui.input.read.end", component="ui.command_loop", prompt_kind="post_command", eof=True)
+    except KeyboardInterrupt:
+        print("")
+        runtime._emit("ui.input.read.end", component="ui.command_loop", prompt_kind="post_command", interrupted=True)
 
 
 @dataclass

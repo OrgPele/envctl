@@ -839,6 +839,7 @@ class PythonEngineRuntime:
         allow_untested: bool,
         multi: bool,
         initial_project_names: list[str] | None = None,
+        exclusive_project_name: str | None = None,
     ):
         return bridge_select_project_targets(
             self,
@@ -848,6 +849,7 @@ class PythonEngineRuntime:
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
         )
 
     def _select_grouped_targets(

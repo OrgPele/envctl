@@ -153,7 +153,7 @@ def _prune_project_metadata(state: RunState, *, project_name: str) -> list[Path]
     if isinstance(summaries_raw, dict):
         entry = summaries_raw.pop(project_name, None)
         if isinstance(entry, dict):
-            for path_key in ("summary_path", "state_path"):
+            for path_key in ("summary_path", "short_summary_path", "state_path", "manifest_path"):
                 raw_path = str(entry.get(path_key, "") or "").strip()
                 if raw_path:
                     removed_paths.append(Path(raw_path))

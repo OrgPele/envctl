@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import hashlib
 import concurrent.futures
 import os
@@ -23,12 +24,17 @@ from envctl_engine.actions.action_target_support import (
     execute_targeted_action,
 )
 from envctl_engine.actions.action_test_support import (
+    FailedTestManifest,
     TestExecutionSpec as _TestExecutionSpec,
+    build_failed_test_execution_specs,
+    frontend_failed_files_from_failed_tests,
+    sanitize_failed_test_identifiers,
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext,
     build_test_execution_specs,
     build_test_target_contexts,
     is_backend_only_selection,
+    load_failed_test_manifest,
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
@@ -172,6 +178,12 @@ class ActionRuntimeFacade:
 class ActionCommandOrchestrator:
     def __init__(self, runtime: Any) -> None:
         self.runtime = ActionRuntimeFacade(runtime)
+
+    @staticmethod
+    def _short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
+        digest = hashlib.sha1(project_name.encode("utf-8")).hexdigest()[:10]
+        run_root = run_dir.parent.parent
+        return run_root / f"ft_{digest}.txt"
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
@@ -488,6 +500,7 @@ class ActionCommandOrchestrator:
     def _build_test_execution_specs(
         self,
         *,
+        route: Route,
         raw: str | None,
         targets: list[object],
         target_contexts: list[TestTargetContext],
@@ -497,6 +510,12 @@ class ActionCommandOrchestrator:
         untested: bool,
     ) -> list["_TestExecutionSpec"]:
         rt = self.runtime
+        if bool(route.flags.get("failed")):
+            return self._build_failed_test_execution_specs(
+                route=route,
+                raw=raw,
+                target_contexts=target_contexts,
+            )
         return build_test_execution_specs(
             raw_command=raw,
             target_contexts=target_contexts,
@@ -512,6 +531,112 @@ class ActionCommandOrchestrator:
             replacements_for_target=lambda target: self.action_replacements(targets, target=target),
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
+
+    def _build_failed_test_execution_specs(
+        self,
+        *,
+        route: Route,
+        raw: str | None,
+        target_contexts: list[TestTargetContext],
+    ) -> list["_TestExecutionSpec"]:
+        rt = self.runtime
+        state = rt.load_existing_state(mode=route.mode)
+        if state is None:
+            raise RuntimeError("No saved failed-test data is available yet. Run the full test suite first.")
+        summaries_raw = getattr(state, "metadata", {}).get("project_test_summaries")
+        summaries = summaries_raw if isinstance(summaries_raw, dict) else {}
+        manifests_by_project: dict[str, FailedTestManifest] = {}
+        stale_projects: list[str] = []
+        invalid_selector_counts: dict[str, int] = {}
+        non_rerunnable_projects: list[str] = []
+        extraction_failed_projects: list[str] = []
+        for target in target_contexts:
+            entry = summaries.get(target.project_name)
+            if not isinstance(entry, dict):
+                continue
+            manifest_path_raw = str(entry.get("manifest_path", "") or "").strip()
+            if not manifest_path_raw:
+                if str(entry.get("status", "") or "").strip().lower() == "failed":
+                    non_rerunnable_projects.append(target.project_name)
+                    if self._summary_indicates_extraction_failure(entry):
+                        extraction_failed_projects.append(target.project_name)
+                continue
+            manifest = load_failed_test_manifest(Path(manifest_path_raw))
+            if manifest is None:
+                if str(entry.get("status", "") or "").strip().lower() == "failed":
+                    non_rerunnable_projects.append(target.project_name)
+                    if self._summary_indicates_extraction_failure(entry):
+                        extraction_failed_projects.append(target.project_name)
+                continue
+            if not manifest.entries:
+                if str(entry.get("status", "") or "").strip().lower() == "failed":
+                    non_rerunnable_projects.append(target.project_name)
+                    if self._summary_indicates_extraction_failure(entry):
+                        extraction_failed_projects.append(target.project_name)
+                continue
+            current_head, current_status_hash, current_status_lines = self._git_state_components(target.project_root)
+            if (
+                manifest.head != current_head
+                or manifest.status_hash != current_status_hash
+                or manifest.status_lines != current_status_lines
+            ):
+                stale_projects.append(target.project_name)
+                continue
+            invalid_count = sum(item.invalid_failed_tests for item in manifest.entries)
+            if invalid_count > 0:
+                invalid_selector_counts[target.project_name] = invalid_count
+            manifests_by_project[target.project_name] = manifest
+        if stale_projects:
+            names = ", ".join(sorted(stale_projects))
+            raise RuntimeError(f"Saved failed-test data is stale for {names}. Run the full suite first.")
+        for project_name, invalid_count in sorted(invalid_selector_counts.items()):
+            noun = "selector" if invalid_count == 1 else "selectors"
+            message = (
+                f"Skipping {invalid_count} invalid saved pytest {noun} for {project_name}; "
+                "rerunning the remaining failed tests."
+            )
+            self._emit_status(message)
+            print(message)
+        if non_rerunnable_projects:
+            projects = ", ".join(sorted(non_rerunnable_projects))
+            if extraction_failed_projects and sorted(extraction_failed_projects) == sorted(non_rerunnable_projects):
+                print(f"No rerunnable failed tests were extracted for: {projects}")
+            else:
+                print(f"No rerunnable failed tests remain for: {projects}")
+        if not manifests_by_project:
+            if extraction_failed_projects and sorted(extraction_failed_projects) == sorted(non_rerunnable_projects):
+                raise RuntimeError(
+                    "No rerunnable failed tests were found for the selected target(s). "
+                    "The last full run failed before envctl could derive rerunnable test selectors. "
+                    "See the saved failure summary."
+                )
+            if non_rerunnable_projects:
+                raise RuntimeError(
+                    "No rerunnable failed tests were found for the selected target(s). "
+                    "Saved failures could not be converted into rerunnable selectors. Run the full suite first."
+                )
+            raise RuntimeError("No saved failed tests were found for the selected target(s). Run the full suite first.")
+        return build_failed_test_execution_specs(
+            target_contexts=target_contexts,
+            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+            manifests_by_project=manifests_by_project,
+            raw_command=raw,
+        )
+
+    @staticmethod
+    def _summary_indicates_extraction_failure(entry: Mapping[str, object]) -> bool:
+        for key in ("short_summary_path", "summary_path"):
+            raw = str(entry.get(key, "") or "").strip()
+            if not raw:
+                continue
+            path = Path(raw).expanduser()
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if "suite failed before envctl could extract failed tests" in text:
+                return True
+        return False
 
     def run_project_action(
         self,
@@ -817,9 +942,15 @@ class ActionCommandOrchestrator:
         return f"Running {command_name} for {len(target_names)} targets..."
 
     @staticmethod
-    def _test_scope_status(project_names: list[str], *, run_all: bool, untested: bool) -> str:
+    def _test_scope_status(project_names: list[str], *, run_all: bool, untested: bool, failed: bool) -> str:
         if run_all:
             return "Running tests for all discovered projects..."
+        if failed:
+            if len(project_names) == 1:
+                return f"Rerunning failed tests for {project_names[0]}..."
+            if project_names:
+                return f"Rerunning failed tests for {len(project_names)} selected projects..."
+            return "Rerunning failed tests..."
         if untested and not project_names:
             return "Running tests for untested projects..."
         if len(project_names) == 1:
@@ -837,12 +968,23 @@ class ActionCommandOrchestrator:
             return "Executing configured test command..."
 
         if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
+            if len(command) > 3 and all("test" in str(part) or "::" in str(part) for part in command[3:]):
+                return f"Rerunning failed pytest cases ({len(command) - 3})..."
             target = command[3] if len(command) > 3 else "tests"
             return f"Running pytest suite at {target}..."
         if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
             return "Running unittest discovery (test_*.py)..."
+        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest":
+            return f"Rerunning failed unittest cases ({len(command) - 3})..."
         if len(command) >= 3 and command[1] == "run" and command[2] == "test":
             manager = command[0]
+            if "--" in command:
+                try:
+                    file_count = max(0, len(command) - command.index("--") - 1)
+                except ValueError:
+                    file_count = 0
+                if file_count > 0:
+                    return f"Rerunning failed {manager} test files ({file_count}) in {cwd}..."
             return f"Running {manager} test script in {cwd}..."
         if len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh"):
             projects_arg = next((value for value in args if value.startswith("projects=")), "")
@@ -909,9 +1051,9 @@ class ActionCommandOrchestrator:
         route: Route,
         targets: list[object],
         outcomes: list[dict[str, object]],
-    ) -> None:
+    ) -> dict[str, dict[str, object]]:
         if not targets:
-            return
+            return {}
 
         rt = self.runtime
         project_roots: dict[str, Path] = {}
@@ -929,13 +1071,15 @@ class ActionCommandOrchestrator:
                     continue
                 project_roots[name] = Path(root_raw)
         if not project_roots:
-            return
+            return {}
 
         state = rt.load_existing_state(mode=route.mode)
         if state is None:
-            return
+            return {}
 
         run_dir = self._new_test_results_run_dir(state.run_id)  # type: ignore[attr-defined]
+        existing = state.metadata.get("project_test_summaries")
+        metadata = dict(existing) if isinstance(existing, dict) else {}
         summaries: dict[str, dict[str, object]] = {}
         for project_name, project_root in project_roots.items():
             summaries[project_name] = self._write_failed_tests_summary(
@@ -943,10 +1087,9 @@ class ActionCommandOrchestrator:
                 project_name=project_name,
                 project_root=project_root,
                 outcomes=outcomes,
+                previous_entry=metadata.get(project_name) if isinstance(metadata.get(project_name), dict) else None,
             )
 
-        existing = state.metadata.get("project_test_summaries")
-        metadata = dict(existing) if isinstance(existing, dict) else {}
         metadata.update(summaries)
         state.metadata["project_test_summaries"] = metadata
         state.metadata["project_test_results_root"] = str(run_dir)
@@ -963,6 +1106,7 @@ class ActionCommandOrchestrator:
             projects=sorted(summaries),
             run_dir=str(run_dir),
         )
+        return summaries
 
     def _new_test_results_run_dir(self, run_id: str) -> Path:
         results_root = self.runtime.state_repository.test_results_dir_path(run_id)
@@ -987,14 +1131,24 @@ class ActionCommandOrchestrator:
         project_name: str,
         project_root: Path,
         outcomes: list[dict[str, object]],
+        previous_entry: dict[str, object] | None = None,
     ) -> dict[str, object]:
         safe_project = project_name.replace(" ", "_")
         output_dir = run_dir / safe_project
         output_dir.mkdir(parents=True, exist_ok=True)
         summary_path = output_dir / "failed_tests_summary.txt"
+        short_summary_path = self._short_failed_summary_path(run_dir=run_dir, project_name=project_name)
         state_path = output_dir / "test_state.txt"
+        manifest_path = output_dir / "failed_tests_manifest.json"
 
         failures = self._collect_failed_tests(outcomes, project_name=project_name)
+        generic_suite_failures = self._collect_generic_suite_failures(outcomes, project_name=project_name)
+        manifest_entries = self._collect_failed_test_manifest_entries(outcomes, project_name=project_name)
+        failed_only = any(
+            bool(item.get("failed_only", False))
+            for item in outcomes
+            if str(item.get("project_name", "")).strip() == project_name
+        )
         generated_at = datetime.now().astimezone()
         lines = [
             "# envctl Failed Test Summary",
@@ -1011,22 +1165,64 @@ class ActionCommandOrchestrator:
                     for detail in self._format_summary_error_lines(str(error_text)):
                         lines.append(f"    {detail}")
                 lines.append("")
+        elif generic_suite_failures:
+            for suite_name, summary in generic_suite_failures:
+                clean_suite_name = strip_ansi(str(suite_name)).strip()
+                lines.append(f"[{clean_suite_name}]")
+                lines.append("- suite failed before envctl could extract failed tests")
+                for detail in self._format_summary_error_lines(str(summary)):
+                    lines.append(f"    {detail}")
+                lines.append("")
         else:
             lines.append("No failed tests.")
             lines.append("")
-        summary_path.write_text("\n".join(lines), encoding="utf-8")
+        summary_text = "\n".join(lines)
+        summary_path.write_text(summary_text, encoding="utf-8")
+        short_summary_path.write_text(summary_text, encoding="utf-8")
 
         head, status_hash, status_lines = self._git_state_components(project_root)
         state_path.write_text(
             f"state|{project_name}|{project_root}|{head}|{status_hash}|{status_lines}\n",
             encoding="utf-8",
         )
+        manifest_payload = {
+            "generated_at": generated_at.isoformat(),
+            "project_name": project_name,
+            "project_root": str(project_root),
+            "git_state": {
+                "head": head,
+                "status_hash": status_hash,
+                "status_lines": status_lines,
+            },
+            "entries": manifest_entries,
+        }
+        manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+        preserve_previous = (
+            failed_only
+            and not failures
+            and bool(generic_suite_failures)
+            and not manifest_entries
+            and previous_entry is not None
+        )
+        if preserve_previous:
+            previous_manifest_path_raw = str(previous_entry.get("manifest_path", "") or "").strip()
+            previous_manifest = load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+            if previous_manifest is not None and previous_manifest.entries:
+                preserved = dict(previous_entry)
+                preserved["status"] = "failed"
+                preserved["updated_at"] = generated_at.isoformat()
+                preserved["preserved_after_failed_only_extraction_failure"] = True
+                return preserved
 
         return {
             "summary_path": str(summary_path),
+            "short_summary_path": str(short_summary_path),
             "state_path": str(state_path),
-            "status": "failed" if failures else "passed",
+            "manifest_path": str(manifest_path),
+            "status": "failed" if failures or generic_suite_failures else "passed",
             "failed_tests": len(failures),
+            "failed_manifest_entries": len(manifest_entries),
             "updated_at": generated_at.isoformat(),
         }
 
@@ -1048,7 +1244,7 @@ class ActionCommandOrchestrator:
             parsed = item.get("parsed")
             failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
             error_details = dict(getattr(parsed, "error_details", {}) or {}) if parsed is not None else {}
-            suite_name = self._suite_display_name(source)
+            suite_name = self._suite_display_name(source, failed_only=bool(item.get("failed_only", False)))
             for failed_test in failed_tests:
                 test_name = str(failed_test).strip()
                 if not test_name:
@@ -1059,6 +1255,78 @@ class ActionCommandOrchestrator:
                 seen.add(dedupe_key)
                 error_text = self._resolve_failed_test_error(error_details, test_name)
                 collected.append((suite_name, test_name, error_text))
+        return collected
+
+    def _collect_failed_test_manifest_entries(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        project_name: str | None = None,
+    ) -> list[dict[str, object]]:
+        entries: list[dict[str, object]] = []
+        ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+        for item in ordered:
+            if project_name is not None:
+                item_project_name = str(item.get("project_name", "")).strip()
+                if item_project_name != project_name:
+                    continue
+            source = str(item.get("suite", "")).strip()
+            if not source:
+                continue
+            parsed = item.get("parsed")
+            raw_failed_tests = [
+                str(failed_test).strip()
+                for failed_test in list(getattr(parsed, "failed_tests", []) or []) if str(failed_test).strip()
+            ] if parsed is not None else []
+            failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
+                source=source,
+                failed_tests=raw_failed_tests,
+            )
+            failed_files = (
+                frontend_failed_files_from_failed_tests(failed_tests)
+                if source in {"frontend_package_test", "package_test"}
+                else []
+            )
+            if not failed_tests and not failed_files:
+                continue
+            entries.append(
+                {
+                    "suite": self._suite_display_name(source, failed_only=bool(item.get("failed_only", False))),
+                    "source": source,
+                    "failed_tests": list(failed_tests),
+                    "failed_files": failed_files,
+                    "invalid_failed_tests": invalid_failed_tests,
+                }
+            )
+        return entries
+
+    def _collect_generic_suite_failures(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        project_name: str | None = None,
+    ) -> list[tuple[str, str]]:
+        collected: list[tuple[str, str]] = []
+        ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+        for item in ordered:
+            if project_name is not None:
+                item_project_name = str(item.get("project_name", "")).strip()
+                if item_project_name != project_name:
+                    continue
+            if int(item.get("returncode", 0) or 0) == 0:
+                continue
+            parsed = item.get("parsed")
+            failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
+            if failed_tests:
+                continue
+            summary = str(item.get("failure_summary", "") or "").strip()
+            if not summary:
+                summary = "Test command failed before envctl could extract failed tests."
+            suite_name = self._suite_display_name(
+                str(item.get("suite", "suite")),
+                failed_only=bool(item.get("failed_only", False)),
+            )
+            collected.append((suite_name, summary))
         return collected
 
     @staticmethod
@@ -1102,15 +1370,15 @@ class ActionCommandOrchestrator:
         return head, status_hash, status_lines
 
     @staticmethod
-    def _suite_display_name(source: str) -> str:
+    def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
         if source == "backend_pytest":
-            return "Backend (pytest)"
+            return "Backend (pytest, failed only)" if failed_only else "Backend (pytest)"
         if source == "frontend_package_test":
-            return "Frontend (package test)"
+            return "Frontend (package test, failed only)" if failed_only else "Frontend (package test)"
         if source == "root_unittest":
-            return "Repository tests (unittest)"
+            return "Repository tests (unittest, failed only)" if failed_only else "Repository tests (unittest)"
         if source == "package_test":
-            return "Repository package test"
+            return "Repository package test (failed only)" if failed_only else "Repository package test"
         if source == "configured":
             return "Configured test command"
         return source.replace("_", " ")
@@ -1328,7 +1596,12 @@ class ActionCommandOrchestrator:
             return True
         return False
 
-    def _print_test_suite_overview(self, outcomes: list[dict[str, object]]) -> None:
+    def _print_test_suite_overview(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        summary_metadata: dict[str, dict[str, object]] | None = None,
+    ) -> None:
         if not outcomes:
             return
         print("")
@@ -1360,7 +1633,7 @@ class ActionCommandOrchestrator:
                 print(self._colorize(project_name, fg="blue", bold=True))
             for item in project_items:
                 source = str(item.get("suite", "suite"))
-                label = self._suite_display_name(source)
+                label = self._suite_display_name(source, failed_only=bool(item.get("failed_only", False)))
                 label_rendered = self._colorize(label, fg="cyan", bold=True)
                 if multi_project:
                     label_rendered = f"  {label_rendered}"
@@ -1406,6 +1679,14 @@ class ActionCommandOrchestrator:
                             f"{self._colorize('failed', fg='red', bold=True)} "
                             f"(no parsed test counts, duration {duration_text})"
                         )
+            summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
+            if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
+                summary_path = str(summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or "").strip()
+                if summary_path:
+                    prefix = "  " if multi_project else ""
+                    label = self._colorize("failure summary:", fg="gray")
+                    print(f"{prefix}{label}")
+                    print(f"{prefix}{summary_path}")
             if multi_project:
                 print("")
 
@@ -1428,7 +1709,7 @@ class ActionCommandOrchestrator:
         for project_name, specs in grouped.items():
             print(f"  {self._colorize(project_name, fg='blue', bold=True)}")
             for execution in specs:
-                suite_label = self._suite_display_name(execution.spec.source)
+                suite_label = self._suite_display_name(execution.spec.source, failed_only=bool(route.flags.get("failed")))
                 suite_text = self._colorize(suite_label, fg="magenta")
                 print(f"    - {suite_text}")
 

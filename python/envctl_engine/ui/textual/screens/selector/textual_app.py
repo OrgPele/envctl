@@ -42,6 +42,7 @@ def create_selector_app(
     mouse_enabled: bool,
     selector_id: str,
     initial_navigation: tuple[str, ...] = (),
+    exclusive_token: str | None = None,
 ):
     status_error_timeout_seconds = 3.0
     from textual.app import App, ComposeResult
@@ -278,23 +279,53 @@ def create_selector_app(
             if not initial_navigation:
                 return
             self.action_focus_list(reason="initial_navigation")
-            for action in initial_navigation:
-                if action == "down":
-                    self.action_nav_down()
-                elif action == "up":
-                    self.action_nav_up()
+            async def _run_initial_navigation() -> None:
+                for action in initial_navigation:
+                    if action == "down":
+                        await self.action_nav_down()
+                    elif action == "up":
+                        await self.action_nav_up()
+
+            asyncio.create_task(_run_initial_navigation())
 
         def _focused_row(self) -> _RowRef | None:
             return self._controller.focused_row(self._list().index)
+
+        async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
+            if multi:
+                return
+            model_index = self._focused_model_index()
+            if model_index is None or model_index < 0 or model_index >= len(self._rows):
+                return
+            changed = False
+            for idx, row in enumerate(self._rows):
+                selected = idx == model_index
+                if row.selected != selected:
+                    row.selected = selected
+                    changed = True
+            if not changed:
+                return
+            await self._render_rows()
+            self.action_focus_list(reason=reason)
 
         async def _toggle_model_index(self, model_index: int) -> None:
             if model_index < 0 or model_index >= len(self._rows):
                 return
             row = self._rows[model_index]
+            row_token = str(row.item.token)
             if not multi:
                 for candidate in self._rows:
                     candidate.selected = False
             row.selected = not row.selected if multi else True
+            if multi and row.selected and exclusive_token:
+                if row_token == exclusive_token:
+                    for idx, candidate in enumerate(self._rows):
+                        if idx != model_index:
+                            candidate.selected = False
+                else:
+                    for candidate in self._rows:
+                        if str(candidate.item.token) == exclusive_token:
+                            candidate.selected = False
             _emit(
                 emit,
                 "ui.selection.interaction",
@@ -339,6 +370,20 @@ def create_selector_app(
             await self._toggle_model_index(model_index)
 
         async def action_toggle_visible(self) -> None:
+            if multi and exclusive_token:
+                visible_indexes = [idx for idx, row in enumerate(self._rows) if row.visible]
+                selectable_indexes = [
+                    idx for idx in visible_indexes if str(self._rows[idx].item.token) != exclusive_token
+                ]
+                if not selectable_indexes:
+                    selectable_indexes = visible_indexes
+                should_select = any(not self._rows[idx].selected for idx in selectable_indexes)
+                for idx in visible_indexes:
+                    self._rows[idx].selected = should_select and idx in selectable_indexes
+                _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
+                await self._render_rows()
+                self.action_focus_list(reason="toggle_visible")
+                return
             should_select = self._controller.apply_visible_toggle(
                 is_visible=lambda row: row.visible,
                 is_active=lambda row: row.selected,
@@ -381,7 +426,7 @@ def create_selector_app(
                 handled=handled,
             )
 
-        def action_nav_up(self) -> None:
+        async def action_nav_up(self) -> None:
             list_index_before = self._list().index
             focus_before = self._focused_widget_id()
             if not self._list().has_focus:
@@ -391,6 +436,7 @@ def create_selector_app(
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:
                 self._last_user_model_index = focused_model_index
+            await self._sync_single_select_focus_selection(reason="nav_up")
             self._nav_event_counter += 1
             self._last_nav_change_ns = time.monotonic_ns()
             self._idle_snapshot_bucket = -1
@@ -406,7 +452,7 @@ def create_selector_app(
                 handled=True,
             )
 
-        def action_nav_down(self) -> None:
+        async def action_nav_down(self) -> None:
             list_index_before = self._list().index
             focus_before = self._focused_widget_id()
             if not self._list().has_focus:
@@ -416,6 +462,7 @@ def create_selector_app(
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:
                 self._last_user_model_index = focused_model_index
+            await self._sync_single_select_focus_selection(reason="nav_down")
             self._nav_event_counter += 1
             self._last_nav_change_ns = time.monotonic_ns()
             self._idle_snapshot_bucket = -1

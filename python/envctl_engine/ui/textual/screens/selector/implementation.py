@@ -70,6 +70,7 @@ def _run_textual_selector(
     options: list[SelectorItem],
     multi: bool,
     initial_tokens: Sequence[str] | None = None,
+    exclusive_token: str | None = None,
     emit: Callable[..., None] | None = None,
     build_only: bool = False,
     force_textual_backend: bool = False,
@@ -79,6 +80,7 @@ def _run_textual_selector(
         options=options,
         multi=multi,
         initial_tokens=initial_tokens,
+        exclusive_token=exclusive_token,
         emit=emit,
         build_only=build_only,
         force_textual_backend=force_textual_backend,
@@ -93,6 +95,7 @@ def _run_selector_with_impl(
     options: list[SelectorItem],
     multi: bool,
     initial_tokens: Sequence[str] | None = None,
+    exclusive_token: str | None = None,
     emit: Callable[..., None] | None = None,
 ) -> list[str] | None:
     selector_id = _selector_id(prompt)
@@ -119,6 +122,7 @@ def _run_selector_with_impl(
             options=options,
             multi=multi,
             initial_tokens=initial_tokens,
+            exclusive_token=exclusive_token,
             emit=emit,
             force_textual_backend=True,
         )
@@ -130,6 +134,7 @@ def _run_selector_with_impl(
             options=options,
             multi=multi,
             initial_tokens=initial_tokens,
+            exclusive_token=exclusive_token,
             emit=emit,
             selector_id=selector_id,
             deep_debug=deep_debug,
@@ -197,6 +202,7 @@ def select_project_targets_textual(
     emit: Callable[..., None] | None = None,
     untested_projects: Sequence[str] | None = None,
     initial_project_names: Sequence[str] | None = None,
+    exclusive_project_name: str | None = None,
 ) -> TargetSelection:
     result = build_project_selector_items(
         SelectorContext(
@@ -228,6 +234,7 @@ def select_project_targets_textual(
         options=result.items,
         multi=multi,
         initial_tokens=initial_tokens,
+        exclusive_token=(f"__PROJECT__:{exclusive_project_name}" if exclusive_project_name else None),
         emit=emit,
     )
     return _selection_from_values(values)

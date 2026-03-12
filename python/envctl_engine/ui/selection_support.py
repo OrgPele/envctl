@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import project_name_from_service_name
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_types import TargetSelection
@@ -47,6 +48,8 @@ def project_names_from_state(runtime: Any, state: RunState) -> list[object]:
     for name in state.services:
         project = runtime._project_name_from_service(name)  # type: ignore[attr-defined]
         if not project:
+            project = project_name_from_service_name(str(name))
+        if not project:
             continue
         lowered = project.lower()
         if lowered in seen:
@@ -76,6 +79,8 @@ def services_from_selection(runtime: Any, selection: TargetSelection, state: Run
         selected: set[str] = set()
         for name in state.services:
             project = runtime._project_name_from_service(name)  # type: ignore[attr-defined]
+            if not project:
+                project = project_name_from_service_name(str(name))
             if not project:
                 continue
             for wanted in selection.project_names:

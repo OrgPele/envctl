@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from contextlib import suppress
+import hashlib
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any, cast
 
+from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import detect_default_branch, resolve_git_root
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
@@ -11,6 +15,7 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
+from envctl_engine.shared.services import project_name_from_service_name
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
     recover_single_letter_command_from_escape_fragment,
@@ -164,6 +169,11 @@ class DashboardOrchestrator:
         refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
         if code != 0:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
+        if route.command == "test":
+            if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
+                self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
+            else:
+                self._read_interactive_line(runtime_any, "Press Enter to return to dashboard: ")
         if route.command in {"stop-all", "blast-all"}:
             return False, state
         if refreshed is None:
@@ -185,18 +195,55 @@ class DashboardOrchestrator:
         if not isinstance(metadata, dict):
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        printed = False
+        summaries_available = False
         for project_name in project_names:
             entry = metadata.get(project_name)
             if not isinstance(entry, dict):
                 continue
-            summary_path = str(entry.get("summary_path", "")).strip()
+            status = str(entry.get("status", "")).strip().lower()
+            if status and status != "failed":
+                continue
+            summary_path = self._test_summary_display_path(project_name=project_name, entry=entry)
             if not summary_path:
                 continue
-            print(f"Test failure summary for {project_name}:")
-            print(summary_path)
-            printed = True
-        return printed
+            summaries_available = True
+        # Test action output already renders per-project "failure summary:" lines inside
+        # the main Test Suite Summary block. If saved summaries exist here, treat them as
+        # already surfaced and avoid printing the detached dashboard-only duplicate block.
+        return summaries_available
+
+    @staticmethod
+    def _test_summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:
+        short_path = str(entry.get("short_summary_path", "") or "").strip()
+        if short_path:
+            resolved = DashboardOrchestrator._ensure_short_test_summary_path(
+                project_name=project_name,
+                summary_path=short_path,
+            )
+            return resolved or short_path
+        summary_path = str(entry.get("summary_path", "") or "").strip()
+        if not summary_path:
+            return ""
+        resolved = DashboardOrchestrator._ensure_short_test_summary_path(project_name=project_name, summary_path=summary_path)
+        return resolved or summary_path
+
+    @staticmethod
+    def _ensure_short_test_summary_path(*, project_name: str, summary_path: str) -> str:
+        path = Path(summary_path).expanduser()
+        if not path.is_file():
+            return summary_path
+        if path.name.startswith("ft_") and path.suffix == ".txt":
+            return str(path)
+        parents = path.parents
+        if len(parents) < 4:
+            return summary_path
+        run_root = parents[3]
+        digest = hashlib.sha1(project_name.encode("utf-8")).hexdigest()[:10]
+        short_path = run_root / f"ft_{digest}.txt"
+        if not short_path.exists():
+            with suppress(OSError):
+                short_path.write_text(path.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+        return str(short_path) if short_path.exists() else summary_path
 
     def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
         metadata = state.metadata.get("project_action_reports")
@@ -277,8 +324,11 @@ class DashboardOrchestrator:
             route.flags = {
                 key: value
                 for key, value in route.flags.items()
-                if key not in {"backend", "frontend", "services"}
+                if key not in {"backend", "frontend", "services", "failed"}
             }
+            if any(service_type == "failed" for service_type in selected_service_types):
+                route.flags["failed"] = True
+                return route
             selected_service_names = self._service_names_for_projects_and_types(
                 state,
                 runtime_any,
@@ -725,26 +775,167 @@ class DashboardOrchestrator:
         selected_projects: list[str],
         runtime: Any,
     ) -> list[str] | None:
+        if command == "test":
+            return self._select_dashboard_test_scope(
+                state=state,
+                selected_projects=selected_projects,
+                runtime=runtime,
+            )
         available_types = self._available_service_types_for_projects(
             state,
             runtime,
             project_names=selected_projects,
         )
-        if len(available_types) <= 1:
+        all_tests_available = command == "test" and self._all_tests_scope_available(
+            state,
+            runtime,
+            project_names=selected_projects,
+        )
+        failed_scope_available = command == "test" and self._failed_test_scope_available(
+            state,
+            project_names=selected_projects,
+        )
+        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
             return list(available_types)
         default_service_names = [service_type.title() for service_type in available_types]
+        initial_service_names = list(default_service_names)
+        if all_tests_available and not available_types:
+            default_service_names.append("All tests")
+            initial_service_names.append("All tests")
+        if failed_scope_available:
+            default_service_names.append("All failed tests")
+            if not initial_service_names:
+                initial_service_names.append("All failed tests")
         selection = runtime._select_project_targets(
             prompt=self._service_prompt(command),
             projects=[SimpleProject(name=label) for label in default_service_names],
             allow_all=False,
             allow_untested=False,
             multi=True,
-            initial_project_names=default_service_names,
+            initial_project_names=initial_service_names,
         )
         if selection.cancelled:
             return None
-        selected_types = [name.strip().lower() for name in selection.project_names if name.strip()]
+        selected_types: list[str] = []
+        for name in selection.project_names:
+            normalized = name.strip().lower()
+            if not normalized:
+                continue
+            if normalized == "all tests":
+                selected_types.append("all")
+                continue
+            if normalized == "all failed tests":
+                selected_types.append("failed")
+                continue
+            selected_types.append(normalized)
         return selected_types or list(available_types)
+
+    def _select_dashboard_test_scope(
+        self,
+        *,
+        state: RunState,
+        selected_projects: list[str],
+        runtime: Any,
+    ) -> list[str] | None:
+        available_types = self._available_service_types_for_projects(
+            state,
+            runtime,
+            project_names=selected_projects,
+        )
+        all_tests_available = self._all_tests_scope_available(
+            state,
+            runtime,
+            project_names=selected_projects,
+        )
+        failed_scope_available = self._failed_test_scope_available(
+            state,
+            project_names=selected_projects,
+        )
+        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
+            return list(available_types)
+        options: list[str] = []
+        initial_names: list[str] = []
+        for service_type in available_types:
+            label = service_type.title()
+            options.append(label)
+            initial_names.append(label)
+        if all_tests_available and not available_types:
+            options.append("All tests")
+            initial_names.append("All tests")
+        if failed_scope_available:
+            options.append("Failed tests")
+        if not options:
+            return []
+        if len(options) == 1:
+            only = options[0].strip().lower()
+            if only == "all tests":
+                return ["all"]
+            if only == "failed tests":
+                return ["failed"]
+            return [only]
+        selection = runtime._select_project_targets(
+            prompt=self._service_prompt("test"),
+            projects=[SimpleProject(name=label) for label in options],
+            allow_all=False,
+            allow_untested=False,
+            multi=True,
+            initial_project_names=initial_names,
+            exclusive_project_name="Failed tests" if failed_scope_available else None,
+        )
+        if selection.cancelled:
+            return None
+        chosen_types = [str(name).strip().lower() for name in selection.project_names if str(name).strip()]
+        if not chosen_types:
+            return None
+        if "failed tests" in chosen_types:
+            return ["failed"]
+        if "all tests" in chosen_types:
+            return ["all"]
+        return [name for name in chosen_types if name in {"backend", "frontend"}]
+
+    @staticmethod
+    def _all_tests_scope_available(
+        state: RunState,
+        runtime: Any,
+        *,
+        project_names: list[str],
+    ) -> bool:
+        if not project_names:
+            return False
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        project_roots_raw = metadata.get("project_roots")
+        project_roots = project_roots_raw if isinstance(project_roots_raw, dict) else {}
+        repo_root = Path(str(getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())))
+        for project_name in project_names:
+            root_raw = str(project_roots.get(project_name, "") or "").strip()
+            project_root = repo_root if not root_raw else Path(root_raw)
+            if not project_root.is_absolute():
+                project_root = repo_root / project_root
+            try:
+                if default_test_commands(project_root):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _failed_test_scope_available(state: RunState, *, project_names: list[str]) -> bool:
+        metadata = state.metadata.get("project_test_summaries")
+        if not isinstance(metadata, dict):
+            return False
+        requested = {name.casefold() for name in project_names}
+        for project_name, entry in metadata.items():
+            if requested and str(project_name).casefold() not in requested:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            manifest_path = str(entry.get("manifest_path", "") or "").strip()
+            status = str(entry.get("status", "") or "").strip().lower()
+            failed_count = int(entry.get("failed_tests", 0) or 0)
+            manifest_entries = int(entry.get("failed_manifest_entries", 0) or 0)
+            if manifest_path and (failed_count > 0 or manifest_entries > 0 or status == "failed"):
+                return True
+        return False
 
     @staticmethod
     def _available_service_types_for_projects(
@@ -758,6 +949,8 @@ class DashboardOrchestrator:
         seen: set[str] = set()
         for service_name in state.services:
             project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+            if not project_name:
+                project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested and project_name.casefold() not in requested:
                 continue
             normalized = str(service_name).strip().lower()
@@ -769,6 +962,18 @@ class DashboardOrchestrator:
             if service_type and service_type not in seen:
                 seen.add(service_type)
                 ordered.append(service_type)
+        if ordered:
+            return ordered
+        configured_service_types_raw = state.metadata.get("dashboard_configured_service_types")
+        if isinstance(configured_service_types_raw, list):
+            for service_type in configured_service_types_raw:
+                normalized = str(service_type).strip().lower()
+                if normalized not in {"backend", "frontend"}:
+                    continue
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                ordered.append(normalized)
         return ordered
 
     @staticmethod
@@ -784,6 +989,8 @@ class DashboardOrchestrator:
         selected: list[str] = []
         for service_name in state.services:
             project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+            if not project_name:
+                project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested_projects and project_name.casefold() not in requested_projects:
                 continue
             normalized = str(service_name).strip().lower()
@@ -799,7 +1006,7 @@ class DashboardOrchestrator:
     @staticmethod
     def _worktree_prompt(command: str) -> str:
         prompt_map = {
-            "test": "Choose worktrees",
+            "test": "Choose worktrees to test",
             "restart": "Choose worktrees",
         }
         return prompt_map.get(command, "Choose worktrees")
@@ -807,7 +1014,7 @@ class DashboardOrchestrator:
     @staticmethod
     def _service_prompt(command: str) -> str:
         prompt_map = {
-            "test": "Choose services",
+            "test": "Choose test scope",
             "restart": "Choose services",
         }
         return prompt_map.get(command, "Choose services")
@@ -819,6 +1026,13 @@ class DashboardOrchestrator:
             return str(reader(prompt))
         env = getattr(runtime, "env", {})
         return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))
+
+    @staticmethod
+    def _queue_return_to_dashboard_prompt(runtime: Any, prompt: str) -> None:
+        try:
+            setattr(runtime, "_dashboard_return_prompt", str(prompt))
+        except Exception:
+            return
 
     @staticmethod
     def _prompt_text_dialog(

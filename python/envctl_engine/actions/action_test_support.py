@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
 from envctl_engine.actions.actions_test import TestCommandSpec, build_test_args, default_test_commands
+from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.test_output.parser_pytest import PytestOutputParser
 from envctl_engine.ui.color_policy import colors_enabled
 
 
@@ -28,6 +31,45 @@ class TestExecutionSpec:
     project_name: str
     project_root: Path
     target_obj: object | None = None
+
+
+@dataclass(frozen=True)
+class FailedTestManifestEntry:
+    source: str
+    suite: str
+    failed_tests: tuple[str, ...]
+    failed_files: tuple[str, ...]
+    invalid_failed_tests: int = 0
+
+
+@dataclass(frozen=True)
+class FailedTestManifest:
+    generated_at: str
+    head: str
+    status_hash: str
+    status_lines: int
+    entries: tuple[FailedTestManifestEntry, ...]
+
+
+def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]) -> tuple[tuple[str, ...], int]:
+    if source != "backend_pytest":
+        normalized = tuple(str(value).strip() for value in failed_tests if str(value).strip())
+        return normalized, 0
+    kept: list[str] = []
+    invalid = 0
+    seen: set[str] = set()
+    for raw in failed_tests:
+        candidate = str(raw).strip()
+        if not candidate:
+            continue
+        if not PytestOutputParser._is_valid_pytest_nodeid(candidate):
+            invalid += 1
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        kept.append(candidate)
+    return tuple(kept), invalid
 
 
 def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) -> list[TestTargetContext]:
@@ -145,6 +187,213 @@ def build_test_execution_specs(
         )
         for index, spec in enumerate(execution_specs, start=1)
     ]
+
+
+def build_failed_test_execution_specs(
+    *,
+    target_contexts: Sequence[TestTargetContext],
+    repo_root: Path,
+    manifests_by_project: Mapping[str, FailedTestManifest],
+    raw_command: str | None,
+) -> list[TestExecutionSpec]:
+    if raw_command is not None:
+        raise RuntimeError(
+            "Failed-only reruns are not supported for ENVCTL_ACTION_TEST_CMD. Run the full suite first or remove the custom test command."
+        )
+    execution_specs: list[TestExecutionSpec] = []
+    unsupported: list[str] = []
+    for target in target_contexts:
+        manifest = manifests_by_project.get(target.project_name)
+        if manifest is None:
+            continue
+        for entry in manifest.entries:
+            spec = _failed_rerun_spec_for_entry(
+                entry,
+                project_name=target.project_name,
+                project_root=target.project_root,
+                repo_root=repo_root,
+                target_obj=target.target_obj,
+            )
+            if isinstance(spec, str):
+                unsupported.append(spec)
+                continue
+            if spec is not None:
+                execution_specs.append(spec)
+    if unsupported:
+        first = unsupported[0]
+        raise RuntimeError(first)
+    return [
+        TestExecutionSpec(
+            index=index,
+            spec=spec.spec,
+            args=spec.args,
+            resolved_source=spec.resolved_source,
+            project_name=spec.project_name,
+            project_root=spec.project_root,
+            target_obj=spec.target_obj,
+        )
+        for index, spec in enumerate(execution_specs, start=1)
+    ]
+
+
+def load_failed_test_manifest(path: Path) -> FailedTestManifest | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    entries_raw = payload.get("entries")
+    if not isinstance(entries_raw, list):
+        return None
+    entries: list[FailedTestManifestEntry] = []
+    for raw_entry in entries_raw:
+        if not isinstance(raw_entry, dict):
+            continue
+        source = str(raw_entry.get("source", "") or "").strip()
+        suite = str(raw_entry.get("suite", "") or "").strip()
+        sanitized_failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
+            source=source,
+            failed_tests=[
+                value.strip()
+                for value in raw_entry.get("failed_tests", [])
+                if isinstance(value, str) and value.strip()
+            ],
+        )
+        raw_failed_files = [
+            value.strip()
+            for value in raw_entry.get("failed_files", [])
+            if isinstance(value, str) and value.strip()
+        ]
+        if source in {"frontend_package_test", "package_test"}:
+            derived_failed_files = frontend_failed_files_from_failed_tests(sanitized_failed_tests)
+            merged_failed_files: list[str] = []
+            seen_failed_files: set[str] = set()
+            for failed_file in [*raw_failed_files, *derived_failed_files]:
+                if failed_file in seen_failed_files:
+                    continue
+                seen_failed_files.add(failed_file)
+                merged_failed_files.append(failed_file)
+            failed_files = tuple(merged_failed_files)
+        else:
+            failed_files = tuple(raw_failed_files)
+        if not source or (not sanitized_failed_tests and not failed_files):
+            continue
+        entries.append(
+            FailedTestManifestEntry(
+                source=source,
+                suite=suite,
+                failed_tests=sanitized_failed_tests,
+                failed_files=failed_files,
+                invalid_failed_tests=invalid_failed_tests,
+            )
+        )
+    return FailedTestManifest(
+        generated_at=str(payload.get("generated_at", "") or ""),
+        head=str(payload.get("git_state", {}).get("head", "") or "") if isinstance(payload.get("git_state"), dict) else "",
+        status_hash=(
+            str(payload.get("git_state", {}).get("status_hash", "") or "")
+            if isinstance(payload.get("git_state"), dict)
+            else ""
+        ),
+        status_lines=(
+            int(payload.get("git_state", {}).get("status_lines", 0) or 0)
+            if isinstance(payload.get("git_state"), dict)
+            else 0
+        ),
+        entries=tuple(entries),
+    )
+
+
+def frontend_failed_files_from_failed_tests(failed_tests: Sequence[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in failed_tests:
+        text = str(raw).strip()
+        if not text:
+            continue
+        file_name = text.split("::", 1)[0].strip()
+        if not file_name or file_name in seen:
+            continue
+        seen.add(file_name)
+        ordered.append(file_name)
+    return ordered
+
+
+def _failed_rerun_spec_for_entry(
+    entry: FailedTestManifestEntry,
+    *,
+    project_name: str,
+    project_root: Path,
+    repo_root: Path,
+    target_obj: object | None,
+) -> TestExecutionSpec | str | None:
+    source = entry.source
+    if source == "backend_pytest":
+        if not entry.failed_tests:
+            return None
+        python_exe = detect_python_bin(project_root / "backend", project_root, repo_root)
+        if not python_exe:
+            return f"Failed-only reruns are unavailable for {project_name} backend pytest because no Python interpreter was found."
+        return TestExecutionSpec(
+            index=0,
+            spec=TestCommandSpec(
+                command=[python_exe, "-m", "pytest", *entry.failed_tests],
+                cwd=project_root,
+                source=source,
+            ),
+            args=[],
+            resolved_source=source,
+            project_name=project_name,
+            project_root=project_root,
+            target_obj=target_obj,
+        )
+    if source == "root_unittest":
+        if not entry.failed_tests:
+            return None
+        python_exe = detect_python_bin(project_root, repo_root)
+        if not python_exe:
+            return f"Failed-only reruns are unavailable for {project_name} unittest because no Python interpreter was found."
+        return TestExecutionSpec(
+            index=0,
+            spec=TestCommandSpec(
+                command=[python_exe, "-m", "unittest", *entry.failed_tests],
+                cwd=project_root,
+                source=source,
+            ),
+            args=[],
+            resolved_source=source,
+            project_name=project_name,
+            project_root=project_root,
+            target_obj=target_obj,
+        )
+    if source in {"frontend_package_test", "package_test"}:
+        failed_files = list(entry.failed_files)
+        if not failed_files:
+            return None
+        package_root = project_root / "frontend" if source == "frontend_package_test" else project_root
+        manager = detect_package_manager(package_root)
+        if not manager:
+            return f"Failed-only reruns are unavailable for {project_name} {entry.suite or source} because no supported package manager was detected."
+        command = [manager, "run", "test", "--", *failed_files]
+        return TestExecutionSpec(
+            index=0,
+            spec=TestCommandSpec(
+                command=command,
+                cwd=package_root,
+                source=source,
+            ),
+            args=[],
+            resolved_source=source,
+            project_name=project_name,
+            project_root=project_root,
+            target_obj=target_obj,
+        )
+    if source == "configured":
+        return (
+            f"Failed-only reruns are not supported for {project_name} because the previous test run used a custom configured command."
+        )
+    return f"Failed-only reruns are not supported for {project_name} ({source}). Run the full suite first."
 
 
 def rich_progress_available() -> tuple[bool, str]:

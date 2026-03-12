@@ -100,6 +100,7 @@ Run all:
 ```bash
 envctl --resume
 envctl test --all
+envctl test --failed
 envctl logs --all --logs-follow
 ```
 
@@ -123,6 +124,7 @@ Run a single command against saved state:
 
 ```bash
 envctl test --all --skip-startup --load-state
+envctl test --failed --skip-startup --load-state
 ```
 
 Debug and diagnostics:

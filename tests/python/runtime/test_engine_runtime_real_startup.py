@@ -350,9 +350,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("Startup failed: Docker is not running or not reachable", rendered)
-            self.assertIn("/Users/kfiramar/.docker/run/docker.sock", rendered)
-            self.assertIn("retry envctl", rendered)
+            self.assertIn("Startup failed: Docker is not running.", rendered)
+            self.assertIn("Docker is required for Main dependencies:", rendered)
             self.assertNotIn("FailureClass.HARD_START_FAILURE", rendered)
             self.assertEqual(fake_runner.start_calls, [])
             readiness_report_path = runtime / "python-engine" / "runtime_readiness_report.json"

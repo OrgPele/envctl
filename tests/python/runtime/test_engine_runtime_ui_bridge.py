@@ -114,6 +114,7 @@ class EngineRuntimeUiBridgeTests(unittest.TestCase):
             allow_all=True,
             allow_untested=False,
             multi=True,
+            exclusive_project_name="Failed tests",
         )
         selected_group = bridge.select_grouped_targets(
             runtime,

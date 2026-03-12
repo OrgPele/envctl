@@ -33,6 +33,7 @@ class PromptToolkitListConfig:
     emit_event: Callable[[str, object], None] | None = None
     emit_debug: Callable[[str, object], None] | None = None
     row_text: Callable[[SelectorItem], str] | None = None
+    exclusive_token: str | None = None
     help_text_multi: str = "UP/DOWN or j/k move  Space toggle  a/Ctrl+A all  Enter submit  q/Esc cancel"
     help_text_single: str = "UP/DOWN or j/k move  Space select  Enter submit  q/Esc cancel"
     confirm_cause: str = "enter"
@@ -192,12 +193,20 @@ def run_prompt_toolkit_list_selector(
         before = cursor
         status_error = ""
         status_error_deadline = 0.0
+        row_token = str(rows[cursor].token)
         if config.multi:
             if cursor in selected_indexes:
                 selected_indexes.remove(cursor)
                 selected = False
             else:
                 selected_indexes.add(cursor)
+                if config.exclusive_token:
+                    if row_token == config.exclusive_token:
+                        selected_indexes = {cursor}
+                    else:
+                        selected_indexes = {
+                            index for index in selected_indexes if str(rows[index].token) != config.exclusive_token
+                        }
                 selected = True
         else:
             selected_indexes = {cursor}
@@ -216,8 +225,13 @@ def run_prompt_toolkit_list_selector(
             _emit_key("ctrl+a", before, cursor, handled=True)
             event.app.invalidate()  # type: ignore[attr-defined]
             return
-        should_select = any(index not in selected_indexes for index in range(len(rows)))
-        selected_indexes = set(range(len(rows))) if should_select else set()
+        selectable_indexes = list(range(len(rows)))
+        if config.exclusive_token:
+            non_exclusive_indexes = [index for index in selectable_indexes if str(rows[index].token) != config.exclusive_token]
+            if non_exclusive_indexes:
+                selectable_indexes = non_exclusive_indexes
+        should_select = any(index not in selected_indexes for index in selectable_indexes)
+        selected_indexes = set(selectable_indexes) if should_select else set()
         _emit_event("ui.selection.toggle", token="__VISIBLE__", selected=should_select)
         _emit_key("ctrl+a", before, cursor, handled=True)
         event.app.invalidate()  # type: ignore[attr-defined]

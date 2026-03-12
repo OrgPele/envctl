@@ -35,7 +35,6 @@ def format_requirements_progress_message(*, active: set[str], pending: set[str])
 def requirements_failure_message(project_name: str, requirements: RequirementsResult) -> str:
     failed_components: list[str] = []
     docker_failed_components: list[str] = []
-    docker_socket_paths: list[str] = []
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)) or bool(component.get("success", False)):
@@ -44,18 +43,9 @@ def requirements_failure_message(project_name: str, requirements: RequirementsRe
         error = str(component.get("error") or "")
         if _docker_daemon_unavailable(error):
             docker_failed_components.append(definition.id)
-            socket_path = _docker_socket_path(error)
-            if socket_path is not None:
-                docker_socket_paths.append(socket_path)
     if failed_components and len(docker_failed_components) == len(failed_components):
         services = ", ".join(docker_failed_components)
-        message = "Docker is not running or not reachable"
-        unique_paths = sorted({path for path in docker_socket_paths if path})
-        if len(unique_paths) == 1:
-            message += f" at {unique_paths[0]}"
-        message += ". Start Docker Desktop or your Docker daemon, wait for it to become ready, and retry envctl."
-        message += f" Blocked requirements for {project_name}: {services}."
-        return message
+        return f"Docker is not running. Docker is required for {project_name} dependencies: {services}."
     return f"Requirements unavailable for {project_name}: " + ", ".join(requirements.failures)
 
 
