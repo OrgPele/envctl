@@ -64,6 +64,7 @@ MODE_FALSE_TOKENS = MODE_FORCE_MAIN_TOKENS.union(MODE_FORCE_TREES_TOKENS)
 _BOOLEAN_FLAG_TOKENS = (
     "--all",
     "--untested",
+    "--failed",
     "--load-state",
     "--command-resume",
     "--skip-startup",
@@ -860,6 +861,7 @@ def _boolean_flag_name(token: str) -> str:
     mapping = {
         "--all": "all",
         "--untested": "untested",
+        "--failed": "failed",
         "--load-state": "load_state",
         "--command-resume": "load_state",
         "--skip-startup": "skip_startup",

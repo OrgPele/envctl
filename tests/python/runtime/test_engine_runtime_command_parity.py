@@ -16,6 +16,7 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.command_router import list_supported_commands
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RunState, ServiceRecord
 
 
@@ -676,20 +677,24 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             self.assertEqual(mode, "trees")
             self.assertEqual(route.command, "start")
             self.assertEqual(run_id, "run-42")
-            return expected_requirements, expected_services, expected_warnings
+            return ProjectStartupResult(
+                requirements=expected_requirements,
+                services=expected_services,
+                warnings=expected_warnings,
+            )
 
         runtime.startup_orchestrator.start_project_context = fake_start_project_context  # type: ignore[assignment]
 
-        requirements, services, warnings = runtime._start_project_context(
+        result = runtime._start_project_context(
             context=context,  # type: ignore[arg-type]
             mode="trees",
             route=route,
             run_id="run-42",
         )
 
-        self.assertIs(requirements, expected_requirements)
-        self.assertIs(services, expected_services)
-        self.assertEqual(warnings, expected_warnings)
+        self.assertIs(result.requirements, expected_requirements)
+        self.assertIs(result.services, expected_services)
+        self.assertEqual(result.warnings, expected_warnings)
 
     def test_start_requirements_for_project_method_delegates_to_startup_orchestrator(self) -> None:
         runtime = self._runtime()

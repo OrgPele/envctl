@@ -222,6 +222,7 @@ from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
 from envctl_engine.shell.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
+from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.runtime.runtime_context import RuntimeContext
 from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
@@ -610,7 +611,7 @@ class PythonEngineRuntime:
         mode: str,
         route: Route,
         run_id: str,
-    ) -> tuple[RequirementsResult, dict[str, object], list[str]]:
+    ) -> ProjectStartupResult:
         return self.startup_orchestrator.start_project_context(
             context=context,
             mode=mode,
@@ -838,6 +839,7 @@ class PythonEngineRuntime:
         allow_untested: bool,
         multi: bool,
         initial_project_names: list[str] | None = None,
+        exclusive_project_name: str | None = None,
     ):
         return bridge_select_project_targets(
             self,
@@ -847,6 +849,7 @@ class PythonEngineRuntime:
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
         )
 
     def _select_grouped_targets(

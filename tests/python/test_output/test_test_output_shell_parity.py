@@ -140,6 +140,20 @@ FAILED tests/test_auth.py::test_auth - TypeError: boom
         self.assertIn("TypeError", second)
         self.assertIn("tests/test_auth.py:11", second)
 
+    def test_pytest_parser_ignores_non_nodeid_error_lines(self) -> None:
+        output = """
+ERROR: file or directory not found: app.core.middleware:logging_helpers.py:113 Unhandled request error
+ERROR /Users/example/project/backend/tests/unit/test_repo.py::test_repo - AssertionError: boom
+========================= 1 error in 0.12s =========================
+"""
+        parser = PytestOutputParser()
+        result = parser.parse_output(output)
+
+        self.assertEqual(
+            result.failed_tests,
+            ["/Users/example/project/backend/tests/unit/test_repo.py::test_repo"],
+        )
+
     def test_summary_formatter_frontend_shared_error_layout_matches_shell(self) -> None:
         result = TestResult(
             passed=1,

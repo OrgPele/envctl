@@ -298,7 +298,7 @@ def _print_dashboard_tests_row(
     entry = metadata.get(project)
     if not isinstance(entry, dict):
         return
-    summary_raw = entry.get("summary_path")
+    summary_raw = entry.get("short_summary_path") or entry.get("summary_path")
     if not isinstance(summary_raw, str) or not summary_raw.strip():
         return
     summary_path = Path(summary_raw).expanduser()

@@ -273,6 +273,37 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.click("#selector-row-1")
         self.assertEqual(app.return_value, ["beta"])
 
+    async def test_enter_submits_focused_row_in_single_mode_without_explicit_toggle(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Analyze",
+            options=options,
+            multi=False,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["beta"])
+
     async def test_mouse_click_toggles_multi_row_once(self) -> None:
         options = [
             SelectorItem(
@@ -416,6 +447,59 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("space")
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["alpha"])
+
+    async def test_exclusive_multi_option_clears_other_selected_rows(self) -> None:
+        options = [
+            SelectorItem(
+                id="scope:backend",
+                label="Backend",
+                kind="project",
+                token="__PROJECT__:Backend",
+                scope_signature=("scope:backend",),
+            ),
+            SelectorItem(
+                id="scope:frontend",
+                label="Frontend",
+                kind="project",
+                token="__PROJECT__:Frontend",
+                scope_signature=("scope:frontend",),
+            ),
+            SelectorItem(
+                id="scope:failed",
+                label="Failed tests",
+                kind="project",
+                token="__PROJECT__:Failed tests",
+                scope_signature=("scope:failed",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Choose test scope",
+            options=options,
+            multi=True,
+            exclusive_token="__PROJECT__:Failed tests",
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("space")
+            await pilot.press("down")
+            await pilot.press("space")
+            self.assertTrue(app._rows[0].selected)  # type: ignore[attr-defined]
+            self.assertTrue(app._rows[1].selected)  # type: ignore[attr-defined]
+            await pilot.press("down")
+            await pilot.press("space")
+            await pilot.pause()
+            self.assertFalse(app._rows[0].selected)  # type: ignore[attr-defined]
+            self.assertFalse(app._rows[1].selected)  # type: ignore[attr-defined]
+            self.assertTrue(app._rows[2].selected)  # type: ignore[attr-defined]
+            await pilot.press("up")
+            await pilot.press("space")
+            await pilot.pause()
+            self.assertTrue(app._rows[1].selected)  # type: ignore[attr-defined]
+            self.assertFalse(app._rows[2].selected)  # type: ignore[attr-defined]
+            await pilot.press("enter")
+        self.assertEqual(app.return_value, ["__PROJECT__:Frontend"])
 
 
 class SelectorDriverTracePolicyTests(unittest.TestCase):

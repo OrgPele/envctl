@@ -29,6 +29,7 @@ Engine note: Python runtime is the only supported runtime path.
 | `--service <name>` | Target one service. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
+| `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
 
 ## Worktree Orchestration
 | Flag | Purpose |

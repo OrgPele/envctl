@@ -137,6 +137,16 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "runtime" / "lifecycle_cleanup_orchestrator.py",
         ENGINE_ROOT / "state" / "action_orchestrator.py",
     },
+    "start_requirements_for_project": {
+        ENGINE_ROOT / "startup" / "requirements_execution.py",
+        ENGINE_ROOT / "startup" / "startup_orchestrator.py",
+        ENGINE_ROOT / "startup" / "protocols.py",
+    },
+    "start_project_services": {
+        ENGINE_ROOT / "startup" / "service_execution.py",
+        ENGINE_ROOT / "startup" / "startup_orchestrator.py",
+        ENGINE_ROOT / "startup" / "protocols.py",
+    },
 }
 
 

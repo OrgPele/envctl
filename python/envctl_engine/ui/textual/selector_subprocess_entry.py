@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             multi=multi,
             emit=_emit,
             initial_project_names=[str(name) for name in payload.get("initial_project_names", [])],
+            exclusive_project_name=str(payload.get("exclusive_project_name", "") or "").strip() or None,
         )
     else:
         print(f"unsupported selector payload kind: {kind}", file=sys.stderr)

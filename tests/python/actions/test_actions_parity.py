@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import importlib
@@ -1015,18 +1016,36 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIsInstance(project_entry, dict)
             assert isinstance(project_entry, dict)
             summary_path = project_entry.get("summary_path")
+            short_summary_path = project_entry.get("short_summary_path")
+            manifest_path = project_entry.get("manifest_path")
             self.assertIsInstance(summary_path, str)
             assert isinstance(summary_path, str)
+            self.assertIsInstance(short_summary_path, str)
+            assert isinstance(short_summary_path, str)
+            self.assertIsInstance(manifest_path, str)
+            assert isinstance(manifest_path, str)
             expected_root = engine.runtime_root / "runs" / state.run_id / "test-results"
             self.assertTrue(summary_path.endswith("failed_tests_summary.txt"))
+            self.assertRegex(Path(short_summary_path).name, r"^ft_[0-9a-f]{10}\.txt$")
+            self.assertTrue(manifest_path.endswith("failed_tests_manifest.json"))
             self.assertTrue(Path(summary_path).is_file())
+            self.assertTrue(Path(short_summary_path).is_file())
+            self.assertTrue(Path(manifest_path).is_file())
             self.assertTrue(Path(summary_path).is_relative_to(expected_root))
+            self.assertTrue(Path(short_summary_path).is_relative_to(engine.runtime_root / "runs" / state.run_id))
+            self.assertTrue(Path(manifest_path).is_relative_to(expected_root))
             summary_text = Path(summary_path).read_text(encoding="utf-8")
+            self.assertEqual(summary_text, Path(short_summary_path).read_text(encoding="utf-8"))
+            manifest_payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
             self.assertIn("backend/tests/test_auth.py::test_signup_regression", summary_text)
             self.assertIn("AssertionError: expected 201, got 500", summary_text)
             self.assertNotIn("\x1b", summary_text)
             self.assertNotIn("\\x1b", summary_text)
             self.assertNotIn("48;2;39;39;39m", summary_text)
+            self.assertEqual(
+                manifest_payload["entries"][0]["failed_tests"],
+                ["backend/tests/test_auth.py::test_signup_regression"],
+            )
             self.assertEqual(project_entry.get("status"), "failed")
             results_root = refreshed.metadata.get("project_test_results_root")
             self.assertEqual(results_root, str(Path(summary_path).parent.parent))
@@ -1038,7 +1057,741 @@ class ActionsParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(refreshed)
             rendered = dashboard_out.getvalue()
             self.assertIn("tests:", rendered)
-            self.assertIn(summary_path, rendered)
+            self.assertIn(short_summary_path, rendered)
+            self.assertNotIn(summary_path, rendered)
+
+    def test_failed_test_manifest_filters_invalid_pytest_error_lines(self) -> None:
+        parser = importlib.import_module("envctl_engine.test_output.parser_pytest").PytestOutputParser()
+        parsed = parser.parse_output(
+            "\n".join(
+                [
+                    "ERROR: file or directory not found: app.core.middleware:logging_helpers.py:113 Unhandled request error",
+                    "ERROR backend/tests/unit/test_repositories/test_faq_repo.py::test_faq_repo - AssertionError: boom",
+                    "========================= 1 error in 0.12s =========================",
+                ]
+            )
+        )
+        orchestrator = ActionCommandOrchestrator(SimpleNamespace())
+        entries = orchestrator._collect_failed_test_manifest_entries(
+            [
+                {
+                    "index": 0,
+                    "project_name": "Main",
+                    "suite": "backend_pytest",
+                    "parsed": parsed,
+                }
+            ],
+            project_name="Main",
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(
+            entries[0]["failed_tests"],
+            ["backend/tests/unit/test_repositories/test_faq_repo.py::test_faq_repo"],
+        )
+
+    def test_failed_only_backend_rerun_uses_saved_exact_test_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_python = repo / "backend" / ".venv" / "bin" / "python"
+            backend_python.parent.mkdir(parents=True, exist_ok=True)
+            backend_python.write_text("", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-failed-rerun",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:00:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": [
+                                    "backend/tests/test_auth.py::test_signup_regression",
+                                    "backend/tests/test_users.py::test_profile",
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 2,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    captured_commands.append(list(command))
+                    self.last_result = TestResult(passed=2, failed=0, skipped=0, total=2)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertTrue(captured_commands[0][0].endswith("/backend/.venv/bin/python"))
+            self.assertEqual(
+                captured_commands[0][1:],
+                [
+                    "-m",
+                    "pytest",
+                    "backend/tests/test_auth.py::test_signup_regression",
+                    "backend/tests/test_users.py::test_profile",
+                ],
+            )
+
+    def test_failed_only_backend_rerun_skips_invalid_saved_pytest_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_python = repo / "backend" / ".venv" / "bin" / "python"
+            backend_python.parent.mkdir(parents=True, exist_ok=True)
+            backend_python.write_text("", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+            state = RunState(
+                run_id="run-failed-rerun-invalid",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100500" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:05:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": [
+                                    "app.core.middleware:logging_helpers.py:113 Unhandled request error",
+                                    "backend/tests/test_auth.py::test_signup_regression",
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 2,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    captured_commands.append(list(command))
+                    self.last_result = TestResult(passed=1, failed=0, skipped=0, total=1)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            out = StringIO()
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0][1:],
+                ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"],
+            )
+            self.assertIn("Skipping 1 invalid saved pytest selector for Main", out.getvalue())
+
+    def test_failed_only_frontend_rerun_uses_saved_failed_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            frontend_dir = repo / "frontend"
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-failed-frontend",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        pid=2222,
+                        requested_port=9000,
+                        actual_port=9000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_101000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:10:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Frontend (package test)",
+                                "source": "frontend_package_test",
+                                "failed_tests": [
+                                    "src/components/a.test.ts::renders",
+                                    "src/components/b.test.ts::fails",
+                                    "src/components/a.test.ts",
+                                ],
+                                "failed_files": [
+                                    "src/components/a.test.ts",
+                                    "src/components/b.test.ts",
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 3,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    captured_commands.append(list(command))
+                    self.last_result = TestResult(passed=2, failed=0, skipped=0, total=2)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner),
+                patch("envctl_engine.actions.action_test_support.detect_package_manager", return_value="bun"),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0],
+                [
+                    "bun",
+                    "run",
+                    "test",
+                    "--",
+                    "src/components/a.test.ts",
+                    "src/components/b.test.ts",
+                ],
+            )
+
+    def test_failed_only_frontend_rerun_derives_failed_files_from_legacy_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            frontend_dir = repo / "frontend"
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-failed-frontend-legacy",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        pid=2222,
+                        requested_port=9000,
+                        actual_port=9000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_101500" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:15:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Frontend (package test)",
+                                "source": "frontend_package_test",
+                                "failed_tests": [
+                                    "src/components/a.test.ts::renders",
+                                    "src/components/b.test.ts::fails",
+                                    "src/components/a.test.ts",
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 3,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    captured_commands.append(list(command))
+                    self.last_result = TestResult(passed=2, failed=0, skipped=0, total=2)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner),
+                patch("envctl_engine.actions.action_test_support.detect_package_manager", return_value="bun"),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0],
+                [
+                    "bun",
+                    "run",
+                    "test",
+                    "--",
+                    "src/components/a.test.ts",
+                    "src/components/b.test.ts",
+                ],
+            )
+
+    def test_failed_only_rerun_refuses_stale_git_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+            state = RunState(
+                run_id="run-stale-failed",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_103000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:30:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "stale-head",
+                            "status_hash": "stale-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": ["backend/tests/test_auth.py::test_signup_regression"],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("Saved failed-test data is stale for Main. Run the full suite first.", out.getvalue())
+
+    def test_failed_only_rerun_reports_extraction_failure_without_telling_user_to_rerun_full_suite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+            state = RunState(
+                run_id="run-extraction-failure",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_103500" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:35:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summary_path = manifest_dir / "failed_tests_summary.txt"
+            summary_path.write_text(
+                "# envctl Failed Test Summary\n\n[Backend (pytest)]\n- suite failed before envctl could extract failed tests\n",
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "summary_path": str(summary_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("No rerunnable failed tests were extracted for: Main", rendered)
+            self.assertIn(
+                "The last full run failed before envctl could derive rerunnable test selectors. See the saved failure summary.",
+                rendered,
+            )
+            self.assertNotIn("Run the full suite first.", rendered)
+
+    def test_failed_only_rerun_rejects_custom_test_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"NO_COLOR": "1", "ENVCTL_ACTION_TEST_CMD": "pytest tests"},
+            )
+            state = RunState(
+                run_id="run-custom-failed",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_104000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:40:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Configured test command",
+                                "source": "configured",
+                                "failed_tests": ["tests/test_thing.py::test_case"],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("Failed-only reruns are not supported for ENVCTL_ACTION_TEST_CMD", out.getvalue())
+
+    def test_failed_only_summary_persistence_preserves_previous_manifest_after_extraction_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+            state = RunState(
+                run_id="run-preserve-failed-only",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            previous_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100000" / "Main"
+            previous_dir.mkdir(parents=True, exist_ok=True)
+            previous_manifest_path = previous_dir / "failed_tests_manifest.json"
+            previous_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:00:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": ["backend/tests/test_auth.py::test_signup_regression"],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            previous_summary_path = previous_dir / "failed_tests_summary.txt"
+            previous_summary_path.write_text("previous summary", encoding="utf-8")
+            previous_short_summary_path = engine.runtime_root / "runs" / state.run_id / "ft_preserved.txt"
+            previous_short_summary_path.write_text("previous summary", encoding="utf-8")
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "summary_path": str(previous_summary_path),
+                    "short_summary_path": str(previous_short_summary_path),
+                    "manifest_path": str(previous_manifest_path),
+                    "failed_tests": 1,
+                    "failed_manifest_entries": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            orchestrator = ActionCommandOrchestrator(engine)
+            route = parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            outcomes = [
+                {
+                    "index": 1,
+                    "project_name": "Main",
+                    "project_root": str(repo),
+                    "suite": "backend_pytest",
+                    "failed_only": True,
+                    "returncode": 1,
+                    "parsed": SimpleNamespace(failed_tests=[], error_details={}),
+                    "failure_summary": "ERROR: file or directory not found: poisoned selector",
+                }
+            ]
+
+            summaries = orchestrator._persist_test_summary_artifacts(
+                route=route,
+                targets=[SimpleNamespace(name="Main", root=str(repo))],
+                outcomes=outcomes,
+            )
+
+            project_entry = summaries["Main"]
+            self.assertEqual(project_entry["manifest_path"], str(previous_manifest_path))
+            self.assertEqual(project_entry["short_summary_path"], str(previous_short_summary_path))
+            self.assertTrue(bool(project_entry.get("preserved_after_failed_only_extraction_failure")))
 
     def test_failed_test_summary_omits_terminal_chrome_and_separator_noise(self) -> None:
         lines = ActionCommandOrchestrator._format_summary_error_lines(
@@ -1230,12 +1983,17 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIsInstance(project_entry, dict)
             assert isinstance(project_entry, dict)
             summary_path = project_entry.get("summary_path")
+            short_summary_path = project_entry.get("short_summary_path")
             self.assertIsInstance(summary_path, str)
             assert isinstance(summary_path, str)
+            self.assertIsInstance(short_summary_path, str)
+            assert isinstance(short_summary_path, str)
             expected_root = engine.runtime_root / "runs" / state.run_id / "test-results"
             self.assertTrue(Path(summary_path).is_relative_to(expected_root))
+            self.assertTrue(Path(short_summary_path).is_relative_to(engine.runtime_root / "runs" / state.run_id))
             text = Path(summary_path).read_text(encoding="utf-8")
             self.assertIn("No failed tests.", text)
+            self.assertEqual(text, Path(short_summary_path).read_text(encoding="utf-8"))
             self.assertEqual(project_entry.get("status"), "passed")
             self.assertEqual(
                 refreshed.metadata.get("project_test_results_root"),
@@ -2447,7 +3205,9 @@ class ActionsParityTests(unittest.TestCase):
                 patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
             ):
                 route = parse_route(["test", "--all", "frontend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-                code = engine.dispatch(route)
+                rendered_out = StringIO()
+                with redirect_stdout(rendered_out):
+                    code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
             refreshed = engine._try_load_existing_state(mode="trees", strict_mode_match=False)
@@ -2470,6 +3230,13 @@ class ActionsParityTests(unittest.TestCase):
             self.assertNotIn("feature-b-1/backend/tests/test_auth.py::test_signup", first_text)
             self.assertIn("feature-b-1/backend/tests/test_auth.py::test_signup", second_text)
             self.assertNotIn("feature-a-1/backend/tests/test_auth.py::test_signup", second_text)
+            rendered = rendered_out.getvalue()
+            first_short = str(first.get("short_summary_path"))
+            second_short = str(second.get("short_summary_path"))
+            self.assertIn("feature-a-1", rendered)
+            self.assertIn(first_short, rendered)
+            self.assertIn("feature-b-1", rendered)
+            self.assertIn(second_short, rendered)
 
     def test_test_action_backend_false_runs_frontend_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

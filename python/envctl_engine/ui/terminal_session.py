@@ -197,10 +197,16 @@ def _preserve_immediate_followup_input(
     *,
     fd: int,
     on_bytes: Callable[[bytes], None] | None = None,
-    timeout: float = 0.15,
+    timeout: float = 0.35,
     max_bytes: int = 64,
 ) -> None:
-    """Capture rapid post-Enter input so the next UI consumer can read it reliably."""
+    """Capture rapid post-Enter input so the next UI consumer can read it reliably.
+
+    The dashboard -> selector handoff can take a short scheduling hop after the
+    command line reader exits, especially under PTY-driven tests and during
+    service-launch overlap. Keep a modest buffer window so immediate arrow bursts
+    still reach the selector instead of getting stranded between consumers.
+    """
     collected = bytearray()
     deadline = time.monotonic() + max(0.0, timeout)
     while len(collected) < max(1, max_bytes):

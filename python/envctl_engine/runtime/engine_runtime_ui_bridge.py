@@ -67,6 +67,7 @@ def select_project_targets(
     allow_untested: bool,
     multi: bool,
     initial_project_names: list[str] | None = None,
+    exclusive_project_name: str | None = None,
 ):
     return current_ui_backend(runtime).select_project_targets(
         prompt=prompt,
@@ -75,6 +76,7 @@ def select_project_targets(
         allow_untested=allow_untested,
         multi=multi,
         initial_project_names=initial_project_names,
+        exclusive_project_name=exclusive_project_name,
         runtime=runtime,
     )
 

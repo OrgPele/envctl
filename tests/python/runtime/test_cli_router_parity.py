@@ -51,7 +51,14 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["test", "--all", "--dry-run"], env={})
         self.assertEqual(route.command, "test")
         self.assertTrue(route.flags.get("all"))
+        self.assertFalse(route.flags.get("failed"))
         self.assertTrue(route.flags.get("dry_run"))
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
+
+        route = parse_route(["test", "--failed"], env={})
+        self.assertEqual(route.command, "test")
+        self.assertTrue(route.flags.get("failed"))
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 

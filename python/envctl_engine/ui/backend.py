@@ -31,6 +31,7 @@ class InteractiveBackend(Protocol):
         allow_untested: bool,
         multi: bool,
         initial_project_names: Sequence[str] | None = None,
+        exclusive_project_name: str | None = None,
         runtime: Any,
     ) -> TargetSelection: ...
 
@@ -64,6 +65,7 @@ class LegacyInteractiveBackend:
         allow_untested: bool,
         multi: bool,
         initial_project_names: Sequence[str] | None = None,
+        exclusive_project_name: str | None = None,
         runtime: Any,
     ) -> TargetSelection:
         return _select_project_targets_via_textual(
@@ -73,6 +75,7 @@ class LegacyInteractiveBackend:
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
             runtime=runtime,
         )
 
@@ -117,6 +120,7 @@ class TextualInteractiveBackend:
         allow_untested: bool,
         multi: bool,
         initial_project_names: Sequence[str] | None = None,
+        exclusive_project_name: str | None = None,
         runtime: Any,
     ) -> TargetSelection:
         return _select_project_targets_via_textual(
@@ -126,6 +130,7 @@ class TextualInteractiveBackend:
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
             runtime=runtime,
         )
 
@@ -169,9 +174,10 @@ class NonInteractiveBackend:
         allow_untested: bool,
         multi: bool,
         initial_project_names: Sequence[str] | None = None,
+        exclusive_project_name: str | None = None,
         runtime: Any,
     ) -> TargetSelection:
-        _ = prompt, projects, allow_all, allow_untested, multi, initial_project_names
+        _ = prompt, projects, allow_all, allow_untested, multi, initial_project_names, exclusive_project_name
         emit = getattr(runtime, "_emit", None)
         if callable(emit):
             emit("ui.fallback.non_interactive", reason=self.reason, command="selection.project")
@@ -254,6 +260,7 @@ def _select_project_targets_via_textual(
     allow_untested: bool,
     multi: bool,
     initial_project_names: Sequence[str] | None,
+    exclusive_project_name: str | None,
     runtime: Any,
 ) -> TargetSelection:
     run_subprocess = _selector_subprocess_enabled(runtime)
@@ -274,6 +281,7 @@ def _select_project_targets_via_textual(
                 "allow_untested": bool(allow_untested),
                 "multi": bool(multi),
                 "initial_project_names": [str(name) for name in (initial_project_names or [])],
+                "exclusive_project_name": str(exclusive_project_name or ""),
             },
         )
     from .terminal_session import temporary_tty_character_mode
@@ -294,6 +302,7 @@ def _select_project_targets_via_textual(
             allow_untested=allow_untested,
             multi=multi,
             initial_project_names=initial_project_names,
+            exclusive_project_name=exclusive_project_name,
             emit=getattr(runtime, "_emit", None),
         )
 
