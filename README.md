@@ -65,6 +65,19 @@ envctl --plan
 
 That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven worktrees.
 
+## Runtime Prerequisites
+
+`pipx` installs `envctl` itself. Depending on the repo and workflow, you may also need:
+
+- `git` for repository detection, worktrees, commits, reviews, and PR preparation
+- `docker` for built-in local services such as databases, Redis, Supabase, and n8n
+- `gh` for GitHub PR creation flows
+- `poetry` for backend repositories that manage Python dependencies with Poetry
+- one JavaScript package manager for frontend apps:
+  - `bun`, `pnpm`, `yarn`, or `npm`, depending on the repo
+
+`envctl` bootstraps target-repo dependencies from the repo itself, so tools such as `pytest` are usually installed as part of the backend project rather than separately for `envctl`.
+
 ## What envctl Is For
 
 `envctl` is built to:
