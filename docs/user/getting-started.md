@@ -66,11 +66,11 @@ Examples:
 
 ```bash
 cd /path/to/your-project
-envctl --resume
+envctl
 ```
 
 ```bash
-envctl --repo /absolute/path/to/your-project --resume
+envctl --repo /absolute/path/to/your-projecl
 ```
 
 ## 3. Let envctl Create `.envctl`
@@ -136,7 +136,7 @@ After config exists, this is the safest normal loop:
 ```bash
 envctl show-config --json
 envctl explain-startup --json
-envctl --resume
+envctl
 envctl dashboard
 envctl logs --all --logs-follow
 envctl test --all
