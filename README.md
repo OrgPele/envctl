@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/envctl-logo-1.png" alt="envctl" width="820">
+  <img src="docs/assets/envctl-logo-3.png" alt="envctl" width="820">
 </p>
 
 <h1 align="center">
