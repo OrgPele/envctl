@@ -3,19 +3,23 @@
 ## Model
 
 Configuration precedence:
-1. Existing shell environment variables.
-2. `.envctl` / `.envctl.sh`.
-3. Engine defaults.
 
-Use `.envctl` for orchestration behavior.
-Use `.env` for app runtime variables and secrets.
+1. existing shell environment variables
+2. `.envctl` / `.envctl.sh`
+3. engine defaults
+
+Use:
+
+- `.envctl` for orchestration behavior
+- `.env` for app runtime variables and secrets
 
 The Python runtime expects a repo-local `.envctl` for normal operational commands.
-That is true regardless of whether `envctl` was installed with `pip`, `pipx`, or the clone-compatibility wrapper.
 
-- `envctl config` opens the interactive config editor/bootstrap flow.
-- `envctl show-config --json` prints the effective managed config without mutating anything.
-- On missing `.envctl`, inspect-only commands can still run with defaults.
+Useful commands:
+
+- `envctl config` opens the interactive bootstrap/editor flow
+- `envctl show-config --json` prints the effective config without mutating anything
+- on missing `.envctl`, inspect-only commands still run with defaults
 
 ## Service Launch Env Templates In `.envctl`
 
@@ -85,7 +89,29 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The Textual config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
+The current config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
+
+## Current Wizard Coverage
+
+The current setup/editor wizard covers:
+
+- default mode
+- services and dependencies
+- optional backend-only long-running service startup
+- backend/frontend directories
+- canonical ports
+
+The current flow is:
+
+1. `Welcome / Source`
+2. `Default Mode`
+3. `Components`
+4. optional `Long-Running Service`
+5. `Directories`
+6. `Ports`
+7. `Review / Save`
+
+There is no simple/advanced split in the current UI.
 
 ## Core
 | Variable | Default | Purpose |
@@ -94,7 +120,6 @@ The Textual config wizard writes the canonical managed keys. Launch env template
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
-| `ENVCTL_ENGINE_PYTHON_V1` | `true` (launcher default) | Enables the Python runtime path used by the launcher bridge. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
 | `ENVCTL_STATE_COMPAT_MODE` | `compat_read_write` | State repository compatibility mode (`compat_read_write`, `compat_read_only`, `scoped_only`). |
@@ -121,7 +146,7 @@ The Textual config wizard writes the canonical managed keys. Launch env template
 | `ENVCTL_DEBUG_UI_RING_BYTES` | `32768` | Input ring size bound for deep capture. |
 | `ENVCTL_DEBUG_UI_SAMPLE_RATE` | `1` | Event sampling interval for recorder (`1` means every event). |
 
-## Spinner UX Policy
+## Interactive UI Policy
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ENVCTL_UI_BACKEND` | `auto` | Interactive dashboard policy (`auto`, `textual`, `legacy`, `non_interactive`). `auto` currently stays on the legacy dashboard unless `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` is also set. |
@@ -185,6 +210,7 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `FRONTEND_PORT_BASE` | `9000` | Frontend base port for allocation. |
 
 ## Optional Hooks (`.envctl.sh`)
+
 Use hooks only for advanced custom orchestration.
 
 Supported hooks:

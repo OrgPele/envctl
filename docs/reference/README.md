@@ -6,6 +6,8 @@ Use this section when you already know what task you are doing and need the exac
 
 If you want guided workflows instead of raw reference material, start in [User Guides](../user/README.md).
 
+The reference assumes the current Python runtime and the package-installed `envctl` command.
+
 ## Reference Pages
 
 - [Commands](commands.md)

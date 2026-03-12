@@ -10,7 +10,7 @@ These are the highest-value flags for daily use.
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
 | `--main` | Run main mode only (skip trees). |
-| `--tree` / `--trees` / `trees=true` / `trees=false` | Explicit tree mode switch. |
+| `--tree` / `--trees` | Explicit trees-mode switch. |
 | `--doctor` | Run diagnostics and exit. |
 | `--dashboard` | Show runtime dashboard and exit. |
 | `show-config --json` | Print the effective managed config without starting services. |
@@ -82,11 +82,9 @@ Engine note: Python runtime is the only supported runtime path.
 | `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` | In `auto` mode, prefer the Textual dashboard when available. |
 | `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus. Default is the Textual plan-style selector; `planning_style` enables the prompt-toolkit rollback; `legacy` is a compatibility alias that still maps to the Textual selector. |
 
-## Main Infra Source
+## Requirements and Seeding
 | Flag | Purpose |
 | --- | --- |
-| `--main-services-local` | Force local main infra mode. |
-| `--main-services-remote` | Force remote main service mode via main env files. |
 | `--seed-requirements-from-base` | Seed tree DB/Redis state from base where supported. |
 
 ## Planning Path Config

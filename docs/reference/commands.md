@@ -1,43 +1,24 @@
 # Commands
 
-## Installation
-
-Primary install paths:
-
-```bash
-pipx install .
-pipx ensurepath
-python -m pip install --user .
-python -m pip install .
-python -m pip install --user "git+https://github.com/kfiramar/envctl.git"
-```
-
-Primary uninstall paths:
-
-```bash
-python -m pip uninstall envctl
-pipx uninstall envctl
-```
-
 ## Clone-Compatibility Wrapper
 
-If you are running from a clone of the `envctl` repository and explicitly want the old PATH-editing wrapper flow, use:
+If you are intentionally running from a clone of the `envctl` repo and want the compatibility wrapper flow, use:
 
 ```text
 ./bin/envctl [--repo <path>] [engine args...]
 ./bin/envctl doctor [--repo <path>]
 ./bin/envctl install [--shell-file <path>] [--dry-run]
 ./bin/envctl uninstall [--shell-file <path>] [--dry-run]
-./bin/envctl --help
 ```
 
-Compatibility note:
+Notes:
 
-- `./bin/envctl install` and `./bin/envctl uninstall` are clone-only compatibility commands.
-- The preferred package-installed `envctl` command should already be on your PATH in every shell.
-- `envctl doctor --repo ...` works from the installed command and is the preferred verification path.
+- this is compatibility-only, not the primary install story
+- the preferred user path is the package-installed `envctl` command on your `PATH`
 
-## Runtime Inspection
+## Inspection Commands
+
+These commands are safe to use before a repo-local `.envctl` exists:
 
 ```bash
 envctl --list-commands
@@ -49,67 +30,114 @@ envctl show-state --json
 envctl explain-startup --json
 ```
 
-These commands are safe to use before a repo-local `.envctl` exists because they do not require a normal startup run.
-
 ## AI CLI Presets
 
 ```bash
 envctl install-prompts --cli codex
 envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
-envctl install-prompts --cli all
+envctl install-prompts --cli all --preset all
 ```
 
 Behavior:
 
-- installs envctl-managed prompt/command files into user-local AI CLI directories
+- installs built-in prompt files into user-local AI CLI directories
 - built-in presets:
   - `implement_task`
   - `review_task_imp`
   - `continue_task`
   - `merge_trees_into_dev`
   - `create_plan`
-- target roots are user-local only:
+- target roots:
   - Codex: `~/.codex/prompts`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
-- existing files are backed up in-place with a timestamped `.bak-...md` name before overwrite
-- this command is available from the normal CLI, but not from dashboard interactive command mode
+- existing files are backed up in-place before overwrite
+- this command is available from the normal CLI, but not from dashboard interactive mode
 
-## High-Value Runtime Command Families
+## Main Runtime Commands
+
+High-value command families:
+
 - `dashboard`
-- `delete-worktree`
-- `stop` / `stop-all`
-- `restart`
+- `resume`
+- `plan`
 - `test`
 - `logs`
-- `clear-logs`
 - `health`
 - `errors`
+- `restart`
+- `stop` / `stop-all`
 - `doctor`
-- `debug-pack` / `debug-report` / `debug-last`
+- `config`
 - `pr`
 - `commit`
-- `config`
+- `review`
+- `migrate`
 - `install-prompts`
+
+Current supported command surface:
+
+- `blast-all`
+- `blast-worktree`
+- `clear-logs`
+- `commit`
+- `config`
+- `dashboard`
+- `debug-last`
+- `debug-pack`
+- `debug-report`
+- `delete-worktree`
+- `doctor`
+- `errors`
+- `explain-startup`
+- `health`
+- `help`
+- `install-prompts`
+- `list-commands`
+- `list-targets`
+- `list-trees`
+- `logs`
+- `migrate`
+- `migrate-hooks`
+- `plan`
+- `pr`
+- `restart`
+- `resume`
+- `review`
+- `show-config`
+- `show-state`
+- `start`
+- `stop`
+- `stop-all`
+- `test`
 
 ## Common Command Patterns
 
-Run all:
-
-```bash
-envctl --resume
-envctl test --all
-envctl test --failed
-envctl logs --all --logs-follow
-```
-
-Inspect before you start:
+Run and inspect:
 
 ```bash
 envctl show-config --json
 envctl explain-startup --json
-envctl --list-targets --json
+envctl --resume
+envctl dashboard
+```
+
+Run tests:
+
+```bash
+envctl test --all
+envctl test --failed
+envctl test --all --skip-startup --load-state
+envctl test --failed --skip-startup --load-state
+```
+
+Logs and inspection:
+
+```bash
+envctl logs --all --logs-follow
+envctl health --all
+envctl errors --all
 ```
 
 Target one project:
@@ -120,11 +148,20 @@ envctl logs --project api --logs-follow
 envctl restart --project api
 ```
 
-Run a single command against saved state:
+Config management:
 
 ```bash
-envctl test --all --skip-startup --load-state
-envctl test --failed --skip-startup --load-state
+envctl config
+printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
+```
+
+Planning and worktrees:
+
+```bash
+envctl --list-trees --json
+envctl --plan
+envctl --parallel-plan
+envctl --sequential-plan
 ```
 
 Debug and diagnostics:
@@ -134,11 +171,4 @@ envctl --doctor --json
 envctl --debug-pack
 envctl --debug-report
 envctl --debug-last
-```
-
-Config management:
-
-```bash
-envctl config
-printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
