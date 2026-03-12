@@ -1,10 +1,8 @@
 <p align="center">
-  <img src="docs/assets/envctl-logo.png" alt="envctl" width="820">
+  <img src="docs/assets/envctl-logo-2.png" alt="envctl" width="820">
 </p>
 
 <h1 align="center">
-  envctl
-  <br>
   <small>Create, test, compare, and spin up full worktree environments with their databases in seconds</small>
 </h1>
 
