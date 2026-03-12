@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/assets/envctl-logo-2.png" alt="envctl" width="820">
+  <a href="https://github.com/kfiramar/envctl/blob/main/docs/user/getting-started.md">
+    <img src="docs/assets/envctl-logo-2.png" alt="envctl" width="820">
+  </a>
 </p>
 
 <h1 align="center">
