@@ -7,7 +7,7 @@
 </h1>
 
 <p align="center">
-  Reinvent your vibe-coding workflow. Create many worktrees with correctly wired supporting services (databases, Redis, Supabase, n8n and more) then manage everything from one CLI including runing frontend/backend managing logs, testing all trees and more!
+  Reinvent your coding workflow. Create many worktrees with correctly wired supporting services (databases, Redis, Supabase, n8n and more) then manage everything from one CLI including runing frontend/backend managing logs, testing all trees and more!
 </p>
 
 <p align="center">
