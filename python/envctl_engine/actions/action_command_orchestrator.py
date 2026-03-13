@@ -650,7 +650,7 @@ class ActionCommandOrchestrator:
                     "Saved failures could not be converted into rerunnable selectors. Run the full suite first."
                 )
             raise RuntimeError("No saved failed tests were found for the selected target(s). Run the full suite first.")
-        return build_failed_test_execution_specs(
+        execution_specs = build_failed_test_execution_specs(
             target_contexts=target_contexts,
             repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
             manifests_by_project=manifests_by_project,
@@ -658,6 +658,17 @@ class ActionCommandOrchestrator:
             backend_raw_command=backend_raw,
             frontend_raw_command=frontend_raw,
         )
+        if execution_specs:
+            return execution_specs
+        if manifests_by_project:
+            projects = ", ".join(sorted(manifests_by_project))
+            print(f"No rerunnable failed tests remain for: {projects}")
+        if non_rerunnable_projects:
+            raise RuntimeError(
+                "No rerunnable failed tests were found for the selected target(s). "
+                "Saved failures could not be converted into rerunnable selectors. See the saved failure summary."
+            )
+        raise RuntimeError("No rerunnable failed tests were found for the selected target(s).")
 
     @staticmethod
     def _summary_indicates_extraction_failure(entry: Mapping[str, object]) -> bool:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal, Mapping
 
 from envctl_engine.actions.actions_test import (
+    canonicalize_frontend_test_path,
     suggest_action_test_command,
     suggest_backend_test_command,
     suggest_frontend_test_command,
@@ -639,7 +640,14 @@ def _resolved_frontend_test_cmd(*, base_dir: Path, resolved: Mapping[str, str]) 
 def _resolved_frontend_test_path(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
     raw = str(resolved.get("ENVCTL_FRONTEND_TEST_PATH", "") or "").strip()
     if raw:
-        return raw
+        return str(
+            canonicalize_frontend_test_path(
+                raw,
+                project_root=base_dir,
+                frontend_dir_name=str(resolved.get("FRONTEND_DIR", "") or "").strip(),
+            )
+            or raw
+        ).strip()
     suggested = suggest_frontend_test_path(base_dir)
     return str(suggested or "").strip()
 

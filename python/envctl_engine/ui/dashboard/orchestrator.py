@@ -929,6 +929,12 @@ class DashboardOrchestrator:
                 continue
             if not isinstance(entry, dict):
                 continue
+            if str(entry.get("manifest_path", "") or "").strip():
+                return True
+            if str(entry.get("short_summary_path", "") or "").strip():
+                return True
+            if str(entry.get("summary_path", "") or "").strip():
+                return True
             status = str(entry.get("status", "") or "").strip().lower()
             if status == "failed":
                 return True

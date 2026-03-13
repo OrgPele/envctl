@@ -47,7 +47,14 @@ def suggest_frontend_test_path(base_dir: Path) -> str | None:
     package_root = _frontend_test_package_root(base_dir)
     if package_root is None:
         return None
-    return _suggest_frontend_test_path_for_package_root(package_root)
+    suggested = _suggest_frontend_test_path_for_package_root(package_root)
+    if not suggested:
+        return None
+    return canonicalize_frontend_test_path(
+        suggested,
+        project_root=base_dir,
+        frontend_dir_name=_frontend_dir_name_from_package_root(base_dir, package_root),
+    )
 
 
 def default_test_commands(
@@ -169,6 +176,35 @@ def normalize_frontend_test_path(
     return normalized
 
 
+def canonicalize_frontend_test_path(
+    frontend_test_path: str | None,
+    *,
+    project_root: Path,
+    frontend_dir_name: str | None = None,
+) -> str | None:
+    text = str(frontend_test_path or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("\\", "/").strip().rstrip("/")
+    if not normalized:
+        return None
+    if os.path.isabs(normalized):
+        return normalized
+    package_root = _frontend_package_root_for_config(project_root, frontend_dir_name)
+    if package_root is None:
+        return normalized
+    package_prefix = _frontend_dir_name_from_package_root(project_root, package_root)
+    if not package_prefix:
+        return normalized
+    if normalized == package_prefix or normalized.startswith(f"{package_prefix}/"):
+        return normalized
+    package_candidate = package_root / normalized
+    project_candidate = project_root / normalized
+    if package_candidate.exists() or not project_candidate.exists():
+        return f"{package_prefix}/{normalized}"
+    return normalized
+
+
 def is_package_test_command(command: Sequence[str]) -> bool:
     rendered = [str(part).strip() for part in command if str(part).strip()]
     if not rendered:
@@ -233,6 +269,8 @@ def _root_unittest_discover_command(base_dir: Path) -> list[str] | None:
         "discover",
         "-s",
         "tests",
+        "-t",
+        ".",
         "-p",
         "test_*.py",
     ]
@@ -299,6 +337,23 @@ def _frontend_test_package_root(base_dir: Path) -> Path | None:
     if not package_json.is_file():
         return None
     return package_root
+
+
+def _frontend_package_root_for_config(project_root: Path, frontend_dir_name: str | None) -> Path | None:
+    configured = str(frontend_dir_name or "").strip().strip("/")
+    if configured and configured != ".":
+        candidate = project_root / configured
+        if candidate.exists() or candidate.parent.exists():
+            return candidate
+    return _frontend_test_package_root(project_root)
+
+
+def _frontend_dir_name_from_package_root(project_root: Path, package_root: Path) -> str | None:
+    try:
+        package_prefix = package_root.resolve().relative_to(project_root.resolve()).as_posix().rstrip("/")
+    except ValueError:
+        return None
+    return package_prefix or None
 
 
 def _suggest_frontend_test_path_for_package_root(package_root: Path) -> str | None:

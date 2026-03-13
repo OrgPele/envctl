@@ -158,7 +158,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = out.getvalue()
             self.assertIn("command: ", rendered)
-            self.assertIn("-m unittest discover -s tests -p test_*.py", rendered)
+            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", rendered)
             self.assertIn(f"cwd: {tree_root.resolve()}", rendered)
             self.assertIn("2 passed, 0 failed, 0 skipped", rendered)
             self.assertIn("Repository tests (unittest)", rendered)
@@ -1488,6 +1488,108 @@ class ActionsParityTests(unittest.TestCase):
                 ],
             )
 
+    def test_failed_only_frontend_rerun_normalizes_repo_relative_failed_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend" / "src" / "components").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-failed-frontend-repo-relative",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        pid=2222,
+                        requested_port=9000,
+                        actual_port=9000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_031100" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-13T03:11:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Frontend (package test)",
+                                "source": "frontend_package_test",
+                                "failed_tests": [
+                                    "frontend/src/components/a.test.ts::renders",
+                                    "frontend/src/components/b.test.ts::fails",
+                                ],
+                                "failed_files": [
+                                    "frontend/src/components/a.test.ts",
+                                    "frontend/src/components/b.test.ts",
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 2,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    captured_commands.append(list(command))
+                    self.last_result = TestResult(passed=2, failed=0, skipped=0, total=2)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner),
+                patch("envctl_engine.actions.action_test_support.detect_package_manager", return_value="bun"),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0],
+                [
+                    "bun",
+                    "run",
+                    "test",
+                    "--",
+                    "src/components/a.test.ts",
+                    "src/components/b.test.ts",
+                ],
+            )
+
     def test_failed_only_rerun_allows_saved_manifest_from_different_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1805,13 +1907,31 @@ class ActionsParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
-            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            tests_pkg = repo / "tests" / "python" / "config"
+            tests_pkg.mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "python" / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "test_config_persistence.py").write_text(
+                "\n".join(
+                    [
+                        "import unittest",
+                        "",
+                        "class ConfigPersistenceTests(unittest.TestCase):",
+                        "    def test_reference_envctl_example_matches_current_defaults(self):",
+                        "        self.assertTrue(True)",
+                        "",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
                 env={
                     "NO_COLOR": "1",
-                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -p test_*.py",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -t . -p test_*.py",
                 },
             )
             state = RunState(
@@ -1890,7 +2010,7 @@ class ActionsParityTests(unittest.TestCase):
                 [
                     "-m",
                     "unittest",
-                    "python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
+                    "tests.python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
                 ],
             )
 
@@ -1898,13 +2018,31 @@ class ActionsParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
-            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            tests_pkg = repo / "tests" / "python" / "config"
+            tests_pkg.mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "python" / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "test_config_persistence.py").write_text(
+                "\n".join(
+                    [
+                        "import unittest",
+                        "",
+                        "class ConfigPersistenceTests(unittest.TestCase):",
+                        "    def test_reference_envctl_example_matches_current_defaults(self):",
+                        "        self.assertTrue(True)",
+                        "",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(
                 self._config(repo, runtime),
                 env={
                     "NO_COLOR": "1",
-                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -p test_*.py",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -t . -p test_*.py",
                 },
             )
             state = RunState(
@@ -1983,9 +2121,306 @@ class ActionsParityTests(unittest.TestCase):
                 [
                     "-m",
                     "unittest",
-                    "python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
+                    "tests.python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
                 ],
             )
+
+    def test_failed_only_rerun_repairs_root_unittest_ids_missing_tests_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tests_pkg = repo / "tests" / "python" / "actions"
+            tests_pkg.mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "python" / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "test_actions_parity.py").write_text(
+                "\n".join(
+                    [
+                        "import unittest",
+                        "",
+                        "class ActionsParityTests(unittest.TestCase):",
+                        "    def test_test_action_uses_separate_backend_and_frontend_test_commands(self):",
+                        "        self.assertTrue(True)",
+                        "",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -t . -p test_*.py",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-shared-unittest-prefix-repair",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_140000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-13T14:00:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Repository tests (unittest)",
+                                "source": "root_unittest",
+                                "failed_tests": [
+                                    "python.actions.test_actions_parity.ActionsParityTests.test_test_action_uses_separate_backend_and_frontend_test_commands"
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    captured_commands.append(list(command))
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0][1:],
+                [
+                    "-m",
+                    "unittest",
+                    "tests.python.actions.test_actions_parity.ActionsParityTests.test_test_action_uses_separate_backend_and_frontend_test_commands",
+                ],
+            )
+
+    def test_failed_only_rerun_skips_root_unittest_ids_that_no_longer_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -t . -p test_*.py",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-shared-unittest-missing-test",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_142000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-13T14:20:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Repository tests (unittest)",
+                                "source": "root_unittest",
+                                "failed_tests": [
+                                    "python.test_failed_rerun_probe.FailedRerunProbeTests.test_intentional_failure_for_failed_rerun"
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _FailIfCalledRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    raise AssertionError("TestRunner should not be constructed for non-rerunnable unittest ids")
+
+            out = StringIO()
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailIfCalledRunner),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("No rerunnable failed tests remain for: Main", out.getvalue())
+
+    def test_failed_only_rerun_skips_root_unittest_ids_with_missing_test_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tests_pkg = repo / "tests" / "python" / "config"
+            tests_pkg.mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "python" / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "__init__.py").write_text("", encoding="utf-8")
+            (tests_pkg / "test_config_loader.py").write_text(
+                "\n".join(
+                    [
+                        "import unittest",
+                        "",
+                        "class ConfigLoaderTests(unittest.TestCase):",
+                        "    def test_existing(self):",
+                        "        self.assertTrue(True)",
+                        "",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -t . -p test_*.py",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-shared-unittest-missing-method",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_143000" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-13T14:30:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Repository tests (unittest)",
+                                "source": "root_unittest",
+                                "failed_tests": [
+                                    "python.config.test_config_loader.ConfigLoaderTests.test_removed"
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _FailIfCalledRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    raise AssertionError("TestRunner should not be constructed for missing unittest methods")
+
+            out = StringIO()
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailIfCalledRunner),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertIn("No rerunnable failed tests remain for: Main", out.getvalue())
 
     def test_failed_only_summary_persistence_preserves_previous_manifest_after_extraction_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2584,7 +3019,8 @@ class ActionsParityTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
-            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            tree_root = repo / "trees" / "feature-a" / "1"
+            tree_root.mkdir(parents=True, exist_ok=True)
             (repo / ".envctl").write_text(
                 "\n".join(
                     [
@@ -2600,7 +3036,7 @@ class ActionsParityTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            frontend = repo / "frontend"
+            frontend = tree_root / "frontend"
             src_dir = frontend / "src"
             src_dir.mkdir(parents=True, exist_ok=True)
             (frontend / "package.json").write_text(
@@ -2684,7 +3120,8 @@ class ActionsParityTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
-            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            tree_root = repo / "trees" / "feature-a" / "1"
+            tree_root.mkdir(parents=True, exist_ok=True)
             (repo / ".envctl").write_text(
                 "\n".join(
                     [
@@ -2701,7 +3138,7 @@ class ActionsParityTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            frontend = repo / "frontend"
+            frontend = tree_root / "frontend"
             (frontend / "src").mkdir(parents=True, exist_ok=True)
             (frontend / "package.json").write_text(
                 '{"name":"frontend","scripts":{"test":"vitest run"}}',
@@ -2730,7 +3167,12 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(len(backend_commands), 1, msg=commands)
             self.assertIn("envctl_engine.test_output.pytest_progress_plugin", backend_commands[0])
             self.assertEqual(backend_commands[0][-1], "backend/tests")
-            self.assertIn(("pnpm", "run", "test", "--", "src"), commands)
+            frontend_commands = [
+                command
+                for command in commands
+                if len(command) >= 5 and command[:5] == ("pnpm", "run", "test", "--", "src")
+            ]
+            self.assertEqual(len(frontend_commands), 1, msg=commands)
 
     def test_configured_backend_and_frontend_test_commands_keep_runner_suite_labels(self) -> None:
         target = action_test_support_module.TestTargetContext(
@@ -2775,7 +3217,7 @@ class ActionsParityTests(unittest.TestCase):
         specs = action_test_support_module.build_test_execution_specs(
             repo_root=Path("/tmp/repo"),
             target_contexts=[target],
-            shared_raw_command="python3.12 -m unittest discover -s tests -p test_*.py",
+            shared_raw_command="python3.12 -m unittest discover -s tests -t . -p test_*.py",
             backend_raw_command=None,
             frontend_raw_command=None,
             include_backend=True,
