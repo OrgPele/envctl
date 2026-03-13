@@ -59,7 +59,12 @@ def resolve_requirement_start_command(
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
         return CommandResolutionResult(
-            command=_split_and_validate(raw, port=port, command_exists=exists),
+            command=_split_and_validate(
+                raw,
+                port=port,
+                command_exists=exists,
+                search_roots=[project_root],
+            ),
             source="configured",
         )
 
@@ -85,8 +90,18 @@ def resolve_service_start_command(
     env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
+        service_root = _configured_service_root(
+            service_name=service_name,
+            project_root=project_root,
+            config_raw=config_raw,
+        )
         return CommandResolutionResult(
-            command=_split_and_validate(raw, port=port, command_exists=exists),
+            command=_split_and_validate(
+                raw,
+                port=port,
+                command_exists=exists,
+                search_roots=[service_root, project_root],
+            ),
             source="configured",
         )
 
@@ -137,7 +152,7 @@ def _suggest_backend_start_command(*, project_root: Path, command_exists: Comman
             if python_bin is not None and app_ref is not None:
                 return _join_command(
                     [
-                        _display_python_bin(python_bin=python_bin, service_root=candidate_root),
+                        "python",
                         "-m",
                         "uvicorn",
                         app_ref,
@@ -157,7 +172,7 @@ def _suggest_backend_start_command(*, project_root: Path, command_exists: Comman
             continue
         return _join_command(
             [
-                _display_python_bin(python_bin=python_bin, service_root=candidate_root),
+                "python",
                 _display_relative_path(path=runnable, service_root=candidate_root),
             ]
         )
@@ -213,23 +228,47 @@ def _suggest_frontend_directory(*, project_root: Path) -> str | None:
 
 
 def _autodetect_backend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
-    template = _suggest_backend_start_command(project_root=project_root, command_exists=command_exists)
-    if template is None:
-        backend_dir = project_root / "backend"
-        search_roots = [backend_dir, project_root] if backend_dir.is_dir() else [project_root]
-        for candidate_root in search_roots:
-            package_json = candidate_root / "package.json"
-            if package_json.is_file():
-                command = _npm_like_dev_command(
-                    package_json=package_json,
-                    service_name="backend",
-                    port=port,
-                    command_exists=command_exists,
-                )
-                if command is not None:
-                    return command
-        return None
-    return _split_and_validate(template, port=port, command_exists=command_exists)
+    backend_dir = project_root / "backend"
+    search_roots = [backend_dir, project_root] if backend_dir.is_dir() else [project_root]
+
+    for candidate_root in search_roots:
+        pyproject = candidate_root / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        app_ref = _detect_uvicorn_app_ref(candidate_root)
+        if python_bin is None or app_ref is None:
+            continue
+        return [
+            python_bin,
+            "-m",
+            "uvicorn",
+            app_ref,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ]
+
+    for candidate_root in search_roots:
+        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        runnable = _detect_python_entrypoint(candidate_root)
+        if python_bin is None or runnable is None:
+            continue
+        return [python_bin, _display_relative_path(path=runnable, service_root=candidate_root)]
+
+    for candidate_root in search_roots:
+        package_json = candidate_root / "package.json"
+        if package_json.is_file():
+            command = _npm_like_dev_command(
+                package_json=package_json,
+                service_name="backend",
+                port=port,
+                command_exists=command_exists,
+            )
+            if command is not None:
+                return command
+    return None
 
 
 def _autodetect_frontend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
@@ -346,13 +385,6 @@ def _looks_like_frontend_root(service_root: Path) -> bool:
     return bool(isinstance(scripts, dict) and isinstance(scripts.get("dev"), str) and scripts["dev"].strip())
 
 
-def _display_python_bin(*, python_bin: str, service_root: Path) -> str:
-    candidate = Path(python_bin).expanduser()
-    if not candidate.is_absolute():
-        return "python"
-    return _display_relative_path(path=candidate, service_root=service_root)
-
-
 def _display_relative_path(*, path: Path, service_root: Path) -> str:
     try:
         return str(path.relative_to(service_root))
@@ -375,12 +407,33 @@ def _override_value(key: str, *, env: Mapping[str, str], config_raw: Mapping[str
     return text if text else None
 
 
-def _split_and_validate(raw: str, *, port: int, command_exists: CommandExists) -> list[str]:
+def _configured_service_root(*, service_name: str, project_root: Path, config_raw: Mapping[str, str]) -> Path:
+    dir_key = "BACKEND_DIR" if service_name == "backend" else "FRONTEND_DIR"
+    raw_dir = str(config_raw.get(dir_key, "") or "").strip()
+    if raw_dir:
+        candidate = (project_root / raw_dir).resolve()
+        if candidate.is_dir():
+            return candidate
+    autodetected = suggest_service_directory(service_name=service_name, project_root=project_root)
+    if autodetected:
+        candidate = (project_root / autodetected).resolve()
+        if candidate.is_dir():
+            return candidate
+    return project_root
+
+
+def _split_and_validate(
+    raw: str,
+    *,
+    port: int,
+    command_exists: CommandExists,
+    search_roots: list[Path] | None = None,
+) -> list[str]:
     parsed = shlex.split(raw.replace("{port}", str(port)))
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
     executable = parsed[0]
-    if not command_exists(executable):
+    if not _command_exists_for_roots(executable, command_exists=command_exists, search_roots=search_roots or []):
         raise CommandResolutionError(
             "missing_command_executable",
             f"Resolved command executable not found: {executable}",
@@ -392,3 +445,23 @@ def _default_command_exists(executable: str) -> bool:
     if "/" in executable:
         return Path(executable).expanduser().exists()
     return shutil.which(executable) is not None
+
+
+def _command_exists_for_roots(
+    executable: str,
+    *,
+    command_exists: CommandExists,
+    search_roots: list[Path],
+) -> bool:
+    if "/" not in executable:
+        return command_exists(executable)
+    candidate = Path(executable).expanduser()
+    if candidate.is_absolute():
+        return candidate.exists()
+    if candidate.exists():
+        return True
+    for root in search_roots:
+        resolved = (root / candidate).expanduser()
+        if resolved.exists():
+            return True
+    return False
