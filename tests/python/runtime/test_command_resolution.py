@@ -17,6 +17,51 @@ from envctl_engine.runtime.command_resolution import (  # type: ignore[attr-defi
 
 
 class CommandResolutionTests(unittest.TestCase):
+    def test_configured_backend_command_accepts_relative_python_from_backend_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            (backend / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend / "venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "BACKEND_DIR": "backend",
+                    "ENVCTL_BACKEND_START_CMD": "venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(result.command[0], "venv/bin/python")
+            self.assertIn("8000", result.command)
+
+    def test_configured_frontend_command_accepts_relative_python_from_frontend_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frontend = root / "frontend"
+            (frontend / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (frontend / "venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="frontend",
+                project_root=root,
+                port=9000,
+                env={},
+                config_raw={
+                    "FRONTEND_DIR": "frontend",
+                    "ENVCTL_FRONTEND_START_CMD": "venv/bin/python app.py",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(result.command, ["venv/bin/python", "app.py"])
+
     def test_service_resolution_prefers_backend_venv_python_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -39,7 +84,7 @@ class CommandResolutionTests(unittest.TestCase):
             )
 
             self.assertEqual(result.source, "autodetected")
-            self.assertEqual(result.command[0], "venv/bin/python")
+            self.assertEqual(result.command[0], str(backend / "venv" / "bin" / "python"))
 
     def test_service_resolution_autodetects_fastapi_backend_from_pyproject(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -109,7 +154,7 @@ class CommandResolutionTests(unittest.TestCase):
             )
 
             self.assertEqual(result.source, "autodetected")
-            self.assertEqual(result.command[0], ".venv/bin/python")
+            self.assertEqual(result.command[0], str(root / ".venv" / "bin" / "python"))
             self.assertEqual(result.command[1], "src/main.py")
 
     def test_suggest_service_start_command_returns_template_for_fastapi_backend(self) -> None:
@@ -129,7 +174,7 @@ class CommandResolutionTests(unittest.TestCase):
 
             self.assertEqual(
                 command,
-                shlex.join([".venv/bin/python", "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "{port}"]),
+                shlex.join(["python", "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "{port}"]),
             )
 
     def test_suggest_service_directory_prefers_src_for_python_backend(self) -> None:
