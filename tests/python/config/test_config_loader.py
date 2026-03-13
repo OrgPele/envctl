@@ -142,7 +142,7 @@ class ConfigLoaderTests(unittest.TestCase):
 
             self.assertIn("ENVCTL_BACKEND_TEST_CMD", config.raw)
             self.assertEqual(config.raw["ENVCTL_BACKEND_TEST_CMD"], "")
-            self.assertTrue(config.backend_test_cmd.endswith(" -m unittest discover -s tests -p test_*.py"))
+            self.assertTrue(config.backend_test_cmd.endswith(" -m unittest discover -s tests -t . -p test_*.py"))
 
     def test_load_config_autodetects_frontend_test_path_when_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -160,7 +160,25 @@ class ConfigLoaderTests(unittest.TestCase):
 
             config = load_config({"RUN_REPO_ROOT": str(repo)})
 
-            self.assertEqual(config.frontend_test_path, "src")
+            self.assertEqual(config.frontend_test_path, "frontend/src")
+
+    def test_load_config_canonicalizes_saved_frontend_test_path_to_repo_relative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            frontend = repo / "frontend"
+            src_dir = frontend / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"app","scripts":{"test":"vitest run"}}\n',
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+            (src_dir / "app.test.ts").write_text("it('works', () => {})\n", encoding="utf-8")
+            (repo / ".envctl").write_text("ENVCTL_FRONTEND_TEST_PATH=src\n", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.frontend_test_path, "frontend/src")
 
     def test_load_config_uses_managed_dependency_baseline_when_envctl_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -195,7 +213,6 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.redis_enable)
             self.assertFalse(config.n8n_main_enable)
             self.assertFalse(config.n8n_enable)
-
 
 if __name__ == "__main__":
     unittest.main()

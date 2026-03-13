@@ -19,6 +19,7 @@ from envctl_engine.config import (
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.actions.actions_test import (
+    canonicalize_frontend_test_path,
     suggest_action_test_command,
     suggest_backend_test_command,
     suggest_frontend_test_command,
@@ -464,7 +465,28 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
-    validation = validate_managed_values(values, require_directories=False, require_entrypoints=False)
+    canonical_values = ManagedConfigValues(
+        default_mode=values.default_mode,
+        main_profile=values.main_profile,
+        trees_profile=values.trees_profile,
+        port_defaults=values.port_defaults,
+        backend_dir_name=values.backend_dir_name,
+        frontend_dir_name=values.frontend_dir_name,
+        backend_start_cmd=values.backend_start_cmd,
+        frontend_start_cmd=values.frontend_start_cmd,
+        backend_test_cmd=values.backend_test_cmd,
+        frontend_test_cmd=values.frontend_test_cmd,
+        action_test_cmd=values.action_test_cmd,
+        frontend_test_path=(
+            canonicalize_frontend_test_path(
+                values.frontend_test_path,
+                project_root=local_state.base_dir,
+                frontend_dir_name=values.frontend_dir_name,
+            )
+            or ""
+        ),
+    )
+    validation = validate_managed_values(canonical_values, require_directories=False, require_entrypoints=False)
     if not validation.valid:
         raise ValueError("Invalid config values: " + "; ".join(validation.errors))
     existing_text = ""
@@ -475,7 +497,7 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
             existing_text = ""
     elif local_state.file_text and local_state.config_source == "envctl":
         existing_text = local_state.file_text
-    merged = merge_managed_block(existing_text, render_managed_block(values))
+    merged = merge_managed_block(existing_text, render_managed_block(canonical_values))
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
     ignore_updated, ignore_warning = ensure_local_config_ignored(local_state.base_dir)
@@ -644,7 +666,16 @@ def _resolved_frontend_test_cmd(*, values: dict[str, str], base_dir: Path | None
 def _resolved_frontend_test_path(*, values: dict[str, str], base_dir: Path | None) -> str:
     raw = str(values.get("ENVCTL_FRONTEND_TEST_PATH") or "").strip()
     if raw:
-        return raw
+        if base_dir is None:
+            return raw
+        return str(
+            canonicalize_frontend_test_path(
+                raw,
+                project_root=base_dir,
+                frontend_dir_name=str(values.get("FRONTEND_DIR") or "").strip(),
+            )
+            or raw
+        ).strip()
     if base_dir is None:
         return ""
     suggested = suggest_frontend_test_path(base_dir)

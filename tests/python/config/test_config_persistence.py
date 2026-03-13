@@ -83,7 +83,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
                 backend_start_cmd="python src/main.py",
                 frontend_start_cmd="npm run dev -- --port 0 --host",
-                backend_test_cmd="python -m unittest discover -s tests -p test_*.py",
+                backend_test_cmd="python -m unittest discover -s tests -t . -p test_*.py",
                 frontend_test_cmd="pnpm run test",
                 frontend_test_path="src",
             )
@@ -99,9 +99,9 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertNotIn("FRONTEND_DIR=frontend", written)
             self.assertIn("ENVCTL_BACKEND_START_CMD=python src/main.py", written)
             self.assertIn("ENVCTL_FRONTEND_START_CMD=npm run dev -- --port 0 --host", written)
-            self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -p test_*.py", written)
+            self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -t . -p test_*.py", written)
             self.assertIn("ENVCTL_FRONTEND_TEST_CMD=pnpm run test", written)
-            self.assertIn("ENVCTL_FRONTEND_TEST_PATH=src", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_PATH=frontend/src", written)
             self.assertIn("BACKEND_PORT_BASE=8100", written)
             self.assertIn("FRONTEND_PORT_BASE=9100", written)
             self.assertIn("DB_PORT=5434", written)
@@ -214,14 +214,14 @@ class ConfigPersistenceTests(unittest.TestCase):
             port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
             backend_dir_name=".",
             backend_start_cmd="python src/main.py",
-            backend_test_cmd="python -m unittest discover -s tests -p test_*.py",
+            backend_test_cmd="python -m unittest discover -s tests -t . -p test_*.py",
         )
 
         rendered = render_managed_block(values)
 
         self.assertIn("ENVCTL_DEFAULT_MODE=trees", rendered)
         self.assertIn("BACKEND_DIR=.", rendered)
-        self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -p test_*.py", rendered)
+        self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -t . -p test_*.py", rendered)
         self.assertIn("MAIN_STARTUP_ENABLE=false", rendered)
         self.assertIn("TREES_STARTUP_ENABLE=false", rendered)
         self.assertIn("MAIN_FRONTEND_ENABLE=false", rendered)
@@ -326,6 +326,21 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn(CONFIG_DEPENDENCY_ENV_START, example_text)
         self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_END, example_text)
         self.assertIn(CONFIG_FRONTEND_DEPENDENCY_ENV_END, example_text)
+
+    def test_managed_values_from_mapping_canonicalizes_frontend_test_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+
+            values = managed_values_from_mapping(
+                {
+                    "FRONTEND_DIR": "frontend",
+                    "ENVCTL_FRONTEND_TEST_PATH": "src",
+                },
+                base_dir=repo,
+            )
+
+            self.assertEqual(values.frontend_test_path, "frontend/src")
 
     def test_parse_dependency_env_section_reads_entries_and_line_numbers(self) -> None:
         text = (

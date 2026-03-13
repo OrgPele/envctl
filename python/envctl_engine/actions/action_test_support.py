@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 import importlib.util
 import json
@@ -14,6 +15,7 @@ from envctl_engine.actions.actions_test import (
     append_frontend_test_path,
     build_test_args,
     classify_test_command_source,
+    normalize_frontend_test_path,
     default_test_commands,
     is_package_test_command,
     is_pytest_command,
@@ -109,6 +111,50 @@ def normalize_unittest_test_identifier(raw: str) -> str | None:
     if display_match:
         return display_match.group(1)
     return None
+
+
+def resolve_unittest_test_identifier_for_project(raw: str, project_root: Path) -> str | None:
+    candidate = normalize_unittest_test_identifier(raw)
+    if not candidate:
+        return None
+    tests_root = project_root / "tests"
+    if not tests_root.is_dir():
+        return candidate
+    if _unittest_identifier_exists_for_project(candidate, project_root):
+        return candidate
+    prefixed = f"tests.{candidate}"
+    if _unittest_identifier_exists_for_project(prefixed, project_root):
+        return prefixed
+    return None
+
+
+def _unittest_identifier_exists_for_project(identifier: str, project_root: Path) -> bool:
+    parts = [part for part in str(identifier).split(".") if part]
+    if len(parts) < 3:
+        return False
+    module_parts = parts[:-2]
+    class_name = parts[-2]
+    method_name = parts[-1]
+    if not module_parts:
+        return False
+    module_path = project_root.joinpath(*module_parts)
+    file_path = module_path.with_suffix(".py")
+    if not file_path.is_file():
+        init_path = module_path / "__init__.py"
+        if not init_path.is_file():
+            return False
+        file_path = init_path
+    try:
+        tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return False
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == method_name:
+                    return True
+            return False
+    return False
 
 
 def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) -> list[TestTargetContext]:
@@ -483,7 +529,12 @@ def _failed_rerun_spec_for_entry(
             target_obj=target_obj,
         )
     if source == "root_unittest":
-        if not entry.failed_tests:
+        failed_tests = [
+            normalized
+            for value in entry.failed_tests
+            if (normalized := resolve_unittest_test_identifier_for_project(value, project_root))
+        ]
+        if not failed_tests:
             return None
         python_exe = detect_python_bin(project_root, repo_root)
         if not python_exe:
@@ -491,7 +542,7 @@ def _failed_rerun_spec_for_entry(
         return TestExecutionSpec(
             index=0,
             spec=TestCommandSpec(
-                command=[python_exe, "-m", "unittest", *entry.failed_tests],
+                command=[python_exe, "-m", "unittest", *failed_tests],
                 cwd=project_root,
                 source=source,
             ),
@@ -502,10 +553,20 @@ def _failed_rerun_spec_for_entry(
             target_obj=target_obj,
         )
     if source in {"frontend_package_test", "package_test"}:
-        failed_files = list(entry.failed_files)
+        package_root = project_root / "frontend" if source == "frontend_package_test" else project_root
+        failed_files = [
+            normalized
+            for value in entry.failed_files
+            if (
+                normalized := normalize_frontend_test_path(
+                    value,
+                    project_root=project_root,
+                    command_cwd=package_root,
+                )
+            )
+        ]
         if not failed_files:
             return None
-        package_root = project_root / "frontend" if source == "frontend_package_test" else project_root
         manager = detect_package_manager(package_root)
         if not manager:
             return f"Failed-only reruns are unavailable for {project_name} {entry.suite or source} because no supported package manager was detected."

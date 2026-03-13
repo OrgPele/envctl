@@ -359,7 +359,7 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 test_command = app.query_one("#directory-backend_test_cmd")
                 self.assertTrue(
                     str(getattr(test_command, "value", "")).endswith(
-                        " -m unittest discover -s tests -p test_*.py"
+                        " -m unittest discover -s tests -t . -p test_*.py"
                     )
                 )
                 app.exit(None)
@@ -499,7 +499,7 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
                 frontend_test_path = app.query_one("#directory-frontend_test_path")
-                self.assertEqual(getattr(frontend_test_path, "value", None), "src")
+                self.assertEqual(getattr(frontend_test_path, "value", None), "frontend/src")
                 app.exit(None)
 
     async def test_enter_on_back_button_goes_back_instead_of_next(self) -> None:
