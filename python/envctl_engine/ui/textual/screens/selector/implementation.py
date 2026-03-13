@@ -229,14 +229,16 @@ def select_project_targets_textual(
         token = available_tokens.get(str(name).strip().lower())
         if token:
             initial_tokens.append(token)
-    values = _run_selector_with_impl(
-        prompt=prompt,
-        options=result.items,
-        multi=multi,
-        initial_tokens=initial_tokens,
-        exclusive_token=(f"__PROJECT__:{exclusive_project_name}" if exclusive_project_name else None),
-        emit=emit,
-    )
+    selector_kwargs = {
+        "prompt": prompt,
+        "options": result.items,
+        "multi": multi,
+        "initial_tokens": initial_tokens,
+        "emit": emit,
+    }
+    if exclusive_project_name:
+        selector_kwargs["exclusive_token"] = f"__PROJECT__:{exclusive_project_name}"
+    values = _run_selector_with_impl(**selector_kwargs)
     return _selection_from_values(values)
 
 

@@ -112,6 +112,90 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.backend_dir_name, "api")
             self.assertEqual(config.frontend_dir_name, "web")
 
+    def test_load_config_autodetects_backend_and_frontend_dirs_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "src").mkdir(parents=True, exist_ok=True)
+            (repo / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite"}}\n',
+                encoding="utf-8",
+            )
+            (repo / ".envctl").write_text("", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.backend_dir_name, "src")
+            self.assertEqual(config.frontend_dir_name, "frontend")
+
+    def test_load_config_autodetects_backend_test_command_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            tests_dir = repo / "tests"
+            tests_dir.mkdir(parents=True, exist_ok=True)
+            (tests_dir / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            (repo / ".envctl").write_text("", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertIn("ENVCTL_BACKEND_TEST_CMD", config.raw)
+            self.assertEqual(config.raw["ENVCTL_BACKEND_TEST_CMD"], "")
+            self.assertTrue(config.backend_test_cmd.endswith(" -m unittest discover -s tests -p test_*.py"))
+
+    def test_load_config_autodetects_frontend_test_path_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            frontend = repo / "frontend"
+            src_dir = frontend / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"app","scripts":{"test":"vitest run"}}\n',
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+            (src_dir / "app.test.ts").write_text("it('works', () => {})\n", encoding="utf-8")
+            (repo / ".envctl").write_text("", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.frontend_test_path, "src")
+
+    def test_load_config_uses_managed_dependency_baseline_when_envctl_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "BACKEND_DIR=src",
+                        "ENVCTL_BACKEND_START_CMD=python main.py",
+                        "MAIN_FRONTEND_ENABLE=false",
+                        "TREES_STARTUP_ENABLE=false",
+                        "TREES_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertFalse(config.main_profile.postgres_enable)
+            self.assertFalse(config.main_profile.redis_enable)
+            self.assertFalse(config.main_profile.supabase_enable)
+            self.assertFalse(config.main_profile.n8n_enable)
+            self.assertFalse(config.trees_profile.postgres_enable)
+            self.assertFalse(config.trees_profile.redis_enable)
+            self.assertFalse(config.trees_profile.supabase_enable)
+            self.assertFalse(config.trees_profile.n8n_enable)
+            self.assertFalse(config.postgres_main_enable)
+            self.assertFalse(config.redis_main_enable)
+            self.assertFalse(config.redis_enable)
+            self.assertFalse(config.n8n_main_enable)
+            self.assertFalse(config.n8n_enable)
+
 
 if __name__ == "__main__":
     unittest.main()

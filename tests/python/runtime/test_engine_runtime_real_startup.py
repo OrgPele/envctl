@@ -253,6 +253,14 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             python_bin = sys.executable
             payload.update(
                 {
+                    "MAIN_POSTGRES_ENABLE": "true",
+                    "MAIN_REDIS_ENABLE": "true",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "TREES_POSTGRES_ENABLE": "true",
+                    "TREES_REDIS_ENABLE": "true",
+                    "TREES_SUPABASE_ENABLE": "false",
+                    "TREES_N8N_ENABLE": "true",
                     "ENVCTL_REQUIREMENT_POSTGRES_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
                     "ENVCTL_REQUIREMENT_REDIS_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
                     "ENVCTL_REQUIREMENT_N8N_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
@@ -333,7 +341,15 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
 
-            engine = PythonEngineRuntime(self._config(repo, runtime, include_commands=False), env={})
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={"MAIN_POSTGRES_ENABLE": "true"},
+                    include_commands=False,
+                ),
+                env={},
+            )
             engine.port_planner.availability_checker = lambda _port: True
             fake_runner = _FakeProcessRunner()
             fake_runner.docker_connect_error = (
@@ -1815,6 +1831,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 {
                     "RUN_REPO_ROOT": str(repo),
                     "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_TREES_ENABLE": "true",
                 }
             )
             engine = PythonEngineRuntime(config, env={})
@@ -1904,6 +1921,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 {
                     "RUN_REPO_ROOT": str(repo),
                     "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_POSTGRES_ENABLE": "true",
                 }
             )
             engine = PythonEngineRuntime(config, env={})
@@ -2789,6 +2807,63 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(resume_mock.call_count, 1)
+
+    def test_plan_falls_back_to_fresh_start_when_auto_resume_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+
+            started_projects: list[str] = []
+
+            def fake_start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+                _ = mode, route, run_id
+                started_projects.append(context.name)
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root),
+                            pid=2222,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            with (
+                patch.object(engine, "_try_load_existing_state", return_value=state),
+                patch.object(engine, "_resume", return_value=1) as resume_mock,
+                patch.object(engine, "_start_project_context", side_effect=fake_start_project_context),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(resume_mock.call_count, 1)
+            self.assertEqual(started_projects, ["feature-a-1"])
 
     def test_plan_auto_resumes_existing_run_when_selected_projects_are_subset_of_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

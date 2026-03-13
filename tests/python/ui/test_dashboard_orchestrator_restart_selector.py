@@ -1244,6 +1244,54 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.selection_calls[0]["multi"], True)
         self.assertIsNone(runtime.selection_calls[0]["exclusive_project_name"])
 
+    def test_interactive_test_service_selection_hides_failed_rerun_when_latest_status_passed(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["Backend", "Frontend"])
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            metadata={
+                "project_test_summaries": {
+                    "Main": {
+                        "manifest_path": "/tmp/runtime/Main_failed_tests_manifest.json",
+                        "short_summary_path": "/tmp/runtime/ft_deadbeef00.txt",
+                        "failed_tests": 0,
+                        "failed_manifest_entries": 0,
+                        "status": "passed",
+                    }
+                }
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, _next_state = orchestrator._run_interactive_command("t", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(runtime.selection_calls[0]["projects"], ["Backend", "Frontend"])
+        self.assertEqual(runtime.selection_calls[0]["multi"], True)
+        self.assertIsNone(runtime.selection_calls[0]["exclusive_project_name"])
+
     def test_interactive_test_service_selection_falls_back_to_service_name_parsing(self) -> None:
         runtime = _RuntimeStubMissingProjectResolver()
         runtime.next_selection = TargetSelection(project_names=["Failed tests"])

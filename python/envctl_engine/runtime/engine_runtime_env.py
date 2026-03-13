@@ -527,9 +527,11 @@ def effective_main_requirement_flags(runtime: Any, route: Route | None) -> dict[
     mode = main_requirements_mode(route)
     if mode == "local":
         values["postgres"] = False
+        values["redis"] = True
         values["supabase"] = True
         values["n8n"] = True
     elif mode == "remote":
+        values["postgres"] = True
         values["supabase"] = False
         values["n8n"] = False
     values.update(

@@ -19,6 +19,20 @@ class DependencyRegistryTests(unittest.TestCase):
             [definition.order for definition in definitions], sorted(definition.order for definition in definitions)
         )
 
+    def test_dependency_defaults_match_runtime_profiles(self) -> None:
+        definitions = dependency_definitions()
+
+        expected = {
+            "postgres": {"main": False, "trees": False},
+            "redis": {"main": False, "trees": False},
+            "supabase": {"main": False, "trees": False},
+            "n8n": {"main": False, "trees": False},
+        }
+
+        for definition in definitions:
+            self.assertEqual(definition.enabled_by_default("main"), expected[definition.id]["main"], msg=f"{definition.id} main")
+            self.assertEqual(definition.enabled_by_default("trees"), expected[definition.id]["trees"], msg=f"{definition.id} trees")
+
     def test_requirements_result_keeps_legacy_aliases_and_components(self) -> None:
         result = RequirementsResult(
             project="Main",

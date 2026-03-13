@@ -89,12 +89,10 @@ def run_test_action(
     frontend_flag = route.flags.get("frontend")
     include_backend, include_frontend = orchestrator._test_service_selection(route, backend_flag, frontend_flag)
 
-    raw = rt.env.get("ENVCTL_ACTION_TEST_CMD")  # type: ignore[attr-defined]
     target_contexts = orchestrator._test_target_contexts(targets)
     try:
         execution_specs = orchestrator._build_test_execution_specs(
             route=route,
-            raw=raw,
             targets=targets,
             target_contexts=target_contexts,
             include_backend=include_backend,
@@ -106,7 +104,9 @@ def run_test_action(
         print(str(exc))
         return 1
     if not execution_specs:
-        print("No test command configured. Set ENVCTL_ACTION_TEST_CMD or add utils/test-all-trees.sh.")
+        print(
+            "No test command configured. Set Backend test command or Frontend test command in envctl config."
+        )
         return 1
 
     parallel = orchestrator._test_parallel_enabled(route, execution_specs)

@@ -11,6 +11,21 @@ _PROFILE_COMPONENT_DEFAULTS: dict[str, bool] = {
     "frontend_enable": True,
 }
 
+_RUNTIME_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
+    "main": {
+        "postgres": False,
+        "redis": False,
+        "supabase": False,
+        "n8n": False,
+    },
+    "trees": {
+        "postgres": False,
+        "redis": False,
+        "supabase": False,
+        "n8n": False,
+    },
+}
+
 _MANAGED_BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
     "main": {
         "postgres": False,
@@ -26,37 +41,6 @@ _MANAGED_BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
     },
 }
 
-_RUNTIME_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
-    "main": {
-        "postgres": True,
-        "redis": True,
-        "supabase": False,
-        "n8n": False,
-    },
-    "trees": {
-        "postgres": True,
-        "redis": True,
-        "supabase": False,
-        "n8n": True,
-    },
-}
-
-_STANDARD_PRESET_DEPENDENCIES: dict[Mode, dict[str, bool]] = {
-    "main": {
-        "postgres": True,
-        "redis": True,
-        "supabase": False,
-        "n8n": False,
-    },
-    "trees": {
-        "postgres": True,
-        "redis": True,
-        "supabase": False,
-        "n8n": True,
-    },
-}
-
-
 def default_profile_settings(mode: str) -> dict[str, object]:
     normalized = _normalize_mode(mode)
     return {
@@ -70,10 +54,10 @@ def wizard_preset_settings(mode: str, preset: str) -> dict[str, object]:
     normalized_preset = _normalize_preset(preset)
     if normalized_preset == "apps_only":
         dependencies = {
-            dependency_id: False for dependency_id in _MANAGED_BASELINE_DEPENDENCY_DEFAULTS[normalized_mode]
+            dependency_id: False for dependency_id in _RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode]
         }
     else:
-        dependencies = dict(_STANDARD_PRESET_DEPENDENCIES[normalized_mode])
+        dependencies = dict(_RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode])
     return {
         "startup_enable": normalized_preset != "disabled",
         "backend_enable": True,

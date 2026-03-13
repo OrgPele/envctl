@@ -397,7 +397,19 @@ class StartupOrchestrator:
                         projects=route.projects,
                         flags={**route.flags, "_resume_source_command": route.command},
                     )
-                    return rt._resume(resume_route)
+                    resume_code = rt._resume(resume_route)
+                    if int(resume_code) == 0:
+                        return 0
+                    rt._emit(
+                        "state.auto_resume.skipped",
+                        reason="resume_failed",
+                        resume_code=int(resume_code),
+                        state_projects=sorted(prior_project_names),
+                        selected_projects=sorted(selected_project_names),
+                        mode=runtime_mode,
+                        command=route.command,
+                    )
+                    existing_state = None
                 if expand_match:
                     missing_services = rt._reconcile_state_truth(existing_state)
                     if not missing_services:

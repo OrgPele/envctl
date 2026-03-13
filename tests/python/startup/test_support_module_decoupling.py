@@ -177,9 +177,8 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
 
         message = _requirements_failure_message("Main", requirements)
 
-        self.assertIn("Docker is not running or not reachable", message)
-        self.assertIn("/Users/kfiramar/.docker/run/docker.sock", message)
-        self.assertIn("Blocked requirements for Main:", message)
+        self.assertIn("Docker is not running.", message)
+        self.assertIn("Docker is required for Main dependencies:", message)
         self.assertIn("redis", message)
         self.assertIn("supabase", message)
         self.assertIn("n8n", message)

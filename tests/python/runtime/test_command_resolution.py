@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,8 @@ from envctl_engine.runtime.command_resolution import (  # type: ignore[attr-defi
     CommandResolutionError,
     resolve_requirement_start_command,
     resolve_service_start_command,
+    suggest_service_directory,
+    suggest_service_start_command,
 )
 
 
@@ -36,7 +39,7 @@ class CommandResolutionTests(unittest.TestCase):
             )
 
             self.assertEqual(result.source, "autodetected")
-            self.assertEqual(result.command[0], str(backend / "venv" / "bin" / "python"))
+            self.assertEqual(result.command[0], "venv/bin/python")
 
     def test_service_resolution_autodetects_fastapi_backend_from_pyproject(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -86,6 +89,106 @@ class CommandResolutionTests(unittest.TestCase):
 
             self.assertEqual(result.source, "autodetected")
             self.assertEqual(result.command[:3], ["bun", "run", "dev"])
+            self.assertEqual(result.command[3:], ["--", "--port", "9000", "--host", "127.0.0.1"])
+
+    def test_service_resolution_autodetects_plain_python_backend_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir(parents=True, exist_ok=True)
+            (root / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={},
+                command_exists=lambda exe: True,
+            )
+
+            self.assertEqual(result.source, "autodetected")
+            self.assertEqual(result.command[0], ".venv/bin/python")
+            self.assertEqual(result.command[1], "src/main.py")
+
+    def test_suggest_service_start_command_returns_template_for_fastapi_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+            (root / "src").mkdir(parents=True, exist_ok=True)
+            (root / "src" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+            (root / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            command = suggest_service_start_command(
+                service_name="backend",
+                project_root=root,
+                command_exists=lambda exe: True,
+            )
+
+            self.assertEqual(
+                command,
+                shlex.join([".venv/bin/python", "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "{port}"]),
+            )
+
+    def test_suggest_service_directory_prefers_src_for_python_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir(parents=True, exist_ok=True)
+            (root / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+            directory = suggest_service_directory(service_name="backend", project_root=root)
+
+            self.assertEqual(directory, "src")
+
+    def test_suggest_service_directory_prefers_frontend_dir_with_package_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frontend = root / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+
+            directory = suggest_service_directory(service_name="frontend", project_root=root)
+
+            self.assertEqual(directory, "frontend")
+
+    def test_suggest_service_directory_returns_root_for_root_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+
+            directory = suggest_service_directory(service_name="frontend", project_root=root)
+
+            self.assertEqual(directory, ".")
+
+    def test_suggest_service_start_command_returns_template_for_vite_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frontend = root / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+
+            command = suggest_service_start_command(
+                service_name="frontend",
+                project_root=root,
+                command_exists=lambda exe: True,
+            )
+
+            self.assertEqual(
+                command,
+                shlex.join(["bun", "run", "dev", "--", "--port", "{port}", "--host", "127.0.0.1"]),
+            )
 
     def test_service_resolution_raises_when_unresolvable_and_synthetic_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
