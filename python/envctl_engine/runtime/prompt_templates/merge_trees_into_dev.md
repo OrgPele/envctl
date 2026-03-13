@@ -3,6 +3,7 @@ Authoritative sources of truth: the `MAIN_TASK.md` on the current branch and the
 First, read both branches' `MAIN_TASK.md` files and both implementations in depth before merging anything.
 Ask questions only if a blocking product-intent ambiguity remains after deep code, test, and diff review; otherwise resolve everything yourself according to repo evidence and best practices.
 Final output must include: branch A vs branch B intent summary, merge order, conflict resolutions, tests run, and any material assumptions or residual risks.
+WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. Use git to inspect and merge other branches rather than touching sibling worktree directories directly. You may read outside the current worktree ONLY when genuinely needed for historical/reference context, and that access MUST remain read-only.
 
 ## Inputs
 Primary specs / expected behavior: `MAIN_TASK.md` on both branches
