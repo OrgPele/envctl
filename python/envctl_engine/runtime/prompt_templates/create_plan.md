@@ -3,6 +3,7 @@ Authoritative source of truth: the user-provided scope plus verified repo eviden
 First, read the relevant code, tests, docs, and existing plans in depth before writing anything.
 Ask questions only if a blocking requirement is truly missing after deep repo review; otherwise resolve the plan yourself according to repo evidence and best practices.
 Final output must include: the plan path, plan intent, files researched, and any material assumptions or residual risks.
+WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
 Primary spec / expected behavior: provided by the user or linked project docs/tickets

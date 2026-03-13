@@ -3,6 +3,7 @@ Authoritative source of truth: the current `MAIN_TASK.md`, plus code and test ev
 First, audit what was actually implemented by reading the task, the code, the tests, and recent git history in depth.
 Ask questions only if a blocking ambiguity remains after deep code, test, and git review; otherwise resolve everything yourself according to repo evidence and best practices.
 Final output must include: archive file name, implemented vs remaining scope, new MAIN_TASK focus, git-evidence commands used, and any material assumptions or residual risks.
+WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
 Primary source of truth: current MAIN_TASK.md

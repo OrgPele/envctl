@@ -3,6 +3,7 @@ Authoritative source of truth: `MAIN_TASK.md`.
 First, read `MAIN_TASK.md`, then read all relevant code, tests, and call paths before changing anything.
 Ask questions only if a blocking ambiguity remains after deep code and test review; otherwise resolve everything yourself according to repo evidence and best practices.
 Final output must include: what changed, files changed, tests run, and any material assumptions or residual risks.
+WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
 Authoritative spec file: MAIN_TASK.md.
