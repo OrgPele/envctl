@@ -501,7 +501,6 @@ class ActionCommandOrchestrator:
         self,
         *,
         route: Route,
-        raw: str | None,
         targets: list[object],
         target_contexts: list[TestTargetContext],
         include_backend: bool,
@@ -513,15 +512,42 @@ class ActionCommandOrchestrator:
         if bool(route.flags.get("failed")):
             return self._build_failed_test_execution_specs(
                 route=route,
-                raw=raw,
                 target_contexts=target_contexts,
             )
+        shared_raw = (
+            str(
+                rt.env.get("ENVCTL_ACTION_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_ACTION_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
+        backend_raw = (
+            str(
+                rt.env.get("ENVCTL_BACKEND_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_BACKEND_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
+        frontend_raw = (
+            str(
+                rt.env.get("ENVCTL_FRONTEND_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
         return build_test_execution_specs(
-            raw_command=raw,
+            shared_raw_command=shared_raw,
+            backend_raw_command=backend_raw,
+            frontend_raw_command=frontend_raw,
             target_contexts=target_contexts,
             repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
             include_backend=include_backend,
             include_frontend=include_frontend,
+            frontend_test_path=(
+                getattr(rt.config, "frontend_test_path", "")
+                or rt.env.get("ENVCTL_FRONTEND_TEST_PATH")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_PATH", "")  # type: ignore[attr-defined]
+            ),
             run_all=run_all,
             untested=untested,
             split_command=lambda command_raw, replacements: rt.split_command(
@@ -536,17 +562,36 @@ class ActionCommandOrchestrator:
         self,
         *,
         route: Route,
-        raw: str | None,
         target_contexts: list[TestTargetContext],
     ) -> list["_TestExecutionSpec"]:
         rt = self.runtime
+        shared_raw = (
+            str(
+                rt.env.get("ENVCTL_ACTION_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_ACTION_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
+        backend_raw = (
+            str(
+                rt.env.get("ENVCTL_BACKEND_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_BACKEND_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
+        frontend_raw = (
+            str(
+                rt.env.get("ENVCTL_FRONTEND_TEST_CMD")  # type: ignore[attr-defined]
+                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_CMD", "")  # type: ignore[attr-defined]
+            ).strip()
+            or None
+        )
         state = rt.load_existing_state(mode=route.mode)
         if state is None:
             raise RuntimeError("No saved failed-test data is available yet. Run the full test suite first.")
         summaries_raw = getattr(state, "metadata", {}).get("project_test_summaries")
         summaries = summaries_raw if isinstance(summaries_raw, dict) else {}
         manifests_by_project: dict[str, FailedTestManifest] = {}
-        stale_projects: list[str] = []
         invalid_selector_counts: dict[str, int] = {}
         non_rerunnable_projects: list[str] = []
         extraction_failed_projects: list[str] = []
@@ -574,21 +619,10 @@ class ActionCommandOrchestrator:
                     if self._summary_indicates_extraction_failure(entry):
                         extraction_failed_projects.append(target.project_name)
                 continue
-            current_head, current_status_hash, current_status_lines = self._git_state_components(target.project_root)
-            if (
-                manifest.head != current_head
-                or manifest.status_hash != current_status_hash
-                or manifest.status_lines != current_status_lines
-            ):
-                stale_projects.append(target.project_name)
-                continue
             invalid_count = sum(item.invalid_failed_tests for item in manifest.entries)
             if invalid_count > 0:
                 invalid_selector_counts[target.project_name] = invalid_count
             manifests_by_project[target.project_name] = manifest
-        if stale_projects:
-            names = ", ".join(sorted(stale_projects))
-            raise RuntimeError(f"Saved failed-test data is stale for {names}. Run the full suite first.")
         for project_name, invalid_count in sorted(invalid_selector_counts.items()):
             noun = "selector" if invalid_count == 1 else "selectors"
             message = (
@@ -620,7 +654,9 @@ class ActionCommandOrchestrator:
             target_contexts=target_contexts,
             repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
             manifests_by_project=manifests_by_project,
-            raw_command=raw,
+            shared_raw_command=shared_raw,
+            backend_raw_command=backend_raw,
+            frontend_raw_command=frontend_raw,
         )
 
     @staticmethod
@@ -1373,14 +1409,18 @@ class ActionCommandOrchestrator:
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
         if source == "backend_pytest":
             return "Backend (pytest, failed only)" if failed_only else "Backend (pytest)"
+        if source == "configured_backend":
+            return "Backend (failed only)" if failed_only else "Backend"
         if source == "frontend_package_test":
             return "Frontend (package test, failed only)" if failed_only else "Frontend (package test)"
+        if source == "configured_frontend":
+            return "Frontend (failed only)" if failed_only else "Frontend"
         if source == "root_unittest":
             return "Repository tests (unittest, failed only)" if failed_only else "Repository tests (unittest)"
         if source == "package_test":
             return "Repository package test (failed only)" if failed_only else "Repository package test"
         if source == "configured":
-            return "Configured test command"
+            return "Test command (failed only)" if failed_only else "Test command"
         return source.replace("_", " ")
 
     @staticmethod

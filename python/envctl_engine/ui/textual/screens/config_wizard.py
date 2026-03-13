@@ -5,6 +5,11 @@ from pathlib import Path
 import re
 from typing import Callable
 
+from ....actions.actions_test import (
+    suggest_backend_test_command,
+    suggest_frontend_test_command,
+    suggest_frontend_test_path,
+)
 from ....config import LocalConfigState, StartupProfile
 from ....config.persistence import (
     ConfigSaveResult,
@@ -15,6 +20,7 @@ from ....config.persistence import (
     validate_managed_values,
 )
 from ....requirements.core import dependency_definitions
+from ....runtime.command_resolution import suggest_service_directory, suggest_service_start_command
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import (
     apply_textual_driver_compat,
@@ -58,6 +64,14 @@ _COMPONENT_FIELDS: tuple[tuple[str, str], ...] = (
 _DIRECTORY_FIELDS: tuple[tuple[str, str], ...] = (
     ("backend_dir_name", "Backend directory"),
     ("frontend_dir_name", "Frontend directory"),
+    ("frontend_test_path", "Frontend tests directory"),
+)
+
+_COMMAND_FIELDS: tuple[tuple[str, str], ...] = (
+    ("backend_start_cmd", "Backend entrypoint"),
+    ("frontend_start_cmd", "Frontend entrypoint"),
+    ("backend_test_cmd", "Backend test command"),
+    ("frontend_test_cmd", "Frontend test command"),
 )
 
 _PORT_FIELDS: tuple[tuple[str, str], ...] = (
@@ -75,6 +89,7 @@ _STEP_TITLES = {
     "components": "Components",
     "service_startup": "Long-Running Service",
     "directories": "Directories",
+    "commands": "Entrypoints / Commands",
     "ports": "Ports",
     "review": "Review / Save",
 }
@@ -94,6 +109,9 @@ _STEP_HELP_TEXT = {
         "main and trees. CLI tools usually should not stay running."
     ),
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
+    "commands": (
+        "Set only the entrypoints and test commands needed by the components currently configured in main or trees."
+    ),
     "ports": "Set only the ports needed by the components currently configured in main or trees.",
     "review": "Review the generated managed .envctl block before saving it to the repository.",
 }
@@ -148,11 +166,18 @@ def _directory_validation_message(base_dir: Path, label: str, raw: str) -> str |
     return None
 
 
+def _entrypoint_validation_message(label: str, raw: str) -> str | None:
+    value = str(raw).strip()
+    if not value:
+        return f"{label} must not be empty."
+    return None
+
+
 def _wizard_steps(*, include_service_startup: bool) -> list[str]:
     steps = ["welcome", "default_mode", "components"]
     if include_service_startup:
         steps.append("service_startup")
-    steps.extend(["directories", "ports", "review"])
+    steps.extend(["directories", "commands", "ports", "review"])
     return steps
 
 
@@ -180,7 +205,81 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         ),
         backend_dir_name=values.backend_dir_name,
         frontend_dir_name=values.frontend_dir_name,
+        backend_start_cmd=values.backend_start_cmd,
+        frontend_start_cmd=values.frontend_start_cmd,
+        backend_test_cmd=values.backend_test_cmd,
+        frontend_test_cmd=values.frontend_test_cmd,
+        action_test_cmd=values.action_test_cmd,
+        frontend_test_path=values.frontend_test_path,
     )
+
+
+def _hydrate_wizard_values(values: ManagedConfigValues, *, base_dir: Path) -> ManagedConfigValues:
+    hydrated = _clone_values(values)
+    baseline_defaults = managed_values_from_local_state(
+        LocalConfigState(
+            base_dir=base_dir,
+            config_file_path=base_dir / ".envctl",
+            config_file_exists=False,
+            config_source="defaults",
+            active_source_path=None,
+            legacy_source_path=None,
+            explicit_path=None,
+            parsed_values={},
+            file_text="",
+        )
+    )
+    backend_suggested = str(suggest_service_directory(service_name="backend", project_root=base_dir) or "").strip()
+    frontend_suggested = str(suggest_service_directory(service_name="frontend", project_root=base_dir) or "").strip()
+    if _should_hydrate_directory_value(
+        current_value=hydrated.backend_dir_name,
+        baseline_value=baseline_defaults.backend_dir_name,
+        base_dir=base_dir,
+        conventional_default="backend",
+        suggested_value=backend_suggested,
+    ):
+        hydrated.backend_dir_name = backend_suggested
+    if _should_hydrate_directory_value(
+        current_value=hydrated.frontend_dir_name,
+        baseline_value=baseline_defaults.frontend_dir_name,
+        base_dir=base_dir,
+        conventional_default="frontend",
+        suggested_value=frontend_suggested,
+    ):
+        hydrated.frontend_dir_name = frontend_suggested
+    if not str(hydrated.backend_start_cmd).strip():
+        hydrated.backend_start_cmd = str(
+            suggest_service_start_command(service_name="backend", project_root=base_dir) or ""
+        ).strip()
+    if not str(hydrated.frontend_start_cmd).strip():
+        hydrated.frontend_start_cmd = str(
+            suggest_service_start_command(service_name="frontend", project_root=base_dir) or ""
+        ).strip()
+    if not str(hydrated.backend_test_cmd).strip():
+        hydrated.backend_test_cmd = str(suggest_backend_test_command(base_dir) or "").strip()
+    if not str(hydrated.frontend_test_cmd).strip():
+        hydrated.frontend_test_cmd = str(suggest_frontend_test_command(base_dir) or "").strip()
+    if not str(hydrated.frontend_test_path).strip():
+        hydrated.frontend_test_path = str(suggest_frontend_test_path(base_dir) or "").strip()
+    return hydrated
+
+
+def _should_hydrate_directory_value(
+    *,
+    current_value: str,
+    baseline_value: str,
+    base_dir: Path,
+    conventional_default: str,
+    suggested_value: str,
+) -> bool:
+    current = str(current_value or "").strip()
+    if not current:
+        return True
+    if current == str(baseline_value or "").strip():
+        return True
+    if current != conventional_default or not suggested_value or suggested_value == current:
+        return False
+    return not (base_dir / current).exists()
 
 
 def _visible_directory_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
@@ -190,6 +289,23 @@ def _visible_directory_fields(values: ManagedConfigValues) -> tuple[tuple[str, s
         visible.append(("backend_dir_name", "Backend directory"))
     if any(profile.frontend_enable for profile in profiles):
         visible.append(("frontend_dir_name", "Frontend directory"))
+        visible.append(("frontend_test_path", "Frontend tests directory"))
+    return tuple(visible)
+
+
+def _visible_command_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
+    profiles = [values.main_profile, values.trees_profile]
+    visible: list[tuple[str, str]] = []
+    backend_runs = any(profile.startup_enable and profile.backend_enable for profile in profiles)
+    frontend_runs = any(profile.startup_enable and profile.frontend_enable for profile in profiles)
+    if any(profile.backend_enable for profile in profiles):
+        if backend_runs:
+            visible.append(("backend_start_cmd", "Backend entrypoint"))
+        visible.append(("backend_test_cmd", "Backend test command"))
+    if any(profile.frontend_enable for profile in profiles):
+        if frontend_runs:
+            visible.append(("frontend_start_cmd", "Frontend entrypoint"))
+        visible.append(("frontend_test_cmd", "Frontend test command"))
     return tuple(visible)
 
 
@@ -362,7 +478,7 @@ def run_config_wizard_textual(
             super().__init__()
             _ = default_wizard_type
             self.step_index = 0
-            self.values = _clone_values(values)
+            self.values = _hydrate_wizard_values(values, base_dir=local_state.base_dir)
             self._save_result: ConfigSaveResult | None = None
             self._steps: list[str] = []
             self._suppress_list_selected_once = False
@@ -387,7 +503,7 @@ def run_config_wizard_textual(
                     yield ListView(id="config-list")
                     yield Static("", id="config-empty")
                     with VerticalScroll(id="config-directories"):
-                        for field_name, label in _DIRECTORY_FIELDS:
+                        for field_name, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
                             yield Label(label, id=_field_label_id("directory", field_name))
                             yield Input(
                                 value=str(self._field_value(field_name)),
@@ -488,7 +604,7 @@ def run_config_wizard_textual(
             if field_name is None:
                 return
             self._refresh_directory_validation(field_name, raw=event.value)
-            if self._current_step() == "directories":
+            if self._current_step() in {"directories", "commands"}:
                 self._refresh_status()
 
         def _current_step(self) -> str:
@@ -540,6 +656,7 @@ def run_config_wizard_textual(
             self._refresh_body()
             self._refresh_status()
             self._refresh_actions()
+            self.refresh_bindings()
             self._focus_current_step()
 
         def _refresh_body(self) -> None:
@@ -552,8 +669,8 @@ def run_config_wizard_textual(
             review_scroll = self.query_one("#config-review-scroll", VerticalScroll)
             review = self.query_one("#config-review", Static)
             welcome.display = step == "welcome"
-            list_view.display = step not in {"welcome", "directories", "ports", "review"}
-            directories.display = step == "directories"
+            list_view.display = step not in {"welcome", "directories", "commands", "ports", "review"}
+            directories.display = step in {"directories", "commands"}
             ports.display = step == "ports"
             review_scroll.display = step == "review"
             empty.display = False
@@ -591,6 +708,15 @@ def run_config_wizard_textual(
                     )
                     empty.display = True
                 return
+            if step == "commands":
+                visible_fields = _visible_command_fields(self.values)
+                self._sync_directory_inputs(visible_fields)
+                if not visible_fields:
+                    empty.update(
+                        "No entrypoints or test commands need configuration for the components currently configured in main or trees."
+                    )
+                    empty.display = True
+                return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 self._sync_port_inputs(visible_fields)
@@ -606,7 +732,7 @@ def run_config_wizard_textual(
                         path=local_state.config_file_path,
                         values=self.values,
                         source_label=source_label,
-                        ignore_warning=".envctl and trees/ will be added to .gitignore on save when possible.",
+                        ignore_warning=".envctl*, and trees/ will be added to .gitignore on save when possible.",
                     )
                 )
 
@@ -692,7 +818,7 @@ def run_config_wizard_textual(
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
-            for field_name, _label in _DIRECTORY_FIELDS:
+            for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
                 label = self.query_one(f"#{_field_label_id('directory', field_name)}", Label)
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
@@ -727,16 +853,26 @@ def run_config_wizard_textual(
             status = self.query_one("#config-status", Static)
             if message is not None:
                 status.update(message)
+                self.refresh_bindings()
                 return
             step = self._current_step()
             if step in {"components", "service_startup", "review"}:
-                validation = validate_managed_values(self.values)
+                validation = validate_managed_values(
+                    self.values,
+                    require_entrypoints=step == "review",
+                )
                 if validation.valid:
                     if step == "components":
-                        status.update(
-                            "Configure components for Main + Trees together, or split a row when they should differ. "
-                            "Use Space to toggle rows, D to split/merge, and Enter only moves forward."
-                        )
+                        if self._component_split_available():
+                            status.update(
+                                "Configure components for Main + Trees together, or split a row when they should differ. "
+                                "Use Space to toggle rows, D to split/merge, and Enter only moves forward."
+                            )
+                        else:
+                            status.update(
+                                "Configure components for Main + Trees together. "
+                                "Use Space to toggle rows and Enter only moves forward."
+                            )
                     elif step == "service_startup":
                         status.update(
                             "Decide whether envctl should start this backend-only service automatically. "
@@ -746,17 +882,31 @@ def run_config_wizard_textual(
                         status.update("Configuration is valid.")
                 else:
                     status.update(validation.errors[0])
+                self.refresh_bindings()
                 return
             if step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
                 if visible_fields:
-                    directory_error = self._first_directory_error()
+                    directory_error = self._first_directory_error(visible_fields=visible_fields)
                     if directory_error is not None:
                         status.update(directory_error)
                     else:
                         status.update("Only directories for components configured in main or trees are shown.")
                 else:
                     status.update("No directories are needed for the components currently configured in main or trees.")
+                self.refresh_bindings()
+                return
+            if step == "commands":
+                visible_fields = _visible_command_fields(self.values)
+                if visible_fields:
+                    directory_error = self._first_directory_error(visible_fields=visible_fields)
+                    if directory_error is not None:
+                        status.update(directory_error)
+                    else:
+                        status.update("Only entrypoints and test commands for configured components are shown.")
+                else:
+                    status.update("No entrypoints or test commands are needed for the configured components.")
+                self.refresh_bindings()
                 return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
@@ -764,8 +914,10 @@ def run_config_wizard_textual(
                     status.update("Only canonical ports for configured components are shown.")
                 else:
                     status.update("No ports are needed for the components currently configured in main or trees.")
+                self.refresh_bindings()
                 return
-            status.update("Use Enter for Next/Save, Space to toggle, D to split rows, Escape to cancel.")
+            status.update("Use Enter for Next/Save, Space to toggle, Escape to cancel.")
+            self.refresh_bindings()
 
         def _focus_current_step(self) -> None:
             step = self._current_step()
@@ -774,8 +926,12 @@ def run_config_wizard_textual(
                 if step == "components":
                     list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
                 focus_selectable_list(self, list_view, list_view.index)
-            elif step == "directories":
-                visible_fields = _visible_directory_fields(self.values)
+            elif step in {"directories", "commands"}:
+                visible_fields = (
+                    _visible_directory_fields(self.values)
+                    if step == "directories"
+                    else _visible_command_fields(self.values)
+                )
                 if visible_fields:
                     self.query_one(f"#{_directory_input_id(visible_fields[0][0])}", Input).focus()
                 else:
@@ -796,6 +952,16 @@ def run_config_wizard_textual(
                 return self.values.backend_dir_name
             if field_name == "frontend_dir_name":
                 return self.values.frontend_dir_name
+            if field_name == "backend_start_cmd":
+                return self.values.backend_start_cmd
+            if field_name == "frontend_start_cmd":
+                return self.values.frontend_start_cmd
+            if field_name == "backend_test_cmd":
+                return self.values.backend_test_cmd
+            if field_name == "frontend_test_cmd":
+                return self.values.frontend_test_cmd
+            if field_name == "frontend_test_path":
+                return self.values.frontend_test_path
             if field_name == "backend_port_base":
                 return self.values.port_defaults.backend_port_base
             if field_name == "frontend_port_base":
@@ -875,6 +1041,14 @@ def run_config_wizard_textual(
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
             label = self._directory_label(field_name)
             value = str(self._field_value(field_name)) if raw is None else str(raw)
+            if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
+                return _entrypoint_validation_message(label, value)
+            if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
+                return None
+            if field_name == "frontend_test_path":
+                if not value.strip():
+                    return None
+                return _directory_validation_message(local_state.base_dir, label, value)
             return _directory_validation_message(local_state.base_dir, label, value)
 
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
@@ -892,8 +1066,9 @@ def run_config_wizard_textual(
             error.update(message)
             error.add_class("directory-error-visible")
 
-        def _first_directory_error(self) -> str | None:
-            for field_name, _label in _visible_directory_fields(self.values):
+        def _first_directory_error(self, *, visible_fields: tuple[tuple[str, str], ...] | None = None) -> str | None:
+            fields = visible_fields if visible_fields is not None else _visible_directory_fields(self.values)
+            for field_name, _label in fields:
                 message = self._directory_validation_error(field_name)
                 if message is not None:
                     return message
@@ -910,6 +1085,7 @@ def run_config_wizard_textual(
             if self._current_step() == "components":
                 list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=-1)
             self._sync_focus_driven_selection()
+            self._refresh_status()
 
         def action_cursor_down(self) -> None:
             if self._current_step() not in {"default_mode", "components", "service_startup"}:
@@ -925,6 +1101,7 @@ def run_config_wizard_textual(
             if self._current_step() == "components":
                 list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
             self._sync_focus_driven_selection()
+            self._refresh_status()
 
         def _sync_focus_driven_selection(self) -> None:
             if self._current_step() != "default_mode":
@@ -980,7 +1157,7 @@ def run_config_wizard_textual(
             focus_selectable_list(self, list_view, list_view.index)
 
         def _toggle_component_split(self) -> None:
-            if self._current_step() != "components":
+            if not self._component_split_available():
                 return
             list_view = self.query_one("#config-list", ListView)
             index = list_view.index or 0
@@ -1026,6 +1203,20 @@ def run_config_wizard_textual(
             apply_selectable_list_index(list_view, target_index)
             focus_selectable_list(self, list_view, list_view.index)
 
+        def _component_split_available(self) -> bool:
+            if self._current_step() != "components":
+                return False
+            list_view = self.query_one("#config-list", ListView)
+            if self.focused is not list_view:
+                return False
+            rows = self._component_rows()
+            if not rows:
+                return False
+            index = list_view.index or 0
+            if index < 0 or index >= len(rows):
+                return False
+            return rows[index].selectable
+
         def on_list_view_selected(self, event: ListView.Selected) -> None:
             if self._suppress_list_selected_once:
                 self._suppress_list_selected_once = False
@@ -1044,12 +1235,19 @@ def run_config_wizard_textual(
 
         def action_focus_next(self) -> None:
             self.screen.focus_next()
+            self._refresh_status()
 
         def action_focus_previous(self) -> None:
             self.screen.focus_previous()
+            self._refresh_status()
 
         def action_cancel(self) -> None:
             self.exit(None)
+
+        def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+            if action == "toggle_component_split":
+                return True if self._component_split_available() else False
+            return super().check_action(action, parameters)
 
         def action_go_back(self) -> None:
             self._go_back()
@@ -1083,12 +1281,16 @@ def run_config_wizard_textual(
 
         def _advance(self) -> None:
             step = self._current_step()
-            if step == "directories" and not self._apply_directory_inputs():
+            if step in {"directories", "commands"} and not self._apply_directory_inputs():
                 return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"components", "service_startup", "directories", "ports", "review"}:
-                validation = validate_managed_values(self.values)
+            if step in {"components", "service_startup", "directories", "commands", "ports", "review"}:
+                validation = validate_managed_values(
+                    self.values,
+                    require_directories=step in {"directories", "commands", "ports", "review"},
+                    require_entrypoints=step in {"commands", "ports", "review"},
+                )
                 if not validation.valid:
                     self._refresh_status(validation.errors[0])
                     return
@@ -1101,10 +1303,22 @@ def run_config_wizard_textual(
             self._refresh_all()
 
         def _apply_directory_inputs(self) -> bool:
-            for field_name, label in _visible_directory_fields(self.values):
+            visible_fields = (
+                _visible_directory_fields(self.values)
+                if self._current_step() == "directories"
+                else _visible_command_fields(self.values)
+            )
+            for field_name, label in visible_fields:
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 raw = directory_input.value.strip()
-                directory_error = _directory_validation_message(local_state.base_dir, label, raw)
+                if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
+                    directory_error = _entrypoint_validation_message(label, raw)
+                elif field_name in {"backend_test_cmd", "frontend_test_cmd"}:
+                    directory_error = None
+                elif field_name == "frontend_test_path":
+                    directory_error = _directory_validation_message(local_state.base_dir, label, raw) if raw else None
+                else:
+                    directory_error = _directory_validation_message(local_state.base_dir, label, raw)
                 self._refresh_directory_validation(field_name, raw=raw)
                 if directory_error is not None:
                     self._refresh_status(directory_error)

@@ -13,6 +13,8 @@ from envctl_engine.shared.node_tooling import detect_package_manager, load_packa
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
 
+_STATE_DIRNAME = ".envctl-state"
+
 
 class ProjectContextLike(Protocol):
     name: str
@@ -617,11 +619,11 @@ def _backend_dependency_fingerprint(*, backend_cwd: Path, manager: str) -> str:
 
 
 def _backend_bootstrap_state_path(backend_cwd: Path) -> Path:
-    return backend_cwd / ".run-sh" / "envctl-backend-bootstrap.json"
+    return backend_cwd / _STATE_DIRNAME / "envctl-backend-bootstrap.json"
 
 
 def _backend_runtime_prep_state_path(backend_cwd: Path) -> Path:
-    return backend_cwd / ".run-sh" / "envctl-backend-runtime-prep.json"
+    return backend_cwd / _STATE_DIRNAME / "envctl-backend-runtime-prep.json"
 
 
 def _read_backend_bootstrap_state(backend_cwd: Path) -> dict[str, object] | None:
@@ -630,7 +632,9 @@ def _read_backend_bootstrap_state(backend_cwd: Path) -> dict[str, object] | None
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if isinstance(payload, dict):
+        return payload
+    return None
 
 
 def _write_backend_bootstrap_state(*, backend_cwd: Path, state: dict[str, object]) -> None:
@@ -648,7 +652,9 @@ def _read_backend_runtime_prep_state(backend_cwd: Path) -> dict[str, object] | N
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if isinstance(payload, dict):
+        return payload
+    return None
 
 
 def _write_backend_runtime_prep_state(*, backend_cwd: Path, state: dict[str, object]) -> None:
@@ -693,7 +699,7 @@ def _backend_runtime_fingerprint(
 
 
 def _frontend_runtime_prep_state_path(frontend_cwd: Path) -> Path:
-    return frontend_cwd / ".run-sh" / "envctl-frontend-runtime-prep.json"
+    return frontend_cwd / _STATE_DIRNAME / "envctl-frontend-runtime-prep.json"
 
 
 def _frontend_runtime_prep_required(
@@ -758,7 +764,9 @@ def _read_frontend_runtime_prep_state(frontend_cwd: Path) -> dict[str, object] |
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if isinstance(payload, dict):
+        return payload
+    return None
 
 
 def _write_frontend_runtime_prep_state(*, frontend_cwd: Path, state: dict[str, object]) -> None:

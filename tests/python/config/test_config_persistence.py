@@ -41,6 +41,7 @@ class ConfigPersistenceTests(unittest.TestCase):
             trees_profile=StartupProfile(False, True, False, False, False, False, False),
             port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
             backend_dir_name=".",
+            backend_start_cmd="python src/main.py",
         )
         existing = "FOO=bar\n# comment\n\nBAR=baz\n"
 
@@ -80,6 +81,11 @@ class ConfigPersistenceTests(unittest.TestCase):
                 main_profile=StartupProfile(True, True, False, True, True, False, False),
                 trees_profile=StartupProfile(True, True, True, True, False, False, True),
                 port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
+                backend_start_cmd="python src/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
+                backend_test_cmd="python -m unittest discover -s tests -p test_*.py",
+                frontend_test_cmd="pnpm run test",
+                frontend_test_path="src",
             )
 
             result = save_local_config(local_state=local_state, values=values)
@@ -91,6 +97,11 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertIn("ENVCTL_DEFAULT_MODE=trees", written)
             self.assertNotIn("BACKEND_DIR=backend", written)
             self.assertNotIn("FRONTEND_DIR=frontend", written)
+            self.assertIn("ENVCTL_BACKEND_START_CMD=python src/main.py", written)
+            self.assertIn("ENVCTL_FRONTEND_START_CMD=npm run dev -- --port 0 --host", written)
+            self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -p test_*.py", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_CMD=pnpm run test", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_PATH=src", written)
             self.assertIn("BACKEND_PORT_BASE=8100", written)
             self.assertIn("FRONTEND_PORT_BASE=9100", written)
             self.assertIn("DB_PORT=5434", written)
@@ -142,6 +153,8 @@ class ConfigPersistenceTests(unittest.TestCase):
                 main_profile=StartupProfile(True, True, False, True, True, False, False),
                 trees_profile=StartupProfile(True, True, True, True, False, False, True),
                 port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
+                backend_start_cmd="python src/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
             )
 
             save_local_config(local_state=local_state, values=values)
@@ -182,6 +195,8 @@ class ConfigPersistenceTests(unittest.TestCase):
                 main_profile=StartupProfile(True, True, False, True, True, False, False),
                 trees_profile=StartupProfile(True, True, True, True, False, False, True),
                 port_defaults=PortDefaults(8100, 9100, 5434, 6381, 5680, 11),
+                backend_start_cmd="python src/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
             )
 
             save_local_config(local_state=local_state, values=values)
@@ -198,12 +213,15 @@ class ConfigPersistenceTests(unittest.TestCase):
             trees_profile=StartupProfile(False, True, False, False, False, False, False),
             port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
             backend_dir_name=".",
+            backend_start_cmd="python src/main.py",
+            backend_test_cmd="python -m unittest discover -s tests -p test_*.py",
         )
 
         rendered = render_managed_block(values)
 
         self.assertIn("ENVCTL_DEFAULT_MODE=trees", rendered)
         self.assertIn("BACKEND_DIR=.", rendered)
+        self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m unittest discover -s tests -p test_*.py", rendered)
         self.assertIn("MAIN_STARTUP_ENABLE=false", rendered)
         self.assertIn("TREES_STARTUP_ENABLE=false", rendered)
         self.assertIn("MAIN_FRONTEND_ENABLE=false", rendered)
@@ -211,6 +229,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("MAIN_POSTGRES_ENABLE=false", rendered)
         self.assertNotIn("TREES_POSTGRES_ENABLE=false", rendered)
         self.assertNotIn("FRONTEND_DIR=frontend", rendered)
+        self.assertNotIn("ENVCTL_FRONTEND_START_CMD=", rendered)
         self.assertNotIn("BACKEND_PORT_BASE=8000", rendered)
         self.assertNotIn("PORT_SPACING=20", rendered)
         self.assertNotIn("MAIN_BACKEND_ENABLE=true", rendered)
@@ -222,6 +241,46 @@ class ConfigPersistenceTests(unittest.TestCase):
             main_profile=StartupProfile(False, False, False, False, False, False, False),
             trees_profile=StartupProfile(True, True, True, True, True, False, True),
             port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            backend_start_cmd="python src/main.py",
+            frontend_start_cmd="npm run dev -- --port 0 --host",
+        )
+
+        from envctl_engine.config.persistence import validate_managed_values
+
+        validation = validate_managed_values(values)
+
+        self.assertTrue(validation.valid)
+
+    def test_validation_can_defer_entrypoint_requirements(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, False, False, False),
+            trees_profile=StartupProfile(False, False, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            backend_dir_name="",
+            frontend_dir_name="",
+            backend_start_cmd="",
+            frontend_start_cmd="",
+        )
+
+        from envctl_engine.config.persistence import validate_managed_values
+
+        deferred = validate_managed_values(values, require_directories=False, require_entrypoints=False)
+        strict = validate_managed_values(values)
+
+        self.assertTrue(deferred.valid)
+        self.assertIn("Backend directory must not be empty.", strict.errors)
+        self.assertIn("Frontend directory must not be empty.", strict.errors)
+        self.assertIn("Backend entrypoint must not be empty.", strict.errors)
+
+    def test_validation_does_not_require_entrypoint_for_non_running_backend(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(False, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, True, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            backend_start_cmd="",
+            frontend_start_cmd="",
         )
 
         from envctl_engine.config.persistence import validate_managed_values
@@ -245,11 +304,19 @@ class ConfigPersistenceTests(unittest.TestCase):
     def test_reference_envctl_example_matches_current_defaults(self) -> None:
         example_path = REPO_ROOT / "docs" / "reference" / ".envctl.example"
         example_values = _parse_envctl_text(example_path.read_text(encoding="utf-8"))
-        expected_managed = managed_values_from_mapping({})
+        expected_managed = managed_values_from_mapping(DEFAULTS)
         expected_mapping = managed_values_to_mapping(expected_managed)
 
         self.assertEqual(example_values["ENVCTL_PLANNING_DIR"], DEFAULTS["ENVCTL_PLANNING_DIR"])
         for key, value in expected_mapping.items():
+            if key in {
+                "ENVCTL_BACKEND_START_CMD",
+                "ENVCTL_FRONTEND_START_CMD",
+                "ENVCTL_BACKEND_TEST_CMD",
+                "ENVCTL_FRONTEND_TEST_CMD",
+                "ENVCTL_FRONTEND_TEST_PATH",
+            } and value == "":
+                continue
             self.assertEqual(example_values.get(key), value, msg=key)
         example_text = example_path.read_text(encoding="utf-8")
         self.assertIn(CONFIG_BACKEND_DEPENDENCY_ENV_START, example_text)
@@ -366,30 +433,33 @@ class ConfigPersistenceTests(unittest.TestCase):
             updated_second, warning_second = ensure_local_config_ignored(repo)
             exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
             gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
+            exclude_lines = exclude_text.splitlines()
+            gitignore_lines = gitignore_text.splitlines()
 
             self.assertTrue(updated_first)
             self.assertIsNone(warning_first)
             self.assertFalse(updated_second)
             self.assertIsNone(warning_second)
-            self.assertEqual(exclude_text.count(".envctl"), 1)
-            self.assertEqual(gitignore_text.count(".envctl"), 1)
-            self.assertEqual(gitignore_text.count("trees/"), 1)
+            self.assertEqual(exclude_lines.count(".envctl*"), 1)
+            self.assertEqual(gitignore_lines.count(".envctl*"), 1)
+            self.assertEqual(gitignore_lines.count("trees/"), 1)
 
     def test_ignore_local_config_does_not_duplicate_existing_gitignore_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
-            (repo / ".gitignore").write_text(".envctl\ntrees/\n", encoding="utf-8")
+            (repo / ".gitignore").write_text(".envctl*\ntrees/\n", encoding="utf-8")
 
             updated, warning = ensure_local_config_ignored(repo)
 
             gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
             exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+            exclude_lines = exclude_text.splitlines()
 
             self.assertTrue(updated)
             self.assertIsNone(warning)
-            self.assertEqual(gitignore_text, ".envctl\ntrees/\n")
-            self.assertEqual(exclude_text.count(".envctl"), 1)
+            self.assertEqual(gitignore_text, ".envctl*\ntrees/\n")
+            self.assertEqual(exclude_lines.count(".envctl*"), 1)
 
 
 if __name__ == "__main__":

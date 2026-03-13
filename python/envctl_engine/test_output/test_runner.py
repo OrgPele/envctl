@@ -305,6 +305,8 @@ class TestRunner:
         rendered = " ".join(command).lower()
         if "vitest" in rendered:
             return [*command, "--reporter=default", f"--reporter={reporter_path}"]
+        if "--" in command:
+            return [*command, "--reporter=default", f"--reporter={reporter_path}"]
         return [*command, "--", "--reporter=default", f"--reporter={reporter_path}"]
 
     @staticmethod

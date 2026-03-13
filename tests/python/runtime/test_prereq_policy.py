@@ -46,7 +46,7 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
-    def test_setup_worktrees_requires_docker_using_effective_trees_mode(self) -> None:
+    def test_setup_worktrees_does_not_require_docker_when_trees_requirements_are_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -76,8 +76,8 @@ class PrereqPolicyTests(unittest.TestCase):
             ):
                 ok, reason = cli.check_prereqs(route, config)
 
-            self.assertFalse(ok)
-            self.assertIn("docker", str(reason))
+            self.assertTrue(ok)
+            self.assertIsNone(reason)
 
     def test_start_fails_when_rich_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

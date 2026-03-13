@@ -28,7 +28,7 @@ It is designed to:
 - seed user-owned launch env sections into `.envctl`
 - leave already running services unchanged until a later start or restart
 
-On save, `envctl` also tries to add `.envctl` and `trees/` to the repo `.gitignore`.
+On save, `envctl` also tries to add `.envctl*` and `trees/` to the repo `.gitignore`.
 
 ## The Actual Steps
 

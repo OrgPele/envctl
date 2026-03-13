@@ -68,6 +68,14 @@ def run_textual_selector(
     if not _textual_importable():
         _emit(emit, "ui.fallback.non_interactive", reason="textual_missing", command="selector")
         return None
+    tty_fd: int | None = None
+    if not build_only:
+        try:
+            fd = int(sys.stdin.fileno())
+            if os.isatty(fd):
+                tty_fd = fd
+        except Exception:
+            tty_fd = None
     # Keep ESC parsing responsive by default; allow explicit override.
     # Large ESCDELAY values can make arrow navigation feel sluggish.
     esc_delay_default_raw = str(os.environ.get("ENVCTL_UI_SELECTOR_ESCDELAY", "")).strip()
@@ -152,83 +160,84 @@ def run_textual_selector(
             exclusive_token=exclusive_token,
         )
         return app  # type: ignore[return-value]
-    tty_fd: int | None = None
-    try:
-        fd = int(sys.stdin.fileno())
-        if os.isatty(fd):
-            tty_fd = fd
-    except Exception:
-        tty_fd = None
-    launch_mode = temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None else nullcontext(False)
-    with launch_mode:
-        with _guard_textual_nonblocking_read(
-            emit=emit,
-            selector_id=selector_id,
-            deep_debug=deep_debug,
-        ):
-            with _instrument_textual_parser_keys(
+    prelaunch_mode = (
+        temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None and force_textual_backend else nullcontext(False)
+    )
+    with prelaunch_mode:
+        launch_mode = (
+            nullcontext(False)
+            if tty_fd is not None and force_textual_backend
+            else temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None else nullcontext(False)
+        )
+        with launch_mode:
+            with _guard_textual_nonblocking_read(
                 emit=emit,
-                enabled=driver_trace_enabled,
                 selector_id=selector_id,
                 deep_debug=deep_debug,
-                esc_delay_env_ms=esc_delay_effective_ms,
-            ) as _driver_probe:
-                driver_probe = cast(Callable[[], dict[str, object]] | None, _driver_probe)
-                run_policy = textual_run_policy(screen="selector")
-                initial_navigation = _consume_initial_selector_navigation()
-                app = create_selector_app(
-                    prompt=prompt,
-                    options=options,
-                    multi=multi,
-                    initial_token_set=initial_token_set,
+            ):
+                with _instrument_textual_parser_keys(
                     emit=emit,
+                    enabled=driver_trace_enabled,
+                    selector_id=selector_id,
                     deep_debug=deep_debug,
-                    key_trace_enabled=key_trace_enabled,
-                    key_trace_verbose=key_trace_verbose,
-                    driver_trace_enabled=driver_trace_enabled,
-                    driver_probe=driver_probe,
-                    thread_stack_enabled=thread_stack_enabled,
-                    disable_focus_reporting=disable_focus_reporting,
-                    mouse_enabled=run_policy.mouse,
-                    selector_id=selector_id,
-                    initial_navigation=initial_navigation,
-                    exclusive_token=exclusive_token,
-                )
-                try:
-                    import textual.constants as textual_constants  # type: ignore
+                    esc_delay_env_ms=esc_delay_effective_ms,
+                ) as _driver_probe:
+                    driver_probe = cast(Callable[[], dict[str, object]] | None, _driver_probe)
+                    run_policy = textual_run_policy(screen="selector")
+                    initial_navigation = _consume_initial_selector_navigation()
+                    app = create_selector_app(
+                        prompt=prompt,
+                        options=options,
+                        multi=multi,
+                        initial_token_set=initial_token_set,
+                        emit=emit,
+                        deep_debug=deep_debug,
+                        key_trace_enabled=key_trace_enabled,
+                        key_trace_verbose=key_trace_verbose,
+                        driver_trace_enabled=driver_trace_enabled,
+                        driver_probe=driver_probe,
+                        thread_stack_enabled=thread_stack_enabled,
+                        disable_focus_reporting=disable_focus_reporting,
+                        mouse_enabled=run_policy.mouse,
+                        selector_id=selector_id,
+                        initial_navigation=initial_navigation,
+                        exclusive_token=exclusive_token,
+                    )
+                    try:
+                        import textual.constants as textual_constants  # type: ignore
 
-                    before_ms = int(float(textual_constants.ESCAPE_DELAY) * 1000.0)
-                    textual_constants.ESCAPE_DELAY = float(esc_delay_effective_ms) / 1000.0
+                        before_ms = int(float(textual_constants.ESCAPE_DELAY) * 1000.0)
+                        textual_constants.ESCAPE_DELAY = float(esc_delay_effective_ms) / 1000.0
+                        _emit_selector_debug(
+                            emit,
+                            enabled=deep_debug,
+                            event="ui.selector.key.driver.escape_delay",
+                            selector_id=selector_id,
+                            before_ms=before_ms,
+                            applied_ms=esc_delay_effective_ms,
+                            source=("env" if esc_delay_ms > 0 else "default"),
+                        )
+                    except Exception as exc:
+                        _emit_selector_debug(
+                            emit,
+                            enabled=deep_debug,
+                            event="ui.selector.key.driver.escape_delay",
+                            selector_id=selector_id,
+                            before_ms=None,
+                            applied_ms=esc_delay_effective_ms,
+                            source=("env" if esc_delay_ms > 0 else "default"),
+                            error=type(exc).__name__,
+                        )
                     _emit_selector_debug(
                         emit,
                         enabled=deep_debug,
-                        event="ui.selector.key.driver.escape_delay",
+                        event="ui.textual.run_policy",
                         selector_id=selector_id,
-                        before_ms=before_ms,
-                        applied_ms=esc_delay_effective_ms,
-                        source=("env" if esc_delay_ms > 0 else "default"),
+                        screen="selector",
+                        mouse_enabled=run_policy.mouse,
+                        reason=run_policy.reason,
+                        term_program=run_policy.term_program,
                     )
-                except Exception as exc:
-                    _emit_selector_debug(
-                        emit,
-                        enabled=deep_debug,
-                        event="ui.selector.key.driver.escape_delay",
-                        selector_id=selector_id,
-                        before_ms=None,
-                        applied_ms=esc_delay_effective_ms,
-                        source=("env" if esc_delay_ms > 0 else "default"),
-                        error=type(exc).__name__,
-                    )
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.textual.run_policy",
-                    selector_id=selector_id,
-                    screen="selector",
-                    mouse_enabled=run_policy.mouse,
-                    reason=run_policy.reason,
-                    term_program=run_policy.term_program,
-                )
                 result = app.run(mouse=run_policy.mouse)
     if result is None and not app.explicit_cancel:
         recovered = app.fallback_values()

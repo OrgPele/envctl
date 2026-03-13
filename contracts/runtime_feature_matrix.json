@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-03-12T08:53:37+00:00",
+  "generated_at": "2026-03-13T00:16:40+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -224,8 +224,6 @@
       "--logs-follow",
       "--logs-tail",
       "--main",
-      "--main-services-local",
-      "--main-services-remote",
       "--parallel-plan",
       "--parallel-trees",
       "--parallel-trees-max",

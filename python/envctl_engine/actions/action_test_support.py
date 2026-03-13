@@ -4,11 +4,21 @@ from dataclasses import dataclass
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
-from envctl_engine.actions.actions_test import TestCommandSpec, build_test_args, default_test_commands
+from envctl_engine.actions.actions_test import (
+    TestCommandSpec,
+    append_frontend_test_path,
+    build_test_args,
+    classify_test_command_source,
+    default_test_commands,
+    is_package_test_command,
+    is_pytest_command,
+    is_unittest_command,
+)
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.test_output.parser_pytest import PytestOutputParser
@@ -53,6 +63,20 @@ class FailedTestManifest:
 
 def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]) -> tuple[tuple[str, ...], int]:
     if source != "backend_pytest":
+        if source == "root_unittest":
+            kept: list[str] = []
+            invalid = 0
+            seen: set[str] = set()
+            for raw in failed_tests:
+                candidate = normalize_unittest_test_identifier(str(raw).strip())
+                if not candidate:
+                    invalid += 1
+                    continue
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                kept.append(candidate)
+            return tuple(kept), invalid
         normalized = tuple(str(value).strip() for value in failed_tests if str(value).strip())
         return normalized, 0
     kept: list[str] = []
@@ -70,6 +94,21 @@ def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]
         seen.add(candidate)
         kept.append(candidate)
     return tuple(kept), invalid
+
+
+_UNITTEST_TEST_ID_RE = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
+
+
+def normalize_unittest_test_identifier(raw: str) -> str | None:
+    candidate = str(raw).strip()
+    if not candidate:
+        return None
+    if re.fullmatch(_UNITTEST_TEST_ID_RE, candidate):
+        return candidate
+    display_match = re.fullmatch(rf"[^()]+\s+\(({_UNITTEST_TEST_ID_RE})\)", candidate)
+    if display_match:
+        return display_match.group(1)
+    return None
 
 
 def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) -> list[TestTargetContext]:
@@ -101,11 +140,14 @@ def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) ->
 
 def build_test_execution_specs(
     *,
-    raw_command: str | None,
+    shared_raw_command: str | None,
+    backend_raw_command: str | None,
+    frontend_raw_command: str | None,
     target_contexts: Sequence[TestTargetContext],
     repo_root: Path,
     include_backend: bool,
     include_frontend: bool,
+    frontend_test_path: str | None,
     run_all: bool,
     untested: bool,
     split_command: Callable[[str, Mapping[str, str]], list[str]],
@@ -114,29 +156,50 @@ def build_test_execution_specs(
 ) -> list[TestExecutionSpec]:
     source = "detected"
     execution_specs: list[TestExecutionSpec] = []
-    if raw_command is not None:
+    if shared_raw_command is not None:
         source = "configured"
         parsed_command: list[str] | None = None
         for target in target_contexts:
-            command = split_command(raw_command, replacements_for_target(target.target_obj))
+            command = split_command(shared_raw_command, replacements_for_target(target.target_obj))
+            cwd = target.project_root
+            if include_frontend and not include_backend and is_package_test_command(command):
+                cwd = _configured_test_command_cwd(target.project_root, include_frontend=True)
+                command = append_frontend_test_path(
+                    command,
+                    frontend_test_path,
+                    project_root=target.project_root,
+                    command_cwd=cwd,
+                )
             if parsed_command is None:
                 parsed_command = command
             if is_legacy_tree_test_script(command):
                 parsed_command = command
                 break
+            classified_source = classify_test_command_source(
+                command,
+                include_backend=include_backend,
+                include_frontend=include_frontend,
+            )
             execution_specs.append(
                 TestExecutionSpec(
                     index=0,
-                    spec=TestCommandSpec(command=command, cwd=target.project_root, source="configured"),
+                    spec=TestCommandSpec(command=command, cwd=cwd, source=classified_source),
                     args=[],
-                    resolved_source=source,
+                    resolved_source=classified_source,
                     project_name=target.project_name,
                     project_root=target.project_root,
                     target_obj=target.target_obj,
                 )
             )
         if parsed_command is None:
-            parsed_command = split_command(raw_command, replacements_for_target(None))
+            parsed_command = split_command(shared_raw_command, replacements_for_target(None))
+            if include_frontend and not include_backend and is_package_test_command(parsed_command):
+                parsed_command = append_frontend_test_path(
+                    parsed_command,
+                    frontend_test_path,
+                    project_root=repo_root,
+                    command_cwd=repo_root,
+                )
         if is_legacy_tree_test_script(parsed_command):
             project_names = [target.project_name for target in target_contexts]
             execution_specs = [
@@ -152,17 +215,33 @@ def build_test_execution_specs(
             ]
     else:
         for target in target_contexts:
-            target_specs = default_test_commands(
-                target.project_root,
-                include_backend=include_backend,
-                include_frontend=include_frontend,
-            )
-            if not target_specs and target.project_root != repo_root:
-                target_specs = default_test_commands(
-                    repo_root,
-                    include_backend=include_backend,
-                    include_frontend=include_frontend,
+            target_specs: list[TestCommandSpec] = []
+            if include_backend:
+                backend_spec = _configured_or_default_test_spec(
+                    raw_command=backend_raw_command,
+                    target=target,
+                    repo_root=repo_root,
+                    include_backend=True,
+                    include_frontend=False,
+                    frontend_test_path=None,
+                    split_command=split_command,
+                    replacements_for_target=replacements_for_target,
                 )
+                if backend_spec is not None:
+                    target_specs.append(backend_spec)
+            if include_frontend:
+                frontend_spec = _configured_or_default_test_spec(
+                    raw_command=frontend_raw_command,
+                    target=target,
+                    repo_root=repo_root,
+                    include_backend=False,
+                    include_frontend=True,
+                    frontend_test_path=frontend_test_path,
+                    split_command=split_command,
+                    replacements_for_target=replacements_for_target,
+                )
+                if frontend_spec is not None:
+                    target_specs.append(frontend_spec)
             for spec in target_specs:
                 execution_specs.append(
                     TestExecutionSpec(
@@ -189,17 +268,72 @@ def build_test_execution_specs(
     ]
 
 
+def _configured_or_default_test_spec(
+    *,
+    raw_command: str | None,
+    target: TestTargetContext,
+    repo_root: Path,
+    include_backend: bool,
+    include_frontend: bool,
+    frontend_test_path: str | None,
+    split_command: Callable[[str, Mapping[str, str]], list[str]],
+    replacements_for_target: Callable[[object | None], Mapping[str, str]],
+) -> TestCommandSpec | None:
+    if raw_command is not None:
+        command = split_command(raw_command, replacements_for_target(target.target_obj))
+        source = "configured_frontend" if include_frontend else "configured_backend"
+        if include_backend:
+            if is_pytest_command(command):
+                source = "backend_pytest"
+            elif is_unittest_command(command):
+                source = "root_unittest"
+        if include_frontend and is_package_test_command(command):
+            command = append_frontend_test_path(
+                command,
+                frontend_test_path,
+                project_root=target.project_root,
+                command_cwd=_configured_test_command_cwd(target.project_root, include_frontend=True),
+            )
+            source = "frontend_package_test"
+        cwd = _configured_test_command_cwd(target.project_root, include_frontend=include_frontend)
+        return TestCommandSpec(
+            command=command,
+            cwd=cwd,
+            source=source,
+        )
+    target_specs = default_test_commands(
+        target.project_root,
+        include_backend=include_backend,
+        include_frontend=include_frontend,
+        frontend_test_path=frontend_test_path,
+    )
+    if not target_specs and target.project_root != repo_root:
+        target_specs = default_test_commands(
+            repo_root,
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            frontend_test_path=frontend_test_path,
+        )
+    if not target_specs:
+        return None
+    return target_specs[0]
+
+
+def _configured_test_command_cwd(project_root: Path, *, include_frontend: bool) -> Path:
+    if include_frontend and (project_root / "frontend" / "package.json").is_file():
+        return project_root / "frontend"
+    return project_root
+
+
 def build_failed_test_execution_specs(
     *,
     target_contexts: Sequence[TestTargetContext],
     repo_root: Path,
     manifests_by_project: Mapping[str, FailedTestManifest],
-    raw_command: str | None,
+    shared_raw_command: str | None,
+    backend_raw_command: str | None,
+    frontend_raw_command: str | None,
 ) -> list[TestExecutionSpec]:
-    if raw_command is not None:
-        raise RuntimeError(
-            "Failed-only reruns are not supported for ENVCTL_ACTION_TEST_CMD. Run the full suite first or remove the custom test command."
-        )
     execution_specs: list[TestExecutionSpec] = []
     unsupported: list[str] = []
     for target in target_contexts:

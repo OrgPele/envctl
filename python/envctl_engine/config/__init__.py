@@ -5,7 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping
 
-from envctl_engine.config.profile_defaults import default_profile_settings
+from envctl_engine.actions.actions_test import (
+    suggest_action_test_command,
+    suggest_backend_test_command,
+    suggest_frontend_test_command,
+    suggest_frontend_test_path,
+)
+from envctl_engine.config.profile_defaults import default_profile_settings, managed_dependency_default_enabled
+from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
@@ -38,6 +45,12 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_DEFAULT_MODE": "main",
         "BACKEND_DIR": "backend",
         "FRONTEND_DIR": "frontend",
+        "ENVCTL_BACKEND_START_CMD": "",
+        "ENVCTL_FRONTEND_START_CMD": "",
+        "ENVCTL_BACKEND_TEST_CMD": "",
+        "ENVCTL_FRONTEND_TEST_CMD": "",
+        "ENVCTL_ACTION_TEST_CMD": "",
+        "ENVCTL_FRONTEND_TEST_PATH": "",
         "ENVCTL_PLANNING_DIR": "todo/plans",
         "TREES_DIR_NAME": "trees",
         "RUN_SH_RUNTIME_DIR": "/tmp/envctl-runtime",
@@ -101,6 +114,11 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_DEFAULT_MODE",
     "BACKEND_DIR",
     "FRONTEND_DIR",
+    "ENVCTL_BACKEND_START_CMD",
+    "ENVCTL_FRONTEND_START_CMD",
+    "ENVCTL_BACKEND_TEST_CMD",
+    "ENVCTL_FRONTEND_TEST_CMD",
+    "ENVCTL_FRONTEND_TEST_PATH",
     "BACKEND_PORT_BASE",
     "FRONTEND_PORT_BASE",
     *_MANAGED_DEPENDENCY_PORT_KEYS,
@@ -261,6 +279,12 @@ class EngineConfig:
     base_dir: Path
     backend_dir_name: str
     frontend_dir_name: str
+    backend_start_cmd: str
+    frontend_start_cmd: str
+    backend_test_cmd: str
+    frontend_test_cmd: str
+    action_test_cmd: str
+    frontend_test_path: str
     runtime_dir: Path
     runtime_scope_id: str
     runtime_scope_dir: Path
@@ -385,8 +409,19 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         port_spacing=parse_int(resolved.get("PORT_SPACING"), 20),
     )
 
-    main_profile = _startup_profile_from_resolved(resolved, explicit_values=explicit_values, mode="main")
-    trees_profile = _startup_profile_from_resolved(resolved, explicit_values=explicit_values, mode="trees")
+    use_managed_dependency_defaults = local_state.config_file_exists
+    main_profile = _startup_profile_from_resolved(
+        resolved,
+        explicit_values=explicit_values,
+        mode="main",
+        use_managed_dependency_defaults=use_managed_dependency_defaults,
+    )
+    trees_profile = _startup_profile_from_resolved(
+        resolved,
+        explicit_values=explicit_values,
+        mode="trees",
+        use_managed_dependency_defaults=use_managed_dependency_defaults,
+    )
     if "REDIS_ENABLE" in explicit_values and not parse_bool(explicit_values.get("REDIS_ENABLE"), True):
         main_profile.redis_enable = False
         trees_profile.redis_enable = False
@@ -399,13 +434,15 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     return EngineConfig(
         base_dir=base_dir,
-        backend_dir_name=str(resolved.get("BACKEND_DIR", DEFAULTS["BACKEND_DIR"]) or DEFAULTS["BACKEND_DIR"]).strip()
-        or DEFAULTS["BACKEND_DIR"],
-        frontend_dir_name=str(
-            resolved.get("FRONTEND_DIR", DEFAULTS["FRONTEND_DIR"]) or DEFAULTS["FRONTEND_DIR"]
-        ).strip()
-        or DEFAULTS["FRONTEND_DIR"],
+        backend_dir_name=_resolved_backend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
+        frontend_dir_name=_resolved_frontend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
         runtime_dir=runtime_dir,
+        backend_start_cmd=_resolved_backend_start_cmd(base_dir=base_dir, resolved=resolved),
+        frontend_start_cmd=_resolved_frontend_start_cmd(base_dir=base_dir, resolved=resolved),
+        backend_test_cmd=_resolved_backend_test_cmd(base_dir=base_dir, resolved=resolved),
+        frontend_test_cmd=_resolved_frontend_test_cmd(base_dir=base_dir, resolved=resolved),
+        action_test_cmd=_resolved_action_test_cmd(base_dir=base_dir, resolved=resolved),
+        frontend_test_path=_resolved_frontend_test_path(base_dir=base_dir, resolved=resolved),
         runtime_scope_id=runtime_scope_id,
         runtime_scope_dir=runtime_scope_dir,
         planning_dir=planning_dir,
@@ -539,11 +576,80 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
     )
 
 
+def _resolved_backend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_BACKEND_START_CMD", "") or "").strip()
+    if raw:
+        return raw
+    suggested = suggest_service_start_command(service_name="backend", project_root=base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_backend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+    if "BACKEND_DIR" in explicit_values:
+        return str(resolved.get("BACKEND_DIR") or "").strip()
+    suggested = suggest_service_directory(service_name="backend", project_root=base_dir)
+    return str(suggested or "backend").strip()
+
+
+def _resolved_frontend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_FRONTEND_START_CMD", "") or "").strip()
+    if raw:
+        return raw
+    suggested = suggest_service_start_command(service_name="frontend", project_root=base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+    if "FRONTEND_DIR" in explicit_values:
+        return str(resolved.get("FRONTEND_DIR") or "").strip()
+    suggested = suggest_service_directory(service_name="frontend", project_root=base_dir)
+    return str(suggested or "frontend").strip()
+
+
+def _resolved_action_test_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_ACTION_TEST_CMD", "") or "").strip()
+    if raw:
+        return raw
+    suggested = suggest_action_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_backend_test_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_BACKEND_TEST_CMD", "") or "").strip()
+    if raw:
+        return raw
+    shared = str(resolved.get("ENVCTL_ACTION_TEST_CMD", "") or "").strip()
+    if shared:
+        return shared
+    suggested = suggest_backend_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_test_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_FRONTEND_TEST_CMD", "") or "").strip()
+    if raw:
+        return raw
+    shared = str(resolved.get("ENVCTL_ACTION_TEST_CMD", "") or "").strip()
+    if shared:
+        return shared
+    suggested = suggest_frontend_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_test_path(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
+    raw = str(resolved.get("ENVCTL_FRONTEND_TEST_PATH", "") or "").strip()
+    if raw:
+        return raw
+    suggested = suggest_frontend_test_path(base_dir)
+    return str(suggested or "").strip()
+
+
 def _startup_profile_from_resolved(
     resolved: Mapping[str, str],
     *,
     explicit_values: Mapping[str, str],
     mode: Literal["main", "trees"],
+    use_managed_dependency_defaults: bool = False,
 ) -> StartupProfile:
     prefix = "MAIN" if mode == "main" else "TREES"
 
@@ -554,7 +660,10 @@ def _startup_profile_from_resolved(
 
     dependencies: dict[str, bool] = {}
     for definition in _dependency_definitions():
-        default = definition.enabled_by_default(mode)
+        if use_managed_dependency_defaults:
+            default = managed_dependency_default_enabled(definition.id, mode)
+        else:
+            default = definition.enabled_by_default(mode)
         value = default
         for key in definition.enable_keys_for_mode(mode):
             if key not in explicit_values:

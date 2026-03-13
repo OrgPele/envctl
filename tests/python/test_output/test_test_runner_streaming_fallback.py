@@ -341,6 +341,31 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             self.assertNotIn("ENVCTL_TEST_TOTAL", completed.stdout)
             self.assertNotIn("ENVCTL_TEST_PROGRESS", completed.stdout)
 
+    def test_run_tests_instruments_bun_vitest_script_with_existing_separator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            (project_root / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            process_runner = _RunStreamingVitestRunner()
+            runtime = _RuntimeStreamingStub(process_runner)
+            runner = TestRunner(runtime, verbose=False, render_output=False)
+
+            completed = runner.run_tests(
+                ["bun", "run", "test", "--", "src"],
+                cwd=project_root,
+            )
+
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(len(process_runner.calls), 1)
+            invoked = process_runner.calls[0]["cmd"]
+            reporter_path = str(PYTHON_ROOT / "envctl_engine" / "test_output" / "vitest_progress_reporter.mjs")
+            self.assertEqual(
+                invoked,
+                ("bun", "run", "test", "--", "src", "--reporter=default", f"--reporter={reporter_path}"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

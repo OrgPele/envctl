@@ -14,6 +14,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 actions_test_module = importlib.import_module("envctl_engine.actions.actions_test")
+action_test_support_module = importlib.import_module("envctl_engine.actions.action_test_support")
 action_command_orchestrator_module = importlib.import_module("envctl_engine.actions.action_command_orchestrator")
 command_router_module = importlib.import_module("envctl_engine.runtime.command_router")
 config_module = importlib.import_module("envctl_engine.config")
@@ -21,6 +22,7 @@ engine_runtime_module = importlib.import_module("envctl_engine.runtime.engine_ru
 
 default_test_command = actions_test_module.default_test_command
 default_test_commands = actions_test_module.default_test_commands
+_configured_or_default_test_spec = action_test_support_module._configured_or_default_test_spec
 ActionCommandOrchestrator = action_command_orchestrator_module.ActionCommandOrchestrator
 parse_route = command_router_module.parse_route
 load_config = config_module.load_config
@@ -1486,7 +1488,7 @@ class ActionsParityTests(unittest.TestCase):
                 ],
             )
 
-    def test_failed_only_rerun_refuses_stale_git_state(self) -> None:
+    def test_failed_only_rerun_allows_saved_manifest_from_different_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1547,12 +1549,23 @@ class ActionsParityTests(unittest.TestCase):
                 runtime_map_builder=engine_runtime_module.build_runtime_map,
             )
 
-            out = StringIO()
-            with redirect_stdout(out):
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    captured_commands.append(list(command))
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner),
+            ):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
-            self.assertEqual(code, 1)
-            self.assertIn("Saved failed-test data is stale for Main. Run the full suite first.", out.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
 
     def test_failed_only_rerun_reports_extraction_failure_without_telling_user_to_rerun_full_suite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1669,7 +1682,7 @@ class ActionsParityTests(unittest.TestCase):
                         },
                         "entries": [
                             {
-                                "suite": "Configured test command",
+                                "suite": "Test command",
                                 "source": "configured",
                                 "failed_tests": ["tests/test_thing.py::test_case"],
                                 "failed_files": [],
@@ -1697,7 +1710,282 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 1)
-            self.assertIn("Failed-only reruns are not supported for ENVCTL_ACTION_TEST_CMD", out.getvalue())
+            self.assertIn(
+                "Failed-only reruns are not supported for Main because the previous test run used a custom configured command.",
+                out.getvalue(),
+            )
+
+    def test_failed_only_rerun_allows_configured_backend_pytest_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend = repo / "backend"
+            (backend / "tests").mkdir(parents=True, exist_ok=True)
+            (backend / "requirements.txt").write_text("", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_BACKEND_TEST_CMD": f"{sys.executable} -m pytest backend/tests",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-backend-failed",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_103900" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:39:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": ["backend/tests/test_auth.py::test_signup_regression"],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    captured_commands.append(list(command))
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
+
+    def test_failed_only_rerun_allows_configured_shared_unittest_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -p test_*.py",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-shared-failed",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_103950" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-12T10:39:50+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Repository tests (unittest)",
+                                "source": "root_unittest",
+                                "failed_tests": [
+                                    "python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults"
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    captured_commands.append(list(command))
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0][1:],
+                [
+                    "-m",
+                    "unittest",
+                    "python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
+                ],
+            )
+
+    def test_failed_only_rerun_normalizes_unittest_display_labels_to_runnable_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "NO_COLOR": "1",
+                    "ENVCTL_ACTION_TEST_CMD": f"{sys.executable} -m unittest discover -s tests -p test_*.py",
+                },
+            )
+            state = RunState(
+                run_id="run-configured-shared-unittest-display-labels",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata={},
+            )
+            manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_034452" / "Main"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "failed_tests_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-13T03:44:52+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": "any-head",
+                            "status_hash": "any-hash",
+                            "status_lines": 99,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Repository tests (unittest)",
+                                "source": "root_unittest",
+                                "failed_tests": [
+                                    "test_reference_envctl_example_matches_current_defaults (python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults)"
+                                ],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state.metadata["project_test_summaries"] = {
+                "Main": {
+                    "manifest_path": str(manifest_path),
+                    "failed_tests": 1,
+                    "status": "failed",
+                }
+            }
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            captured_commands: list[list[str]] = []
+
+            class _PassingRunner:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    self.last_result = None
+
+                def run_tests(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    captured_commands.append(list(command))
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PassingRunner):
+                code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                captured_commands[0][1:],
+                [
+                    "-m",
+                    "unittest",
+                    "python.config.test_config_persistence.ConfigPersistenceTests.test_reference_envctl_example_matches_current_defaults",
+                ],
+            )
 
     def test_failed_only_summary_persistence_preserves_previous_manifest_after_extraction_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2191,6 +2479,50 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(commands[1].command, ["pnpm", "run", "test"])
             self.assertEqual(commands[1].cwd, repo / "frontend")
 
+    def test_default_test_commands_append_frontend_test_path_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with patch(
+                "envctl_engine.shared.node_tooling.shutil.which",
+                side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+            ):
+                commands = default_test_commands(repo, frontend_test_path="src")
+
+            self.assertEqual(len(commands), 1)
+            self.assertEqual(commands[0].command, ["pnpm", "run", "test", "--", "src"])
+            self.assertEqual(commands[0].cwd, repo / "frontend")
+
+    def test_default_test_commands_normalize_repo_relative_frontend_test_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with patch(
+                "envctl_engine.shared.node_tooling.shutil.which",
+                side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+            ):
+                commands = default_test_commands(repo, frontend_test_path="frontend/src")
+
+            self.assertEqual(len(commands), 1)
+            self.assertEqual(commands[0].command, ["pnpm", "run", "test", "--", "src"])
+            self.assertEqual(commands[0].cwd, repo / "frontend")
+
     def test_test_action_runs_backend_and_frontend_for_mixed_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2246,6 +2578,256 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(any(str(part).endswith("/backend/tests") for part in pytest_commands[0]))
             self.assertIn(repo.resolve(), cwd_set)
             self.assertIn((repo / "frontend").resolve(), cwd_set)
+
+    def test_test_action_appends_frontend_test_path_to_configured_frontend_test_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=trees",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=true",
+                        "TREES_BACKEND_ENABLE=false",
+                        "TREES_FRONTEND_ENABLE=true",
+                        "ENVCTL_FRONTEND_TEST_CMD=pnpm run test",
+                        "ENVCTL_FRONTEND_TEST_PATH=src",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frontend = repo / "frontend"
+            src_dir = frontend / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "backend=false", "frontend=true"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            with patch(
+                "envctl_engine.runtime.engine_runtime_commands.shutil.which",
+                side_effect=lambda name: f"/usr/bin/{name}",
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(fake_runner.run_calls)
+            self.assertEqual(fake_runner.run_calls[0][0][:5], ("pnpm", "run", "test", "--", "src"))
+            if len(fake_runner.run_calls[0][0]) > 5:
+                self.assertEqual(fake_runner.run_calls[0][0][5], "--reporter=default")
+                self.assertTrue(fake_runner.run_calls[0][0][6].startswith("--reporter="))
+
+    def test_test_action_normalizes_repo_relative_frontend_test_path_for_configured_frontend_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=true",
+                        "TREES_BACKEND_ENABLE=false",
+                        "TREES_FRONTEND_ENABLE=true",
+                        "ENVCTL_FRONTEND_TEST_CMD=pnpm run test",
+                        "ENVCTL_FRONTEND_TEST_PATH=frontend/src",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frontend = repo / "frontend"
+            (frontend / "src").mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(
+                ["test", "backend=false", "frontend=true"],
+                env={"ENVCTL_DEFAULT_MODE": "main"},
+            )
+            with patch(
+                "envctl_engine.runtime.engine_runtime_commands.shutil.which",
+                side_effect=lambda name: f"/usr/bin/{name}",
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(fake_runner.run_calls)
+            self.assertEqual(fake_runner.run_calls[0][0][:5], ("pnpm", "run", "test", "--", "src"))
+            if len(fake_runner.run_calls[0][0]) > 5:
+                self.assertEqual(fake_runner.run_calls[0][0][5], "--reporter=default")
+                self.assertTrue(fake_runner.run_calls[0][0][6].startswith("--reporter="))
+
+    def test_test_action_uses_separate_backend_and_frontend_test_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=trees",
+                        "MAIN_BACKEND_ENABLE=true",
+                        "MAIN_FRONTEND_ENABLE=true",
+                        "TREES_BACKEND_ENABLE=true",
+                        "TREES_FRONTEND_ENABLE=true",
+                        "ENVCTL_BACKEND_TEST_CMD=python -m pytest backend/tests",
+                        "ENVCTL_FRONTEND_TEST_CMD=pnpm run test",
+                        "ENVCTL_FRONTEND_TEST_PATH=src",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frontend = repo / "frontend"
+            (frontend / "src").mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            with patch(
+                "envctl_engine.runtime.engine_runtime_commands.shutil.which",
+                side_effect=lambda name: f"/usr/bin/{name}",
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            commands = {call[0] for call in fake_runner.run_calls}
+            backend_commands = [
+                command
+                for command in commands
+                if len(command) >= 4 and command[:3] == ("python", "-m", "pytest")
+            ]
+            self.assertEqual(len(backend_commands), 1, msg=commands)
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", backend_commands[0])
+            self.assertEqual(backend_commands[0][-1], "backend/tests")
+            self.assertIn(("pnpm", "run", "test", "--", "src"), commands)
+
+    def test_configured_backend_and_frontend_test_commands_keep_runner_suite_labels(self) -> None:
+        target = action_test_support_module.TestTargetContext(
+            project_name="Main",
+            project_root=Path("/tmp/repo"),
+            target_obj=None,
+        )
+
+        backend_spec = _configured_or_default_test_spec(
+            raw_command="python -m pytest backend/tests",
+            target=target,
+            repo_root=Path("/tmp/repo"),
+            include_backend=True,
+            include_frontend=False,
+            frontend_test_path=None,
+            split_command=lambda raw, _replacements: raw.split(),
+            replacements_for_target=lambda _target: {},
+        )
+        frontend_spec = _configured_or_default_test_spec(
+            raw_command="pnpm run test",
+            target=target,
+            repo_root=Path("/tmp/repo"),
+            include_backend=False,
+            include_frontend=True,
+            frontend_test_path="src",
+            split_command=lambda raw, _replacements: raw.split(),
+            replacements_for_target=lambda _target: {},
+        )
+
+        self.assertIsNotNone(backend_spec)
+        self.assertIsNotNone(frontend_spec)
+        self.assertEqual(backend_spec.source, "backend_pytest")
+        self.assertEqual(frontend_spec.source, "frontend_package_test")
+
+    def test_shared_configured_root_unittest_command_keeps_repository_suite_label(self) -> None:
+        target = action_test_support_module.TestTargetContext(
+            project_name="Main",
+            project_root=Path("/tmp/repo"),
+            target_obj=None,
+        )
+
+        specs = action_test_support_module.build_test_execution_specs(
+            repo_root=Path("/tmp/repo"),
+            target_contexts=[target],
+            shared_raw_command="python3.12 -m unittest discover -s tests -p test_*.py",
+            backend_raw_command=None,
+            frontend_raw_command=None,
+            include_backend=True,
+            include_frontend=False,
+            frontend_test_path=None,
+            run_all=False,
+            untested=False,
+            split_command=lambda raw, _replacements: raw.split(),
+            replacements_for_target=lambda _target: {},
+            is_legacy_tree_test_script=lambda _cmd: False,
+        )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.source, "root_unittest")
+        self.assertEqual(specs[0].resolved_source, "root_unittest")
+
+    def test_shared_configured_frontend_package_test_runs_from_frontend_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+
+            target = action_test_support_module.TestTargetContext(
+                project_name="Main",
+                project_root=repo,
+                target_obj=None,
+            )
+
+            specs = action_test_support_module.build_test_execution_specs(
+                repo_root=repo,
+                target_contexts=[target],
+                shared_raw_command="pnpm run test",
+                backend_raw_command=None,
+                frontend_raw_command=None,
+                include_backend=False,
+                include_frontend=True,
+                frontend_test_path="src",
+                run_all=False,
+                untested=False,
+                split_command=lambda raw, _replacements: raw.split(),
+                replacements_for_target=lambda _target: {},
+                is_legacy_tree_test_script=lambda _cmd: False,
+            )
+
+            self.assertEqual(len(specs), 1)
+            self.assertEqual(specs[0].spec.command, ["pnpm", "run", "test", "--", "src"])
+            self.assertEqual(specs[0].spec.cwd, frontend)
+            self.assertEqual(specs[0].spec.source, "frontend_package_test")
 
     def test_test_action_uses_parallel_executor_for_mixed_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

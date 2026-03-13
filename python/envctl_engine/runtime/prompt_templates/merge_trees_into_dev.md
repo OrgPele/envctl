@@ -24,8 +24,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - History cleanup allowed (no need to preserve original commit history).
 - You decide conflict resolutions; only ask if a conflict requires product intent.
 - Tests (default strategy):
-  - Prefer `./utils/test-all-trees.sh --brief` if present.
-  - Otherwise run backend + frontend tests using repo conventions (discover via README/Makefile/package.json/pyproject.toml).
+  - Run backend + frontend tests using repo conventions (discover via README/Makefile/package.json/pyproject.toml).
 
 ## Non-negotiables
 - Read both branches' `MAIN_TASK.md` files and relevant code to understand intent before merging.

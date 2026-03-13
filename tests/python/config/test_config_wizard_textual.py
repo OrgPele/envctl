@@ -9,6 +9,7 @@ from envctl_engine.config import PortDefaults, StartupProfile, discover_local_co
 from envctl_engine.config.persistence import ManagedConfigValues
 from envctl_engine.ui.textual.screens.config_wizard import (
     _directory_validation_message,
+    _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
     run_config_wizard_textual,
@@ -25,7 +26,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 self.skipTest("Textual is not available in this environment")
             self.assertEqual(  # noqa: SLF001
                 app._steps,
-                ["welcome", "default_mode", "components", "directories", "ports", "review"],
+                ["welcome", "default_mode", "components", "directories", "commands", "ports", "review"],
             )
 
     def test_build_only_flow_includes_service_startup_for_backend_only_projects(self) -> None:
@@ -43,7 +44,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 self.skipTest("Textual is not available in this environment")
             self.assertEqual(  # noqa: SLF001
                 app._steps,
-                ["welcome", "default_mode", "components", "service_startup", "directories", "ports", "review"],
+                ["welcome", "default_mode", "components", "service_startup", "directories", "commands", "ports", "review"],
             )
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:
@@ -56,7 +57,19 @@ class ConfigWizardTextualTests(unittest.TestCase):
 
         self.assertEqual(
             _visible_directory_fields(values),
-            (("backend_dir_name", "Backend directory"), ("frontend_dir_name", "Frontend directory")),
+            (
+                ("backend_dir_name", "Backend directory"),
+                ("frontend_dir_name", "Frontend directory"),
+                ("frontend_test_path", "Frontend tests directory"),
+            ),
+        )
+        self.assertEqual(
+            _visible_command_fields(values),
+            (
+                ("backend_start_cmd", "Backend entrypoint"),
+                ("backend_test_cmd", "Backend test command"),
+                ("frontend_test_cmd", "Frontend test command"),
+            ),
         )
         self.assertEqual(
             _visible_port_fields(values),
@@ -79,7 +92,29 @@ class ConfigWizardTextualTests(unittest.TestCase):
         )
 
         self.assertEqual(_visible_directory_fields(values), ())
+        self.assertEqual(_visible_command_fields(values), ())
         self.assertEqual(_visible_port_fields(values), ())
+
+    def test_directory_fields_hide_entrypoint_when_backend_is_not_long_running(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(False, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, True, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+        )
+
+        self.assertEqual(
+            _visible_directory_fields(values),
+            (
+                ("backend_dir_name", "Backend directory"),
+            ),
+        )
+        self.assertEqual(
+            _visible_command_fields(values),
+            (
+                ("backend_test_cmd", "Backend test command"),
+            ),
+        )
 
     def test_directory_validation_message_requires_existing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -90,7 +125,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 _directory_validation_message(repo, "Backend directory", "api"),
                 "Directory does not exist: api",
             )
-            self.assertEqual(
+        self.assertEqual(
                 _directory_validation_message(repo, "Backend directory", ""),
                 "Backend directory must not be empty.",
             )

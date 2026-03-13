@@ -929,11 +929,8 @@ class DashboardOrchestrator:
                 continue
             if not isinstance(entry, dict):
                 continue
-            manifest_path = str(entry.get("manifest_path", "") or "").strip()
             status = str(entry.get("status", "") or "").strip().lower()
-            failed_count = int(entry.get("failed_tests", 0) or 0)
-            manifest_entries = int(entry.get("failed_manifest_entries", 0) or 0)
-            if manifest_path and (failed_count > 0 or manifest_entries > 0 or status == "failed"):
+            if status == "failed":
                 return True
         return False
 

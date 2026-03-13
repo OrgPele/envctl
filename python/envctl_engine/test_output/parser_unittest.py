@@ -35,7 +35,7 @@ class UnittestOutputParser(TestOutputParser):
         failure_match = re.match(r"^(FAIL|ERROR):\s+(.+)$", status_line)
         if failure_match:
             kind = failure_match.group(1)
-            test_name = failure_match.group(2).strip()
+            test_name = self._normalize_test_name(failure_match.group(2).strip())
             if test_name not in self.result.failed_tests:
                 self.result.failed_tests.append(test_name)
             if test_name not in self.result.error_details:
@@ -84,7 +84,7 @@ class UnittestOutputParser(TestOutputParser):
             header_match = re.match(r"^(FAIL|ERROR):\s+(.+)$", stripped)
             if header_match:
                 flush()
-                current_test = header_match.group(2).strip()
+                current_test = self._normalize_test_name(header_match.group(2).strip())
                 continue
             if current_test is None:
                 continue
@@ -107,3 +107,16 @@ class UnittestOutputParser(TestOutputParser):
                 continue
             current_lines.append(line)
         flush()
+
+    @staticmethod
+    def _normalize_test_name(raw: str) -> str:
+        candidate = raw.strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+", candidate):
+            return candidate
+        display_match = re.fullmatch(
+            r"[^()]+\s+\(([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\)",
+            candidate,
+        )
+        if display_match:
+            return display_match.group(1)
+        return candidate

@@ -23,6 +23,28 @@ class CommandResolutionError(RuntimeError):
         super().__init__(f"{code}: {message}")
 
 
+def suggest_service_start_command(
+    *,
+    service_name: str,
+    project_root: Path,
+    command_exists: CommandExists | None = None,
+) -> str | None:
+    exists = command_exists or _default_command_exists
+    if service_name == "backend":
+        return _suggest_backend_start_command(project_root=project_root, command_exists=exists)
+    if service_name == "frontend":
+        return _suggest_frontend_start_command(project_root=project_root, command_exists=exists)
+    return None
+
+
+def suggest_service_directory(*, service_name: str, project_root: Path) -> str | None:
+    if service_name == "backend":
+        return _suggest_backend_directory(project_root=project_root)
+    if service_name == "frontend":
+        return _suggest_frontend_directory(project_root=project_root)
+    return None
+
+
 def resolve_requirement_start_command(
     *,
     service_name: str,
@@ -101,7 +123,7 @@ def _autodetect_service_command(
     return None
 
 
-def _autodetect_backend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
+def _suggest_backend_start_command(*, project_root: Path, command_exists: CommandExists) -> str | None:
     backend_dir = project_root / "backend"
     search_roots = [backend_dir, project_root] if backend_dir.is_dir() else [project_root]
 
@@ -113,29 +135,101 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
             )
             app_ref = _detect_uvicorn_app_ref(candidate_root)
             if python_bin is not None and app_ref is not None:
-                return [
-                    python_bin,
-                    "-m",
-                    "uvicorn",
-                    app_ref,
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(port),
-                ]
+                return _join_command(
+                    [
+                        _display_python_bin(python_bin=python_bin, service_root=candidate_root),
+                        "-m",
+                        "uvicorn",
+                        app_ref,
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "{port}",
+                    ]
+                )
 
     for candidate_root in search_roots:
-        package_json = candidate_root / "package.json"
-        if package_json.is_file():
-            command = _npm_like_dev_command(
-                package_json=package_json,
-                service_name="backend",
-                port=port,
-                command_exists=command_exists,
-            )
-            if command is not None:
-                return command
+        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        if python_bin is None:
+            continue
+        runnable = _detect_python_entrypoint(candidate_root)
+        if runnable is None:
+            continue
+        return _join_command(
+            [
+                _display_python_bin(python_bin=python_bin, service_root=candidate_root),
+                _display_relative_path(path=runnable, service_root=candidate_root),
+            ]
+        )
+
     return None
+
+
+def _suggest_frontend_start_command(*, project_root: Path, command_exists: CommandExists) -> str | None:
+    frontend_dir = project_root / "frontend"
+    search_roots = [frontend_dir, project_root] if frontend_dir.is_dir() else [project_root]
+    for candidate_root in search_roots:
+        package_json = candidate_root / "package.json"
+        if not package_json.is_file():
+            continue
+        command = _npm_like_dev_command(
+            package_json=package_json,
+            service_name="frontend",
+            port=0,
+            command_exists=command_exists,
+        )
+        if command is not None:
+            rendered = ["{port}" if part == "0" else part for part in command]
+            return _join_command(rendered)
+    return None
+
+
+def _suggest_backend_directory(*, project_root: Path) -> str | None:
+    candidates = ("backend", "src", "api", "server", "service", "app")
+    for name in candidates:
+        candidate_root = project_root / name
+        if candidate_root.is_dir() and _looks_like_backend_root(candidate_root):
+            return name
+    if _looks_like_backend_root(project_root):
+        return "."
+    for name in candidates:
+        if (project_root / name).is_dir():
+            return name
+    return None
+
+
+def _suggest_frontend_directory(*, project_root: Path) -> str | None:
+    candidates = ("frontend", "web", "ui", "client", "app")
+    for name in candidates:
+        candidate_root = project_root / name
+        if candidate_root.is_dir() and _looks_like_frontend_root(candidate_root):
+            return name
+    if _looks_like_frontend_root(project_root):
+        return "."
+    for name in candidates:
+        if (project_root / name).is_dir():
+            return name
+    return None
+
+
+def _autodetect_backend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
+    template = _suggest_backend_start_command(project_root=project_root, command_exists=command_exists)
+    if template is None:
+        backend_dir = project_root / "backend"
+        search_roots = [backend_dir, project_root] if backend_dir.is_dir() else [project_root]
+        for candidate_root in search_roots:
+            package_json = candidate_root / "package.json"
+            if package_json.is_file():
+                command = _npm_like_dev_command(
+                    package_json=package_json,
+                    service_name="backend",
+                    port=port,
+                    command_exists=command_exists,
+                )
+                if command is not None:
+                    return command
+        return None
+    return _split_and_validate(template, port=port, command_exists=command_exists)
 
 
 def _autodetect_frontend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
@@ -182,12 +276,12 @@ def _npm_like_dev_command(
     if manager == "bun":
         command = ["bun", "run", "dev"]
         if "vite" in lowered_dev and service_name == "frontend":
-            command.extend(["--", "--port", str(port), "--host"])
+            command.extend(["--", "--port", str(port), "--host", "127.0.0.1"])
         return command
     if manager in {"npm", "pnpm", "yarn"}:
         command = [manager, "run", "dev"]
         if "vite" in lowered_dev and service_name == "frontend":
-            command.extend(["--", "--port", str(port), "--host"])
+            command.extend(["--", "--port", str(port), "--host", "127.0.0.1"])
         return command
     return None
 
@@ -206,6 +300,68 @@ def _detect_uvicorn_app_ref(service_root: Path) -> str | None:
         if path.is_file():
             return ref
     return None
+
+
+def _detect_python_entrypoint(service_root: Path) -> Path | None:
+    for candidate in (
+        service_root / "main.py",
+        service_root / "app.py",
+        service_root / "run.py",
+        service_root / "server.py",
+        service_root / "src" / "main.py",
+        service_root / "src" / "app.py",
+        service_root / "src" / "run.py",
+        service_root / "src" / "server.py",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _looks_like_backend_root(service_root: Path) -> bool:
+    if (service_root / "pyproject.toml").is_file():
+        return True
+    if _detect_uvicorn_app_ref(service_root) is not None:
+        return True
+    if _detect_python_entrypoint(service_root) is not None:
+        return True
+    package_json = service_root / "package.json"
+    if package_json.is_file():
+        payload = load_package_json(package_json)
+        if isinstance(payload, dict):
+            scripts = payload.get("scripts")
+            if isinstance(scripts, dict) and isinstance(scripts.get("dev"), str) and scripts["dev"].strip():
+                return True
+    return False
+
+
+def _looks_like_frontend_root(service_root: Path) -> bool:
+    package_json = service_root / "package.json"
+    if not package_json.is_file():
+        return False
+    payload = load_package_json(package_json)
+    if not isinstance(payload, dict):
+        return False
+    scripts = payload.get("scripts")
+    return bool(isinstance(scripts, dict) and isinstance(scripts.get("dev"), str) and scripts["dev"].strip())
+
+
+def _display_python_bin(*, python_bin: str, service_root: Path) -> str:
+    candidate = Path(python_bin).expanduser()
+    if not candidate.is_absolute():
+        return "python"
+    return _display_relative_path(path=candidate, service_root=service_root)
+
+
+def _display_relative_path(*, path: Path, service_root: Path) -> str:
+    try:
+        return str(path.relative_to(service_root))
+    except ValueError:
+        return str(path)
+
+
+def _join_command(parts: list[str]) -> str:
+    return shlex.join(parts)
 
 
 def _override_value(key: str, *, env: Mapping[str, str], config_raw: Mapping[str, str]) -> str | None:

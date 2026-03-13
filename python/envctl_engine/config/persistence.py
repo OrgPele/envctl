@@ -18,6 +18,13 @@ from envctl_engine.config import (
 )
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
+from envctl_engine.actions.actions_test import (
+    suggest_action_test_command,
+    suggest_backend_test_command,
+    suggest_frontend_test_command,
+    suggest_frontend_test_path,
+)
+from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
 from envctl_engine.shared.parsing import parse_int
 
 
@@ -29,6 +36,12 @@ class ManagedConfigValues:
     port_defaults: PortDefaults
     backend_dir_name: str = "backend"
     frontend_dir_name: str = "frontend"
+    backend_start_cmd: str = ""
+    frontend_start_cmd: str = ""
+    backend_test_cmd: str = ""
+    frontend_test_cmd: str = ""
+    action_test_cmd: str = ""
+    frontend_test_path: str = ""
 
 
 @dataclass(slots=True)
@@ -56,10 +69,10 @@ _BOOLEAN_KEYS = {
 
 
 def managed_values_from_local_state(local_state: LocalConfigState) -> ManagedConfigValues:
-    return managed_values_from_mapping(local_state.parsed_values)
+    return managed_values_from_mapping(local_state.parsed_values, base_dir=local_state.base_dir)
 
 
-def managed_values_from_mapping(values: dict[str, str]) -> ManagedConfigValues:
+def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None = None) -> ManagedConfigValues:
     default_mode = str(values.get("ENVCTL_DEFAULT_MODE") or "main").strip().lower()
     if default_mode not in {"main", "trees"}:
         default_mode = "main"
@@ -97,8 +110,14 @@ def managed_values_from_mapping(values: dict[str, str]) -> ManagedConfigValues:
     )
     return ManagedConfigValues(
         default_mode=default_mode,
-        backend_dir_name=str(values.get("BACKEND_DIR") or "backend").strip() or "backend",
-        frontend_dir_name=str(values.get("FRONTEND_DIR") or "frontend").strip() or "frontend",
+        backend_dir_name=_resolved_backend_dir_name(values=values, base_dir=base_dir),
+        frontend_dir_name=_resolved_frontend_dir_name(values=values, base_dir=base_dir),
+        backend_start_cmd=_resolved_backend_start_cmd(values=values, base_dir=base_dir),
+        frontend_start_cmd=_resolved_frontend_start_cmd(values=values, base_dir=base_dir),
+        backend_test_cmd=_resolved_backend_test_cmd(values=values, base_dir=base_dir),
+        frontend_test_cmd=_resolved_frontend_test_cmd(values=values, base_dir=base_dir),
+        action_test_cmd=_resolved_action_test_cmd(values=values, base_dir=base_dir),
+        frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
         main_profile=main_profile,
         trees_profile=trees_profile,
         port_defaults=port_defaults,
@@ -110,6 +129,11 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "ENVCTL_DEFAULT_MODE": values.default_mode,
         "BACKEND_DIR": values.backend_dir_name,
         "FRONTEND_DIR": values.frontend_dir_name,
+        "ENVCTL_BACKEND_START_CMD": values.backend_start_cmd,
+        "ENVCTL_FRONTEND_START_CMD": values.frontend_start_cmd,
+        "ENVCTL_BACKEND_TEST_CMD": values.backend_test_cmd,
+        "ENVCTL_FRONTEND_TEST_CMD": values.frontend_test_cmd,
+        "ENVCTL_FRONTEND_TEST_PATH": values.frontend_test_path,
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
         "PORT_SPACING": str(values.port_defaults.port_spacing),
@@ -140,6 +164,12 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
         "directories": {
             "backend": values.backend_dir_name,
             "frontend": values.frontend_dir_name,
+            "backend_entrypoint": values.backend_start_cmd,
+            "frontend_entrypoint": values.frontend_start_cmd,
+            "backend_test_command": values.backend_test_cmd,
+            "frontend_test_command": values.frontend_test_cmd,
+            "test_command": values.action_test_cmd,
+            "frontend_test_path": values.frontend_test_path,
         },
         "ports": {
             "backend": values.port_defaults.backend_port_base,
@@ -199,6 +229,23 @@ def managed_values_from_payload(
             mapping["BACKEND_DIR"] = str(directories["backend"])
         if directories.get("frontend") is not None:
             mapping["FRONTEND_DIR"] = str(directories["frontend"])
+        if directories.get("entrypoint") is not None:
+            mapping["ENVCTL_BACKEND_START_CMD"] = str(directories["entrypoint"])
+        if directories.get("backend_entrypoint") is not None:
+            mapping["ENVCTL_BACKEND_START_CMD"] = str(directories["backend_entrypoint"])
+        if directories.get("frontend_entrypoint") is not None:
+            mapping["ENVCTL_FRONTEND_START_CMD"] = str(directories["frontend_entrypoint"])
+        if directories.get("backend_test_command") is not None:
+            mapping["ENVCTL_BACKEND_TEST_CMD"] = str(directories["backend_test_command"])
+        if directories.get("frontend_test_command") is not None:
+            mapping["ENVCTL_FRONTEND_TEST_CMD"] = str(directories["frontend_test_command"])
+        if directories.get("test_command") is not None:
+            value = str(directories["test_command"])
+            mapping["ENVCTL_BACKEND_TEST_CMD"] = value
+            mapping["ENVCTL_FRONTEND_TEST_CMD"] = value
+            mapping["ENVCTL_ACTION_TEST_CMD"] = value
+        if directories.get("frontend_test_path") is not None:
+            mapping["ENVCTL_FRONTEND_TEST_PATH"] = str(directories["frontend_test_path"])
 
     ports = payload.get("ports")
     if isinstance(ports, dict):
@@ -243,14 +290,23 @@ def managed_values_from_payload(
     return managed_values_from_mapping(mapping)
 
 
-def validate_managed_values(values: ManagedConfigValues) -> ValidationResult:
+def validate_managed_values(
+    values: ManagedConfigValues,
+    *,
+    require_directories: bool = True,
+    require_entrypoints: bool = True,
+) -> ValidationResult:
     errors: list[str] = []
     if values.default_mode not in {"main", "trees"}:
         errors.append("Default mode must be main or trees.")
-    if not str(values.backend_dir_name).strip():
+    if require_directories and _component_enabled_any(values, "backend") and not str(values.backend_dir_name).strip():
         errors.append("Backend directory must not be empty.")
-    if not str(values.frontend_dir_name).strip():
+    if require_directories and _component_enabled_any(values, "frontend") and not str(values.frontend_dir_name).strip():
         errors.append("Frontend directory must not be empty.")
+    if require_entrypoints and _component_runs_any(values, "backend") and not str(values.backend_start_cmd).strip():
+        errors.append("Backend entrypoint must not be empty.")
+    if require_entrypoints and _component_runs_any(values, "frontend") and not str(values.frontend_start_cmd).strip():
+        errors.append("Frontend entrypoint must not be empty.")
     _validate_profile(values.main_profile, mode="main", errors=errors)
     _validate_profile(values.trees_profile, mode="trees", errors=errors)
     ports = values.port_defaults
@@ -303,6 +359,16 @@ def _managed_block_sections(
         append_once(directory_keys, "BACKEND_DIR")
     if _component_enabled_any(values, "frontend") and rendered["FRONTEND_DIR"] != defaults["FRONTEND_DIR"]:
         append_once(directory_keys, "FRONTEND_DIR")
+    if _component_runs_any(values, "backend") and rendered["ENVCTL_BACKEND_START_CMD"] != defaults["ENVCTL_BACKEND_START_CMD"]:
+        append_once(directory_keys, "ENVCTL_BACKEND_START_CMD")
+    if _component_runs_any(values, "frontend") and rendered["ENVCTL_FRONTEND_START_CMD"] != defaults["ENVCTL_FRONTEND_START_CMD"]:
+        append_once(directory_keys, "ENVCTL_FRONTEND_START_CMD")
+    if _component_enabled_any(values, "backend") and rendered["ENVCTL_BACKEND_TEST_CMD"] != defaults["ENVCTL_BACKEND_TEST_CMD"]:
+        append_once(directory_keys, "ENVCTL_BACKEND_TEST_CMD")
+    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_CMD"] != defaults["ENVCTL_FRONTEND_TEST_CMD"]:
+        append_once(directory_keys, "ENVCTL_FRONTEND_TEST_CMD")
+    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_PATH"] != defaults["ENVCTL_FRONTEND_TEST_PATH"]:
+        append_once(directory_keys, "ENVCTL_FRONTEND_TEST_PATH")
     sections.append(directory_keys)
 
     port_keys: list[str] = []
@@ -359,6 +425,20 @@ def _component_enabled_any(values: ManagedConfigValues, component: str) -> bool:
     return False
 
 
+def _component_runs_any(values: ManagedConfigValues, component: str) -> bool:
+    if component == "backend":
+        return bool(
+            (values.main_profile.startup_enable and values.main_profile.backend_enable)
+            or (values.trees_profile.startup_enable and values.trees_profile.backend_enable)
+        )
+    if component == "frontend":
+        return bool(
+            (values.main_profile.startup_enable and values.main_profile.frontend_enable)
+            or (values.trees_profile.startup_enable and values.trees_profile.frontend_enable)
+        )
+    return False
+
+
 def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> bool:
     return bool(
         values.main_profile.dependency_enabled(dependency_id) or values.trees_profile.dependency_enabled(dependency_id)
@@ -384,7 +464,7 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
-    validation = validate_managed_values(values)
+    validation = validate_managed_values(values, require_directories=False, require_entrypoints=False)
     if not validation.valid:
         raise ValueError("Invalid config values: " + "; ".join(validation.errors))
     existing_text = ""
@@ -413,7 +493,7 @@ def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
     try:
         gitignore_updated = _ensure_ignore_patterns(
             Path(base_dir) / ".gitignore",
-            (CONFIG_PRIMARY_FILENAME, "trees/"),
+            (".envctl*", "trees/"),
         )
     except OSError as exc:
         warnings.append(f"Could not update .gitignore: {exc}")
@@ -421,7 +501,7 @@ def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
     exclude_path = Path(base_dir) / ".git" / "info" / "exclude"
     try:
         exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        exclude_updated = _ensure_ignore_patterns(exclude_path, (CONFIG_PRIMARY_FILENAME,))
+        exclude_updated = _ensure_ignore_patterns(exclude_path, (".envctl*",))
     except OSError as exc:
         warnings.append(f"Could not update .git/info/exclude: {exc}")
     warning_text = "; ".join(warnings) if warnings else None
@@ -494,6 +574,90 @@ def _parse_bool_value(raw: str | None, default: bool) -> bool:
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _resolved_backend_start_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_BACKEND_START_CMD") or "").strip()
+    if raw:
+        return raw
+    if base_dir is None:
+        return ""
+    suggested = suggest_service_start_command(service_name="backend", project_root=base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_backend_dir_name(*, values: dict[str, str], base_dir: Path | None) -> str:
+    if "BACKEND_DIR" in values:
+        return str(values.get("BACKEND_DIR") or "").strip()
+    if base_dir is None:
+        return "backend"
+    suggested = suggest_service_directory(service_name="backend", project_root=base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_start_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_FRONTEND_START_CMD") or "").strip()
+    if raw:
+        return raw
+    if base_dir is None:
+        return ""
+    suggested = suggest_service_start_command(service_name="frontend", project_root=base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_action_test_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_ACTION_TEST_CMD") or "").strip()
+    if raw:
+        return raw
+    if base_dir is None:
+        return ""
+    suggested = suggest_action_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_backend_test_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_BACKEND_TEST_CMD") or "").strip()
+    if raw:
+        return raw
+    shared = str(values.get("ENVCTL_ACTION_TEST_CMD") or "").strip()
+    if shared:
+        return shared
+    if base_dir is None:
+        return ""
+    suggested = suggest_backend_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_test_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_FRONTEND_TEST_CMD") or "").strip()
+    if raw:
+        return raw
+    shared = str(values.get("ENVCTL_ACTION_TEST_CMD") or "").strip()
+    if shared:
+        return shared
+    if base_dir is None:
+        return ""
+    suggested = suggest_frontend_test_command(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_test_path(*, values: dict[str, str], base_dir: Path | None) -> str:
+    raw = str(values.get("ENVCTL_FRONTEND_TEST_PATH") or "").strip()
+    if raw:
+        return raw
+    if base_dir is None:
+        return ""
+    suggested = suggest_frontend_test_path(base_dir)
+    return str(suggested or "").strip()
+
+
+def _resolved_frontend_dir_name(*, values: dict[str, str], base_dir: Path | None) -> str:
+    if "FRONTEND_DIR" in values:
+        return str(values.get("FRONTEND_DIR") or "").strip()
+    if base_dir is None:
+        return "frontend"
+    suggested = suggest_service_directory(service_name="frontend", project_root=base_dir)
+    return str(suggested or "").strip()
 
 
 def _atomic_write(path: Path, text: str) -> None:

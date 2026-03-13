@@ -1,7 +1,7 @@
 .venv*
 *__pycache__*
 .opencode/
-.envctl
+.envctl*
 trees/
 *.egg-info/
 build/
