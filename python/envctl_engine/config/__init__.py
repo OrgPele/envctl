@@ -77,6 +77,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
         "MAIN_STARTUP_ENABLE": _bool_text(bool(main_profile["startup_enable"])),
         "MAIN_BACKEND_ENABLE": _bool_text(bool(main_profile["backend_enable"])),
+        "MAIN_BACKEND_EXPECT_LISTENER": "true",
         "MAIN_FRONTEND_ENABLE": _bool_text(bool(main_profile["frontend_enable"])),
         "MAIN_POSTGRES_ENABLE": _bool_text(bool(main_dependencies["postgres"])),
         "MAIN_REDIS_ENABLE": _bool_text(bool(main_dependencies["redis"])),
@@ -84,6 +85,7 @@ def _build_defaults() -> dict[str, str]:
         "MAIN_N8N_ENABLE": _bool_text(bool(main_dependencies["n8n"])),
         "TREES_STARTUP_ENABLE": _bool_text(bool(trees_profile["startup_enable"])),
         "TREES_BACKEND_ENABLE": _bool_text(bool(trees_profile["backend_enable"])),
+        "TREES_BACKEND_EXPECT_LISTENER": "true",
         "TREES_FRONTEND_ENABLE": _bool_text(bool(trees_profile["frontend_enable"])),
         "TREES_POSTGRES_ENABLE": _bool_text(bool(trees_dependencies["postgres"])),
         "TREES_REDIS_ENABLE": _bool_text(bool(trees_dependencies["redis"])),
@@ -126,10 +128,12 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "PORT_SPACING",
     "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
+    "MAIN_BACKEND_EXPECT_LISTENER",
     "MAIN_FRONTEND_ENABLE",
     *_MANAGED_DEPENDENCY_ENABLE_KEYS,
     "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
+    "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
 )
 
@@ -311,6 +315,8 @@ class EngineConfig:
     requirements_strict: bool
     main_profile: StartupProfile
     trees_profile: StartupProfile
+    main_backend_expect_listener: bool
+    trees_backend_expect_listener: bool
     port_defaults: PortDefaults
     config_file_path: Path
     config_file_exists: bool
@@ -348,6 +354,12 @@ class EngineConfig:
             return False
         profile = self.profile_for_mode(mode)
         return profile.dependency_enabled(str(requirement_name).strip().lower())
+
+    def backend_expects_listener_for_mode(self, mode: str) -> bool:
+        normalized = str(mode).strip().lower()
+        if normalized == "trees":
+            return bool(self.trees_backend_expect_listener)
+        return bool(self.main_backend_expect_listener)
 
 
 @dataclass(slots=True, frozen=True)
@@ -432,6 +444,8 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     redis_enabled_any = main_profile.redis_enable or trees_profile.redis_enable
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
+    main_backend_expect_listener = parse_bool(resolved.get("MAIN_BACKEND_EXPECT_LISTENER"), True)
+    trees_backend_expect_listener = parse_bool(resolved.get("TREES_BACKEND_EXPECT_LISTENER"), True)
 
     return EngineConfig(
         base_dir=base_dir,
@@ -474,6 +488,8 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         requirements_strict=parse_bool(resolved.get("ENVCTL_REQUIREMENTS_STRICT"), True),
         main_profile=main_profile,
         trees_profile=trees_profile,
+        main_backend_expect_listener=main_backend_expect_listener,
+        trees_backend_expect_listener=trees_backend_expect_listener,
         port_defaults=port_defaults,
         config_file_path=local_state.config_file_path,
         config_file_exists=local_state.config_file_exists,

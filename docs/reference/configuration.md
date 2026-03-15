@@ -201,7 +201,9 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `MAIN_STARTUP_ENABLE` | `true` | Master switch for whether Main mode auto-starts anything at all. |
 | `TREES_STARTUP_ENABLE` | `true` | Master switch for whether Trees mode auto-starts anything at all. |
 | `MAIN_BACKEND_ENABLE` | `true` | Enable backend startup in Main mode when startup is enabled. |
+| `MAIN_BACKEND_EXPECT_LISTENER` | `true` | Expect the Main backend to open a listener/port. Set `false` for long-running scripts or workers that should start without blocking on port detection. |
 | `TREES_BACKEND_ENABLE` | `true` | Enable backend startup in Trees mode when startup is enabled. |
+| `TREES_BACKEND_EXPECT_LISTENER` | `true` | Expect the Trees backend to open a listener/port. Set `false` for long-running scripts or workers that should start without blocking on port detection. |
 | `MAIN_FRONTEND_ENABLE` | `true` | Enable frontend startup in Main mode when startup is enabled. |
 | `TREES_FRONTEND_ENABLE` | `true` | Enable frontend startup in Trees mode when startup is enabled. |
 | `BACKEND_DIR` | `backend` | Preferred backend directory name. |

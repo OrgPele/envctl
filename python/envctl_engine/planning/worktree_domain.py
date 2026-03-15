@@ -924,7 +924,8 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
     existing_iters = {int(path.name) for path in feature_root.iterdir() if path.is_dir() and path.name.isdigit()}
-    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(self._planning_root() / plan_file)})
+    plan_path = self._planning_root() / plan_file
+    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
 
     for _ in range(count):
         iteration = self._next_available_iteration(existing_iters)
@@ -944,6 +945,7 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
             )
             if error:
                 return error
+        _seed_main_task_from_plan(target=target, plan_path=plan_path)
         existing_iters.add(iteration)
     return None
 
@@ -978,6 +980,22 @@ def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
     )
     return parse_bool(raw, False)
+
+
+def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:
+    if not plan_path.is_file() or not target.is_dir():
+        return
+    try:
+        plan_text = plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not plan_text.strip():
+        return
+    main_task_path = target / "MAIN_TASK.md"
+    try:
+        main_task_path.write_text(plan_text if plan_text.endswith("\n") else f"{plan_text}\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def _delete_feature_worktrees(

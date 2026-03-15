@@ -235,6 +235,21 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("MAIN_BACKEND_ENABLE=true", rendered)
         self.assertNotIn("TREES_BACKEND_ENABLE=true", rendered)
 
+    def test_render_managed_block_includes_backend_listener_expectation_when_disabled(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, False, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            main_backend_expect_listener=False,
+            backend_start_cmd="python worker.py",
+        )
+
+        rendered = render_managed_block(values)
+
+        self.assertIn("MAIN_BACKEND_EXPECT_LISTENER=false", rendered)
+        self.assertNotIn("BACKEND_PORT_BASE=8000", rendered)
+
     def test_validation_allows_zero_components_when_startup_disabled(self) -> None:
         values = ManagedConfigValues(
             default_mode="main",

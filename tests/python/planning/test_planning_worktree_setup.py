@@ -69,6 +69,14 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual(names, ["implementations_task-1", "implementations_task-2"])
             self.assertTrue((repo / "trees" / "implementations_task" / "1").is_dir())
             self.assertTrue((repo / "trees" / "implementations_task" / "2").is_dir())
+            self.assertEqual(
+                (repo / "trees" / "implementations_task" / "1" / "MAIN_TASK.md").read_text(encoding="utf-8"),
+                "# task\n",
+            )
+            self.assertEqual(
+                (repo / "trees" / "implementations_task" / "2" / "MAIN_TASK.md").read_text(encoding="utf-8"),
+                "# task\n",
+            )
 
     def test_plan_selection_create_missing_worktrees_fails_without_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,7 +177,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             plan_file.write_text("# task\n", encoding="utf-8")
             (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
 
-            engine = self._runtime(repo, runtime)
+            engine = self._runtime(repo, runtime, env={"ENVCTL_UI_SPINNER_MODE": "off"})
             raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
             out = StringIO()
             with redirect_stdout(out):
