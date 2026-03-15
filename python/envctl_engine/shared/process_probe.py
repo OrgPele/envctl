@@ -193,6 +193,10 @@ class ProcessProbe:
                 return "running"
             return "stale"
 
+        if not bool(getattr(service, "listener_expected", True)):
+            clear_listener_pids(service)
+            return "running"
+
         if not listener_truth_enforced:
             clear_listener_pids(service)
             return "running"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -189,6 +190,8 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             self.assertEqual(runner.last_result.passed, 3)
 
     def test_run_tests_reports_live_pytest_progress_with_real_subprocess(self) -> None:
+        if importlib.util.find_spec("pytest") is None:
+            self.skipTest("pytest is not installed in this interpreter")
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
             tests_dir = project_root / "tests"
@@ -211,7 +214,7 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             progress_updates: list[tuple[int, int]] = []
 
             completed = runner.run_tests(
-                [str(REPO_ROOT / ".venv" / "bin" / "python"), "-m", "pytest", "tests"],
+                [sys.executable, "-m", "pytest", "tests"],
                 cwd=project_root,
                 progress_callback=lambda current, total: progress_updates.append((current, total)),
             )

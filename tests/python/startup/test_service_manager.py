@@ -157,6 +157,24 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertEqual(service.actual_port, 8001)
         self.assertEqual(retries, [("backend", 8000, 8001, 1, "bind: address already in use")])
 
+    def test_non_listener_service_can_start_without_persisted_ports(self) -> None:
+        manager = ServiceManager()
+
+        service = manager.start_service_with_retry(
+            project="Tree Alpha",
+            service_type="backend",
+            cwd="/tmp/tree-alpha/backend",
+            requested_port=8000,
+            start=lambda _port: (True, None, 25001),
+            reserve_next=lambda port: port,
+            detect_actual=lambda _pid, _requested: None,
+            listener_expected=False,
+        )
+
+        self.assertFalse(service.listener_expected)
+        self.assertIsNone(service.requested_port)
+        self.assertIsNone(service.actual_port)
+
 
 if __name__ == "__main__":
     unittest.main()

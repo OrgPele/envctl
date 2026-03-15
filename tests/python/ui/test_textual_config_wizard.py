@@ -192,6 +192,50 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
             labels = [label.render().plain for label in app.query("#config-list Label")]
             self.assertIn("● Main - start this service with envctl", labels)
             self.assertIn("● Trees - start this service with envctl", labels)
+            self.assertIn("● Main - wait for a listener/port before continuing", labels)
+            self.assertIn("● Trees - wait for a listener/port before continuing", labels)
+            app.exit(None)
+
+    async def test_backend_only_non_running_service_skips_ports_step(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        initial_values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(False, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, True, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            backend_test_cmd="pytest",
+        )
+        app = run_config_wizard_textual(
+            local_state=self._local_state(),
+            initial_values=initial_values,
+            build_only=True,
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "components")  # noqa: SLF001
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "service_startup")  # noqa: SLF001
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
+            app.query_one("#btn-next").focus()
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "commands")  # noqa: SLF001
+            app.query_one("#btn-next").focus()
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(app._current_step(), "review")  # noqa: SLF001
+            self.assertNotIn("ports", app._steps)  # noqa: SLF001
             app.exit(None)
 
     async def test_components_split_focused_row_into_main_and_trees(self) -> None:

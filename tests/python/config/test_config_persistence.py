@@ -235,6 +235,21 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("MAIN_BACKEND_ENABLE=true", rendered)
         self.assertNotIn("TREES_BACKEND_ENABLE=true", rendered)
 
+    def test_render_managed_block_includes_backend_listener_expectation_when_disabled(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, False, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            main_backend_expect_listener=False,
+            backend_start_cmd="python worker.py",
+        )
+
+        rendered = render_managed_block(values)
+
+        self.assertIn("MAIN_BACKEND_EXPECT_LISTENER=false", rendered)
+        self.assertNotIn("BACKEND_PORT_BASE=8000", rendered)
+
     def test_validation_allows_zero_components_when_startup_disabled(self) -> None:
         values = ManagedConfigValues(
             default_mode="main",
@@ -458,12 +473,13 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
             self.assertEqual(gitignore_lines.count(".envctl*"), 1)
             self.assertEqual(gitignore_lines.count("trees/"), 1)
+            self.assertEqual(gitignore_lines.count("MAIN_TASK.md"), 1)
 
     def test_ignore_local_config_does_not_duplicate_existing_gitignore_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
-            (repo / ".gitignore").write_text(".envctl*\ntrees/\n", encoding="utf-8")
+            (repo / ".gitignore").write_text(".envctl*\ntrees/\nMAIN_TASK.md\n", encoding="utf-8")
 
             updated, warning = ensure_local_config_ignored(repo)
 
@@ -473,7 +489,7 @@ class ConfigPersistenceTests(unittest.TestCase):
 
             self.assertTrue(updated)
             self.assertIsNone(warning)
-            self.assertEqual(gitignore_text, ".envctl*\ntrees/\n")
+            self.assertEqual(gitignore_text, ".envctl*\ntrees/\nMAIN_TASK.md\n")
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
 
 

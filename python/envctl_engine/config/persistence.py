@@ -35,6 +35,8 @@ class ManagedConfigValues:
     main_profile: StartupProfile
     trees_profile: StartupProfile
     port_defaults: PortDefaults
+    main_backend_expect_listener: bool = True
+    trees_backend_expect_listener: bool = True
     backend_dir_name: str = "backend"
     frontend_dir_name: str = "frontend"
     backend_start_cmd: str = ""
@@ -61,9 +63,11 @@ class ValidationResult:
 _BOOLEAN_KEYS = {
     "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
+    "MAIN_BACKEND_EXPECT_LISTENER",
     "MAIN_FRONTEND_ENABLE",
     "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
+    "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
     *managed_enable_keys(),
 }
@@ -111,6 +115,8 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
     )
     return ManagedConfigValues(
         default_mode=default_mode,
+        main_backend_expect_listener=_parse_bool_value(values.get("MAIN_BACKEND_EXPECT_LISTENER"), True),
+        trees_backend_expect_listener=_parse_bool_value(values.get("TREES_BACKEND_EXPECT_LISTENER"), True),
         backend_dir_name=_resolved_backend_dir_name(values=values, base_dir=base_dir),
         frontend_dir_name=_resolved_frontend_dir_name(values=values, base_dir=base_dir),
         backend_start_cmd=_resolved_backend_start_cmd(values=values, base_dir=base_dir),
@@ -140,9 +146,11 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "PORT_SPACING": str(values.port_defaults.port_spacing),
         "MAIN_STARTUP_ENABLE": _bool_text(values.main_profile.startup_enable),
         "MAIN_BACKEND_ENABLE": _bool_text(values.main_profile.backend_enable),
+        "MAIN_BACKEND_EXPECT_LISTENER": _bool_text(values.main_backend_expect_listener),
         "MAIN_FRONTEND_ENABLE": _bool_text(values.main_profile.frontend_enable),
         "TREES_STARTUP_ENABLE": _bool_text(values.trees_profile.startup_enable),
         "TREES_BACKEND_ENABLE": _bool_text(values.trees_profile.backend_enable),
+        "TREES_BACKEND_EXPECT_LISTENER": _bool_text(values.trees_backend_expect_listener),
         "TREES_FRONTEND_ENABLE": _bool_text(values.trees_profile.frontend_enable),
     }
     for definition in dependency_definitions():
@@ -188,6 +196,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
             "main": {
                 "startup_enabled": values.main_profile.startup_enable,
                 "backend": values.main_profile.backend_enable,
+                "backend_expect_listener": values.main_backend_expect_listener,
                 "frontend": values.main_profile.frontend_enable,
                 "dependencies": {
                     definition.id: values.main_profile.dependency_enabled(definition.id)
@@ -197,6 +206,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
             "trees": {
                 "startup_enabled": values.trees_profile.startup_enable,
                 "backend": values.trees_profile.backend_enable,
+                "backend_expect_listener": values.trees_backend_expect_listener,
                 "frontend": values.trees_profile.frontend_enable,
                 "dependencies": {
                     definition.id: values.trees_profile.dependency_enabled(definition.id)
@@ -277,6 +287,10 @@ def managed_values_from_payload(
                 mapping[f"{mode.upper()}_STARTUP_ENABLE"] = _bool_text(bool(profile["startup_enabled"]))
             if profile.get("backend") is not None:
                 mapping[f"{mode.upper()}_BACKEND_ENABLE"] = _bool_text(bool(profile["backend"]))
+            if profile.get("backend_expect_listener") is not None:
+                mapping[f"{mode.upper()}_BACKEND_EXPECT_LISTENER"] = _bool_text(
+                    bool(profile["backend_expect_listener"])
+                )
             if profile.get("frontend") is not None:
                 mapping[f"{mode.upper()}_FRONTEND_ENABLE"] = _bool_text(bool(profile["frontend"]))
             dependencies = profile.get("dependencies")
@@ -373,12 +387,12 @@ def _managed_block_sections(
     sections.append(directory_keys)
 
     port_keys: list[str] = []
-    if _component_enabled_any(values, "backend") and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
+    if _backend_uses_port_any(values) and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
         append_once(port_keys, "BACKEND_PORT_BASE")
-    if _component_enabled_any(values, "frontend") and rendered["FRONTEND_PORT_BASE"] != defaults["FRONTEND_PORT_BASE"]:
+    if _frontend_uses_port_any(values) and rendered["FRONTEND_PORT_BASE"] != defaults["FRONTEND_PORT_BASE"]:
         append_once(port_keys, "FRONTEND_PORT_BASE")
     for definition in dependency_definitions():
-        if not _dependency_enabled_any(values, definition.id):
+        if not _dependency_runs_any(values, definition.id):
             continue
         for resource in definition.resources:
             key = resource.config_port_keys[0]
@@ -407,6 +421,7 @@ def _profile_keys_for_mode(
     for key in (
         f"{prefix}_STARTUP_ENABLE",
         f"{prefix}_BACKEND_ENABLE",
+        f"{prefix}_BACKEND_EXPECT_LISTENER",
         f"{prefix}_FRONTEND_ENABLE",
     ):
         if rendered[key] != defaults[key]:
@@ -446,6 +461,28 @@ def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> 
     )
 
 
+def _backend_uses_port_any(values: ManagedConfigValues) -> bool:
+    return bool(
+        (values.main_profile.startup_enable and values.main_profile.backend_enable and values.main_backend_expect_listener)
+        or (
+            values.trees_profile.startup_enable
+            and values.trees_profile.backend_enable
+            and values.trees_backend_expect_listener
+        )
+    )
+
+
+def _frontend_uses_port_any(values: ManagedConfigValues) -> bool:
+    return _component_runs_any(values, "frontend")
+
+
+def _dependency_runs_any(values: ManagedConfigValues, dependency_id: str) -> bool:
+    return bool(
+        (values.main_profile.startup_enable and values.main_profile.dependency_enabled(dependency_id))
+        or (values.trees_profile.startup_enable and values.trees_profile.dependency_enabled(dependency_id))
+    )
+
+
 def merge_managed_block(existing_text: str, block_text: str) -> str:
     text = existing_text or ""
     start = text.find(CONFIG_MANAGED_BLOCK_START)
@@ -469,6 +506,8 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
         default_mode=values.default_mode,
         main_profile=values.main_profile,
         trees_profile=values.trees_profile,
+        main_backend_expect_listener=values.main_backend_expect_listener,
+        trees_backend_expect_listener=values.trees_backend_expect_listener,
         port_defaults=values.port_defaults,
         backend_dir_name=values.backend_dir_name,
         frontend_dir_name=values.frontend_dir_name,
@@ -515,7 +554,7 @@ def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
     try:
         gitignore_updated = _ensure_ignore_patterns(
             Path(base_dir) / ".gitignore",
-            (".envctl*", "trees/"),
+            (".envctl*", "trees/", "MAIN_TASK.md"),
         )
     except OSError as exc:
         warnings.append(f"Could not update .gitignore: {exc}")

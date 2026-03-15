@@ -99,9 +99,14 @@ This is where you decide which services and dependencies `envctl` should manage.
 
 This step appears only for backend-only projects.
 
-It asks whether `envctl` should keep that backend running automatically in `main` and `trees`.
+It asks:
+
+- whether `envctl` should keep that backend running automatically in `main` and `trees`
+- whether `envctl` should wait for a listener/port before continuing in each mode
 
 This exists because backend-only repos are not always long-running apps. Some are CLI or one-shot tooling repos and should not be auto-started.
+
+For long-running scripts or workers that do not expose an API port, keep startup enabled but disable listener waiting. That lets `envctl` launch the process and continue straight to the dashboard/menu instead of waiting for port detection that will never succeed.
 
 If your project has both backend and frontend, this screen is skipped.
 
@@ -119,6 +124,8 @@ If a component is not configured, its directory field is not shown.
 ## Step 6: Ports
 
 This screen only shows the canonical ports needed for the components currently configured in `main` or `trees`.
+
+Ports are shown only when the selected startup configuration actually uses them. If a mode does not auto-start a service, or a backend is configured as a long-running non-listener task, that mode does not contribute port fields here.
 
 Possible fields:
 

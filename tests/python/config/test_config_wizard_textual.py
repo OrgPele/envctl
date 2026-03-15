@@ -75,10 +75,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
             _visible_port_fields(values),
             (
                 ("backend_port_base", "Backend base port"),
-                ("frontend_port_base", "Frontend base port"),
                 ("db_port_base", "Database base port"),
-                ("redis_port_base", "Redis base port"),
-                ("n8n_port_base", "n8n base port"),
                 ("port_spacing", "Port spacing"),
             ),
         )
@@ -93,6 +90,18 @@ class ConfigWizardTextualTests(unittest.TestCase):
 
         self.assertEqual(_visible_directory_fields(values), ())
         self.assertEqual(_visible_command_fields(values), ())
+        self.assertEqual(_visible_port_fields(values), ())
+
+    def test_port_fields_hide_backend_when_backend_runs_without_listener(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, True, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            main_backend_expect_listener=False,
+            trees_backend_expect_listener=False,
+        )
+
         self.assertEqual(_visible_port_fields(values), ())
 
     def test_directory_fields_hide_entrypoint_when_backend_is_not_long_running(self) -> None:

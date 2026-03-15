@@ -1062,6 +1062,67 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn(short_summary_path, rendered)
             self.assertNotIn(summary_path, rendered)
 
+    def test_test_action_summary_event_omits_fake_zero_counts_when_parsing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            fake_runner = _FakeRunner(returncode=1)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-tests-no-counts",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    ),
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _UnparsedFailingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+                    return SimpleNamespace(returncode=1, stdout="", stderr="startup import error")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _UnparsedFailingRunner):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            summary_events = [event for event in engine.events if event.get("event") == "test.suite.summary"]
+            self.assertEqual(len(summary_events), 1)
+            summary = summary_events[0]
+            self.assertFalse(bool(summary.get("counts_detected")))
+            self.assertIsNone(summary.get("passed"))
+            self.assertIsNone(summary.get("failed"))
+            self.assertIsNone(summary.get("skipped"))
+            self.assertIsNone(summary.get("errors"))
+            self.assertIsNone(summary.get("total_tests"))
+
     def test_failed_test_manifest_filters_invalid_pytest_error_lines(self) -> None:
         parser = importlib.import_module("envctl_engine.test_output.parser_pytest").PytestOutputParser()
         parsed = parser.parse_output(

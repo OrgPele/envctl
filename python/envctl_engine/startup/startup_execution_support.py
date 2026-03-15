@@ -57,7 +57,11 @@ def start_project_context(
     orchestrator._report_progress(
         route,
         f"Services ready for {context.name}: "
-        f"backend={context.ports['backend'].final} frontend={context.ports['frontend'].final}",
+        + " ".join(
+            f"{service_type}={_service_ready_label(project_services.get(f'{context.name} {service_type.title()}'))}"
+            for service_type in ("backend", "frontend")
+            if f"{context.name} {service_type.title()}" in project_services
+        ),
         project=context.name,
     )
     return ProjectStartupResult(
@@ -142,6 +146,20 @@ def _component_port_summary(requirements: RequirementsResult, dependency_id: str
     if isinstance(requested_port, int) and requested_port > 0:
         return requested_port
     return None
+
+
+def _service_ready_label(service: object | None) -> str:
+    if service is None:
+        return "disabled"
+    actual_port = getattr(service, "actual_port", None)
+    if isinstance(actual_port, int) and actual_port > 0:
+        return str(actual_port)
+    requested_port = getattr(service, "requested_port", None)
+    if isinstance(requested_port, int) and requested_port > 0:
+        return str(requested_port)
+    if isinstance(getattr(service, "pid", None), int) and getattr(service, "listener_expected", True) is False:
+        return "running"
+    return str(getattr(service, "status", "unknown") or "unknown")
 
 
 _requirements_failure_message = requirements_failure_message

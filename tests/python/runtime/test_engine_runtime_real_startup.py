@@ -327,13 +327,56 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+
+    def test_backend_long_running_task_can_skip_listener_wait_and_start_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "MAIN_FRONTEND_ENABLE": "false",
+                        "TREES_BACKEND_ENABLE": "false",
+                        "TREES_FRONTEND_ENABLE": "false",
+                        "MAIN_POSTGRES_ENABLE": "false",
+                        "MAIN_REDIS_ENABLE": "false",
+                        "MAIN_N8N_ENABLE": "false",
+                        "TREES_POSTGRES_ENABLE": "false",
+                        "TREES_REDIS_ENABLE": "false",
+                        "TREES_N8N_ENABLE": "false",
+                        "MAIN_BACKEND_EXPECT_LISTENER": "false",
+                    },
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            code = engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="main")
+            self.assertIsNotNone(state)
+            assert state is not None
+            backend = state.services.get("Main Backend")
+            self.assertIsNotNone(backend)
+            assert backend is not None
+            self.assertFalse(backend.listener_expected)
+            self.assertIsNone(backend.requested_port)
+            self.assertIsNone(backend.actual_port)
+            self.assertEqual(backend.status, "running")
 
     def test_startup_summarizes_docker_daemon_outage_for_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -412,7 +455,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -458,7 +501,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner = _FakeSetupWorktreeRunner()
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -1291,6 +1334,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             out = StringIO()
@@ -1396,7 +1440,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -1655,7 +1699,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_overrides[preferred_frontend + 2] = False
             fake_runner.wait_for_pid_port_overrides[preferred_frontend + 2] = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -3408,10 +3452,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
 
             out = StringIO()
             with redirect_stdout(out):
-                code = engine.dispatch(parse_route(["--plan", "feature-a"], env={}))
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
 
             self.assertEqual(code, 0)
             output = out.getvalue()

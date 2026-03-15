@@ -52,9 +52,11 @@ _SERVICE_FIELDS: tuple[tuple[str, str], ...] = (
     ("frontend_enable", "Frontend"),
 )
 
-_SERVICE_STARTUP_FIELDS: tuple[tuple[str, str], ...] = (
-    ("main", "Main - start this service with envctl"),
-    ("trees", "Trees - start this service with envctl"),
+_SERVICE_STARTUP_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("startup_enable", "main", "Main - start this service with envctl"),
+    ("startup_enable", "trees", "Trees - start this service with envctl"),
+    ("backend_expect_listener", "main", "Main - wait for a listener/port before continuing"),
+    ("backend_expect_listener", "trees", "Trees - wait for a listener/port before continuing"),
 )
 
 _COMPONENT_FIELDS: tuple[tuple[str, str], ...] = (
@@ -173,11 +175,17 @@ def _entrypoint_validation_message(label: str, raw: str) -> str | None:
     return None
 
 
-def _wizard_steps(*, include_service_startup: bool) -> list[str]:
+def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool) -> list[str]:
     steps = ["welcome", "default_mode", "components"]
     if include_service_startup:
         steps.append("service_startup")
-    steps.extend(["directories", "commands", "ports", "review"])
+    if _visible_directory_fields(values):
+        steps.append("directories")
+    if _visible_command_fields(values):
+        steps.append("commands")
+    if _visible_port_fields(values):
+        steps.append("ports")
+    steps.append("review")
     return steps
 
 
@@ -203,6 +211,8 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
             },
             port_spacing=values.port_defaults.port_spacing,
         ),
+        main_backend_expect_listener=values.main_backend_expect_listener,
+        trees_backend_expect_listener=values.trees_backend_expect_listener,
         backend_dir_name=values.backend_dir_name,
         frontend_dir_name=values.frontend_dir_name,
         backend_start_cmd=values.backend_start_cmd,
@@ -310,22 +320,35 @@ def _visible_command_fields(values: ManagedConfigValues) -> tuple[tuple[str, str
 
 
 def _visible_port_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
-    profiles = [values.main_profile, values.trees_profile]
-    enabled_dependencies = {
+    backend_uses_port = (
+        (values.main_profile.startup_enable and values.main_profile.backend_enable and values.main_backend_expect_listener)
+        or (
+            values.trees_profile.startup_enable
+            and values.trees_profile.backend_enable
+            and values.trees_backend_expect_listener
+        )
+    )
+    frontend_uses_port = any(
+        profile.startup_enable and profile.frontend_enable for profile in (values.main_profile, values.trees_profile)
+    )
+    running_dependencies = {
         definition.id
         for definition in dependency_definitions()
-        if any(profile.dependency_enabled(definition.id) for profile in profiles)
+        if any(
+            profile.startup_enable and profile.dependency_enabled(definition.id)
+            for profile in (values.main_profile, values.trees_profile)
+        )
     }
     visible: list[tuple[str, str]] = []
-    if any(profile.backend_enable for profile in profiles):
+    if backend_uses_port:
         visible.append(("backend_port_base", "Backend base port"))
-    if any(profile.frontend_enable for profile in profiles):
+    if frontend_uses_port:
         visible.append(("frontend_port_base", "Frontend base port"))
-    if enabled_dependencies & {"postgres", "supabase"}:
+    if running_dependencies & {"postgres", "supabase"}:
         visible.append(("db_port_base", "Database base port"))
-    if "redis" in enabled_dependencies:
+    if "redis" in running_dependencies:
         visible.append(("redis_port_base", "Redis base port"))
-    if "n8n" in enabled_dependencies:
+    if "n8n" in running_dependencies:
         visible.append(("n8n_port_base", "n8n base port"))
     if visible:
         visible.append(("port_spacing", "Port spacing"))
@@ -623,7 +646,10 @@ def run_config_wizard_textual(
             target_step = current_step
             if target_step is None and self._steps:
                 target_step = self._steps[min(self.step_index, len(self._steps) - 1)]
-            self._steps = _wizard_steps(include_service_startup=self._should_show_service_startup_step())
+            self._steps = _wizard_steps(
+                self.values,
+                include_service_startup=self._should_show_service_startup_step(),
+            )
             if not self._steps:
                 self.step_index = 0
                 return
@@ -732,7 +758,9 @@ def run_config_wizard_textual(
                         path=local_state.config_file_path,
                         values=self.values,
                         source_label=source_label,
-                        ignore_warning=".envctl*, and trees/ will be added to .gitignore on save when possible.",
+                        ignore_warning=(
+                            ".envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible."
+                        ),
                     )
                 )
 
@@ -802,9 +830,8 @@ def run_config_wizard_textual(
             list_view.clear()
             items: list[ListItem] = []
             selected_flags: list[bool] = []
-            for mode, label in _SERVICE_STARTUP_FIELDS:
-                profile = self._profile_for_mode(mode)
-                enabled = bool(profile.startup_enable)
+            for field_name, mode, label in _SERVICE_STARTUP_FIELDS:
+                enabled = self._service_startup_value(field_name, mode)
                 selected_flags.append(enabled)
                 marker = "●" if enabled else "○"
                 items.append(
@@ -815,6 +842,26 @@ def run_config_wizard_textual(
                 )
             list_view.extend(items)
             apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
+
+        def _service_startup_value(self, field_name: str, mode: str) -> bool:
+            if field_name == "startup_enable":
+                return bool(self._profile_for_mode(mode).startup_enable)
+            if field_name == "backend_expect_listener":
+                return bool(
+                    self.values.trees_backend_expect_listener if mode == "trees" else self.values.main_backend_expect_listener
+                )
+            return False
+
+        def _toggle_service_startup_value(self, field_name: str, mode: str) -> None:
+            if field_name == "startup_enable":
+                profile = self._profile_for_mode(mode)
+                profile.startup_enable = not profile.startup_enable
+                return
+            if field_name == "backend_expect_listener":
+                if mode == "trees":
+                    self.values.trees_backend_expect_listener = not self.values.trees_backend_expect_listener
+                else:
+                    self.values.main_backend_expect_listener = not self.values.main_backend_expect_listener
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
@@ -875,8 +922,9 @@ def run_config_wizard_textual(
                             )
                     elif step == "service_startup":
                         status.update(
-                            "Decide whether envctl should start this backend-only service automatically. "
-                            "Use Space to toggle rows; Enter only moves forward."
+                            "Decide whether envctl should auto-start this backend-only service and whether it should wait "
+                            "for a listener before continuing. Disable listener waiting for long-running scripts or workers "
+                            "that do not open a port. Use Space to toggle rows; Enter only moves forward."
                         )
                     else:
                         status.update("Configuration is valid.")
@@ -1123,11 +1171,12 @@ def run_config_wizard_textual(
         def _toggle_service_startup_row(self) -> None:
             list_view = self.query_one("#config-list", ListView)
             index = list_view.index or 0
-            mode, _label = _SERVICE_STARTUP_FIELDS[index]
-            profile = self._profile_for_mode(mode)
-            profile.startup_enable = not profile.startup_enable
+            field_name, mode, _label = _SERVICE_STARTUP_FIELDS[index]
+            self._toggle_service_startup_value(field_name, mode)
+            self._sync_steps(current_step="service_startup")
             self._refresh_body()
             self._refresh_status()
+            self._refresh_actions()
             list_view = self.query_one("#config-list", ListView)
             apply_selectable_list_index(list_view, min(index, max(len(list_view.children) - 1, 0)))
             focus_selectable_list(self, list_view, list_view.index)
