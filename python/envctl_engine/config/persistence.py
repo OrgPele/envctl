@@ -554,7 +554,7 @@ def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
     try:
         gitignore_updated = _ensure_ignore_patterns(
             Path(base_dir) / ".gitignore",
-            (".envctl*", "trees/"),
+            (".envctl*", "trees/", "MAIN_TASK.md"),
         )
     except OSError as exc:
         warnings.append(f"Could not update .gitignore: {exc}")

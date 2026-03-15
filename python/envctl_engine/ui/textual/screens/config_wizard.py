@@ -758,7 +758,9 @@ def run_config_wizard_textual(
                         path=local_state.config_file_path,
                         values=self.values,
                         source_label=source_label,
-                        ignore_warning=".envctl*, and trees/ will be added to .gitignore on save when possible.",
+                        ignore_warning=(
+                            ".envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible."
+                        ),
                     )
                 )
 

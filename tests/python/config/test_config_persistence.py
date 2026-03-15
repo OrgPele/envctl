@@ -473,12 +473,13 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
             self.assertEqual(gitignore_lines.count(".envctl*"), 1)
             self.assertEqual(gitignore_lines.count("trees/"), 1)
+            self.assertEqual(gitignore_lines.count("MAIN_TASK.md"), 1)
 
     def test_ignore_local_config_does_not_duplicate_existing_gitignore_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
-            (repo / ".gitignore").write_text(".envctl*\ntrees/\n", encoding="utf-8")
+            (repo / ".gitignore").write_text(".envctl*\ntrees/\nMAIN_TASK.md\n", encoding="utf-8")
 
             updated, warning = ensure_local_config_ignored(repo)
 
@@ -488,7 +489,7 @@ class ConfigPersistenceTests(unittest.TestCase):
 
             self.assertTrue(updated)
             self.assertIsNone(warning)
-            self.assertEqual(gitignore_text, ".envctl*\ntrees/\n")
+            self.assertEqual(gitignore_text, ".envctl*\ntrees/\nMAIN_TASK.md\n")
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
 
 
