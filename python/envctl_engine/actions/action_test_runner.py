@@ -432,11 +432,12 @@ def run_test_action(
                 total=len(execution_specs),
                 project=project_name,
                 project_root=str(project_root),
-                passed=parsed.passed,
-                failed=parsed.failed,
-                skipped=parsed.skipped,
-                errors=parsed.errors,
-                total_tests=parsed.total,
+                counts_detected=counts_detected,
+                passed=(parsed.passed if counts_detected else None),
+                failed=(parsed.failed if counts_detected else None),
+                skipped=(parsed.skipped if counts_detected else None),
+                errors=(parsed.errors if counts_detected else None),
+                total_tests=(parsed.total if counts_detected else None),
             )
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
         if interactive_command and not use_suite_spinner_group:

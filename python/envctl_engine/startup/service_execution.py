@@ -67,6 +67,16 @@ def service_prep_parallel_enabled(
     return attach_parallel
 
 
+def backend_listener_expected_for_mode(config: object, mode: str) -> bool:
+    helper = getattr(config, "backend_expects_listener_for_mode", None)
+    if callable(helper):
+        return bool(helper(mode))
+    normalized = str(mode).strip().lower()
+    if normalized == "trees":
+        return bool(getattr(config, "trees_backend_expect_listener", True))
+    return bool(getattr(config, "main_backend_expect_listener", True))
+
+
 def start_project_services(
     orchestrator: StartupOrchestratorLike,
     context: ProjectContextLike,
@@ -155,7 +165,7 @@ def start_project_services(
         for service_name in ("backend", "frontend")
         if rt._service_enabled_for_mode(effective_mode, service_name)
     }
-    backend_listener_expected = bool(rt.config.backend_expects_listener_for_mode(effective_mode))
+    backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
     selected_service_types = orchestrator._restart_service_types_for_project(
         route=route,
         project_name=context.name,
