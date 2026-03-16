@@ -278,7 +278,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(filter_input.has_focus)
             app.exit(None)
 
-    async def test_tab_cycles_focus_between_list_and_filter(self) -> None:
+    async def test_tab_cycles_focus_between_list_filter_and_buttons(self) -> None:
         options = [
             SelectorItem(
                 id="service:alpha",
@@ -306,7 +306,15 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             filter_input = app.query_one("#selector-filter")
             list_view = app.query_one("#selector-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
             self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(run_button.has_focus)
             await pilot.press("tab")
             await pilot.pause()
             self.assertTrue(filter_input.has_focus)
@@ -592,7 +600,7 @@ class PlanningSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(filter_input.has_focus)
             app.exit(None)
 
-    async def test_planning_tab_cycles_focus_between_list_and_filter(self) -> None:
+    async def test_planning_tab_cycles_focus_between_list_filter_and_buttons(self) -> None:
         app = select_planning_counts_textual(
             planning_files=["backend/task-a.md", "frontend/task-b.md"],
             selected_counts={"backend/task-a.md": 1, "frontend/task-b.md": 0},
@@ -605,13 +613,50 @@ class PlanningSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             filter_input = app.query_one("#planning-filter")
             list_view = app.query_one("#planning-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
             self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(run_button.has_focus)
             await pilot.press("tab")
             await pilot.pause()
             self.assertTrue(filter_input.has_focus)
             await pilot.press("tab")
             await pilot.pause()
             self.assertTrue(list_view.has_focus)
+            app.exit(None)
+
+    async def test_planning_tab_skips_disabled_run_button(self) -> None:
+        app = select_planning_counts_textual(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        assert app is not None
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            list_view = app.query_one("#planning-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
+            self.assertTrue(run_button.disabled)
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            self.assertFalse(run_button.has_focus)
             app.exit(None)
 
 

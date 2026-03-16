@@ -68,3 +68,66 @@
 ## Risks / notes
 - The full pytest suite still emits the pre-existing `PytestCollectionWarning` warnings for dataclass-like helper classes under `python/envctl_engine/...`; they are warnings only and do not fail validation.
 - Documentation now treats bare `list-*` commands as the primary spelling while keeping `--list-*` aliases as compatibility forms.
+
+# 2026-03-16
+
+## Scope
+- Follow-up fix for the textual selector accessibility regression after restoring filter focus.
+- Restored a complete `Tab` traversal path so selector dialogs no longer trap focus between only the list and filter.
+
+## Key behavior changes
+- `python/envctl_engine/ui/textual/list_controller.py`
+  - Replaced the binary list/filter toggle helper with ordered focus traversal so selector screens can define an explicit tab loop.
+- `python/envctl_engine/ui/textual/screens/selector/textual_app.py`
+  - `Tab` now cycles `list -> filter -> cancel -> run -> list`.
+  - Disabled action buttons are skipped instead of receiving focus.
+- `python/envctl_engine/ui/textual/screens/planning_selector.py`
+  - Planning mode now uses the same explicit focus order as the runtime selector.
+  - When `Run` is disabled, `Tab` cycles `list -> filter -> cancel -> list`.
+
+## Files touched
+- `python/envctl_engine/ui/textual/list_controller.py`
+- `python/envctl_engine/ui/textual/screens/selector/textual_app.py`
+- `python/envctl_engine/ui/textual/screens/planning_selector.py`
+- `tests/python/ui/test_textual_selector_shared_behavior.py`
+- `tests/python/ui/test_textual_selector_responsiveness.py`
+
+## Tests run
+- `./.venv/bin/pytest -q tests/python/ui/test_textual_selector_shared_behavior.py tests/python/ui/test_textual_selector_responsiveness.py`
+  - Result: `27 passed`
+- `./.venv/bin/pytest -q tests/python/ui/test_textual_selector_shared_behavior.py tests/python/ui/test_textual_selector_responsiveness.py tests/python/planning/test_planning_textual_selector.py`
+  - Result: `31 passed`
+
+## Config / env / migrations
+- No config, environment, or migration changes were required.
+
+## Risks / notes
+- The custom `Tab` loop is intentionally explicit to preserve access to the filter from the list while still including action buttons; if additional focusable controls are added to these screens later, their ids need to be added to the local focus-order helpers.
+
+# 2026-03-16
+
+## Scope
+- Refined the selector `Tab` order to match the visible layout more closely after restoring button participation in the focus loop.
+
+## Key behavior changes
+- `python/envctl_engine/ui/textual/screens/selector/textual_app.py`
+  - The runtime selector now tabs in visual order: `search -> list -> cancel -> run -> search`.
+- `python/envctl_engine/ui/textual/screens/planning_selector.py`
+  - Planning mode uses the same visual wrap order.
+  - When `Run` is disabled, the loop becomes `search -> list -> cancel -> search`.
+
+## Files touched
+- `python/envctl_engine/ui/textual/screens/selector/textual_app.py`
+- `python/envctl_engine/ui/textual/screens/planning_selector.py`
+- `tests/python/ui/test_textual_selector_shared_behavior.py`
+- `tests/python/ui/test_textual_selector_responsiveness.py`
+
+## Tests run
+- `./.venv/bin/pytest -q tests/python/ui/test_textual_selector_shared_behavior.py tests/python/ui/test_textual_selector_responsiveness.py tests/python/planning/test_planning_textual_selector.py`
+  - Result: `31 passed`
+
+## Config / env / migrations
+- No config, environment, or migration changes were required.
+
+## Risks / notes
+- The tab order is still maintained explicitly in code, so any future focusable controls added to these dialogs need to be inserted into the local focus-order lists to participate in traversal.

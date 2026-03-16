@@ -225,6 +225,23 @@ def select_planning_counts_textual(
         def _status(self) -> Static:
             return self.query_one("#planning-status", Static)
 
+        def _focused_widget_id(self) -> str:
+            focused = getattr(self, "focused", None)
+            focused_id = str(getattr(focused, "id", "") or "").strip()
+            if focused_id:
+                return focused_id
+            if self._list().has_focus:
+                return "planning-list"
+            if self.query_one("#planning-filter", Input).has_focus:
+                return "planning-filter"
+            return "unknown"
+
+        def _focus_order(self) -> tuple[str, ...]:
+            focus_order = ["planning-filter", "planning-list", "btn-cancel"]
+            if not self.query_one("#btn-run", Button).disabled:
+                focus_order.append("btn-run")
+            return tuple(focus_order)
+
         def _focused_row(self) -> _PlanningRow | None:
             return self._controller.focused_row(self._list().index)
 
@@ -351,14 +368,20 @@ def select_planning_counts_textual(
             apply_selectable_list_index(list_view, index)
             focus_selectable_list(self, list_view, index)
 
+        def action_focus_button(self, button_id: str) -> None:
+            self.query_one(f"#{button_id}", Button).focus()
+
         def action_cycle_focus(self) -> None:
             next_target = self._controller.cycle_focus_target(
-                filter_has_focus=self.query_one("#planning-filter", Input).has_focus
+                current_target=self._focused_widget_id(),
+                focus_order=self._focus_order(),
             )
-            if next_target == "list":
+            if next_target == "planning-list":
                 self.action_focus_list()
-            else:
+            elif next_target == "planning-filter":
                 self.action_focus_filter()
+            else:
+                self.action_focus_button(next_target)
 
         def _result(self) -> dict[str, int]:
             has_existing = any(row.existing > 0 for row in self._rows)

@@ -159,6 +159,12 @@ def create_selector_app(
                 return "selector-filter"
             return "unknown"
 
+        def _focus_order(self) -> tuple[str, ...]:
+            focus_order = ["selector-filter", "selector-list", "btn-cancel"]
+            if not self.query_one("#btn-run", Button).disabled:
+                focus_order.append("btn-run")
+            return tuple(focus_order)
+
         def _emit_focus(self, *, reason: str) -> None:
             current = self._focused_widget_id()
             previous = self._last_focus_widget_id
@@ -516,14 +522,22 @@ def create_selector_app(
             focus_selectable_list(self, list_view, index)
             self._emit_focus(reason=reason)
 
+        def action_focus_button(self, button_id: str, *, reason: str) -> None:
+            self._allow_filter_focus = False
+            self.query_one(f"#{button_id}", Button).focus()
+            self._emit_focus(reason=reason)
+
         def action_cycle_focus(self) -> None:
             next_target = self._controller.cycle_focus_target(
-                filter_has_focus=self.query_one("#selector-filter", Input).has_focus
+                current_target=self._focused_widget_id(),
+                focus_order=self._focus_order(),
             )
-            if next_target == "list":
+            if next_target == "selector-list":
                 self.action_focus_list(reason="tab_cycle")
-            else:
+            elif next_target == "selector-filter":
                 self.action_focus_filter(reason="tab_cycle")
+            else:
+                self.action_focus_button(next_target, reason="tab_cycle")
 
         def _selected_values(self) -> list[str]:
             return [row.item.token for row in self._rows if row.selected and row.visible]
