@@ -13,7 +13,7 @@ except ModuleNotFoundError:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv or sys.argv[1:])
-    parser = argparse.ArgumentParser(description="Validate envctl Python cutover shipability gates.")
+    parser = argparse.ArgumentParser(description="Validate envctl release-readiness shipability gates.")
     parser.add_argument("--repo", default=".", help="Repository root to evaluate (default: current dir).")
     parser.add_argument("--required-path", action="append", default=[], help="Required path (repeatable).")
     parser.add_argument(
@@ -30,23 +30,39 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-tests",
         dest="check_tests",
         action="store_false",
-        help="Skip Python unittest execution during gate evaluation.",
+        help="Skip the canonical pytest validation lane during gate evaluation.",
+    )
+    parser.add_argument(
+        "--skip-build",
+        dest="check_packaging",
+        action="store_false",
+        help="Skip packaging build smoke during gate evaluation.",
     )
     parser.add_argument("--skip-parity-sync", action="store_true", help="Skip manifest/runtime parity-sync check.")
-    parser.set_defaults(check_tests=False)
+    parser.set_defaults(check_tests=False, check_packaging=True)
     args = parser.parse_args(argv)
 
     ensure_python_root(repo_root_from(__file__))
-    from envctl_engine.shell.release_gate import evaluate_shipability
+    from envctl_engine.shell.release_gate import (
+        canonical_packaging_command,
+        canonical_validation_command,
+        evaluate_shipability,
+        format_command,
+    )
 
     repo_root = Path(args.repo).resolve()
     required_paths = args.required_path or None
     required_scopes = args.required_scope or None
+    if args.check_packaging:
+        print(f"packaging.command: {format_command(canonical_packaging_command(repo_root))}")
+    if args.check_tests:
+        print(f"validation.command: {format_command(canonical_validation_command(repo_root))}")
     result = evaluate_shipability(
         repo_root=repo_root,
         required_paths=required_paths,
         required_scopes=required_scopes,
         check_tests=bool(args.check_tests),
+        check_packaging=bool(args.check_packaging),
         enforce_parity_sync=not args.skip_parity_sync,
         enforce_runtime_readiness_contract=True,
     )

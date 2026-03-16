@@ -78,18 +78,44 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
         )
         subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
 
+    def _write_repo_local_python(self, repo: Path, *, exit_code: int = 0) -> None:
+        python_bin = repo / ".venv" / "bin" / "python"
+        python_bin.parent.mkdir(parents=True, exist_ok=True)
+        python_bin.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        python_bin.chmod(0o755)
+
+    def _write_minimal_pyproject(self, repo: Path) -> None:
+        (repo / "pyproject.toml").write_text(
+            "\n".join(
+                [
+                    "[build-system]",
+                    'requires = ["setuptools>=77.0.0"]',
+                    'build-backend = "setuptools.build_meta"',
+                    "",
+                    "[project]",
+                    'name = "shipability-test"',
+                    'version = "0.0.1"',
+                    "",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def test_release_shipability_script_reports_clean_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
             self._prepare_repo(repo)
+            self._write_repo_local_python(repo)
 
             result = subprocess.run(
                 [
                     sys.executable,
                     str(SCRIPT),
                     "--skip-tests",
+                    "--skip-build",
                     "--skip-parity-sync",
                     "--repo",
                     str(repo),
@@ -111,6 +137,37 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
             self._prepare_repo(repo, blocking_gaps=1)
+            self._write_repo_local_python(repo)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--skip-tests",
+                    "--skip-build",
+                    "--skip-parity-sync",
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("shipability.passed: false", result.stdout)
+        self.assertIn("python runtime gap report has blocking gaps: 1", result.stdout)
+
+    def test_release_shipability_script_reports_packaging_command_on_default_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            self._write_repo_local_python(repo)
+            self._write_minimal_pyproject(repo)
 
             result = subprocess.run(
                 [
@@ -127,10 +184,39 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
                 check=False,
             )
 
+        self.assertEqual(result.returncode, 0, msg=result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("packaging.command: .venv/bin/python -m build", result.stdout)
+        self.assertIn("shipability.passed: true", result.stdout)
+
+    def test_release_shipability_script_reports_validation_lane_command_and_failure_quietly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            self._write_repo_local_python(repo, exit_code=2)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check-tests",
+                    "--skip-build",
+                    "--skip-parity-sync",
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stderr, "")
-        self.assertIn("shipability.passed: false", result.stdout)
-        self.assertIn("python runtime gap report has blocking gaps: 1", result.stdout)
+        self.assertIn("validation.command: .venv/bin/python -m pytest -q", result.stdout)
+        self.assertIn("error: validation_lane_failed: .venv/bin/python -m pytest -q (exit 2)", result.stdout)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,26 @@ envctl --plan
 
 That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven worktrees.
 
+## Release Validation
+
+Contributor and release-readiness validation uses one repo-local workflow:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+.venv/bin/python -m build
+.venv/bin/python scripts/release_shipability_gate.py --repo .
+```
+
+To run the release gate with the same canonical test lane enabled:
+
+```bash
+.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
+```
+
+Use narrower `unittest` targets only for focused local iteration; `pytest -q` is the authoritative repo-wide validation signal.
+
 ## What envctl Is For
 
 `envctl` is built to:

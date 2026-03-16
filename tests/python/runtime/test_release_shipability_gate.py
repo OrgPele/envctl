@@ -7,10 +7,16 @@ import tempfile
 import unittest
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.shell.release_gate import _manifest_freshness_is_valid, evaluate_shipability
+from envctl_engine.shell.release_gate import (
+    _manifest_freshness_is_valid,
+    canonical_packaging_command,
+    canonical_validation_command,
+    evaluate_shipability,
+)
 
 
 class ReleaseShipabilityGateTests(unittest.TestCase):
@@ -124,6 +130,31 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             "tests/python/test_stub.py",
             self._PARITY_MANIFEST_PATH,
             self._GAP_REPORT_PATH,
+        )
+
+    def _write_repo_local_python(self, repo: Path) -> Path:
+        python_bin = repo / ".venv" / "bin" / "python"
+        python_bin.parent.mkdir(parents=True, exist_ok=True)
+        python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        python_bin.chmod(0o755)
+        return python_bin
+
+    def _write_minimal_pyproject(self, repo: Path) -> None:
+        (repo / "pyproject.toml").write_text(
+            "\n".join(
+                [
+                    "[build-system]",
+                    'requires = ["setuptools>=77.0.0"]',
+                    'build-backend = "setuptools.build_meta"',
+                    "",
+                    "[project]",
+                    'name = "shipability-test"',
+                    'version = "0.0.1"',
+                    "",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
     def test_gate_passes_when_required_paths_and_runtime_readiness_are_green(self) -> None:
@@ -247,6 +278,80 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
 
             self.assertTrue(result.passed, msg=result.errors)
             self.assertEqual(result.errors, [])
+
+    def test_gate_check_tests_uses_canonical_pytest_validation_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            python_bin = self._write_repo_local_python(repo)
+
+            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+                run_cmd.return_value = type("Result", (), {"returncode": 0, "output": ""})()
+                result = evaluate_shipability(
+                    repo_root=repo,
+                    check_tests=True,
+                    check_packaging=False,
+                    enforce_parity_sync=False,
+                    enforce_runtime_readiness_contract=True,
+                )
+
+        self.assertTrue(result.passed, msg=result.errors)
+        self.assertEqual(run_cmd.call_count, 1)
+        self.assertEqual(run_cmd.call_args.args[0], repo)
+        self.assertEqual(run_cmd.call_args.args[1], canonical_validation_command(repo))
+        self.assertEqual(run_cmd.call_args.args[1][0], str(python_bin))
+
+    def test_gate_check_packaging_reports_failed_build_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            self._write_repo_local_python(repo)
+            self._write_minimal_pyproject(repo)
+
+            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+                run_cmd.return_value = type("Result", (), {"returncode": 2, "output": "build failed"})()
+                result = evaluate_shipability(
+                    repo_root=repo,
+                    check_tests=False,
+                    check_packaging=True,
+                    enforce_parity_sync=False,
+                    enforce_runtime_readiness_contract=True,
+                )
+
+        self.assertFalse(result.passed)
+        self.assertIn("packaging_build_failed", result.errors[0])
+        self.assertIn(".venv/bin/python -m build", result.errors[0])
+        self.assertEqual(run_cmd.call_args.args[1], canonical_packaging_command(repo))
+
+    def test_gate_check_packaging_reports_warning_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            self._write_repo_local_python(repo)
+            self._write_minimal_pyproject(repo)
+
+            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+                run_cmd.return_value = type(
+                    "Result",
+                    (),
+                    {"returncode": 0, "output": "SetuptoolsDeprecationWarning: old config"},
+                )()
+                result = evaluate_shipability(
+                    repo_root=repo,
+                    check_tests=False,
+                    check_packaging=True,
+                    enforce_parity_sync=False,
+                    enforce_runtime_readiness_contract=True,
+                )
+
+        self.assertFalse(result.passed)
+        self.assertIn("packaging_build_warned", result.errors[0])
 
     def test_release_shipability_script_enforces_runtime_readiness_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
