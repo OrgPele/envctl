@@ -72,9 +72,22 @@ def _resolved_path(path: Path) -> Path:
         return path
 
 
-def _invocation_argv0(argv0: str, env: Mapping[str, str] | None = None) -> str:
+def _effective_invocation_argv0(current_binary: Path, argv0: str, env: Mapping[str, str] | None = None) -> str:
     env_map = os.environ if env is None else env
-    return env_map.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR, argv0)
+    preserved = env_map.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
+    if not preserved:
+        return argv0
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    if not any(separator in argv0 for separator in separators):
+        return argv0
+    candidate = Path(argv0).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    if _resolved_path(candidate) != _resolved_path(current_binary):
+        return argv0
+    return preserved
 
 
 def is_explicit_wrapper_path(
@@ -85,7 +98,7 @@ def is_explicit_wrapper_path(
     cwd: Path | None = None,
 ) -> bool:
     env_map = os.environ if env is None else env
-    invocation = _invocation_argv0(argv0, env=env)
+    invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
     if not invocation:
         return False
     separators = [os.path.sep]

@@ -74,3 +74,30 @@ Stabilized the release-shipability and cutover-readiness coverage that surfaced 
 
 ### Risks / notes
 - The release gate still enforces manifest freshness against wall-clock time. The tests now generate fresh timestamps dynamically, which removes date-driven flakiness, but any repo workflow that intentionally carries an old committed manifest will still fail the freshness check by design.
+
+## 2026-03-16 - Follow-up: prevent ambient wrapper argv leakage
+
+### Scope
+Hardened the wrapper redirect helper so an ambient `ENVCTL_WRAPPER_ORIGINAL_ARGV0` value cannot accidentally change the behavior of a fresh bare `envctl` invocation during tests or other in-process flows.
+
+### Key behavior changes
+- `python/envctl_engine/runtime/launcher_support.py`
+  - the preserved original wrapper argv is now consulted only when the current `argv[0]` already points at the current wrapper path, which is the real Python re-exec case
+  - bare `argv0="envctl"` now keeps bare-name behavior even if `ENVCTL_WRAPPER_ORIGINAL_ARGV0` is present in the environment
+- `tests/python/runtime/test_cli_packaging.py`
+  - added regression coverage proving a bare-name invocation is not overridden by an ambient preserved-wrapper env var
+
+### Files / modules touched
+- `python/envctl_engine/runtime/launcher_support.py`
+- `tests/python/runtime/test_cli_packaging.py`
+
+### Tests run + results
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging`
+  - result: `Ran 17 tests`, `OK`
+
+### Config / env / migrations
+- No migrations.
+- No user-facing config changes.
+
+### Risks / notes
+- This change intentionally narrows the env-var override to the Python re-exec path only. Any future caller that wants the preserved original invocation token must either pass the re-exec wrapper path as `argv0` or pass the original token explicitly.

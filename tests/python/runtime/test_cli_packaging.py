@@ -155,6 +155,28 @@ class CliPackagingTests(unittest.TestCase):
                 )
             )
 
+    def test_bare_argv0_wins_over_ambient_original_wrapper_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertEqual(
+                select_envctl_reexec_target(
+                    current,
+                    "envctl",
+                    env={ORIGINAL_WRAPPER_ARGV0_ENVVAR: str(current)},
+                    alternate=alternate,
+                ),
+                alternate,
+            )
+
     def test_preserved_original_argv0_controls_redirect_after_python_reexec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
