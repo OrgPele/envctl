@@ -102,7 +102,8 @@ def select_planning_counts_textual(
             Binding("/", "focus_filter", "Filter"),
             Binding("tab", "cycle_focus", "Focus"),
         ]
-        CSS = """
+        CSS = (
+            """
         Screen {
             align: center middle;
         }
@@ -133,7 +134,9 @@ def select_planning_counts_textual(
             align-horizontal: right;
             height: auto;
         }
-        """ + PLANNING_ROW_STYLES_CSS
+        """
+            + PLANNING_ROW_STYLES_CSS
+        )
 
         def __init__(self) -> None:
             super().__init__()

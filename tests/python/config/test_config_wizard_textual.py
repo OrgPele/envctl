@@ -44,7 +44,16 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 self.skipTest("Textual is not available in this environment")
             self.assertEqual(  # noqa: SLF001
                 app._steps,
-                ["welcome", "default_mode", "components", "service_startup", "directories", "commands", "ports", "review"],
+                [
+                    "welcome",
+                    "default_mode",
+                    "components",
+                    "service_startup",
+                    "directories",
+                    "commands",
+                    "ports",
+                    "review",
+                ],
             )
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:
@@ -114,15 +123,11 @@ class ConfigWizardTextualTests(unittest.TestCase):
 
         self.assertEqual(
             _visible_directory_fields(values),
-            (
-                ("backend_dir_name", "Backend directory"),
-            ),
+            (("backend_dir_name", "Backend directory"),),
         )
         self.assertEqual(
             _visible_command_fields(values),
-            (
-                ("backend_test_cmd", "Backend test command"),
-            ),
+            (("backend_test_cmd", "Backend test command"),),
         )
 
     def test_directory_validation_message_requires_existing_directory(self) -> None:
@@ -135,6 +140,6 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 "Directory does not exist: api",
             )
         self.assertEqual(
-                _directory_validation_message(repo, "Backend directory", ""),
-                "Backend directory must not be empty.",
-            )
+            _directory_validation_message(repo, "Backend directory", ""),
+            "Backend directory must not be empty.",
+        )

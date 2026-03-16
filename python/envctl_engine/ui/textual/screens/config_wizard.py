@@ -321,12 +321,13 @@ def _visible_command_fields(values: ManagedConfigValues) -> tuple[tuple[str, str
 
 def _visible_port_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
     backend_uses_port = (
-        (values.main_profile.startup_enable and values.main_profile.backend_enable and values.main_backend_expect_listener)
-        or (
-            values.trees_profile.startup_enable
-            and values.trees_profile.backend_enable
-            and values.trees_backend_expect_listener
-        )
+        values.main_profile.startup_enable
+        and values.main_profile.backend_enable
+        and values.main_backend_expect_listener
+    ) or (
+        values.trees_profile.startup_enable
+        and values.trees_profile.backend_enable
+        and values.trees_backend_expect_listener
     )
     frontend_uses_port = any(
         profile.startup_enable and profile.frontend_enable for profile in (values.main_profile, values.trees_profile)
@@ -401,7 +402,8 @@ def run_config_wizard_textual(
             Binding("tab", "focus_next", "Next"),
             Binding("shift+tab", "focus_previous", "Prev"),
         ]
-        CSS = """
+        CSS = (
+            """
         Screen {
             align: center middle;
         }
@@ -495,7 +497,9 @@ def run_config_wizard_textual(
             align-horizontal: right;
             height: auto;
         }
-        """ + CONFIG_ROW_STYLES_CSS
+        """
+            + CONFIG_ROW_STYLES_CSS
+        )
 
         def __init__(self) -> None:
             super().__init__()
@@ -739,7 +743,8 @@ def run_config_wizard_textual(
                 self._sync_directory_inputs(visible_fields)
                 if not visible_fields:
                     empty.update(
-                        "No entrypoints or test commands need configuration for the components currently configured in main or trees."
+                        "No entrypoints or test commands need configuration "
+                        "for the components currently configured in main or trees."
                     )
                     empty.display = True
                 return
@@ -848,7 +853,9 @@ def run_config_wizard_textual(
                 return bool(self._profile_for_mode(mode).startup_enable)
             if field_name == "backend_expect_listener":
                 return bool(
-                    self.values.trees_backend_expect_listener if mode == "trees" else self.values.main_backend_expect_listener
+                    self.values.trees_backend_expect_listener
+                    if mode == "trees"
+                    else self.values.main_backend_expect_listener
                 )
             return False
 
@@ -912,7 +919,8 @@ def run_config_wizard_textual(
                     if step == "components":
                         if self._component_split_available():
                             status.update(
-                                "Configure components for Main + Trees together, or split a row when they should differ. "
+                                "Configure components for Main + Trees together, "
+                                "or split a row when they should differ. "
                                 "Use Space to toggle rows, D to split/merge, and Enter only moves forward."
                             )
                         else:
@@ -922,8 +930,9 @@ def run_config_wizard_textual(
                             )
                     elif step == "service_startup":
                         status.update(
-                            "Decide whether envctl should auto-start this backend-only service and whether it should wait "
-                            "for a listener before continuing. Disable listener waiting for long-running scripts or workers "
+                            "Decide whether envctl should auto-start this backend-only service "
+                            "and whether it should wait for a listener before continuing. "
+                            "Disable listener waiting for long-running scripts or workers "
                             "that do not open a port. Use Space to toggle rows; Enter only moves forward."
                         )
                     else:

@@ -435,15 +435,11 @@ def load_failed_test_manifest(path: Path) -> FailedTestManifest | None:
         sanitized_failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
             source=source,
             failed_tests=[
-                value.strip()
-                for value in raw_entry.get("failed_tests", [])
-                if isinstance(value, str) and value.strip()
+                value.strip() for value in raw_entry.get("failed_tests", []) if isinstance(value, str) and value.strip()
             ],
         )
         raw_failed_files = [
-            value.strip()
-            for value in raw_entry.get("failed_files", [])
-            if isinstance(value, str) and value.strip()
+            value.strip() for value in raw_entry.get("failed_files", []) if isinstance(value, str) and value.strip()
         ]
         if source in {"frontend_package_test", "package_test"}:
             derived_failed_files = frontend_failed_files_from_failed_tests(sanitized_failed_tests)
@@ -470,7 +466,9 @@ def load_failed_test_manifest(path: Path) -> FailedTestManifest | None:
         )
     return FailedTestManifest(
         generated_at=str(payload.get("generated_at", "") or ""),
-        head=str(payload.get("git_state", {}).get("head", "") or "") if isinstance(payload.get("git_state"), dict) else "",
+        head=str(payload.get("git_state", {}).get("head", "") or "")
+        if isinstance(payload.get("git_state"), dict)
+        else "",
         status_hash=(
             str(payload.get("git_state", {}).get("status_hash", "") or "")
             if isinstance(payload.get("git_state"), dict)
@@ -514,7 +512,10 @@ def _failed_rerun_spec_for_entry(
             return None
         python_exe = detect_python_bin(project_root / "backend", project_root, repo_root)
         if not python_exe:
-            return f"Failed-only reruns are unavailable for {project_name} backend pytest because no Python interpreter was found."
+            return (
+                f"Failed-only reruns are unavailable for {project_name} backend pytest "
+                "because no Python interpreter was found."
+            )
         return TestExecutionSpec(
             index=0,
             spec=TestCommandSpec(
@@ -538,7 +539,10 @@ def _failed_rerun_spec_for_entry(
             return None
         python_exe = detect_python_bin(project_root, repo_root)
         if not python_exe:
-            return f"Failed-only reruns are unavailable for {project_name} unittest because no Python interpreter was found."
+            return (
+                f"Failed-only reruns are unavailable for {project_name} unittest "
+                "because no Python interpreter was found."
+            )
         return TestExecutionSpec(
             index=0,
             spec=TestCommandSpec(
@@ -569,7 +573,10 @@ def _failed_rerun_spec_for_entry(
             return None
         manager = detect_package_manager(package_root)
         if not manager:
-            return f"Failed-only reruns are unavailable for {project_name} {entry.suite or source} because no supported package manager was detected."
+            return (
+                f"Failed-only reruns are unavailable for {project_name} {entry.suite or source} "
+                "because no supported package manager was detected."
+            )
         command = [manager, "run", "test", "--", *failed_files]
         return TestExecutionSpec(
             index=0,
@@ -586,7 +593,8 @@ def _failed_rerun_spec_for_entry(
         )
     if source == "configured":
         return (
-            f"Failed-only reruns are not supported for {project_name} because the previous test run used a custom configured command."
+            f"Failed-only reruns are not supported for {project_name} "
+            "because the previous test run used a custom configured command."
         )
     return f"Failed-only reruns are not supported for {project_name} ({source}). Run the full suite first."
 

@@ -291,7 +291,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 },
             )
             runtime._latest_state = state
-            orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+            orchestrator._run_pr_selection_flow = lambda **kwargs: (
+                runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+            )  # type: ignore[method-assign]
 
             should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
 
@@ -329,7 +331,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             },
         )
         runtime._latest_state = state
-        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        orchestrator._run_pr_selection_flow = lambda **kwargs: (
+            runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+        )  # type: ignore[method-assign]
 
         should_continue, _next_state = orchestrator._run_interactive_command("p", state, runtime)
 
@@ -363,7 +367,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             },
         )
         runtime._latest_state = state
-        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        orchestrator._run_pr_selection_flow = lambda **kwargs: (
+            runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+        )  # type: ignore[method-assign]
 
         out = StringIO()
         with redirect_stdout(out):
@@ -591,7 +597,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 runtime.last_dispatched_route = None
                 if raw == "p":
-                    orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+                    orchestrator._run_pr_selection_flow = lambda **kwargs: (
+                        runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+                    )  # type: ignore[method-assign]
                 should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
@@ -634,7 +642,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 runtime.pr_flow_calls.clear()
                 runtime.last_dispatched_route = None
                 if raw == "p":
-                    orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+                    orchestrator._run_pr_selection_flow = lambda **kwargs: (
+                        runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+                    )  # type: ignore[method-assign]
                 should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
@@ -720,7 +730,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         runtime = _RuntimeStub()
         runtime.text_input_responses = ["Ship the feature in this PR"]
         orchestrator = DashboardOrchestrator(runtime)
-        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        orchestrator._run_pr_selection_flow = lambda **kwargs: (
+            runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+        )  # type: ignore[method-assign]
         state = RunState(
             run_id="run-1",
             mode="main",
@@ -757,7 +769,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         runtime = _RuntimeStub()
         runtime.text_input_responses = [""]
         orchestrator = DashboardOrchestrator(runtime)
-        orchestrator._run_pr_selection_flow = lambda **kwargs: runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result  # type: ignore[method-assign]
+        orchestrator._run_pr_selection_flow = lambda **kwargs: (
+            runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
+        )  # type: ignore[method-assign]
         state = RunState(
             run_id="run-1",
             mode="main",
@@ -1244,7 +1258,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.selection_calls[0]["multi"], True)
         self.assertIsNone(runtime.selection_calls[0]["exclusive_project_name"])
 
-    def test_interactive_test_service_selection_keeps_failed_rerun_when_saved_failure_state_exists_even_if_latest_status_passed(self) -> None:
+    def test_interactive_test_service_selection_keeps_failed_rerun_when_saved_failure_state_exists_even_if_latest_status_passed(
+        self,
+    ) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(project_names=["Backend", "Frontend"])
         orchestrator = DashboardOrchestrator(runtime)

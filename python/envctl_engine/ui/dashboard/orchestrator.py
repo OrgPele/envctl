@@ -4,7 +4,6 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import subprocess
-import sys
 from typing import Any, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
@@ -224,7 +223,9 @@ class DashboardOrchestrator:
         summary_path = str(entry.get("summary_path", "") or "").strip()
         if not summary_path:
             return ""
-        resolved = DashboardOrchestrator._ensure_short_test_summary_path(project_name=project_name, summary_path=summary_path)
+        resolved = DashboardOrchestrator._ensure_short_test_summary_path(
+            project_name=project_name, summary_path=summary_path
+        )
         return resolved or summary_path
 
     @staticmethod
@@ -353,7 +354,10 @@ class DashboardOrchestrator:
             return None
         if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
             return route
-        if isinstance(route.flags.get("commit_message_file"), str) and str(route.flags.get("commit_message_file")).strip():
+        if (
+            isinstance(route.flags.get("commit_message_file"), str)
+            and str(route.flags.get("commit_message_file")).strip()
+        ):
             return route
         raw = self._prompt_commit_message(
             runtime_any,
@@ -540,11 +544,9 @@ class DashboardOrchestrator:
             capture_output=True,
             check=False,
         )
-        branch_names = [
-            line.strip()
-            for line in listed.stdout.splitlines()
-            if line.strip()
-        ] if listed.returncode == 0 else []
+        branch_names = (
+            [line.strip() for line in listed.stdout.splitlines() if line.strip()] if listed.returncode == 0 else []
+        )
         if default_branch and default_branch not in branch_names:
             branch_names.append(default_branch)
         if not branch_names:
@@ -595,7 +597,11 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _single_project_name(projects: list[object]) -> str:
-        names = [str(getattr(project, "name", "")).strip() for project in projects if str(getattr(project, "name", "")).strip()]
+        names = [
+            str(getattr(project, "name", "")).strip()
+            for project in projects
+            if str(getattr(project, "name", "")).strip()
+        ]
         if len(names) != 1:
             return ""
         return names[0]
@@ -661,9 +667,15 @@ class DashboardOrchestrator:
             runtime_any,
             project_names=all_project_names,
         )
-        include_requirements = set(selected_projects) == set(all_project_names) and set(selected_service_types) == set(all_service_types)
+        include_requirements = set(selected_projects) == set(all_project_names) and set(selected_service_types) == set(
+            all_service_types
+        )
         route.flags = {
-            **{key: value for key, value in route.flags.items() if key not in {"all", "services", "restart_service_types"}},
+            **{
+                key: value
+                for key, value in route.flags.items()
+                if key not in {"all", "services", "restart_service_types"}
+            },
             "services": selected_service_names,
             "restart_service_types": list(selected_service_types),
             "restart_include_requirements": include_requirements,
@@ -795,7 +807,11 @@ class DashboardOrchestrator:
             state,
             project_names=selected_projects,
         )
-        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
+        if (
+            len(available_types) <= 1
+            and not failed_scope_available
+            and not (all_tests_available and not available_types)
+        ):
             return list(available_types)
         default_service_names = [service_type.title() for service_type in available_types]
         initial_service_names = list(default_service_names)
@@ -851,7 +867,11 @@ class DashboardOrchestrator:
             state,
             project_names=selected_projects,
         )
-        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
+        if (
+            len(available_types) <= 1
+            and not failed_scope_available
+            and not (all_tests_available and not available_types)
+        ):
             return list(available_types)
         options: list[str] = []
         initial_names: list[str] = []

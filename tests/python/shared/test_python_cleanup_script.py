@@ -162,7 +162,7 @@ class PythonCleanupScriptTests(unittest.TestCase):
                 "python/envctl_engine/config",
                 "python/envctl_engine/ui/dashboard",
                 "python/envctl_engine/runtime",
-            ]
+            ],
         )
         self.assertEqual(paths, ["tests/python/config", "tests/python/ui", "tests/python/runtime"])
 
@@ -267,7 +267,9 @@ class PythonCleanupScriptTests(unittest.TestCase):
 
     def test_main_executes_by_default(self) -> None:
         with patch.object(self.module, "_run_plan", return_value=0) as run_plan:
-            code = self.module.main([str(REPO_ROOT), "--skip-format", "--skip-typecheck", "--skip-dead-code", "--skip-tests"])
+            code = self.module.main(
+                [str(REPO_ROOT), "--skip-format", "--skip-typecheck", "--skip-dead-code", "--skip-tests"]
+            )
         self.assertEqual(code, 0)
         run_plan.assert_called_once()
 

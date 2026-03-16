@@ -329,7 +329,9 @@ def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -
         entries.append("\n".join(entry_lines).strip())
     if not entries:
         return ""
-    return _truncate_recent_entries(entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]")
+    return _truncate_recent_entries(
+        entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]"
+    )
 
 
 def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:

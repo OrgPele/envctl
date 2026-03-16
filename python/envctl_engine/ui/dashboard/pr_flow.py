@@ -137,16 +137,6 @@ def run_pr_flow(
                 pass
             self._refresh()
 
-        def on_key(self, event: Key) -> None:
-            if event.key == "enter":
-                event.stop()
-                self.action_submit()
-                return
-            if event.key == "space":
-                event.stop()
-                self.action_toggle()
-                return
-
         def on_unmount(self) -> None:
             _emit(emit, "ui.screen.exit", screen="dashboard_pr_flow")
 

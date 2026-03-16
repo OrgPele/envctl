@@ -161,13 +161,17 @@ def run_textual_selector(
         )
         return app  # type: ignore[return-value]
     prelaunch_mode = (
-        temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None and force_textual_backend else nullcontext(False)
+        temporary_tty_character_mode(fd=tty_fd, emit=emit)
+        if tty_fd is not None and force_textual_backend
+        else nullcontext(False)
     )
     with prelaunch_mode:
         launch_mode = (
             nullcontext(False)
             if tty_fd is not None and force_textual_backend
-            else temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None else nullcontext(False)
+            else temporary_tty_character_mode(fd=tty_fd, emit=emit)
+            if tty_fd is not None
+            else nullcontext(False)
         )
         with launch_mode:
             with _guard_textual_nonblocking_read(

@@ -318,7 +318,9 @@ def resolve_dependency_env_templates(
             continue
         rendered = template
         for placeholder in placeholders:
-            rendered = rendered.replace(f"${{{placeholder}}}", _resolve_dependency_placeholder(placeholder, source_env, resolved))
+            rendered = rendered.replace(
+                f"${{{placeholder}}}", _resolve_dependency_placeholder(placeholder, source_env, resolved)
+            )
         resolved[name] = rendered
     return resolved
 

@@ -126,7 +126,9 @@ def _normalize_cli_targets(raw_cli: str) -> tuple[list[str], list[PromptInstallR
     invalid_results: list[PromptInstallResult] = []
     seen: set[str] = set()
     expand_all = "all" in raw_tokens
-    candidate_tokens = list(_SUPPORTED_CLIS) if expand_all else [token for token in raw_tokens if token in _SUPPORTED_CLIS]
+    candidate_tokens = (
+        list(_SUPPORTED_CLIS) if expand_all else [token for token in raw_tokens if token in _SUPPORTED_CLIS]
+    )
 
     for token in raw_tokens:
         if token in {"all", *_SUPPORTED_CLIS}:

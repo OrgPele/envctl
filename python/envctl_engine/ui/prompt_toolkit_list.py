@@ -227,7 +227,9 @@ def run_prompt_toolkit_list_selector(
             return
         selectable_indexes = list(range(len(rows)))
         if config.exclusive_token:
-            non_exclusive_indexes = [index for index in selectable_indexes if str(rows[index].token) != config.exclusive_token]
+            non_exclusive_indexes = [
+                index for index in selectable_indexes if str(rows[index].token) != config.exclusive_token
+            ]
             if non_exclusive_indexes:
                 selectable_indexes = non_exclusive_indexes
         should_select = any(index not in selected_indexes for index in selectable_indexes)

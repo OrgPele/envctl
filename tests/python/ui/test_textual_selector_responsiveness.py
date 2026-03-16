@@ -244,6 +244,76 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["beta"])
 
+    async def test_filter_accepts_focus_when_clicked(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#selector-filter")
+            self.assertFalse(filter_input.has_focus)
+            await pilot.click("#selector-filter")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            app.exit(None)
+
+    async def test_tab_cycles_focus_between_list_and_filter(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = selector._run_textual_selector(
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#selector-filter")
+            list_view = app.query_one("#selector-list")
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            app.exit(None)
+
     async def test_mouse_click_selects_single_mode_without_enter(self) -> None:
         options = [
             SelectorItem(
