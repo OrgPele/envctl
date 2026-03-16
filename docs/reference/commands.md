@@ -14,7 +14,10 @@ If you are intentionally running from a clone of the `envctl` repo and want the 
 Notes:
 
 - this is compatibility-only, not the primary install story
+- running `./bin/envctl`, `bin/envctl`, or an absolute wrapper path uses that exact wrapper directly
 - the preferred user path is the package-installed `envctl` command on your `PATH`
+- bare `envctl` keeps the installed-command preference when a repo wrapper shadows another `envctl` later on `PATH`
+- `ENVCTL_USE_REPO_WRAPPER=1` remains the override when you need to force repo-wrapper behavior for an ambiguous PATH-based launch
 
 ## Inspection Commands
 
