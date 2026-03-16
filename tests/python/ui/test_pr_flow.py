@@ -36,10 +36,11 @@ class PrFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with app.run_test() as pilot:
             await pilot.press("down")
+            await pilot.pause()
             await pilot.press("space")
             await pilot.pause()
             status = app.query_one("#selector-status")
-            self.assertIn("1 selected", str(getattr(status, "renderable", "")))
+            self.assertIn("1 selected", str(status.render()))
 
     async def test_space_toggles_the_focused_project_not_the_top_row(self) -> None:
         if importlib.util.find_spec("textual") is None:
@@ -58,7 +59,9 @@ class PrFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with app.run_test() as pilot:
             await pilot.press("down")
+            await pilot.pause()
             await pilot.press("space")
+            await pilot.pause()
             await pilot.press("enter")
             await pilot.press("enter")
             await pilot.pause()

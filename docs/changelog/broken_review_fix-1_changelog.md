@@ -183,3 +183,33 @@ Hardened the PR flow selector against a render-timing race where rapid keyboard 
 
 ### Risks and Notes
 - Textual-specific PR flow execution still could not be run in this environment because `textual` is not installed here.
+
+## 2026-03-16 - Fix immediate key handling in PR flow with Textual installed
+
+### Scope
+Resolved the remaining PR flow bug reproduced under a real Textual test environment where the first `Down` key could be overwritten by deferred selector setup, causing `Space` to keep toggling `Main`.
+
+### Key behavior changes
+- `python/envctl_engine/ui/dashboard/pr_flow.py` now renders the initial list synchronously on mount instead of leaving the first render on a background worker.
+- PR flow list rebuilds preserve the live `ListView` index before clearing/re-extending rows.
+- PR flow applies focus/index directly in this screen instead of relying on the deferred `focus_selectable_list(...)` sync path.
+- `tests/python/ui/test_pr_flow.py` now asserts the status text via `status.render()` and pauses after directional input so the test matches current Textual widget semantics.
+
+### Files and Modules Touched
+- `python/envctl_engine/ui/dashboard/pr_flow.py`
+- `tests/python/ui/test_pr_flow.py`
+
+### Tests Run
+- `PYTHONPATH=python /tmp/envctl-textual-venv/bin/python -m unittest tests.python.ui.test_pr_flow`
+  - Result: passed (`2` tests)
+- `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+  - Result: passed (`140` tests)
+- `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+  - Result: passed
+
+### Config, Env, and Migrations
+- No new config/env keys.
+- No migrations.
+
+### Risks and Notes
+- Textual verification here used a temporary local venv at `/tmp/envctl-textual-venv`; that environment is not repo-managed.

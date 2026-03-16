@@ -13841,6 +13841,38 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 - Risks/notes:
   - The direct Textual PR flow test path is still not runnable in this environment because `textual` is unavailable here.
 
+## 2026-03-16 - Fix PR flow first-key race under real Textual execution
+
+- Scope:
+  - Closed the remaining PR selector bug reproduced only when the Textual widget stack was actually installed and running.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Initial PR flow rendering is now awaited on mount so the first keyboard interaction operates on a stable list.
+    - Row rebuilds preserve the live `ListView` index instead of resetting from stale cached state.
+    - This screen now focuses and reapplies list index directly, avoiding the deferred helper callback that could overwrite an immediate `Down` key.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+    - Updated to assert `Static` content through `render()` and to pause after directional input in the real Textual driver.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python /tmp/envctl-textual-venv/bin/python -m unittest tests.python.ui.test_pr_flow`
+    - Result: pass (`2 passed`).
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+    - Result: pass (`140 passed`).
+  - `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Result: pass.
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - The Textual verification here used a temporary non-repo venv for reproduction because the default shell environment still lacks `textual`.
+
 ## 2026-03-03 - Remove conflicting action-level spinner during interactive test suite-row mode
 
 - Scope:
