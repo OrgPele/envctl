@@ -375,20 +375,23 @@ class CliPackagingTests(unittest.TestCase):
         self.assertTrue(any(item.startswith("basedpyright") for item in dev_dependencies))
         self.assertTrue(any(item.startswith("vulture") for item in dev_dependencies))
 
-    def test_release_version_metadata_is_aligned_for_1_3_0(self) -> None:
+    def test_release_version_metadata_is_consistent(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = payload["project"]
-        self.assertEqual(project["version"], "1.3.0")
+        version = str(project["version"])
 
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("releases/tag/1.3.0", readme)
-        self.assertIn("release-1.3.0", readme)
-        self.assertIn("Release 1.3.0", readme)
+        self.assertIn(f"releases/tag/{version}", readme)
+        self.assertIn(f"release-{version}", readme)
+        self.assertIn(f"Release {version}", readme)
 
-    def test_release_notes_exist_for_1_3_0(self) -> None:
-        notes = (REPO_ROOT / "docs" / "changelog" / "RELEASE_NOTES_1.3.0.md").read_text(encoding="utf-8")
-        self.assertTrue(notes.startswith("# envctl 1.3.0"))
-        self.assertRegex(notes, re.compile(r"\b1\.3\.0\b"))
+    def test_release_notes_exist_for_current_version(self) -> None:
+        payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        version = str(payload["project"]["version"])
+        notes_path = REPO_ROOT / "docs" / "changelog" / f"RELEASE_NOTES_{version}.md"
+        notes = notes_path.read_text(encoding="utf-8")
+        self.assertTrue(notes.startswith(f"# envctl {version}"))
+        self.assertRegex(notes, re.compile(rf"\b{re.escape(version)}\b"))
 
     def test_build_smoke_is_warning_free(self) -> None:
         packaging_python = self._packaging_python()
