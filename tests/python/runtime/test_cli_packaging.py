@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import re
 import site
 import subprocess
 import sys
@@ -288,6 +289,21 @@ class CliPackagingTests(unittest.TestCase):
         self.assertEqual(project["scripts"]["envctl"], "envctl_engine.runtime.cli:main")
         self.assertEqual(project["requires-python"], ">=3.12,<3.15")
         self.assertIn("rich>=13.7", project["dependencies"])
+
+    def test_release_version_metadata_is_aligned_for_1_3_0(self) -> None:
+        payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        project = payload["project"]
+        self.assertEqual(project["version"], "1.3.0")
+
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("releases/tag/1.3.0", readme)
+        self.assertIn("release-1.3.0", readme)
+        self.assertIn("Release 1.3.0", readme)
+
+    def test_release_notes_exist_for_1_3_0(self) -> None:
+        notes = (REPO_ROOT / "docs" / "changelog" / "RELEASE_NOTES_1.3.0.md").read_text(encoding="utf-8")
+        self.assertTrue(notes.startswith("# envctl 1.3.0"))
+        self.assertRegex(notes, re.compile(r"\b1\.3\.0\b"))
 
     def test_editable_install_exposes_envctl_help(self) -> None:
         with self._installed_env(editable=True) as env:
