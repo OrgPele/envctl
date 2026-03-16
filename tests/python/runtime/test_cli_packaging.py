@@ -148,6 +148,24 @@ class CliPackagingTests(unittest.TestCase):
 
             self.assertTrue(is_explicit_wrapper_path(current, str(symlink_path)))
 
+    def test_explicit_wrapper_path_ignores_ambient_preserved_argv0_without_explicit_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            current.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+
+            original = os.environ.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
+            try:
+                os.environ[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = "envctl"
+                self.assertTrue(is_explicit_wrapper_path(current, str(current)))
+            finally:
+                if original is None:
+                    os.environ.pop(ORIGINAL_WRAPPER_ARGV0_ENVVAR, None)
+                else:
+                    os.environ[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = original
+
     def test_bare_envctl_keeps_shadow_redirect_behavior(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -243,6 +261,33 @@ class CliPackagingTests(unittest.TestCase):
             installed.chmod(0o755)
 
             env = dict(os.environ)
+            env["PATH"] = os.pathsep.join((str(installed_bin), env.get("PATH", "")))
+            result = subprocess.run(
+                [str(REPO_ROOT / "bin" / "envctl"), "doctor", "--repo", str(repo_root)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Launcher: envctl", result.stdout)
+        self.assertNotIn("INSTALLED_SENTINEL", result.stdout)
+        self.assertNotIn("shadowing installed envctl", result.stderr)
+
+    def test_explicit_wrapper_subprocess_ignores_stale_preserved_argv0_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = tmp_path / "project"
+            (repo_root / ".git").mkdir(parents=True)
+            installed_bin = tmp_path / "installed-bin"
+            installed_bin.mkdir()
+            installed = installed_bin / "envctl"
+            installed.write_text("#!/bin/sh\necho INSTALLED_SENTINEL\n", encoding="utf-8")
+            installed.chmod(0o755)
+
+            env = dict(os.environ)
+            env[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = "envctl"
             env["PATH"] = os.pathsep.join((str(installed_bin), env.get("PATH", "")))
             result = subprocess.run(
                 [str(REPO_ROOT / "bin" / "envctl"), "doctor", "--repo", str(repo_root)],

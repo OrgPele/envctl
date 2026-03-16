@@ -1753,18 +1753,14 @@ class ActionCommandOrchestrator:
                         )
             summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
             if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
-                excerpt_lines = summary_excerpt_from_entry(summary_entry, max_lines=3)
                 summary_path = str(
                     summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
                 ).strip()
-                if excerpt_lines or summary_path:
+                if summary_path:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
-                    for line in excerpt_lines:
-                        print(f"{prefix}{line}")
-                    if summary_path:
-                        print(f"{prefix}{summary_path}")
+                    print(f"{prefix}{summary_path}")
             if multi_project:
                 print("")
 

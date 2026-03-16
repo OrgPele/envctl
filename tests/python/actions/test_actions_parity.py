@@ -1046,7 +1046,11 @@ class ActionsParityTests(unittest.TestCase):
                     )
                     return SimpleNamespace(returncode=1, stdout="", stderr="suite failed")
 
-            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailingRunner):
+            dispatch_out = StringIO()
+            with (
+                redirect_stdout(dispatch_out),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailingRunner),
+            ):
                 route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
 
@@ -1105,6 +1109,11 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(results_root, str(Path(summary_path).parent.parent))
             self.assertTrue(Path(str(results_root)).is_relative_to(expected_root))
             self.assertFalse((repo / "test-results").exists())
+            dispatch_rendered = dispatch_out.getvalue()
+            self.assertIn("failure summary:", dispatch_rendered)
+            self.assertIn(short_summary_path, dispatch_rendered)
+            self.assertNotIn("backend/tests/test_auth.py::test_signup_regression", dispatch_rendered)
+            self.assertNotIn("AssertionError: expected 201, got 500", dispatch_rendered)
 
             dashboard_out = StringIO()
             with redirect_stdout(dashboard_out):

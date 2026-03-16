@@ -170,3 +170,126 @@
 - Risks/notes:
   - The auto-bootstrap preflight is intentionally scoped to envctl repositories/worktrees; other repositories still use their existing configured test commands without side effects.
   - If `pip install -e '.[dev]'` fails because the host is offline or package resolution is broken, envctl now stops with the bootstrap command and first failure detail instead of silently falling through to opaque downstream test failures.
+
+## 2026-03-16 - Remove duplicate interactive test failure replay
+
+- Scope:
+  - Cleaned up interactive dashboard test output after failed `t` runs so envctl no longer prints the same saved failure excerpt twice.
+
+- Key behavior changes:
+  - `python/envctl_engine/ui/dashboard/orchestrator.py`
+    - Interactive `test` commands now skip the detached `Test failure summary for <project>` replay block when the just-finished test action already produced a saved failure summary.
+    - The dashboard snapshot/test row still retains the compact saved excerpt; only the immediate duplicate replay after the `Test Suite Summary` block is suppressed.
+  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py`
+    - Updated regression coverage to assert the interactive loop no longer replays a duplicate failure-summary block after a failed test action.
+
+- Files/modules touched:
+  - `python/envctl_engine/ui/dashboard/orchestrator.py`
+  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py`
+  - `docs/changelog/broken_envctl_release_readiness_closure_plan-1_changelog.md`
+
+- Tests run + results:
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.ui.test_dashboard_orchestrator_restart_selector`
+    - Result: pass (`Ran 38 tests`, `OK`).
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.ui.test_dashboard_rendering_parity tests.python.actions.test_actions_parity`
+    - Result: pass (`Ran 106 tests`, `OK`).
+
+- Config/env/migrations:
+  - No config or environment changes.
+  - No migrations.
+
+- Risks/notes:
+  - If a future test-action failure occurs before envctl can persist any saved summary metadata, the generic failure path still applies so failures remain visible rather than being silently suppressed.
+
+## 2026-03-16 - Trim interactive test suite failure summary noise
+
+- Scope:
+  - Cleaned up the `Test Suite Summary` block for failed interactive test actions so it no longer dumps saved failure excerpt lines inline.
+
+- Key behavior changes:
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+    - The per-project `failure summary:` section printed by the test action now shows only the saved summary path.
+    - Saved excerpt metadata is still persisted and remains available to dashboard snapshot rendering.
+  - `tests/python/actions/test_actions_parity.py`
+    - Added regression coverage proving failed test action output keeps the saved path but omits the verbose failed-test/explanation lines.
+
+- Files/modules touched:
+  - `python/envctl_engine/actions/action_command_orchestrator.py`
+  - `tests/python/actions/test_actions_parity.py`
+  - `docs/changelog/broken_envctl_release_readiness_closure_plan-1_changelog.md`
+
+- Tests run + results:
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.actions.test_actions_parity.ActionsParityTests.test_test_action_writes_failed_tests_summary_and_persists_dashboard_metadata`
+    - Result: pass (`Ran 1 test`, `OK`).
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.ui.test_dashboard_rendering_parity tests.python.ui.test_dashboard_orchestrator_restart_selector`
+    - Result: pass (`Ran 51 tests`, `OK`).
+
+- Config/env/migrations:
+  - No config or environment changes.
+  - No migrations.
+
+- Risks/notes:
+  - The immediate action output is now quieter by design; the richer excerpt still exists in the saved summary file and dashboard snapshot when deeper inspection is needed.
+
+## 2026-03-16 - Harden wrapper-path intent against stale argv0 env leakage
+
+- Scope:
+  - Fixed packaging/launcher regressions where explicit wrapper invocations could be misclassified as bare `envctl` intent because the wrapper’s internal preserved-argv0 env var leaked into later test processes.
+
+- Key behavior changes:
+  - `bin/envctl`
+    - Added a dedicated re-exec marker so preserved original `argv0` is only trusted during the wrapper’s own Python-version re-exec chain.
+    - Supported-runtime launches now clear stale inherited wrapper-preservation env state instead of propagating it into child commands and tests.
+  - `python/envctl_engine/runtime/launcher_support.py`
+    - `is_explicit_wrapper_path(...)` now ignores ambient preserved-argv0 state unless the caller explicitly supplies an environment map.
+    - Real wrapper flows still preserve the intended redirect behavior because `bin/envctl` continues to pass `os.environ` explicitly.
+  - `tests/python/runtime/test_cli_packaging.py`
+    - Added regressions for ambient/stale preserved-argv0 leakage in both direct helper calls and explicit-wrapper subprocess launches.
+
+- Files/modules touched:
+  - `bin/envctl`
+  - `python/envctl_engine/runtime/launcher_support.py`
+  - `tests/python/runtime/test_cli_packaging.py`
+  - `docs/changelog/broken_envctl_release_readiness_closure_plan-1_changelog.md`
+
+- Tests run + results:
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.runtime.test_cli_packaging.CliPackagingTests.test_explicit_absolute_wrapper_path_skips_shadow_redirect tests.python.runtime.test_cli_packaging.CliPackagingTests.test_explicit_symlink_wrapper_path_is_treated_as_wrapper_intent tests.python.runtime.test_cli_packaging.CliPackagingTests.test_explicit_wrapper_path_ignores_ambient_preserved_argv0_without_explicit_env tests.python.runtime.test_cli_packaging.CliPackagingTests.test_explicit_wrapper_subprocess_skips_shadowed_installed_envctl tests.python.runtime.test_cli_packaging.CliPackagingTests.test_explicit_wrapper_subprocess_ignores_stale_preserved_argv0_env`
+    - Result: pass (`Ran 5 tests`, `OK`).
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.runtime.test_cli_packaging`
+    - Result: pass (`Ran 24 tests in 13.937s`, `OK`).
+
+- Config/env/migrations:
+  - No user-facing config changes.
+  - Added an internal wrapper re-exec marker env var only for the wrapper’s own transient process chain.
+  - No migrations.
+
+- Risks/notes:
+  - The fix intentionally narrows trust in inherited wrapper env state; if future launcher flows need preserved original `argv0`, they must pass an explicit env map or participate in the wrapper’s marked re-exec path.
+
+## 2026-03-16 - Collapse dashboard service log label and path onto one line
+
+- Scope:
+  - Cleaned up dashboard service rows so `log:` and the resolved log path render on one line instead of two.
+
+- Key behavior changes:
+  - `python/envctl_engine/ui/dashboard/rendering.py`
+    - Service rows now print `log: <path>` on a single line.
+    - No other dashboard service-row formatting changed.
+  - `tests/python/ui/test_dashboard_rendering_parity.py`
+    - Added regression coverage for the single-line log rendering contract.
+
+- Files/modules touched:
+  - `python/envctl_engine/ui/dashboard/rendering.py`
+  - `tests/python/ui/test_dashboard_rendering_parity.py`
+  - `docs/changelog/broken_envctl_release_readiness_closure_plan-1_changelog.md`
+
+- Tests run + results:
+  - `PYTHONPATH=python .venv/bin/python -m unittest tests.python.ui.test_dashboard_rendering_parity`
+    - Result: pass (`Ran 14 tests in 0.155s`, `OK`).
+
+- Config/env/migrations:
+  - No config or environment changes.
+  - No migrations.
+
+- Risks/notes:
+  - Long log paths remain unwrapped; this change only removes the extra line break between the label and the path.

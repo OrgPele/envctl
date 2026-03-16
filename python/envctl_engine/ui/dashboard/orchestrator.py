@@ -182,6 +182,8 @@ class DashboardOrchestrator:
 
     def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
         if route.command == "test":
+            if bool(route.flags.get("interactive_command")) and self._test_failure_details_available(route, state):
+                return
             printed = self._print_test_failure_details(route, state)
             if printed:
                 return
@@ -189,6 +191,24 @@ class DashboardOrchestrator:
         if printed:
             return
         print(f"Command failed (exit {code}).")
+
+    def _test_failure_details_available(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_test_summaries")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        for project_name in project_names:
+            entry = metadata.get(project_name)
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status", "")).strip().lower()
+            if status and status != "failed":
+                continue
+            if self._test_summary_display_path(project_name=project_name, entry=entry):
+                return True
+            if summary_excerpt_from_entry(entry, max_lines=3):
+                return True
+        return False
 
     def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
         metadata = state.metadata.get("project_test_summaries")

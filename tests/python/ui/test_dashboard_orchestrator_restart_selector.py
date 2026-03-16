@@ -1467,7 +1467,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertNotIn("frontend", runtime.last_dispatched_route.flags)
         self.assertNotIn("failed", runtime.last_dispatched_route.flags)
 
-    def test_interactive_test_failure_does_not_print_generic_command_failed_banner(self) -> None:
+    def test_interactive_test_failure_does_not_replay_duplicate_summary_after_test_suite_block(self) -> None:
         runtime = _RuntimeStub()
         runtime.dispatch_code = 1
         orchestrator = DashboardOrchestrator(runtime)
@@ -1521,11 +1521,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(next_state.run_id, "run-1")
         self.assertNotIn("Command failed (exit 1).", out.getvalue())
         rendered = strip_ansi(out.getvalue())
-        self.assertIn("Test failure summary for Main:", rendered)
-        self.assertIn("[Repository tests (unittest)]", rendered)
-        self.assertIn("tests/python/ui/test_selector.py::test_keyboard_burst", rendered)
-        self.assertIn("AssertionError: Regex didn't match: 'RESULT_CANCELLED=False'", rendered)
-        self.assertIn("/tmp/runtime/run_1/ft_deadbeef00.txt", rendered)
+        self.assertNotIn("Test failure summary for Main:", rendered)
         self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
 
     def test_interactive_test_success_pauses_before_returning_to_dashboard(self) -> None:

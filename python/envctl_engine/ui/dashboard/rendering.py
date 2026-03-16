@@ -210,8 +210,7 @@ def _print_dashboard_service_row(
     )
     log_path = getattr(service, "log_path", None)
     if isinstance(log_path, str) and log_path.strip():
-        print(f"      {dim}log:{reset}")
-        print(f"      {log_path}")
+        print(f"      {dim}log:{reset} {log_path}")
 
     requested = getattr(service, "requested_port", None)
     actual = getattr(service, "actual_port", None)
