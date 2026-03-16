@@ -213,3 +213,38 @@ Resolved the remaining PR flow bug reproduced under a real Textual test environm
 
 ### Risks and Notes
 - Textual verification here used a temporary local venv at `/tmp/envctl-textual-venv`; that environment is not repo-managed.
+
+## 2026-03-16 - Prepare envctl 1.3.0 release metadata and notes
+
+### Scope
+Cut the repository metadata and release collateral for `envctl` `1.3.0` on top of the current worktree changes so the branch is ready for a release PR, tag, and GitHub release.
+
+### Key behavior changes
+- Bumped the package version from `1.2.4` to `1.3.0` in `pyproject.toml`.
+- Updated the README release badge/tag reference to `1.3.0`.
+- Added `docs/changelog/RELEASE_NOTES_1.3.0.md` covering the three shipped release themes:
+  - branch-relative single-mode review with persisted provenance
+  - branch-attached envctl worktrees and detached PR skip truthfulness
+  - PR selector keyboard/focus reliability fixes
+- Added packaging tests that lock the `1.3.0` version metadata, README badge, and release-notes file together.
+
+### Files and Modules Touched
+- `pyproject.toml`
+- `README.md`
+- `docs/changelog/RELEASE_NOTES_1.3.0.md`
+- `tests/python/runtime/test_cli_packaging.py`
+- `docs/changelog/broken_review_fix-1_changelog.md`
+
+### Tests Run
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging.CliPackagingTests.test_release_version_metadata_is_aligned_for_1_3_0 tests.python.runtime.test_cli_packaging.CliPackagingTests.test_release_notes_exist_for_1_3_0`
+  - Result: passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging`
+  - Result: passed
+
+### Config, Env, and Migrations
+- No new config/env keys.
+- No migrations.
+- New release-notes artifact: `docs/changelog/RELEASE_NOTES_1.3.0.md`
+
+### Risks and Notes
+- This release branch is intentionally based on the current worktree head so `1.3.0` includes the unreleased workflow fixes already implemented here.
