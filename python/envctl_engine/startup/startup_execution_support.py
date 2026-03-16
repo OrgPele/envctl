@@ -6,15 +6,14 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.requirements_execution import (
-    format_requirements_progress_message,
     maybe_prewarm_docker,
     requirements_failure_message,
     requirements_for_restart_context,
     requirements_timing_enabled,
-    start_requirements_for_project,
+    start_requirements_for_project as start_requirements_for_project_impl,
     startup_breakdown_enabled,
 )
-from envctl_engine.startup.service_execution import start_project_services
+from envctl_engine.startup.service_execution import start_project_services as start_project_services_impl
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult
 
@@ -166,3 +165,5 @@ _requirements_failure_message = requirements_failure_message
 _maybe_prewarm_docker = maybe_prewarm_docker
 _requirements_timing_enabled = requirements_timing_enabled
 _startup_breakdown_enabled = startup_breakdown_enabled
+start_requirements_for_project = start_requirements_for_project_impl
+start_project_services = start_project_services_impl

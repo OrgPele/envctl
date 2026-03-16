@@ -164,7 +164,9 @@ def _suggest_backend_start_command(*, project_root: Path, command_exists: Comman
                 )
 
     for candidate_root in search_roots:
-        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        python_bin = _detect_python_bin(
+            project_root=project_root, service_root=candidate_root, command_exists=command_exists
+        )
         if python_bin is None:
             continue
         runnable = _detect_python_entrypoint(candidate_root)
@@ -235,7 +237,9 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
         pyproject = candidate_root / "pyproject.toml"
         if not pyproject.is_file():
             continue
-        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        python_bin = _detect_python_bin(
+            project_root=project_root, service_root=candidate_root, command_exists=command_exists
+        )
         app_ref = _detect_uvicorn_app_ref(candidate_root)
         if python_bin is None or app_ref is None:
             continue
@@ -251,7 +255,9 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
         ]
 
     for candidate_root in search_roots:
-        python_bin = _detect_python_bin(project_root=project_root, service_root=candidate_root, command_exists=command_exists)
+        python_bin = _detect_python_bin(
+            project_root=project_root, service_root=candidate_root, command_exists=command_exists
+        )
         runnable = _detect_python_entrypoint(candidate_root)
         if python_bin is None or runnable is None:
             continue

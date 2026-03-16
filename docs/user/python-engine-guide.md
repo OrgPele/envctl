@@ -80,9 +80,9 @@ envctl --plan
 These commands are safe to run before startup:
 
 ```bash
-envctl --list-commands
-envctl --list-targets --json
-envctl --list-trees --json
+envctl list-commands
+envctl list-targets --json
+envctl list-trees --json
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
@@ -91,13 +91,17 @@ envctl install-prompts --cli codex --dry-run
 
 What they are for:
 
-- `--list-commands`: show the supported runtime command surface
-- `--list-targets --json`: show discovered projects and targetable scopes
-- `--list-trees --json`: show discovered worktrees / planning targets
+- `list-commands`: show the supported runtime command surface
+- `list-targets --json`: show discovered projects and targetable scopes
+- `list-trees --json`: show discovered worktrees / planning targets
 - `show-config --json`: print effective config source and values
 - `show-state --json`: print the latest saved runtime state
 - `explain-startup --json`: show what startup would do before anything runs
 - `install-prompts --cli ...`: install built-in AI prompt presets without requiring a startup run
+
+Compatibility note:
+
+- `list-commands`, `list-targets`, and `list-trees` still accept the older `--list-*` flag spellings
 
 ## Runtime Artifacts
 

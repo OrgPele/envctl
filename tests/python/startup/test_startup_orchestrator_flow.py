@@ -88,7 +88,9 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_start_project_context", return_value=result),
                 patch.object(engine, "_reconcile_state_truth", return_value=["Main Backend"]),
                 patch.object(engine, "_write_artifacts") as write_artifacts_mock,
-                patch.object(engine, "_terminate_started_services", side_effect=lambda services: terminated.append(services)),
+                patch.object(
+                    engine, "_terminate_started_services", side_effect=lambda services: terminated.append(services)
+                ),
             ):
                 code = engine.dispatch(route)
 

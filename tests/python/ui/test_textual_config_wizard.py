@@ -11,7 +11,6 @@ from envctl_engine.config import LocalConfigState, discover_local_config_state
 from envctl_engine.config.persistence import ManagedConfigValues
 from envctl_engine.config import PortDefaults, StartupProfile
 from envctl_engine.ui.textual.screens.config_wizard import (
-    _COMPONENT_FIELDS,
     _PORT_FIELDS,
     _port_input_id,
     run_config_wizard_textual,
@@ -402,9 +401,7 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(getattr(entrypoint, "value", None), "python src/main.py")
                 test_command = app.query_one("#directory-backend_test_cmd")
                 self.assertTrue(
-                    str(getattr(test_command, "value", "")).endswith(
-                        " -m unittest discover -s tests -t . -p test_*.py"
-                    )
+                    str(getattr(test_command, "value", "")).endswith(" -m unittest discover -s tests -t . -p test_*.py")
                 )
                 app.exit(None)
 

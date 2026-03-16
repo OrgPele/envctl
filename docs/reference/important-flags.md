@@ -20,6 +20,7 @@ These are the highest-value flags for daily use.
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
 Allowed values are `main` and `trees` (default: `main`).
 Engine note: Python runtime is the only supported runtime path.
+Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
 
 ## Targeting
 | Flag | Purpose |
