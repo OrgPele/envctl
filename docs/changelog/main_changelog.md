@@ -13756,6 +13756,40 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
   - Existing detached worktrees are not retroactively reattached; they still need manual checkout or recreation.
   - Detached-head skip classification is currently specific to `pr` actions, matching the user-visible issue investigated here.
 
+## 2026-03-16 - Fix follow-up selector test fixture and runtime contracts
+
+- Scope:
+  - Cleaned up post-merge test drift caused by the selector fixture shape and runtime inventory contract updates.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+    - PR flow tests now build valid branch selector items using the current selector model fields (`id`, `kind`, `scope_signature`).
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/runtime/test_cutover_gate_truth.py`
+    - Cutover gate fixture now writes a fresh parity-manifest timestamp so shipability passes in the clean temporary repo setup.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/runtime_feature_matrix.json`
+    - Regenerated to reflect the current parser/docs inventory, including `--review-base`.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/python_runtime_gap_report.json`
+    - Regenerated to stay consistent with the refreshed runtime feature matrix payload.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/runtime/test_cutover_gate_truth.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/runtime_feature_matrix.json`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/python_runtime_gap_report.json`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+    - Result: pass (`17 passed`, `2 skipped` because `textual` is not installed).
+  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+    - Result: pass (`67 passed`, `2 skipped` because `textual` is not installed).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - Textual-specific selector execution still depends on having `textual` installed in the test environment.
+
 ## 2026-03-03 - Remove conflicting action-level spinner during interactive test suite-row mode
 
 - Scope:

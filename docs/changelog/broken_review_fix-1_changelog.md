@@ -129,3 +129,32 @@ Updated envctl-managed worktree creation so new trees check out a named branch, 
 ### Risks and Notes
 - Existing already-detached worktrees are not automatically reattached; they still need a manual checkout or recreation to gain the new branch behavior.
 - The new skip classification is intentionally scoped to PR actions that exit `0` while printing the detached-HEAD skip message.
+
+## 2026-03-16 - Fix follow-up test and contract drift
+
+### Scope
+Fixed follow-up regressions after the workflow changes by aligning the new PR flow test fixture with the shared selector model and resyncing runtime inventory contracts.
+
+### Key behavior changes
+- `tests/python/ui/test_pr_flow.py` now constructs valid branch `SelectorItem` fixtures with the current selector metadata shape.
+- `tests/python/runtime/test_cutover_gate_truth.py` now writes a fresh parity-manifest timestamp so shipability assertions reflect runtime behavior instead of stale fixture data.
+- Regenerated runtime inventory contracts to include the new review-base flag surface and the updated gap-report hash.
+
+### Files and Modules Touched
+- `tests/python/ui/test_pr_flow.py`
+- `tests/python/runtime/test_cutover_gate_truth.py`
+- `contracts/runtime_feature_matrix.json`
+- `contracts/python_runtime_gap_report.json`
+
+### Tests Run
+- `PYTHONPATH=python python3 -m unittest tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+  - Result: passed (`17` tests, `2` skipped because `textual` is not installed in this environment)
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+  - Result: passed (`67` tests, `2` skipped because `textual` is not installed in this environment)
+
+### Config, Env, and Migrations
+- No new config/env keys.
+- No migrations.
+
+### Risks and Notes
+- The PR flow tests still skip without `textual` installed, so widget-level execution remains environment-dependent.

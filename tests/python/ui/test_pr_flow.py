@@ -8,6 +8,16 @@ from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
 from envctl_engine.ui.selector_model import SelectorItem
 
 
+def _branch_option(name: str) -> SelectorItem:
+    return SelectorItem(
+        id=f"branch:{name}",
+        label=name,
+        kind="branch",
+        token=name,
+        scope_signature=(f"branch:{name}",),
+    )
+
+
 class PrFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_space_toggles_project_selection_before_enter(self) -> None:
         if importlib.util.find_spec("textual") is None:
@@ -17,8 +27,8 @@ class PrFlowTests(unittest.IsolatedAsyncioTestCase):
             projects=[SimpleNamespace(name="Main"), SimpleNamespace(name="feature-a-1")],
             initial_project_names=[],
             branch_options=[
-                SelectorItem(token="main", label="main"),
-                SelectorItem(token="dev", label="dev"),
+                _branch_option("main"),
+                _branch_option("dev"),
             ],
             default_branch="main",
             build_only=True,
@@ -39,8 +49,8 @@ class PrFlowTests(unittest.IsolatedAsyncioTestCase):
             projects=[SimpleNamespace(name="Main"), SimpleNamespace(name="feature-a-1")],
             initial_project_names=[],
             branch_options=[
-                SelectorItem(token="main", label="main"),
-                SelectorItem(token="dev", label="dev"),
+                _branch_option("main"),
+                _branch_option("dev"),
             ],
             default_branch="main",
             build_only=True,

@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
@@ -38,7 +39,13 @@ class CutoverGateTruthTests(unittest.TestCase):
         manifest = repo / "contracts" / "python_engine_parity_manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text(
-            '{"generated_at":"2026-03-09T00:00:00","commands":{"doctor":"python_complete"},"modes":{}}',
+            json.dumps(
+                {
+                    "generated_at": datetime.now().isoformat(),
+                    "commands": {"doctor": "python_complete"},
+                    "modes": {},
+                }
+            ),
             encoding="utf-8",
         )
         gap_report = repo / "contracts" / "python_runtime_gap_report.json"
