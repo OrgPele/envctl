@@ -14,6 +14,7 @@ from typing import Any, cast
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.color_policy import colors_enabled
 
 
@@ -317,6 +318,8 @@ def _print_dashboard_tests_row(
     color = ok_color if passed else bad_color
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
     print(f"      {color}{icon}{reset} tests: {dim}({timestamp}){reset}")
+    for line in summary_excerpt_from_entry(entry, max_lines=3):
+        print(f"        {line}")
     print(f"      {summary_path}")
 
 

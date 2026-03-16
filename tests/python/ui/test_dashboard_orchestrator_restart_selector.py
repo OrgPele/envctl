@@ -1499,6 +1499,11 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                         "Main": {
                             "summary_path": "/tmp/runtime/test-results/run_1/Main/failed_tests_summary.txt",
                             "short_summary_path": "/tmp/runtime/run_1/ft_deadbeef00.txt",
+                            "summary_excerpt": [
+                                "[Repository tests (unittest)]",
+                                "tests/python/ui/test_selector.py::test_keyboard_burst",
+                                "AssertionError: Regex didn't match: 'RESULT_CANCELLED=False'",
+                            ],
                             "status": "failed",
                         }
                     }
@@ -1515,8 +1520,12 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertNotIn("Command failed (exit 1).", out.getvalue())
-        self.assertNotIn("Test failure summary for Main:", strip_ansi(out.getvalue()))
-        self.assertNotIn("Failed test summaries:", strip_ansi(out.getvalue()))
+        rendered = strip_ansi(out.getvalue())
+        self.assertIn("Test failure summary for Main:", rendered)
+        self.assertIn("[Repository tests (unittest)]", rendered)
+        self.assertIn("tests/python/ui/test_selector.py::test_keyboard_burst", rendered)
+        self.assertIn("AssertionError: Regex didn't match: 'RESULT_CANCELLED=False'", rendered)
+        self.assertIn("/tmp/runtime/run_1/ft_deadbeef00.txt", rendered)
         self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
 
     def test_interactive_test_success_pauses_before_returning_to_dashboard(self) -> None:

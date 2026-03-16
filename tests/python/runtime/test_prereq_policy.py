@@ -104,7 +104,8 @@ class PrereqPolicyTests(unittest.TestCase):
 
             self.assertFalse(ok)
             self.assertIn("rich", str(reason))
-            self.assertIn("python -m pip install -e .", str(reason))
+            self.assertIn("python3.12 -m venv .venv", str(reason))
+            self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", str(reason))
 
 
 if __name__ == "__main__":

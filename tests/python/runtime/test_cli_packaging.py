@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,37 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class CliPackagingTests(unittest.TestCase):
+    @staticmethod
+    def _interpreter_can_import(python_bin: str, module_name: str) -> bool:
+        result = subprocess.run(
+            [
+                python_bin,
+                "-P",
+                "-c",
+                (
+                    "import importlib.util, sys; "
+                    f"raise SystemExit(0 if importlib.util.find_spec({module_name!r}) else 1)"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    @classmethod
+    def _packaging_python(cls) -> str:
+        candidates: list[str] = []
+        for raw in (sys.executable, shutil.which("python3"), shutil.which("python3.12"), shutil.which("python")):
+            if not raw:
+                continue
+            if raw not in candidates:
+                candidates.append(raw)
+        for candidate in candidates:
+            if cls._interpreter_can_import(candidate, "setuptools") and cls._interpreter_can_import(candidate, "build"):
+                return candidate
+        raise unittest.SkipTest("No available interpreter exposes both setuptools and build for packaging smoke")
+
     def test_repo_wrapper_detects_shadowed_installed_envctl(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -314,10 +346,12 @@ class CliPackagingTests(unittest.TestCase):
         self.assertRegex(notes, re.compile(r"\b1\.3\.0\b"))
 
     def test_build_smoke_is_warning_free(self) -> None:
+        packaging_python = self._packaging_python()
         with tempfile.TemporaryDirectory() as tmpdir:
             result = subprocess.run(
                 [
-                    sys.executable,
+                    packaging_python,
+                    "-P",
                     "-m",
                     "build",
                     "--wheel",
@@ -422,6 +456,7 @@ class CliPackagingTests(unittest.TestCase):
         self.assertIn("deps-ok", result.stdout)
 
     def _build_stub_dependency_wheels(self, wheelhouse: Path) -> None:
+        packaging_python = self._packaging_python()
         wheelhouse.mkdir(parents=True, exist_ok=True)
         packages = {
             "rich": ("rich", "99.0.0"),
@@ -452,7 +487,8 @@ class CliPackagingTests(unittest.TestCase):
             )
             subprocess.run(
                 [
-                    sys.executable,
+                    packaging_python,
+                    "-P",
                     "-m",
                     "build",
                     "--wheel",
@@ -469,8 +505,9 @@ class CliPackagingTests(unittest.TestCase):
     @contextmanager
     def _installed_env(self, *, editable: bool, install_deps: bool = False):
         with tempfile.TemporaryDirectory() as tmpdir:
+            packaging_python = self._packaging_python()
             venv_dir = Path(tmpdir) / "venv"
-            subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+            subprocess.run([packaging_python, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
             python_bin = venv_dir / "bin" / "python"
             env = dict(os.environ)
             install_cmd = [

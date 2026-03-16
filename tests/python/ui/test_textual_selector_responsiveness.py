@@ -75,7 +75,7 @@ class TextualSelectorResponsivenessTests(_TextualAppTestHelpers, unittest.Isolat
                 scope_signature=("service:alpha",),
             ),
         ]
-        with patch("envctl_engine.ui.textual.screens.selector._textual_importable", return_value=False):
+        with patch("envctl_engine.ui.textual.screens.selector.textual_impl._textual_importable", return_value=False):
             app = selector._run_textual_selector(
                 prompt="Restart",
                 options=options,

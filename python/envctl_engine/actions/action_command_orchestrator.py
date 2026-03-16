@@ -43,6 +43,7 @@ from envctl_engine.actions.action_worktree_runner import run_delete_worktree_act
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
@@ -1285,6 +1286,7 @@ class ActionCommandOrchestrator:
             "status": "failed" if failures or generic_suite_failures else "passed",
             "failed_tests": len(failures),
             "failed_manifest_entries": len(manifest_entries),
+            "summary_excerpt": extract_failure_summary_excerpt(summary_text, max_lines=3),
             "updated_at": generated_at.isoformat(),
         }
 
@@ -1751,14 +1753,18 @@ class ActionCommandOrchestrator:
                         )
             summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
             if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
+                excerpt_lines = summary_excerpt_from_entry(summary_entry, max_lines=3)
                 summary_path = str(
                     summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
                 ).strip()
-                if summary_path:
+                if excerpt_lines or summary_path:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
-                    print(f"{prefix}{summary_path}")
+                    for line in excerpt_lines:
+                        print(f"{prefix}{line}")
+                    if summary_path:
+                        print(f"{prefix}{summary_path}")
             if multi_project:
                 print("")
 

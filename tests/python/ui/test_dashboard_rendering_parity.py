@@ -265,7 +265,15 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 / "failed_tests_summary.txt"
             )
             summary.parent.mkdir(parents=True, exist_ok=True)
-            summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
+            summary.write_text(
+                (
+                    "# Generated at: now\n"
+                    "[Repository tests (unittest)]\n"
+                    "- tests/test_auth.py::test_signup_regression\n"
+                    "    AssertionError: expected 201, got 500\n"
+                ),
+                encoding="utf-8",
+            )
 
             state = RunState(
                 run_id="run-1",
@@ -306,6 +314,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("tests:", output)
             self.assertIn(str(summary), output)
             self.assertIn("✗ tests:", output)
+            self.assertIn("tests/test_auth.py::test_signup_regression", output)
+            self.assertIn("AssertionError: expected 201, got 500", output)
 
     def test_dashboard_renders_active_project_pr_link(self) -> None:
         class _Runner:

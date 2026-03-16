@@ -137,9 +137,15 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
     def _prompt_toolkit_available() -> bool:
         return importlib.util.find_spec("prompt_toolkit") is not None
 
+    @staticmethod
+    def _textual_available() -> bool:
+        return importlib.util.find_spec("textual") is not None
+
     def test_project_selector_consumes_repeated_down_keys_in_pty_default_textual(self) -> None:
         if not self._prompt_toolkit_available():
             self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
         script = textwrap.dedent(
             """
             from envctl_engine.ui.textual.screens.selector import select_project_targets_textual
@@ -169,6 +175,8 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
     def test_grouped_selector_consumes_repeated_down_keys_in_pty_default_textual(self) -> None:
         if not self._prompt_toolkit_available():
             self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
         script = textwrap.dedent(
             """
             from envctl_engine.ui.textual.screens.selector import select_grouped_targets_textual
@@ -200,6 +208,8 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
     def test_grouped_selector_consumes_early_repeated_down_keys_in_pty_default_textual(self) -> None:
         if not self._prompt_toolkit_available():
             self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
         script = textwrap.dedent(
             """
             from envctl_engine.ui.textual.screens.selector import select_grouped_targets_textual
@@ -230,6 +240,8 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
     def test_dashboard_to_grouped_selector_handoff_preserves_immediate_arrow_burst(self) -> None:
         if not self._prompt_toolkit_available():
             self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
         script = textwrap.dedent(
             """
             from envctl_engine.ui.terminal_session import TerminalSession
@@ -276,6 +288,8 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
     def test_background_service_launch_does_not_steal_selector_input_in_fresh_handoff(self) -> None:
         if not self._prompt_toolkit_available():
             self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
         script = textwrap.dedent(
             """
             import os

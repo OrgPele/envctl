@@ -1093,6 +1093,14 @@ class ActionsParityTests(unittest.TestCase):
                 ["backend/tests/test_auth.py::test_signup_regression"],
             )
             self.assertEqual(project_entry.get("status"), "failed")
+            self.assertEqual(
+                project_entry.get("summary_excerpt"),
+                [
+                    "[Test command]",
+                    "backend/tests/test_auth.py::test_signup_regression",
+                    "AssertionError: expected 201, got 500",
+                ],
+            )
             results_root = refreshed.metadata.get("project_test_results_root")
             self.assertEqual(results_root, str(Path(summary_path).parent.parent))
             self.assertTrue(Path(str(results_root)).is_relative_to(expected_root))
@@ -1103,8 +1111,98 @@ class ActionsParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(refreshed)
             rendered = dashboard_out.getvalue()
             self.assertIn("tests:", rendered)
+            self.assertIn("backend/tests/test_auth.py::test_signup_regression", rendered)
+            self.assertIn("AssertionError: expected 201, got 500", rendered)
             self.assertIn(short_summary_path, rendered)
             self.assertNotIn(summary_path, rendered)
+
+    def test_envctl_repo_test_bootstrap_creates_repo_local_venv_and_installs_dev_deps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine" / "__init__.py").write_text('"""envctl"""\n', encoding="utf-8")
+            (repo / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl"',
+                        'version = "0.0.0"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            commands: list[tuple[str, ...]] = []
+            statuses: list[str] = []
+
+            def fake_run(command, *, cwd=None, capture_output=None, text=None, check=None):  # noqa: ANN001
+                _ = capture_output, text, check
+                commands.append(tuple(str(part) for part in command))
+                self.assertEqual(Path(str(cwd)).resolve(), repo.resolve())
+                rendered = tuple(str(part) for part in command)
+                if rendered[1:3] == ("-m", "venv"):
+                    python_bin = repo / ".venv" / "bin" / "python"
+                    python_bin.parent.mkdir(parents=True, exist_ok=True)
+                    python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    python_bin.chmod(0o755)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.actions_test.subprocess.run", side_effect=fake_run):
+                actions_test_module.ensure_repo_local_test_prereqs(repo, emit_status=statuses.append)
+
+            self.assertEqual(len(commands), 2)
+            self.assertEqual(commands[0][1:3], ("-m", "venv"))
+            self.assertEqual(Path(commands[0][3]).resolve(), (repo / ".venv").resolve())
+            self.assertEqual(
+                commands[1],
+                (str((repo / ".venv" / "bin" / "python").resolve()), "-m", "pip", "install", "-e", ".[dev]"),
+            )
+            self.assertTrue(
+                any("Creating repo-local .venv for envctl test actions" in message for message in statuses),
+                msg=statuses,
+            )
+            self.assertTrue(
+                any("Installing repo-local envctl test prerequisites" in message for message in statuses),
+                msg=statuses,
+            )
+
+    def test_envctl_repo_test_bootstrap_skips_when_repo_local_python_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine" / "__init__.py").write_text('"""envctl"""\n', encoding="utf-8")
+            (repo / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl"',
+                        'version = "0.0.0"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            python_bin = repo / ".venv" / "bin" / "python"
+            python_bin.parent.mkdir(parents=True, exist_ok=True)
+            python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            python_bin.chmod(0o755)
+
+            def fake_run(command, *, cwd=None, capture_output=None, text=None, check=None):  # noqa: ANN001
+                _ = cwd, capture_output, text, check
+                rendered = tuple(str(part) for part in command)
+                if rendered == (
+                    str(python_bin.resolve()),
+                    "-c",
+                    "import build, prompt_toolkit, psutil, pytest, rich, textual",
+                ):
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                self.fail(f"Unexpected bootstrap command: {rendered}")
+
+            with patch("envctl_engine.actions.actions_test.subprocess.run", side_effect=fake_run):
+                actions_test_module.ensure_repo_local_test_prereqs(repo)
 
     def test_test_action_summary_event_omits_fake_zero_counts_when_parsing_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
