@@ -165,7 +165,7 @@ def run_pr_flow(
         def _status_text(self) -> str:
             rows = self._rows()
             selected_count = sum(1 for row in rows if row.selected)
-            focus_index = self._focused_list_index() + 1 if rows else 0
+            focus_index = self._current_index() + 1 if rows else 0
             total = len(rows)
             if self._step == "branch":
                 return f"Select base branch • focus: {focus_index}/{total}"
@@ -191,7 +191,7 @@ def run_pr_flow(
                 await list_view.extend(items)
             index = self._controller().ensure_list_index(self._current_index())
             apply_selectable_list_index(list_view, index)
-            self._set_current_index(list_view.index)
+            self._set_current_index(index)
             focus_selectable_list(self, list_view, index)
 
         def _sync_actions(self) -> None:
@@ -206,28 +206,18 @@ def run_pr_flow(
             self._sync_actions()
             self.run_worker(self._render_rows(), exclusive=True)
 
-        def _focused_list_index(self) -> int:
-            try:
-                list_view = self.query_one("#selector-list", ListView)
-            except Exception:
-                return self._current_index()
-            if list_view.index is not None and list_view.index >= 0:
-                return int(list_view.index)
-            return self._current_index()
-
         def _focused_row(self) -> _Row | None:
-            return self._controller().focused_row(self._focused_list_index())
+            return self._controller().focused_row(self._current_index())
 
         def action_nav_up(self) -> None:
-            self._set_current_index(self._controller().cursor_up(self._focused_list_index()))
+            self._set_current_index(self._controller().cursor_up(self._current_index()))
             self._refresh()
 
         def action_nav_down(self) -> None:
-            self._set_current_index(self._controller().cursor_down(self._focused_list_index()))
+            self._set_current_index(self._controller().cursor_down(self._current_index()))
             self._refresh()
 
         def action_toggle(self) -> None:
-            self._set_current_index(self._focused_list_index())
             row = self._focused_row()
             if row is None:
                 return

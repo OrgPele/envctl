@@ -13790,6 +13790,32 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 - Risks/notes:
   - Textual-specific selector execution still depends on having `textual` installed in the test environment.
 
+## 2026-03-16 - Fix PR flow keyboard selection race after merge
+
+- Scope:
+  - Fixed a PR selector timing bug where rapid `Down` + `Space` input could still act on the stale top-row widget state.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Keyboard navigation and toggle state now use the app-maintained current index instead of reading back `ListView.index` between renders.
+    - Status text now reflects the cached focused row immediately, even before the next render cycle settles.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+    - Result: pass (`140 passed`).
+  - `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Result: pass.
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - The direct Textual PR flow test path is still not runnable in this environment because `textual` is unavailable here.
+
 ## 2026-03-03 - Remove conflicting action-level spinner during interactive test suite-row mode
 
 - Scope:

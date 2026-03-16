@@ -158,3 +158,28 @@ Fixed follow-up regressions after the workflow changes by aligning the new PR fl
 
 ### Risks and Notes
 - The PR flow tests still skip without `textual` installed, so widget-level execution remains environment-dependent.
+
+## 2026-03-16 - Fix PR flow keyboard index race after merge
+
+### Scope
+Hardened the PR flow selector against a render-timing race where rapid keyboard input could toggle the previously rendered row instead of the newly focused row.
+
+### Key behavior changes
+- `python/envctl_engine/ui/dashboard/pr_flow.py` now treats the app's cached list index as the source of truth for keyboard navigation, status text, and toggle actions.
+- Row toggling no longer depends on `ListView.index` being updated before the next key event is processed.
+
+### Files and Modules Touched
+- `python/envctl_engine/ui/dashboard/pr_flow.py`
+
+### Tests Run
+- `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+  - Result: passed (`140` tests)
+- `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+  - Result: passed
+
+### Config, Env, and Migrations
+- No new config/env keys.
+- No migrations.
+
+### Risks and Notes
+- Textual-specific PR flow execution still could not be run in this environment because `textual` is not installed here.
