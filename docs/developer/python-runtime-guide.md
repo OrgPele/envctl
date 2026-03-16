@@ -29,7 +29,8 @@ Current control flow:
 Key boundary decisions:
 
 - The launcher resolves repo root and prepares the Python runtime handoff.
-- Source checkouts should use `bin/envctl`; direct module execution from the repo root requires `PYTHONPATH=python`.
+- Source checkouts should use `bin/envctl`; explicit wrapper paths stay on that exact wrapper, while bare `envctl` still prefers an installed command on `PATH`.
+- Direct module execution from the repo root requires `PYTHONPATH=python`.
 - `runtime/cli.py` owns prereq checks, local config bootstrap policy, and exit code normalization.
 - `EngineRuntime` is the runtime facade that wires the domains together.
 - Orchestrators own behavior; helper modules own reusable policy and contract logic.

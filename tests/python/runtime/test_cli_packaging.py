@@ -10,7 +10,12 @@ import tempfile
 import tomllib
 import unittest
 
-from envctl_engine.runtime.launcher_support import find_shadowed_installed_envctl
+from envctl_engine.runtime.launcher_support import (
+    ORIGINAL_WRAPPER_ARGV0_ENVVAR,
+    find_shadowed_installed_envctl,
+    is_explicit_wrapper_path,
+    select_envctl_reexec_target,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -52,6 +57,207 @@ class CliPackagingTests(unittest.TestCase):
             )
 
         self.assertIsNone(result)
+
+    def test_explicit_absolute_wrapper_path_skips_shadow_redirect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertTrue(is_explicit_wrapper_path(current, str(current)))
+            self.assertIsNone(
+                select_envctl_reexec_target(
+                    current,
+                    str(current),
+                    alternate=alternate,
+                )
+            )
+
+    def test_explicit_relative_wrapper_paths_are_treated_as_wrapper_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = tmp_path / "repo"
+            current = repo_root / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertTrue(is_explicit_wrapper_path(current, "./bin/envctl", cwd=repo_root))
+            self.assertTrue(is_explicit_wrapper_path(current, "bin/envctl", cwd=repo_root))
+            self.assertIsNone(
+                select_envctl_reexec_target(
+                    current,
+                    "./bin/envctl",
+                    cwd=repo_root,
+                    alternate=alternate,
+                )
+            )
+
+    def test_explicit_symlink_wrapper_path_is_treated_as_wrapper_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            symlink_path = tmp_path / "shim" / "envctl"
+            current.parent.mkdir(parents=True)
+            symlink_path.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            symlink_path.symlink_to(current)
+
+            self.assertTrue(is_explicit_wrapper_path(current, str(symlink_path)))
+
+    def test_bare_envctl_keeps_shadow_redirect_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertFalse(is_explicit_wrapper_path(current, "envctl"))
+            self.assertEqual(
+                select_envctl_reexec_target(current, "envctl", alternate=alternate),
+                alternate,
+            )
+
+    def test_env_var_override_forces_repo_wrapper_even_for_bare_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertIsNone(
+                select_envctl_reexec_target(
+                    current,
+                    "envctl",
+                    env={"ENVCTL_USE_REPO_WRAPPER": "1"},
+                    alternate=alternate,
+                )
+            )
+
+    def test_preserved_original_argv0_controls_redirect_after_python_reexec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            current = tmp_path / "repo" / "bin" / "envctl"
+            alternate = tmp_path / "installed" / "envctl"
+            current.parent.mkdir(parents=True)
+            alternate.parent.mkdir(parents=True)
+            current.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            alternate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            current.chmod(0o755)
+            alternate.chmod(0o755)
+
+            self.assertEqual(
+                select_envctl_reexec_target(
+                    current,
+                    str(current),
+                    env={ORIGINAL_WRAPPER_ARGV0_ENVVAR: "envctl"},
+                    alternate=alternate,
+                ),
+                alternate,
+            )
+
+    def test_explicit_wrapper_subprocess_skips_shadowed_installed_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = tmp_path / "project"
+            (repo_root / ".git").mkdir(parents=True)
+            installed_bin = tmp_path / "installed-bin"
+            installed_bin.mkdir()
+            installed = installed_bin / "envctl"
+            installed.write_text("#!/bin/sh\necho INSTALLED_SENTINEL\n", encoding="utf-8")
+            installed.chmod(0o755)
+
+            env = dict(os.environ)
+            env["PATH"] = os.pathsep.join((str(installed_bin), env.get("PATH", "")))
+            result = subprocess.run(
+                [str(REPO_ROOT / "bin" / "envctl"), "doctor", "--repo", str(repo_root)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Launcher: envctl", result.stdout)
+        self.assertNotIn("INSTALLED_SENTINEL", result.stdout)
+        self.assertNotIn("shadowing installed envctl", result.stderr)
+
+    def test_bare_envctl_subprocess_redirects_to_shadowed_installed_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_bin = tmp_path / "repo-bin"
+            installed_bin = tmp_path / "installed-bin"
+            repo_bin.mkdir()
+            installed_bin.mkdir()
+            (repo_bin / "envctl").symlink_to(REPO_ROOT / "bin" / "envctl")
+            installed = installed_bin / "envctl"
+            installed.write_text("#!/bin/sh\necho INSTALLED_SENTINEL\n", encoding="utf-8")
+            installed.chmod(0o755)
+
+            env = dict(os.environ)
+            env["PATH"] = os.pathsep.join((str(repo_bin), str(installed_bin), env.get("PATH", "")))
+            result = subprocess.run(
+                ["envctl", "doctor", "--repo", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "INSTALLED_SENTINEL")
+        self.assertIn("shadowing installed envctl", result.stderr)
+
+    def test_repo_wrapper_override_subprocess_forces_wrapper_on_bare_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = tmp_path / "project"
+            repo_bin = tmp_path / "repo-bin"
+            installed_bin = tmp_path / "installed-bin"
+            repo_bin.mkdir()
+            installed_bin.mkdir()
+            (repo_root / ".git").mkdir(parents=True)
+            (repo_bin / "envctl").symlink_to(REPO_ROOT / "bin" / "envctl")
+            installed = installed_bin / "envctl"
+            installed.write_text("#!/bin/sh\necho INSTALLED_SENTINEL\n", encoding="utf-8")
+            installed.chmod(0o755)
+
+            env = dict(os.environ)
+            env["ENVCTL_USE_REPO_WRAPPER"] = "1"
+            env["PATH"] = os.pathsep.join((str(repo_bin), str(installed_bin), env.get("PATH", "")))
+            result = subprocess.run(
+                ["envctl", "doctor", "--repo", str(repo_root)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Launcher: envctl", result.stdout)
+        self.assertNotIn("INSTALLED_SENTINEL", result.stdout)
+        self.assertNotIn("shadowing installed envctl", result.stderr)
 
     def test_pyproject_declares_installable_console_script(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))

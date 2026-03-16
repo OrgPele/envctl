@@ -38,6 +38,10 @@ That sequence answers four different questions:
 - If you intentionally use the clone-compatibility wrapper, use:
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
+- Wrapper precedence:
+  - explicit wrapper paths such as `./bin/envctl` or `/absolute/path/to/bin/envctl` now run that wrapper directly, even if another `envctl` exists later on `PATH`
+  - bare `envctl` still prefers the installed command path when the repo wrapper shadows it
+  - `ENVCTL_USE_REPO_WRAPPER=1` is still useful when a PATH-based invocation needs to force the repo wrapper
 
 ## Required external tools are missing
 - `envctl` itself installs through `pipx`, but some workflows rely on system tools:

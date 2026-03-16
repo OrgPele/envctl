@@ -19,6 +19,7 @@ The active execution path is:
 Why this matters:
 
 - launcher bugs live before Python import even starts
+- wrapper-selection policy also lives before launcher handoff: explicit repo-wrapper paths stay local, while bare `envctl` can still hop to an installed command
 - route-parsing bugs live before `EngineRuntime` behavior
 - orchestration bugs usually live after `dispatch_command`
 
@@ -30,6 +31,12 @@ Why this matters:
 - `--repo` handling
 - launcher-only subcommands such as `install`, `uninstall`, and launcher `doctor`
 - Python runtime handoff
+
+`bin/envctl` plus `runtime/launcher_support.py` own the wrapper-selection policy that runs before `launcher_cli` starts:
+
+- `ENVCTL_USE_REPO_WRAPPER=1` forces the repo wrapper
+- explicit wrapper paths use the current wrapper directly
+- bare-name invocations keep the installed-command preference when another `envctl` shadows the repo wrapper on `PATH`
 
 Important env exports set before the engine starts include:
 
