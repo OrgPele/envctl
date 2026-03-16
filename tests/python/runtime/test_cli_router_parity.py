@@ -39,6 +39,19 @@ class CliRouterParityTests(unittest.TestCase):
             route = parse_route([token], env={})
             self.assertEqual(route.command, command, msg=token)
 
+    def test_bare_direct_inspection_commands_map_to_expected_commands(self) -> None:
+        expected = {
+            "list-commands": "list-commands",
+            "list-targets": "list-targets",
+            "list-trees": "list-trees",
+            "show-config": "show-config",
+            "show-state": "show-state",
+            "explain-startup": "explain-startup",
+        }
+        for token, command in expected.items():
+            route = parse_route([token], env={})
+            self.assertEqual(route.command, command, msg=token)
+
     def test_unknown_option_is_rejected(self) -> None:
         with self.assertRaises(RouteError):
             parse_route(["--definitely-unknown"], env={})
@@ -86,7 +99,9 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["config"], env={})
         self.assertEqual(route.command, "config")
 
-        route = parse_route(["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={})
+        route = parse_route(
+            ["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={}
+        )
         self.assertEqual(route.command, "install-prompts")
         self.assertEqual(route.flags.get("cli"), "codex,claude")
         self.assertEqual(route.flags.get("preset"), "implement_task")

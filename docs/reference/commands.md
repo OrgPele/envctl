@@ -21,14 +21,18 @@ Notes:
 These commands are safe to use before a repo-local `.envctl` exists:
 
 ```bash
-envctl --list-commands
-envctl --list-targets
-envctl --list-targets --json
-envctl --list-trees --json
+envctl list-commands
+envctl list-targets
+envctl list-targets --json
+envctl list-trees --json
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
 ```
+
+Compatibility note:
+
+- `list-commands`, `list-targets`, and `list-trees` also accept `--list-commands`, `--list-targets`, and `--list-trees`
 
 ## AI CLI Presets
 
@@ -174,7 +178,7 @@ printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 Planning and worktrees:
 
 ```bash
-envctl --list-trees --json
+envctl list-trees --json
 envctl --plan
 envctl --parallel-plan
 envctl --sequential-plan

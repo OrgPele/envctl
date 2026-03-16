@@ -293,7 +293,9 @@ class ActionsParityTests(unittest.TestCase):
                         progress_callback(12, 20)
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"}
+            )
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
             with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
@@ -305,9 +307,24 @@ class ActionsParityTests(unittest.TestCase):
             status_messages = [
                 str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
-            self.assertTrue(any("Collecting Frontend (package test) tests... 47 discovered" in message for message in status_messages))
-            self.assertTrue(any("Running Frontend (package test)... 5 tests complete • 5 passed, 0 failed" in message for message in status_messages))
-            self.assertTrue(any("Running Frontend (package test)... 12/20 tests complete • 12 passed, 0 failed" in message for message in status_messages))
+            self.assertTrue(
+                any(
+                    "Collecting Frontend (package test) tests... 47 discovered" in message
+                    for message in status_messages
+                )
+            )
+            self.assertTrue(
+                any(
+                    "Running Frontend (package test)... 5 tests complete • 5 passed, 0 failed" in message
+                    for message in status_messages
+                )
+            )
+            self.assertTrue(
+                any(
+                    "Running Frontend (package test)... 12/20 tests complete • 12 passed, 0 failed" in message
+                    for message in status_messages
+                )
+            )
 
     def test_interactive_test_action_ignores_late_collection_updates_after_running_starts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -345,7 +362,9 @@ class ActionsParityTests(unittest.TestCase):
                         progress_callback(7, 20)
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"}
+            )
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
             with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
@@ -362,8 +381,14 @@ class ActionsParityTests(unittest.TestCase):
             ]
             self.assertEqual(len(collecting_messages), 1, msg=status_messages)
             self.assertFalse(any("52 discovered" in message for message in collecting_messages), msg=status_messages)
-            self.assertTrue(any("Running Frontend (package test)... 5/20 tests complete" in message for message in status_messages), msg=status_messages)
-            self.assertTrue(any("Running Frontend (package test)... 7/20 tests complete" in message for message in status_messages), msg=status_messages)
+            self.assertTrue(
+                any("Running Frontend (package test)... 5/20 tests complete" in message for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertTrue(
+                any("Running Frontend (package test)... 7/20 tests complete" in message for message in status_messages),
+                msg=status_messages,
+            )
 
     def test_interactive_test_action_prints_failure_excerpt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1747,7 +1772,9 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 0)
-            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
+            self.assertEqual(
+                captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"]
+            )
 
     def test_failed_only_rerun_reports_extraction_failure_without_telling_user_to_rerun_full_suite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1981,7 +2008,9 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 0)
-            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
+            self.assertEqual(
+                captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"]
+            )
 
     def test_failed_only_rerun_allows_configured_shared_unittest_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2465,9 +2494,7 @@ class ActionsParityTests(unittest.TestCase):
                             {
                                 "suite": "Repository tests (unittest)",
                                 "source": "root_unittest",
-                                "failed_tests": [
-                                    "python.config.test_config_loader.ConfigLoaderTests.test_removed"
-                                ],
+                                "failed_tests": ["python.config.test_config_loader.ConfigLoaderTests.test_removed"],
                                 "failed_files": [],
                             }
                         ],
@@ -2606,7 +2633,7 @@ class ActionsParityTests(unittest.TestCase):
                     "  ╭────────────────────────────────────────────────────╮",
                     "  │  Run tests for                                    │",
                     "RESULT_SERVICES=Main Admin",
-                    "File \"/tmp/test.py\", line 10, in test_case",
+                    'File "/tmp/test.py", line 10, in test_case',
                 ]
             )
         )
@@ -2703,7 +2730,9 @@ class ActionsParityTests(unittest.TestCase):
             )
         )
         rendered = "\n".join(lines)
-        self.assertIn('File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered)
+        self.assertIn(
+            'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered
+        )
         self.assertIn(
             'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
             rendered,
@@ -3075,9 +3104,7 @@ class ActionsParityTests(unittest.TestCase):
             command_set = {call[0] for call in fake_runner.run_calls}
             cwd_set = {Path(call[1]).resolve() for call in fake_runner.run_calls}
             frontend_commands = [
-                command
-                for command in command_set
-                if len(command) >= 3 and command[:3] == ("pnpm", "run", "test")
+                command for command in command_set if len(command) >= 3 and command[:3] == ("pnpm", "run", "test")
             ]
             self.assertEqual(len(frontend_commands), 1)
             self.assertEqual(frontend_commands[0][-3], "--")
@@ -3240,9 +3267,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             commands = {call[0] for call in fake_runner.run_calls}
             backend_commands = [
-                command
-                for command in commands
-                if len(command) >= 4 and command[:3] == ("python", "-m", "pytest")
+                command for command in commands if len(command) >= 4 and command[:3] == ("python", "-m", "pytest")
             ]
             self.assertEqual(len(backend_commands), 1, msg=commands)
             self.assertIn("envctl_engine.test_output.pytest_progress_plugin", backend_commands[0])
@@ -3835,11 +3860,19 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("enter", suite_events)
             self.assertIn("exit", suite_events)
-            self.assertTrue(any(event == "progress:1:1/3 complete • 1 passed, 0 failed" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:1:3/3 complete • 3 passed, 0 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(
+                any(event == "progress:1:1/3 complete • 1 passed, 0 failed" for event in suite_events), msg=suite_events
+            )
+            self.assertTrue(
+                any(event == "progress:1:3/3 complete • 3 passed, 0 failed" for event in suite_events), msg=suite_events
+            )
             self.assertTrue(any(event == "progress:2:6 discovered" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:2:2 complete • 1 passed, 1 failed" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:2:6/6 complete • 5 passed, 1 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(
+                any(event == "progress:2:2 complete • 1 passed, 1 failed" for event in suite_events), msg=suite_events
+            )
+            self.assertTrue(
+                any(event == "progress:2:6/6 complete • 5 passed, 1 failed" for event in suite_events), msg=suite_events
+            )
 
     def test_interactive_single_suite_uses_rich_suite_spinner_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

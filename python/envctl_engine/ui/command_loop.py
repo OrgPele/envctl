@@ -327,7 +327,9 @@ def _consume_post_dashboard_prompt(
         return
     with suppress(Exception):
         setattr(runtime, "_dashboard_return_prompt", None)
-    runtime._emit("ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="post_command_input")
+    runtime._emit(
+        "ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="post_command_input"
+    )
     runtime._emit("ui.input.read.begin", component="ui.command_loop", prompt_kind="post_command")
     try:
         if read_command_line is not None:

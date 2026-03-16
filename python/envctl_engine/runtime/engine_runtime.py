@@ -1400,7 +1400,9 @@ class PythonEngineRuntime:
         route: Route | None = None,
         service_name: str | None = None,
     ) -> dict[str, str]:
-        return runtime_project_service_env(self, context, requirements=requirements, route=route, service_name=service_name)
+        return runtime_project_service_env(
+            self, context, requirements=requirements, route=route, service_name=service_name
+        )
 
     def _project_service_env_internal(
         self,

@@ -33,6 +33,18 @@ class LaunchedServiceRuntime:
     log_path: str
 
 
+def _resolve_command_env_builder(rt: object):
+    builder = getattr(rt, "_command_env", None)
+    if callable(builder):
+        return builder
+
+    def build_command_env(*, port: int, extra: dict[str, str] | None = None) -> dict[str, str]:
+        _ = port
+        return dict(extra or {})
+
+    return build_command_env
+
+
 def service_attach_parallel_enabled(
     orchestrator: StartupOrchestratorLike, *, route: Route | None, selected_service_types: set[str]
 ) -> bool:
@@ -272,9 +284,7 @@ def start_project_services(
         )
 
     prepared_launches: dict[str, PreparedServiceLaunch] = {}
-    command_env_builder = getattr(rt, "_command_env", None)
-    if not callable(command_env_builder):
-        command_env_builder = lambda *, port, extra=None: dict(extra or {})
+    command_env_builder = _resolve_command_env_builder(rt)
     if "backend" in selected_service_types:
         prepared_launches["backend"] = PreparedServiceLaunch(
             service_name="backend",

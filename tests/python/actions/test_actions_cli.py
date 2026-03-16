@@ -95,7 +95,13 @@ class ActionsCliTests(unittest.TestCase):
                     return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: add bounded pr body\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/new-demo"]:
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/new-demo",
+                ]:
                     return "abc123\x1ffeat: demo\x1ffirst body line\nsecond body line\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
@@ -140,7 +146,9 @@ class ActionsCliTests(unittest.TestCase):
             self.assertTrue(
                 any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
             )
-            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            gh_create = next(
+                command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]
+            )
             self.assertNotIn("--fill", gh_create)
             self.assertIn("--title", gh_create)
             self.assertIn("feat: add bounded pr body", gh_create)
@@ -172,12 +180,16 @@ class ActionsCliTests(unittest.TestCase):
                     return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: huge commit history\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/huge-pr"]:
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/huge-pr",
+                ]:
                     entries = []
                     for index in range(5000):
-                        entries.append(
-                            f"{index:06x}\x1fcommit {index}\x1fbody line {index} " + ("x" * 40) + "\x1e"
-                        )
+                        entries.append(f"{index:06x}\x1fcommit {index}\x1fbody line {index} " + ("x" * 40) + "\x1e")
                     entries.append("ffffff\x1fLATEST CHANGESET\x1fLATEST DETAIL LINE\x1e")
                     return "".join(entries)
                 if args == ["diff", "--stat", "origin/main...feature/huge-pr"]:
@@ -220,7 +232,6 @@ class ActionsCliTests(unittest.TestCase):
             self.assertNotIn("commit 0", captured_body[0])
 
     def test_pr_action_prefers_explicit_pr_body_over_main_task_and_commit_messages(self) -> None:
-        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
@@ -236,7 +247,13 @@ class ActionsCliTests(unittest.TestCase):
                     return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: explicit pr body\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/custom-body"]:
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/custom-body",
+                ]:
                     return "abc123\x1fcommit fallback\x1fbody fallback\x1e"
                 return ""
 
@@ -289,7 +306,13 @@ class ActionsCliTests(unittest.TestCase):
                     return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: promptless pr\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/no-prompt"]:
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/no-prompt",
+                ]:
                     return "abc123\x1ffeat: demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
@@ -331,7 +354,9 @@ class ActionsCliTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn("https://github.com/acme/supportopia/pull/101", output)
-            gh_create = next(command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"])
+            gh_create = next(
+                command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]
+            )
             self.assertNotIn("--fill", gh_create)
             self.assertIn("--head", gh_create)
             self.assertIn("feature/no-prompt", gh_create)
@@ -455,7 +480,13 @@ class ActionsCliTests(unittest.TestCase):
                     return "mbase123\n"
                 if args == ["log", "-1", "--pretty=%s"]:
                     return "feat: helper demo\n"
-                if args == ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", "mbase123..feature/helper-demo"]:
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/helper-demo",
+                ]:
                     return "abc123\x1ffeat: helper demo\x1f\x1e"
                 if args == ["status", "--porcelain"]:
                     return ""
@@ -643,12 +674,7 @@ class ActionsCliTests(unittest.TestCase):
             changelog = project_root / "docs" / "changelog" / "main_changelog.md"
             changelog.parent.mkdir(parents=True, exist_ok=True)
             changelog.write_text(
-                "# Changelog\n\n"
-                "## Latest\n"
-                + ("line\n" * 10000)
-                + "final line\n\n"
-                "## Older\n"
-                "old section\n",
+                "# Changelog\n\n## Latest\n" + ("line\n" * 10000) + "final line\n\n## Older\nold section\n",
                 encoding="utf-8",
             )
             captured_commit_message: list[str] = []
@@ -1102,9 +1128,7 @@ class ActionsCliTests(unittest.TestCase):
                 (output_dir / "summary.md").write_text("# Summary\n", encoding="utf-8")
                 (output_dir / "all.md").write_text("# Full\n", encoding="utf-8")
                 (output_dir / "summary_short.txt").write_text(
-                    "Tree Changes Analysis Summary\n"
-                    "============================\n"
-                    "Trees analyzed: 1\n",
+                    "Tree Changes Analysis Summary\n============================\nTrees analyzed: 1\n",
                     encoding="utf-8",
                 )
                 return subprocess.CompletedProcess(args=command, returncode=0, stdout="analysis ok\n", stderr="")
@@ -1144,28 +1168,30 @@ class ActionsCliTests(unittest.TestCase):
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
                 patch(
                     "envctl_engine.actions.project_action_domain._run_git",
-                    side_effect=lambda _git_root, args: subprocess.CompletedProcess(
-                        args=args,
-                        returncode=0,
-                        stdout="feature/demo\n" if args == ["rev-parse", "--abbrev-ref", "HEAD"] else "",
-                        stderr="",
-                    )
-                    if args == ["rev-parse", "--abbrev-ref", "HEAD"]
-                    else subprocess.CompletedProcess(
-                        args=args,
-                        returncode=0,
-                        stdout="",
-                        stderr="",
-                    )
-                    if args == ["add", "-A"]
-                    else subprocess.CompletedProcess(
-                        args=args,
-                        returncode=0,
-                        stdout="M app.py\n",
-                        stderr="",
-                    )
-                    if args == ["status", "--porcelain"]
-                    else subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected"),
+                    side_effect=lambda _git_root, args: (
+                        subprocess.CompletedProcess(
+                            args=args,
+                            returncode=0,
+                            stdout="feature/demo\n" if args == ["rev-parse", "--abbrev-ref", "HEAD"] else "",
+                            stderr="",
+                        )
+                        if args == ["rev-parse", "--abbrev-ref", "HEAD"]
+                        else subprocess.CompletedProcess(
+                            args=args,
+                            returncode=0,
+                            stdout="",
+                            stderr="",
+                        )
+                        if args == ["add", "-A"]
+                        else subprocess.CompletedProcess(
+                            args=args,
+                            returncode=0,
+                            stdout="M app.py\n",
+                            stderr="",
+                        )
+                        if args == ["status", "--porcelain"]
+                        else subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+                    ),
                 ),
             ):
                 buffer = StringIO()
