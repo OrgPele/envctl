@@ -43,6 +43,7 @@ from envctl_engine.actions.action_worktree_runner import run_delete_worktree_act
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
@@ -1285,6 +1286,7 @@ class ActionCommandOrchestrator:
             "status": "failed" if failures or generic_suite_failures else "passed",
             "failed_tests": len(failures),
             "failed_manifest_entries": len(manifest_entries),
+            "summary_excerpt": extract_failure_summary_excerpt(summary_text, max_lines=3),
             "updated_at": generated_at.isoformat(),
         }
 

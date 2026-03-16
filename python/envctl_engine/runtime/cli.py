@@ -14,6 +14,7 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.engine_runtime import dispatch_route
+from envctl_engine.shell.release_gate import CANONICAL_BOOTSTRAP_COMMANDS
 
 
 def _best_effort_restore_terminal_state() -> None:
@@ -42,11 +43,13 @@ def check_prereqs(route: Route, config: EngineConfig) -> tuple[bool, str | None]
         return False, f"Missing required executables: {', '.join(missing)}"
     missing_modules = sorted(module for module in required_python_modules if not _python_dependency_available(module))
     if missing_modules:
+        bootstrap_lines = "\n".join(CANONICAL_BOOTSTRAP_COMMANDS)
         return (
             False,
             "Missing required Python packages: "
             + ", ".join(missing_modules)
-            + ". Install envctl with: python -m pip install -e .",
+            + ". Bootstrap the repo-local envctl environment with:\n"
+            + bootstrap_lines,
         )
     return True, None
 

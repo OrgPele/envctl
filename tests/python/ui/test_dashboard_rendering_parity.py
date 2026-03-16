@@ -191,6 +191,39 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("workspace backend:", output)
             self.assertNotIn("workspace frontend:", output)
 
+    def test_dashboard_renders_service_log_on_single_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("ok\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(f"log: {log_path}", output)
+            self.assertNotIn("log:\n", output)
+
     def test_dashboard_renders_project_test_summary_link_with_passed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -265,7 +298,15 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 / "failed_tests_summary.txt"
             )
             summary.parent.mkdir(parents=True, exist_ok=True)
-            summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
+            summary.write_text(
+                (
+                    "# Generated at: now\n"
+                    "[Repository tests (unittest)]\n"
+                    "- tests/test_auth.py::test_signup_regression\n"
+                    "    AssertionError: expected 201, got 500\n"
+                ),
+                encoding="utf-8",
+            )
 
             state = RunState(
                 run_id="run-1",
@@ -306,6 +347,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("tests:", output)
             self.assertIn(str(summary), output)
             self.assertIn("✗ tests:", output)
+            self.assertIn("tests/test_auth.py::test_signup_regression", output)
+            self.assertIn("AssertionError: expected 201, got 500", output)
 
     def test_dashboard_renders_active_project_pr_link(self) -> None:
         class _Runner:

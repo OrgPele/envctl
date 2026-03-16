@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import sys
 from io import StringIO
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -23,12 +23,15 @@ class CommandExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_invalid_typo_alias_is_actionable_failure(self) -> None:
+        stderr = StringIO()
         with (
+            redirect_stderr(stderr),
             patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
             patch("envctl_engine.runtime.cli.ensure_local_config", return_value=self._bootstrap_result()),
         ):
             code = cli.run(["tees=true"], env={})
         self.assertEqual(code, 1)
+        self.assertIn("Unknown option", stderr.getvalue())
 
     def test_shell_nonzero_is_mapped_to_actionable_failure(self) -> None:
         with (
@@ -104,9 +107,14 @@ class CommandExitCodeTests(unittest.TestCase):
                 "N8N_ENABLE": "false",
             }
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
-            with patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False):
+            stderr = StringIO()
+            with (
+                redirect_stderr(stderr),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False),
+            ):
                 code = cli.run(["start"], env=env, dispatcher=lambda _route, _config: 0)
             self.assertEqual(code, 1)
+            self.assertIn("Missing required Python packages", stderr.getvalue())
 
     def test_missing_envctl_bootstraps_before_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,7 +359,10 @@ class CommandExitCodeTests(unittest.TestCase):
         restore_mock.assert_called_once()
 
     def test_run_restores_terminal_state_in_finally_on_route_error(self) -> None:
-        with patch("envctl_engine.runtime.cli._best_effort_restore_terminal_state") as restore_mock:
+        with (
+            redirect_stderr(StringIO()),
+            patch("envctl_engine.runtime.cli._best_effort_restore_terminal_state") as restore_mock,
+        ):
             code = cli.run(["tees=true"], env={})
         self.assertEqual(code, 1)
         restore_mock.assert_called_once()

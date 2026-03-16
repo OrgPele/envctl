@@ -27,6 +27,15 @@ class _RuntimeDeep:
 
 
 class TextualSelectorInteractionTests(unittest.TestCase):
+    @staticmethod
+    def _prompt_toolkit_available() -> bool:
+        try:
+            import importlib.util
+
+            return importlib.util.find_spec("prompt_toolkit") is not None
+        except Exception:
+            return False
+
     def setUp(self) -> None:
         self._original_selector_impl = os.environ.get("ENVCTL_UI_SELECTOR_IMPL")
         self._original_simple_menus = os.environ.get("ENVCTL_UI_SIMPLE_MENUS")
@@ -243,6 +252,8 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertEqual(values, ["alpha"])
 
     def test_cursor_menu_prompt_toolkit_io_prefers_native_auto_tty(self) -> None:
+        if not self._prompt_toolkit_available():
+            self.skipTest("prompt_toolkit is not installed")
         with (
             patch("sys.stdin.isatty", return_value=False),
             patch("sys.stdout.isatty", return_value=True),
@@ -261,6 +272,8 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertTrue(create_output.call_args.kwargs["always_prefer_tty"])
 
     def test_selector_prompt_toolkit_io_prefers_native_auto_tty(self) -> None:
+        if not self._prompt_toolkit_available():
+            self.skipTest("prompt_toolkit is not installed")
         with (
             patch("sys.stdin.isatty", return_value=False),
             patch("sys.stdout.isatty", return_value=True),

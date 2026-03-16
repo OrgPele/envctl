@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -290,7 +291,8 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertTrue(any("backend log:" in msg for msg in detail_messages))
 
     def test_startup_emits_spinner_policy_and_lifecycle(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = tempfile.mkdtemp()
+        try:
             root = Path(tmpdir)
             repo = root / "repo"
             runtime = root / "runtime"
@@ -398,6 +400,8 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(spinner_calls[0][1], True)
             self.assertTrue(any(event.get("event") == "ui.spinner.policy" for event in engine.events))
             self.assertTrue(any(event.get("event") == "ui.spinner.lifecycle" for event in engine.events))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_restart_emits_spinner_for_prestop_and_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

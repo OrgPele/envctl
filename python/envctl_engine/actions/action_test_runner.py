@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.symbols import format_duration
 
@@ -90,6 +91,17 @@ def run_test_action(
     include_backend, include_frontend = orchestrator._test_service_selection(route, backend_flag, frontend_flag)
 
     target_contexts = orchestrator._test_target_contexts(targets)
+    try:
+        seen_roots: set[Path] = set()
+        for context in target_contexts:
+            project_root = Path(context.project_root).resolve()
+            if project_root in seen_roots:
+                continue
+            seen_roots.add(project_root)
+            ensure_repo_local_test_prereqs(project_root, emit_status=orchestrator._emit_status)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
     try:
         execution_specs = orchestrator._build_test_execution_specs(
             route=route,

@@ -10,6 +10,7 @@ import sys
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = ROOT_DIR / "python"
 ORIGINAL_WRAPPER_ARGV0_ENVVAR = "ENVCTL_WRAPPER_ORIGINAL_ARGV0"
+WRAPPER_REEXEC_ENVVAR = "ENVCTL_WRAPPER_PYTHON_REEXEC"
 
 
 def _supported_runtime() -> bool:
@@ -27,18 +28,22 @@ def _candidate_bins() -> list[str]:
 
 
 def _preserve_original_wrapper_argv0() -> str:
-    original = os.environ.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
-    if original:
-        return original
     original = sys.argv[0]
-    os.environ[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = original
+    if os.environ.get(WRAPPER_REEXEC_ENVVAR) == "1":
+        preserved = os.environ.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
+        if preserved:
+            original = preserved
+    else:
+        os.environ.pop(ORIGINAL_WRAPPER_ARGV0_ENVVAR, None)
+    os.environ.pop(WRAPPER_REEXEC_ENVVAR, None)
     return original
 
 
-def _reexec_supported_python() -> None:
+def _reexec_supported_python(original_argv0: str) -> None:
     if _supported_runtime():
         return
-    _preserve_original_wrapper_argv0()
+    os.environ[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = original_argv0
+    os.environ[WRAPPER_REEXEC_ENVVAR] = "1"
     for candidate in _candidate_bins():
         try:
             os.execvp(candidate, [candidate, str(Path(__file__).resolve()), *sys.argv[1:]])
@@ -49,7 +54,7 @@ def _reexec_supported_python() -> None:
 
 def main() -> int:
     original_argv0 = _preserve_original_wrapper_argv0()
-    _reexec_supported_python()
+    _reexec_supported_python(original_argv0)
     if str(PYTHON_ROOT) not in sys.path:
         sys.path.insert(0, str(PYTHON_ROOT))
     from envctl_engine.runtime.launcher_support import select_envctl_reexec_target

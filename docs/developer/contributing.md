@@ -14,23 +14,27 @@ This repository is Python-first at runtime. Most behavior changes therefore need
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install -e '.[dev]'
 ```
 
-4. Run validation locally:
+4. Run the authoritative repo-wide validation lane:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
+.venv/bin/python -m pytest -q
+.venv/bin/python -m build
+.venv/bin/python scripts/release_shipability_gate.py --repo .
 ```
 
-5. For Python engine changes, run Python unit tests:
+5. To verify the release gate against the same canonical test lane:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
+.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
-6. Use conventional commits (`type(scope): subject`).
-7. Open a PR with:
+6. Use narrower `unittest` targets only for focused local iteration; they are no longer the authoritative release-readiness lane.
+
+7. Use conventional commits (`type(scope): subject`).
+8. Open a PR with:
 - `Summary`
 - `Validation`
 - `Impact`

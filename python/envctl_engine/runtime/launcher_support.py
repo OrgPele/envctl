@@ -73,7 +73,9 @@ def _resolved_path(path: Path) -> Path:
 
 
 def _effective_invocation_argv0(current_binary: Path, argv0: str, env: Mapping[str, str] | None = None) -> str:
-    env_map = os.environ if env is None else env
+    if env is None:
+        return argv0
+    env_map = env
     preserved = env_map.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
     if not preserved:
         return argv0

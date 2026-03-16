@@ -15,6 +15,7 @@ from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
 from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
     recover_single_letter_command_from_escape_fragment,
@@ -181,6 +182,8 @@ class DashboardOrchestrator:
 
     def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
         if route.command == "test":
+            if bool(route.flags.get("interactive_command")) and self._test_failure_details_available(route, state):
+                return
             printed = self._print_test_failure_details(route, state)
             if printed:
                 return
@@ -189,12 +192,30 @@ class DashboardOrchestrator:
             return
         print(f"Command failed (exit {code}).")
 
+    def _test_failure_details_available(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_test_summaries")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        for project_name in project_names:
+            entry = metadata.get(project_name)
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status", "")).strip().lower()
+            if status and status != "failed":
+                continue
+            if self._test_summary_display_path(project_name=project_name, entry=entry):
+                return True
+            if summary_excerpt_from_entry(entry, max_lines=3):
+                return True
+        return False
+
     def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
         metadata = state.metadata.get("project_test_summaries")
         if not isinstance(metadata, dict):
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        summaries_available = False
+        printed = False
         for project_name in project_names:
             entry = metadata.get(project_name)
             if not isinstance(entry, dict):
@@ -203,13 +224,16 @@ class DashboardOrchestrator:
             if status and status != "failed":
                 continue
             summary_path = self._test_summary_display_path(project_name=project_name, entry=entry)
-            if not summary_path:
+            excerpt_lines = summary_excerpt_from_entry(entry, max_lines=3)
+            if not summary_path and not excerpt_lines:
                 continue
-            summaries_available = True
-        # Test action output already renders per-project "failure summary:" lines inside
-        # the main Test Suite Summary block. If saved summaries exist here, treat them as
-        # already surfaced and avoid printing the detached dashboard-only duplicate block.
-        return summaries_available
+            print(f"Test failure summary for {project_name}:")
+            for line in excerpt_lines:
+                print(line)
+            if summary_path:
+                print(summary_path)
+            printed = True
+        return printed
 
     @staticmethod
     def _test_summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:

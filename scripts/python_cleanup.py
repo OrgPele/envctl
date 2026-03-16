@@ -269,7 +269,9 @@ def _ensure_python_modules_available(modules: list[str]) -> None:
     quoted = " ".join(shlex.quote(module) for module in missing)
     raise SystemExit(
         "Missing required Python modules for python_cleanup.py: "
-        f"{joined}\nInstall them with:\n{sys.executable} -m pip install {quoted}"
+        f"{joined}\nBootstrap the repo-local validation toolchain with:\n"
+        ".venv/bin/python -m pip install -e '.[dev]'\n"
+        f"Or install only the missing modules with:\n{sys.executable} -m pip install {quoted}"
     )
 
 

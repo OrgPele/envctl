@@ -13873,6 +13873,69 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 - Risks/notes:
   - The Textual verification here used a temporary non-repo venv for reproduction because the default shell environment still lacks `textual`.
 
+## 2026-03-16 - Align release-readiness validation, packaging smoke, and dependency-safe UI tests
+
+- Scope:
+  - Unified contributor docs, packaging smoke, and the shipability gate around one repo-local validation contract.
+
+- Key behavior changes:
+  - `python/envctl_engine/shell/release_gate.py`
+    - `check_tests=True` now runs the canonical `.venv/bin/python -m pytest -q` lane.
+    - Added optional packaging/build checks with explicit stage errors and warning detection.
+  - `scripts/release_shipability_gate.py`
+    - Default gate now reports/runs packaging build smoke and exposes `--skip-build` for focused iteration.
+  - `pyproject.toml`
+    - Added `project.optional-dependencies.dev` and moved `license-files` into PEP 621 metadata to keep builds warning-free.
+  - Docs and tests:
+    - Updated `README.md`, contributing/testing docs, cleanup bootstrap hints, packaging smoke, doc-parity coverage, and dependency-absent UI test behavior to the same contract.
+
+- Files/modules touched:
+  - `README.md`
+  - `docs/developer/contributing.md`
+  - `docs/developer/python-runtime-guide.md`
+  - `docs/developer/testing-and-validation.md`
+  - `pyproject.toml`
+  - `python/envctl_engine/shell/release_gate.py`
+  - `scripts/python_cleanup.py`
+  - `scripts/release_shipability_gate.py`
+  - `tests/python/runtime/test_cli_packaging.py`
+  - `tests/python/runtime/test_release_shipability_gate.py`
+  - `tests/python/runtime/test_release_shipability_gate_cli.py`
+  - `tests/python/shared/test_validation_workflow_contract.py`
+  - `tests/python/ui/test_textual_selector_responsiveness.py`
+  - `tests/python/ui/test_textual_selector_interaction.py`
+  - `tests/python/ui/test_ui_dependency_contract.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli tests.python.runtime.test_cli_packaging tests.python.shared.test_validation_workflow_contract tests.python.shared.test_python_cleanup_script tests.python.runtime.test_command_exit_codes tests.python.ui.test_ui_menu_interactive tests.python.ui.test_ui_dependency_contract tests.python.ui.test_textual_selector_responsiveness tests.python.ui.test_textual_selector_interaction tests.python.ui.test_prompt_toolkit_cursor_menu tests.python.ui.test_prompt_toolkit_selector_shared_behavior`
+    - Result: pass (`Ran 146 tests in 15.292s`, `OK`, `25 skipped`).
+
+- Config/env/migrations:
+  - Added `project.optional-dependencies.dev`.
+  - No runtime config/env additions.
+  - No data migrations.
+
+## 2026-03-16 - Follow-up: stabilize packaging smoke and dep-sensitive PTY tests
+
+- Scope:
+  - Fixed the regression fallout from the release-readiness workflow change on Python 3.12 and hosts without Textual installed.
+
+- Key behavior changes:
+  - `tests/python/runtime/test_cli_packaging.py`
+    - Packaging smoke now picks an interpreter with `setuptools` and `build`, and runs build commands with `-P` to avoid local `build/` shadowing.
+  - `tests/python/ui/test_interactive_selector_key_throughput_pty.py`
+    - Default-Textual PTY tests now skip explicitly when `textual` is absent.
+  - `tests/python/ui/test_textual_selector_responsiveness.py`
+    - The Textual-missing regression test now patches the actual selector import path.
+  - `tests/python/startup/test_startup_spinner_integration.py`
+    - Hardened cleanup of the spinner lifecycle temp runtime directory.
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging tests.python.ui.test_textual_selector_responsiveness tests.python.startup.test_startup_spinner_integration tests.python.ui.test_interactive_selector_key_throughput_pty`
+    - Result: pass (`Ran 59 tests in 15.085s`, `OK`, `24 skipped`).
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli tests.python.runtime.test_cli_packaging tests.python.shared.test_validation_workflow_contract tests.python.shared.test_python_cleanup_script tests.python.runtime.test_command_exit_codes tests.python.ui.test_ui_menu_interactive tests.python.ui.test_ui_dependency_contract tests.python.ui.test_textual_selector_responsiveness tests.python.ui.test_textual_selector_interaction tests.python.ui.test_prompt_toolkit_cursor_menu tests.python.ui.test_prompt_toolkit_selector_shared_behavior tests.python.startup.test_startup_spinner_integration tests.python.ui.test_interactive_selector_key_throughput_pty`
+    - Result: pass (`Ran 157 tests in 16.331s`, `OK`, `31 skipped`).
+
 ## 2026-03-03 - Remove conflicting action-level spinner during interactive test suite-row mode
 
 - Scope:
