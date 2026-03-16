@@ -12,6 +12,7 @@ from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_row_styles import selectable_list_row_css
 from envctl_engine.ui.textual.list_row_styles import selectable_list_default_index
 from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
+from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
 from envctl_engine.ui.textual.screens.config_wizard import CONFIG_ROW_STYLES_CSS
 from envctl_engine.ui.textual.screens.planning_selector import PLANNING_ROW_STYLES_CSS
 from envctl_engine.ui.textual.screens import selector
@@ -570,6 +571,48 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app._rows[2].selected)  # type: ignore[attr-defined]
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["__PROJECT__:Frontend"])
+
+
+class PlanningSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_planning_filter_accepts_focus_when_clicked(self) -> None:
+        app = select_planning_counts_textual(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 1, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        assert app is not None
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            self.assertFalse(filter_input.has_focus)
+            await pilot.click("#planning-filter")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            app.exit(None)
+
+    async def test_planning_tab_cycles_focus_between_list_and_filter(self) -> None:
+        app = select_planning_counts_textual(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 1, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        assert app is not None
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            list_view = app.query_one("#planning-list")
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            app.exit(None)
 
 
 class SelectorDriverTracePolicyTests(unittest.TestCase):

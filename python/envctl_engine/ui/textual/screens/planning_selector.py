@@ -53,7 +53,8 @@ def select_planning_counts_textual(
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
     emit: Callable[..., None] | None = None,
-) -> dict[str, int] | None:
+    build_only: bool = False,
+) -> dict[str, int] | None | object:
     if not planning_files:
         return {}
     if not _textual_importable():
@@ -150,7 +151,6 @@ def select_planning_counts_textual(
 
         def compose(self) -> ComposeResult:
             filter_input = Input(placeholder="Filter planning files...", id="planning-filter")
-            filter_input.can_focus = False
             with Vertical(id="planning-shell"):
                 yield Static("Planning Selection", id="planning-title")
                 yield filter_input
@@ -349,7 +349,6 @@ def select_planning_counts_textual(
             list_view = self._list()
             index = self._controller.ensure_list_index(list_view.index)
             apply_selectable_list_index(list_view, index)
-            self.query_one("#planning-filter", Input).can_focus = False
             focus_selectable_list(self, list_view, index)
 
         def action_cycle_focus(self) -> None:
@@ -403,8 +402,14 @@ def select_planning_counts_textual(
             await self._toggle_model_index(model_index)
 
         async def on_key(self, event: Key) -> None:
-            if self.focused is self.query_one("#planning-filter", Input) and handle_text_edit_key_alias(
-                widget=self.query_one("#planning-filter", Input),
+            filter_input = self.query_one("#planning-filter", Input)
+            if event.key == "tab":
+                event.stop()
+                event.prevent_default()
+                self.action_cycle_focus()
+                return
+            if self.focused is filter_input and handle_text_edit_key_alias(
+                widget=filter_input,
                 event=event,
             ):
                 return
@@ -500,6 +505,8 @@ def select_planning_counts_textual(
                 term_program=run_policy.term_program,
             )
             app = PlanningSelectorApp()
+            if build_only:
+                return app
             try:
                 return app.run(mouse=run_policy.mouse)
             finally:
