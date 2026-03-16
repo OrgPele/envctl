@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from envctl_engine.runtime.command_router import list_supported_flag_tokens
 from envctl_engine.runtime.runtime_readiness import evaluate_runtime_readiness
@@ -165,7 +165,11 @@ def _manifest_freshness_is_valid(repo_root: Path, max_age_days: int = 7) -> tupl
 
     try:
         generated_at = datetime.fromisoformat(str(generated_at_str))
-        age = datetime.now() - generated_at
+        if generated_at.tzinfo is None:
+            now = datetime.now()
+        else:
+            now = datetime.now(UTC).astimezone(generated_at.tzinfo)
+        age = now - generated_at
         if age > timedelta(days=max_age_days):
             return False, f"manifest stale: generated {age.days} days ago (max {max_age_days})"
     except (ValueError, TypeError) as e:
@@ -212,5 +216,5 @@ def _unsupported_documented_flags(repo_root: Path) -> list[str]:
     text = docs_path.read_text(encoding="utf-8")
     tokens = sorted({match.group(0) for match in re.finditer(r"--[a-z0-9][a-z0-9-]*", text)})
     supported = set(list_supported_flag_tokens())
-    ignored = {"--help"}
+    ignored = {"--help", "--repo"}
     return [token for token in tokens if token not in supported and token not in ignored]

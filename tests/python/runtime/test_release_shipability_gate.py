@@ -4,6 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
@@ -15,6 +16,13 @@ from envctl_engine.shell.release_gate import evaluate_shipability
 class ReleaseShipabilityGateTests(unittest.TestCase):
     _PARITY_MANIFEST_PATH = "contracts/python_engine_parity_manifest.json"
     _GAP_REPORT_PATH = "contracts/python_runtime_gap_report.json"
+
+    @staticmethod
+    def _fresh_manifest_timestamp(*, aware: bool = False) -> str:
+        now = datetime.now(UTC).replace(microsecond=0)
+        if aware:
+            return now.isoformat()
+        return now.replace(tzinfo=None).isoformat()
 
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
@@ -47,7 +55,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         parity_manifest.write_text(
             json.dumps(
                 {
-                    "generated_at": "2026-03-09T00:00:00",
+                    "generated_at": self._fresh_manifest_timestamp(),
                     "commands": {"doctor": "python_complete" if complete else "python_partial"},
                     "modes": {},
                 }
@@ -175,6 +183,39 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             code = release_shipability_gate.main(["--repo", str(repo), "--skip-parity-sync"])
 
             self.assertEqual(code, 1)
+
+    def test_gate_accepts_timezone_aware_manifest_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            manifest = repo / self._PARITY_MANIFEST_PATH
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["generated_at"] = self._fresh_manifest_timestamp(aware=True)
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            self._commit_paths(repo, self._PARITY_MANIFEST_PATH, message="update manifest timestamp")
+
+            result = evaluate_shipability(
+                repo_root=repo,
+                check_tests=False,
+                enforce_parity_sync=True,
+                enforce_runtime_readiness_contract=True,
+                enforce_documented_flag_parity=False,
+            )
+
+            self.assertTrue(result.passed, msg=result.errors)
+
+    def test_gate_ignores_launcher_only_repo_flag_in_docs_parity_check(self) -> None:
+        result = evaluate_shipability(
+            repo_root=REPO_ROOT,
+            check_tests=False,
+            enforce_parity_sync=False,
+            enforce_runtime_readiness_contract=False,
+            enforce_documented_flag_parity=True,
+        )
+
+        self.assertFalse(any("--repo" in error for error in result.errors), msg=result.errors)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 
@@ -17,6 +18,10 @@ from envctl_engine.state.models import RunState, ServiceRecord
 
 
 class CutoverGateTruthTests(unittest.TestCase):
+    @staticmethod
+    def _fresh_manifest_timestamp() -> str:
+        return datetime.now(UTC).replace(microsecond=0).astimezone(UTC).isoformat()
+
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
         subprocess.run(
@@ -38,7 +43,13 @@ class CutoverGateTruthTests(unittest.TestCase):
         manifest = repo / "contracts" / "python_engine_parity_manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text(
-            '{"generated_at":"2026-03-09T00:00:00","commands":{"doctor":"python_complete"},"modes":{}}',
+            json.dumps(
+                {
+                    "generated_at": self._fresh_manifest_timestamp(),
+                    "commands": {"doctor": "python_complete"},
+                    "modes": {},
+                }
+            ),
             encoding="utf-8",
         )
         gap_report = repo / "contracts" / "python_runtime_gap_report.json"

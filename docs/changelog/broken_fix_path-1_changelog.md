@@ -42,3 +42,35 @@ Implemented the wrapper-selection change from `MAIN_TASK.md` so explicitly execu
 
 ### Risks / notes
 - Shebang-launched scripts on macOS can normalize bare PATH execution into a path-bearing `argv[0]`. The implementation explicitly covers relative explicit paths, explicit symlink paths, and PATH-resolved shim paths, but a bare invocation that resolves directly to the real wrapper file remains an inherent ambiguity in that platform behavior.
+
+## 2026-03-16 - Follow-up: release gate and cutover fixture stabilization
+
+### Scope
+Stabilized the release-shipability and cutover-readiness coverage that surfaced during branch validation by fixing manifest freshness handling and removing a launcher-only false positive from documented-flag parity checks.
+
+### Key behavior changes
+- `python/envctl_engine/shell/release_gate.py`
+  - manifest freshness now handles both timezone-aware and naive ISO timestamps without failing on aware/naive subtraction
+  - launcher-only `--repo` is ignored in documented-flag parity checks, matching the CLI parity contract
+- `tests/python/runtime/test_release_shipability_gate.py`
+  - added regression coverage for timezone-aware manifest timestamps
+  - added regression coverage confirming `--repo` is ignored in shipability docs-parity validation
+  - switched manifest test fixtures to use fresh timestamps so the suite does not age out over time
+- `tests/python/runtime/test_cutover_gate_truth.py`
+  - switched synthetic manifest fixtures to use fresh timestamps so cutover readiness assertions remain stable as the calendar advances
+
+### Files / modules touched
+- `python/envctl_engine/shell/release_gate.py`
+- `tests/python/runtime/test_release_shipability_gate.py`
+- `tests/python/runtime/test_cutover_gate_truth.py`
+
+### Tests run + results
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_cli_packaging`
+  - result: `Ran 28 tests`, `OK`
+
+### Config / env / migrations
+- No migrations.
+- No new user-facing config changes.
+
+### Risks / notes
+- The release gate still enforces manifest freshness against wall-clock time. The tests now generate fresh timestamps dynamically, which removes date-driven flakiness, but any repo workflow that intentionally carries an old committed manifest will still fail the freshness check by design.
