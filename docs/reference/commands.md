@@ -118,6 +118,22 @@ Run and inspect:
 
 ```bash
 envctl show-config --json
+
+Review branch-relative changes:
+
+```bash
+envctl review --project feature-a-1
+envctl review --project feature-a-1 --review-base dev
+```
+
+Single-mode `review` resolves its base branch in this order:
+
+1. `--review-base <branch>`
+2. persisted worktree provenance from `.envctl-state/worktree-provenance.json`
+3. the target branch's upstream
+4. the repo default branch
+
+The generated markdown now reports the resolved base branch, base ref, resolution source, merge-base, and the full diff from that merge-base through the current worktree state.
 envctl explain-startup --json
 envctl --resume
 envctl dashboard

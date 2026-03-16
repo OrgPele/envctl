@@ -840,14 +840,15 @@ class ActionCommandOrchestrator:
     ) -> Callable[[ActionTargetContext, Any], None] | None:
         def handle_success(context: ActionTargetContext, completed: Any) -> None:
             self._clear_dashboard_pr_cache()
+            status = self._project_action_success_status(command_name=command_name, completed=completed)
             self._persist_project_action_result(
                 command_name=command_name,
                 mode=mode,
                 project_name=context.name,
-                status="success",
+                status=status,
                 error_output="",
             )
-            if command_name != "pr" or not interactive_command:
+            if command_name != "pr" or not interactive_command or status != "success":
                 return
             url = self._first_output_line(getattr(completed, "stdout", ""))
             if url:
@@ -941,6 +942,16 @@ class ActionCommandOrchestrator:
             if text:
                 return text
         return ""
+
+    @classmethod
+    def _project_action_success_status(cls, *, command_name: str, completed: Any) -> str:
+        if command_name != "pr":
+            return "success"
+        output = strip_ansi(str(getattr(completed, "stdout", "") or ""))
+        first_line = cls._first_output_line(output)
+        if first_line.startswith("Skipping ") and "detached HEAD" in output:
+            return "skipped"
+        return "success"
 
     def _colors_enabled(self) -> bool:
         rt_env = getattr(self.runtime, "env", {})

@@ -109,6 +109,14 @@ Use `--plan` when:
 - you want repo-native selection by plan/task
 - multiple people or agents need to run the same implementation matrix
 
+New worktrees created by `envctl` now persist their origin branch in:
+
+```text
+<worktree>/.envctl-state/worktree-provenance.json
+```
+
+Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
+
 ## Typical Loop
 
 ```bash

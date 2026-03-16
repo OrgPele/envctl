@@ -680,6 +680,259 @@ class ActionsCliTests(unittest.TestCase):
             self.assertLessEqual(len(captured_commit_message[0]), domain.COMMIT_MESSAGE_MAX_CHARS)
             self.assertTrue(captured_commit_message[0].endswith("[truncated]"))
 
+    def test_analyze_action_branch_relative_review_uses_explicit_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                calls.append(list(args))
+                if args == ["rev-parse", "--verify", "origin/dev"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/dev"]:
+                    return "mbase123\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase123"]:
+                    return " app.py | 2 +-\n"
+                if args == ["diff", "--find-renames", "--name-status", "mbase123"]:
+                    return "M\tapp.py\n"
+                if args == ["diff", "--find-renames", "mbase123"]:
+                    return "diff --git a/app.py b/app.py\n+change\n"
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return " M app.py\n?? new.txt\n"
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_REVIEW_BASE": "dev",
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("Review Ready: feature-a-1", output)
+            written_paths = sorted((runtime_root / "review").glob("*.md"))
+            self.assertEqual(len(written_paths), 1)
+            markdown = written_paths[0].read_text(encoding="utf-8")
+            self.assertIn("## Base branch", markdown)
+            self.assertIn("dev", markdown)
+            self.assertIn("## Base resolution source", markdown)
+            self.assertIn("explicit", markdown)
+            self.assertIn("## Merge base", markdown)
+            self.assertIn("mbase123", markdown)
+            self.assertIn("## Changed files", markdown)
+            self.assertIn("M\tapp.py", markdown)
+            self.assertIn("## Full diff", markdown)
+            self.assertIn("diff --git a/app.py b/app.py", markdown)
+            self.assertIn("## Working tree / untracked files", markdown)
+            self.assertIn("?? new.txt", markdown)
+            self.assertIn(["diff", "--find-renames", "--stat", "mbase123"], calls)
+
+    def test_analyze_action_uses_worktree_provenance_for_review_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+            provenance_path = project_root / ".envctl-state" / "worktree-provenance.json"
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(
+                (
+                    "{\n"
+                    '  "schema_version": 1,\n'
+                    '  "source_branch": "release/2026.03",\n'
+                    '  "source_ref": "origin/release/2026.03",\n'
+                    '  "resolution_reason": "attached_branch"\n'
+                    "}\n"
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--verify", "origin/release/2026.03"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/release/2026.03"]:
+                    return "mbase-provenance\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase-provenance"]:
+                    return " api.py | 4 ++--\n"
+                if args == ["diff", "--find-renames", "--name-status", "mbase-provenance"]:
+                    return "M\tapi.py\n"
+                if args == ["diff", "--find-renames", "mbase-provenance"]:
+                    return "diff --git a/api.py b/api.py\n"
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return ""
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", side_effect=AssertionError("unexpected")),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+            ):
+                code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+
+            self.assertEqual(code, 0)
+            written_path = next((runtime_root / "review").glob("*.md"))
+            markdown = written_path.read_text(encoding="utf-8")
+            self.assertIn("release/2026.03", markdown)
+            self.assertIn("provenance", markdown)
+            self.assertIn("mbase-provenance", markdown)
+
+    def test_analyze_action_falls_back_to_upstream_branch_for_review_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "--abbrev-ref", "feature/demo@{upstream}"]:
+                    return "origin/dev\n"
+                if args == ["rev-parse", "--verify", "origin/dev"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/dev"]:
+                    return "mbase-upstream\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase-upstream"]:
+                    return ""
+                if args == ["diff", "--find-renames", "--name-status", "mbase-upstream"]:
+                    return ""
+                if args == ["diff", "--find-renames", "mbase-upstream"]:
+                    return ""
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return ""
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", side_effect=AssertionError("unexpected")),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+            ):
+                code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+
+            self.assertEqual(code, 0)
+            written_path = next((runtime_root / "review").glob("*.md"))
+            markdown = written_path.read_text(encoding="utf-8")
+            self.assertIn("## Base branch", markdown)
+            self.assertIn("dev", markdown)
+            self.assertIn("upstream", markdown)
+
+    def test_analyze_action_falls_back_to_default_branch_for_main_repo_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            repo_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase-main\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase-main"]:
+                    return ""
+                if args == ["diff", "--find-renames", "--name-status", "mbase-main"]:
+                    return ""
+                if args == ["diff", "--find-renames", "mbase-main"]:
+                    return ""
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return ""
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+            ):
+                code = actions_cli._run_analyze_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            written_path = next((runtime_root / "review").glob("*.md"))
+            markdown = written_path.read_text(encoding="utf-8")
+            self.assertIn("main", markdown)
+            self.assertIn("default_branch", markdown)
+
+    def test_analyze_action_reports_invalid_explicit_review_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args in (
+                    ["rev-parse", "--verify", "origin/missing-base"],
+                    ["rev-parse", "--verify", "missing-base"],
+                ):
+                    return ""
+                return ""
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_REVIEW_BASE": "missing-base",
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("missing-base", output)
+            self.assertIn("--review-base", output)
+            self.assertFalse((runtime_root / "review").exists())
+
     def test_analyze_action_prefers_repo_helper_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -695,6 +948,15 @@ class ActionsCliTests(unittest.TestCase):
             (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
             (sibling_root / ".git").write_text("gitdir: /tmp/feature-a-2\n", encoding="utf-8")
             calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase123\n"
+                return ""
 
             def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
                 command = [str(token) for token in args]
@@ -725,6 +987,7 @@ class ActionsCliTests(unittest.TestCase):
                     clear=False,
                 ),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
                 buffer = StringIO()
@@ -753,6 +1016,58 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse((written_dir / "summary_short.txt").exists())
             self.assertFalse((repo_root / "tree-diffs").exists())
 
+    def test_analyze_action_helper_receives_explicit_review_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "runs" / "run-123" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            helper = repo_root / "utils" / "analyze-tree-changes.sh"
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--verify", "origin/dev"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/dev"]:
+                    return "mbase123\n"
+                return ""
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                output_dir_arg = next(arg for arg in command if arg.startswith("output-dir="))
+                output_dir = Path(output_dir_arg.split("=", 1)[1])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "summary.md").write_text("# Summary\n", encoding="utf-8")
+                (output_dir / "all.md").write_text("# Full\n", encoding="utf-8")
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_ACTION_RUN_ID": "run-123",
+                        "ENVCTL_REVIEW_BASE": "dev",
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
+
+            self.assertEqual(code, 0)
+            self.assertTrue(calls)
+            self.assertIn("base-branch=dev", calls[0])
+            self.assertIn("base-source=explicit", calls[0])
+
     def test_analyze_action_interactive_mode_does_not_prompt_for_analysis_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -768,6 +1083,15 @@ class ActionsCliTests(unittest.TestCase):
             (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
             (sibling_root / ".git").write_text("gitdir: /tmp/feature-a-2\n", encoding="utf-8")
             calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase123\n"
+                return ""
 
             def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
                 command = [str(token) for token in args]
@@ -799,6 +1123,7 @@ class ActionsCliTests(unittest.TestCase):
                 patch("sys.stdin.isatty", return_value=True),
                 patch("builtins.input", side_effect=AssertionError("input() should not be called for review action")),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
                 code = actions_cli._run_analyze_action(project_root, repo_root, "feature-a-1")
@@ -862,9 +1187,19 @@ class ActionsCliTests(unittest.TestCase):
             (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
-                if args == ["diff", "--stat"]:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase123\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase123"]:
                     return " app.py | 2 +-\n"
-                if args == ["status", "--porcelain"]:
+                if args == ["diff", "--find-renames", "--name-status", "mbase123"]:
+                    return "M\tapp.py\n"
+                if args == ["diff", "--find-renames", "mbase123"]:
+                    return "diff --git a/app.py b/app.py\n"
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
                     return " M app.py\n"
                 return ""
 
@@ -914,9 +1249,19 @@ class ActionsCliTests(unittest.TestCase):
             (sibling_repo / ".git").write_text("gitdir: /tmp/envctl\n", encoding="utf-8")
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
-                if args == ["diff", "--stat"]:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase-main\n"
+                if args == ["diff", "--find-renames", "--stat", "mbase-main"]:
                     return " app.py | 2 +-\n"
-                if args == ["status", "--porcelain"]:
+                if args == ["diff", "--find-renames", "--name-status", "mbase-main"]:
+                    return "M\tapp.py\n"
+                if args == ["diff", "--find-renames", "mbase-main"]:
+                    return "diff --git a/app.py b/app.py\n"
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
                     return " M app.py\n"
                 return ""
 

@@ -40,7 +40,8 @@ def run_pr_flow(
     branch_options: Sequence[SelectorItem],
     default_branch: str,
     emit: Callable[..., None] | None = None,
-) -> PrFlowResult | None:
+    build_only: bool = False,
+) -> PrFlowResult | None | object:
     if not textual_importable():
         return None
 
@@ -137,16 +138,6 @@ def run_pr_flow(
                 pass
             self._refresh()
 
-        def on_key(self, event: Key) -> None:
-            if event.key == "enter":
-                event.stop()
-                self.action_submit()
-                return
-            if event.key == "space":
-                event.stop()
-                self.action_toggle()
-                return
-
         def on_unmount(self) -> None:
             _emit(emit, "ui.screen.exit", screen="dashboard_pr_flow")
 
@@ -174,7 +165,7 @@ def run_pr_flow(
         def _status_text(self) -> str:
             rows = self._rows()
             selected_count = sum(1 for row in rows if row.selected)
-            focus_index = self._current_index() + 1 if rows else 0
+            focus_index = self._focused_list_index() + 1 if rows else 0
             total = len(rows)
             if self._step == "branch":
                 return f"Select base branch • focus: {focus_index}/{total}"
@@ -215,22 +206,28 @@ def run_pr_flow(
             self._sync_actions()
             self.run_worker(self._render_rows(), exclusive=True)
 
+        def _focused_list_index(self) -> int:
+            try:
+                list_view = self.query_one("#selector-list", ListView)
+            except Exception:
+                return self._current_index()
+            if list_view.index is not None and list_view.index >= 0:
+                return int(list_view.index)
+            return self._current_index()
+
         def _focused_row(self) -> _Row | None:
-            rows = self._rows()
-            index = self._current_index()
-            if not rows or index < 0 or index >= len(rows):
-                return None
-            return rows[index]
+            return self._controller().focused_row(self._focused_list_index())
 
         def action_nav_up(self) -> None:
-            self._set_current_index(self._controller().cursor_up(self._current_index()))
+            self._set_current_index(self._controller().cursor_up(self._focused_list_index()))
             self._refresh()
 
         def action_nav_down(self) -> None:
-            self._set_current_index(self._controller().cursor_down(self._current_index()))
+            self._set_current_index(self._controller().cursor_down(self._focused_list_index()))
             self._refresh()
 
         def action_toggle(self) -> None:
+            self._set_current_index(self._focused_list_index())
             row = self._focused_row()
             if row is None:
                 return
@@ -296,14 +293,15 @@ def run_pr_flow(
             self.action_toggle()
 
         def on_key(self, event: Key) -> None:
-            if event.key == "enter":
+            list_view = self.query_one("#selector-list", ListView)
+            if event.key == "enter" and list_view.has_focus:
                 self._suppress_list_selected_once = True
                 event.stop()
+                event.prevent_default()
                 self.action_submit()
                 return
-            if event.key == "space":
-                event.stop()
-                self.action_toggle()
-                return
 
-    return PrFlowApp().run(mouse=run_policy.mouse)
+    app = PrFlowApp()
+    if build_only:
+        return app
+    return app.run(mouse=run_policy.mouse)

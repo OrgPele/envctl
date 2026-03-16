@@ -72,6 +72,12 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
+        route = parse_route(["review", "--review-base", "release/2026.03"], env={})
+        self.assertEqual(route.command, "review")
+        self.assertEqual(route.flags.get("review_base"), "release/2026.03")
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
+
         route = parse_route(["migrate"], env={})
         self.assertEqual(route.command, "migrate")
         self.assertTrue(route.flags.get("skip_startup"))
