@@ -293,3 +293,27 @@
 
 - Risks/notes:
   - Long log paths remain unwrapped; this change only removes the extra line break between the label and the path.
+
+## 2026-03-16 - Keep README focused on end users
+
+- Scope:
+  - Removed contributor and release-engineering validation instructions from the top-level README so the landing page stays focused on end-user installation and product usage.
+
+- Key behavior changes:
+  - `README.md`
+    - Deleted the `Release Validation` section and its repo-local developer workflow commands.
+    - Left the rest of the user-facing onboarding, docs hub, and runtime prerequisites content unchanged.
+
+- Files/modules touched:
+  - `README.md`
+  - `docs/changelog/broken_envctl_release_readiness_closure_plan-1_changelog.md`
+
+- Tests run + results:
+  - No tests run; documentation-only change with no code-path impact.
+
+- Config/env/migrations:
+  - No config or environment changes.
+  - No migrations.
+
+- Risks/notes:
+  - Developer and release-readiness instructions remain in the dedicated developer documentation; only the top-level README was trimmed.
