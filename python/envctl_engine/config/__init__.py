@@ -33,6 +33,7 @@ LEGACY_CONFIG_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl frontend dependency en
 CONFIG_PRIMARY_FILENAME = ".envctl"
 LEGACY_CONFIG_FILENAMES = (".envctl.sh", ".supportopia-config")
 
+
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
@@ -449,8 +450,12 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     return EngineConfig(
         base_dir=base_dir,
-        backend_dir_name=_resolved_backend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
-        frontend_dir_name=_resolved_frontend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
+        backend_dir_name=_resolved_backend_dir_name(
+            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+        ),
+        frontend_dir_name=_resolved_frontend_dir_name(
+            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+        ),
         runtime_dir=runtime_dir,
         backend_start_cmd=_resolved_backend_start_cmd(base_dir=base_dir, resolved=resolved),
         frontend_start_cmd=_resolved_frontend_start_cmd(base_dir=base_dir, resolved=resolved),
@@ -601,7 +606,9 @@ def _resolved_backend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str]) 
     return str(suggested or "").strip()
 
 
-def _resolved_backend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+def _resolved_backend_dir_name(
+    *, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]
+) -> str:
     if "BACKEND_DIR" in explicit_values:
         return str(resolved.get("BACKEND_DIR") or "").strip()
     suggested = suggest_service_directory(service_name="backend", project_root=base_dir)
@@ -616,7 +623,9 @@ def _resolved_frontend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str])
     return str(suggested or "").strip()
 
 
-def _resolved_frontend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+def _resolved_frontend_dir_name(
+    *, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]
+) -> str:
     if "FRONTEND_DIR" in explicit_values:
         return str(resolved.get("FRONTEND_DIR") or "").strip()
     suggested = suggest_service_directory(service_name="frontend", project_root=base_dir)
@@ -697,9 +706,17 @@ def _startup_profile_from_resolved(
         dependencies[definition.id] = value
     postgres_key = f"{prefix}_POSTGRES_ENABLE"
     supabase_key = f"{prefix}_SUPABASE_ENABLE"
-    if supabase_key in explicit_values and parse_bool(resolved.get(supabase_key), False) and postgres_key not in explicit_values:
+    if (
+        supabase_key in explicit_values
+        and parse_bool(resolved.get(supabase_key), False)
+        and postgres_key not in explicit_values
+    ):
         dependencies["postgres"] = False
-    if postgres_key in explicit_values and parse_bool(resolved.get(postgres_key), False) and supabase_key not in explicit_values:
+    if (
+        postgres_key in explicit_values
+        and parse_bool(resolved.get(postgres_key), False)
+        and supabase_key not in explicit_values
+    ):
         dependencies["supabase"] = False
     return StartupProfile(
         startup_enable=profile_bool(f"{prefix}_STARTUP_ENABLE", True),
@@ -984,7 +1001,9 @@ def _extract_template_section(
         if line.startswith("export "):
             line = line[len("export ") :].strip()
         if "=" not in line:
-            errors.append(f"invalid {section_label} entry on line {line_number}: expected KEY=VALUE, got {raw_line.strip()!r}")
+            errors.append(
+                f"invalid {section_label} entry on line {line_number}: expected KEY=VALUE, got {raw_line.strip()!r}"
+            )
             continue
         key, value = line.split("=", 1)
         name = key.strip()

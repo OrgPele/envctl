@@ -30,8 +30,12 @@ class DependencyRegistryTests(unittest.TestCase):
         }
 
         for definition in definitions:
-            self.assertEqual(definition.enabled_by_default("main"), expected[definition.id]["main"], msg=f"{definition.id} main")
-            self.assertEqual(definition.enabled_by_default("trees"), expected[definition.id]["trees"], msg=f"{definition.id} trees")
+            self.assertEqual(
+                definition.enabled_by_default("main"), expected[definition.id]["main"], msg=f"{definition.id} main"
+            )
+            self.assertEqual(
+                definition.enabled_by_default("trees"), expected[definition.id]["trees"], msg=f"{definition.id} trees"
+            )
 
     def test_requirements_result_keeps_legacy_aliases_and_components(self) -> None:
         result = RequirementsResult(

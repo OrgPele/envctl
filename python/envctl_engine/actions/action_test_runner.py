@@ -104,9 +104,7 @@ def run_test_action(
         print(str(exc))
         return 1
     if not execution_specs:
-        print(
-            "No test command configured. Set Backend test command or Frontend test command in envctl config."
-        )
+        print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
         return 1
 
     parallel = orchestrator._test_parallel_enabled(route, execution_specs)
@@ -128,11 +126,7 @@ def run_test_action(
     spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
     rich_progress_supported, rich_progress_error = rich_progress_available()
     suite_policy_enabled, suite_policy_reason = orchestrator._test_suite_spinner_policy_enabled(spinner_policy)
-    use_suite_spinner_group = bool(
-        interactive_command
-        and suite_policy_enabled
-        and rich_progress_supported
-    )
+    use_suite_spinner_group = bool(interactive_command and suite_policy_enabled and rich_progress_supported)
     suite_spinner_reason = "enabled"
     if not interactive_command:
         suite_spinner_reason = "non_interactive"
@@ -219,7 +213,7 @@ def run_test_action(
         enabled=use_suite_spinner_group,
         policy=spinner_policy,
         emit=getattr(rt, "_emit", None),
-            suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
+        suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
         multi_project=multi_project,
         env=getattr(rt, "env", {}),
     )
@@ -296,11 +290,18 @@ def run_test_action(
                 )
                 orchestrator._emit_status(message)
                 if use_suite_spinner_group:
+                    failed_count = min(
+                        max(_live_failed_count(runner.last_result), 0),
+                        max(int(merged_current), 0),
+                    )
+                    passed_count = max(0, int(merged_current) - failed_count)
                     suite_spinner_group.mark_progress(
                         execution,
-                        status_text=f"{int(merged_current)} complete • "
-                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed",
+                        status_text=(
+                            f"{int(merged_current)} complete • "
+                            f"{passed_count} passed, "
+                            f"{failed_count} failed"
+                        ),
                     )
                 return
             if int(current) == 0 and merged_current is not None and int(merged_current) > 0:
@@ -318,12 +319,17 @@ def run_test_action(
                 )
                 orchestrator._emit_status(message)
                 if use_suite_spinner_group:
+                    failed_count = min(
+                        max(_live_failed_count(runner.last_result), 0),
+                        max(int(merged_current), 0),
+                    )
+                    passed_count = max(0, int(merged_current) - failed_count)
                     suite_spinner_group.mark_progress(
                         execution,
                         status_text=(
                             f"{int(merged_current)}/{merged_total} complete • "
-                            f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                            f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                            f"{passed_count} passed, "
+                            f"{failed_count} failed"
                         ),
                     )
                 return
@@ -343,12 +349,17 @@ def run_test_action(
             )
             orchestrator._emit_status(message)
             if use_suite_spinner_group:
+                failed_count = min(
+                    max(_live_failed_count(runner.last_result), 0),
+                    max(int(merged_current), 0),
+                )
+                passed_count = max(0, int(merged_current) - failed_count)
                 suite_spinner_group.mark_progress(
                     execution,
                     status_text=(
                         f"{merged_current}/{merged_total} complete • "
-                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                        f"{passed_count} passed, "
+                        f"{failed_count} failed"
                     ),
                 )
 

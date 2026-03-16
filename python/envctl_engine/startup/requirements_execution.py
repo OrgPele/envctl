@@ -10,7 +10,7 @@ from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
-from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike, StartupRuntime
+from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.state.models import RequirementsResult
 
 _DOCKER_SOCKET_PATTERNS = (

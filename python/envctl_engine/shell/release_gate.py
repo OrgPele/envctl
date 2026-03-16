@@ -4,9 +4,9 @@ import json
 import subprocess
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
-from datetime import UTC, datetime, timedelta
 
 from envctl_engine.runtime.command_router import list_supported_flag_tokens
 from envctl_engine.runtime.runtime_readiness import evaluate_runtime_readiness
@@ -150,7 +150,12 @@ def _runtime_parity_is_complete() -> bool:
     return len(PythonEngineRuntime.PARTIAL_COMMANDS) == 0
 
 
-def _manifest_freshness_is_valid(repo_root: Path, max_age_days: int = 7) -> tuple[bool, str]:
+def _manifest_freshness_is_valid(
+    repo_root: Path,
+    max_age_days: int = 7,
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
     manifest_path = repo_root / "contracts/python_engine_parity_manifest.json"
     if not manifest_path.is_file():
         return False, "manifest file missing"
@@ -164,18 +169,32 @@ def _manifest_freshness_is_valid(repo_root: Path, max_age_days: int = 7) -> tupl
         return False, "manifest missing generated_at timestamp"
 
     try:
-        generated_at = datetime.fromisoformat(str(generated_at_str))
-        if generated_at.tzinfo is None:
-            now = datetime.now()
-        else:
-            now = datetime.now(UTC).astimezone(generated_at.tzinfo)
-        age = now - generated_at
+        generated_at = _parse_generated_at(str(generated_at_str))
+        age = _normalize_freshness_clock(now) - generated_at
         if age > timedelta(days=max_age_days):
             return False, f"manifest stale: generated {age.days} days ago (max {max_age_days})"
     except (ValueError, TypeError) as e:
         return False, f"invalid generated_at format: {e}"
 
     return True, "manifest fresh"
+
+
+def _parse_generated_at(raw_timestamp: str) -> datetime:
+    normalized = str(raw_timestamp).strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _normalize_freshness_clock(now: datetime | None) -> datetime:
+    if now is None:
+        return datetime.now(UTC)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=UTC)
+    return now.astimezone(UTC)
 
 
 def _is_file_tracked(repo_root: Path, relative_path: str) -> bool:

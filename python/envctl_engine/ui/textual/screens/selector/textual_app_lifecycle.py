@@ -43,8 +43,6 @@ async def apply_selector_mount(
         phase="enter",
         ts_mono_ns=time.monotonic_ns(),
     )
-    filter_input = app.query_one("#selector-filter", Input)
-    filter_input.can_focus = False
     await app._render_rows()
     app.action_focus_list(reason="mount")
     app.call_after_refresh(lambda: app.action_focus_list(reason="mount_after_refresh"))

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 import subprocess
 import tempfile
 import unittest
-from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.shell.release_gate import evaluate_shipability
+from envctl_engine.shell.release_gate import _manifest_freshness_is_valid, evaluate_shipability
 
 
 class ReleaseShipabilityGateTests(unittest.TestCase):
@@ -18,11 +18,14 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
     _GAP_REPORT_PATH = "contracts/python_runtime_gap_report.json"
 
     @staticmethod
-    def _fresh_manifest_timestamp(*, aware: bool = False) -> str:
-        now = datetime.now(UTC).replace(microsecond=0)
-        if aware:
-            return now.isoformat()
-        return now.replace(tzinfo=None).isoformat()
+    def _iso_timestamp(*, days_ago: int = 0, utc_suffix: str = "+00:00") -> str:
+        timestamp = (datetime.now(UTC) - timedelta(days=days_ago)).replace(microsecond=0)
+        rendered = timestamp.isoformat()
+        if utc_suffix == "Z":
+            return rendered.replace("+00:00", "Z")
+        if utc_suffix == "naive":
+            return timestamp.replace(tzinfo=None).isoformat()
+        return rendered
 
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
@@ -49,13 +52,19 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         (repo / "tests" / "python").mkdir(parents=True, exist_ok=True)
         (repo / "tests" / "python" / "test_stub.py").write_text("x = 1\n", encoding="utf-8")
 
-    def _write_parity_manifest(self, repo: Path, *, complete: bool = True) -> None:
+    def _write_parity_manifest(
+        self,
+        repo: Path,
+        *,
+        complete: bool = True,
+        generated_at: str | None = None,
+    ) -> None:
         parity_manifest = repo / self._PARITY_MANIFEST_PATH
         parity_manifest.parent.mkdir(parents=True, exist_ok=True)
         parity_manifest.write_text(
             json.dumps(
                 {
-                    "generated_at": self._fresh_manifest_timestamp(),
+                    "generated_at": generated_at or self._iso_timestamp(),
                     "commands": {"doctor": "python_complete" if complete else "python_partial"},
                     "modes": {},
                 }
@@ -63,14 +72,22 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_gap_report(self, repo: Path, *, high: int = 0, medium: int = 0, low: int = 0) -> None:
+    def _write_gap_report(
+        self,
+        repo: Path,
+        *,
+        high: int = 0,
+        medium: int = 0,
+        low: int = 0,
+        generated_at: str | None = None,
+    ) -> None:
         gap_report = repo / self._GAP_REPORT_PATH
         gap_report.parent.mkdir(parents=True, exist_ok=True)
         total = high + medium + low
         gap_report.write_text(
             json.dumps(
                 {
-                    "generated_at": "2026-03-09T00:00:00Z",
+                    "generated_at": generated_at or self._iso_timestamp(utc_suffix="Z"),
                     "summary": {
                         "gap_count": total,
                         "high_or_medium_gap_count": high + medium,
@@ -87,12 +104,20 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         )
 
     def _prepare_repo(
-        self, repo: Path, *, complete_manifest: bool = True, high: int = 0, medium: int = 0, low: int = 0
+        self,
+        repo: Path,
+        *,
+        complete_manifest: bool = True,
+        high: int = 0,
+        medium: int = 0,
+        low: int = 0,
+        manifest_generated_at: str | None = None,
+        gap_generated_at: str | None = None,
     ) -> None:
         self._write_required_engine_init(repo)
         self._write_required_test_files(repo)
-        self._write_parity_manifest(repo, complete=complete_manifest)
-        self._write_gap_report(repo, high=high, medium=medium, low=low)
+        self._write_parity_manifest(repo, complete=complete_manifest, generated_at=manifest_generated_at)
+        self._write_gap_report(repo, high=high, medium=medium, low=low, generated_at=gap_generated_at)
         self._commit_paths(
             repo,
             "python/envctl_engine/__init__.py",
@@ -170,6 +195,59 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self.assertFalse(result.passed)
             self.assertTrue(any("parity manifest is not fully python_complete" in error for error in result.errors))
 
+    def test_manifest_freshness_accepts_offset_aware_and_z_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            self._write_parity_manifest(repo, generated_at="2026-03-10T14:57:02+00:00")
+            valid, message = _manifest_freshness_is_valid(
+                repo,
+                now=datetime(2026, 3, 16, 12, 0, tzinfo=UTC),
+            )
+            self.assertTrue(valid, msg=message)
+
+            self._write_parity_manifest(repo, generated_at="2026-03-10T14:57:02Z")
+            valid, message = _manifest_freshness_is_valid(
+                repo,
+                now=datetime(2026, 3, 16, 12, 0, tzinfo=UTC),
+            )
+            self.assertTrue(valid, msg=message)
+
+    def test_manifest_freshness_reports_stale_manifests_against_explicit_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            self._write_parity_manifest(repo, generated_at="2026-03-01T12:00:00+00:00")
+            valid, message = _manifest_freshness_is_valid(
+                repo,
+                now=datetime(2026, 3, 16, 12, 0, tzinfo=UTC),
+            )
+            self.assertFalse(valid)
+            self.assertIn("manifest stale", message)
+
+    def test_gate_treats_repo_flag_as_supported_documented_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            docs_path = repo / "docs" / "reference" / "important-flags.md"
+            docs_path.parent.mkdir(parents=True, exist_ok=True)
+            docs_path.write_text("| `--repo <path>` | Resolve repo root. |\n", encoding="utf-8")
+
+            result = evaluate_shipability(
+                repo_root=repo,
+                check_tests=False,
+                enforce_parity_sync=False,
+                enforce_runtime_readiness_contract=True,
+                enforce_documented_flag_parity=True,
+            )
+
+            self.assertTrue(result.passed, msg=result.errors)
+            self.assertEqual(result.errors, [])
+
     def test_release_shipability_script_enforces_runtime_readiness_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -183,40 +261,6 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             code = release_shipability_gate.main(["--repo", str(repo), "--skip-parity-sync"])
 
             self.assertEqual(code, 1)
-
-    def test_gate_accepts_timezone_aware_manifest_timestamp(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            repo.mkdir(parents=True, exist_ok=True)
-            self._init_repo(repo)
-            self._prepare_repo(repo)
-            manifest = repo / self._PARITY_MANIFEST_PATH
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            payload["generated_at"] = self._fresh_manifest_timestamp(aware=True)
-            manifest.write_text(json.dumps(payload), encoding="utf-8")
-            self._commit_paths(repo, self._PARITY_MANIFEST_PATH, message="update manifest timestamp")
-
-            result = evaluate_shipability(
-                repo_root=repo,
-                check_tests=False,
-                enforce_parity_sync=True,
-                enforce_runtime_readiness_contract=True,
-                enforce_documented_flag_parity=False,
-            )
-
-            self.assertTrue(result.passed, msg=result.errors)
-
-    def test_gate_ignores_launcher_only_repo_flag_in_docs_parity_check(self) -> None:
-        result = evaluate_shipability(
-            repo_root=REPO_ROOT,
-            check_tests=False,
-            enforce_parity_sync=False,
-            enforce_runtime_readiness_contract=False,
-            enforce_documented_flag_parity=True,
-        )
-
-        self.assertFalse(any("--repo" in error for error in result.errors), msg=result.errors)
-
 
 if __name__ == "__main__":
     unittest.main()

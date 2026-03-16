@@ -295,6 +295,21 @@ class CliPackagingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(result.stdout.strip())
 
+    def test_regular_install_supports_direct_inspection_command_spelling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "--repo", str(repo), "list-commands"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("list-commands", result.stdout)
+
     def test_regular_install_supports_install_and_uninstall_shell_path_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             shell_file = Path(tmpdir) / ".zshrc"

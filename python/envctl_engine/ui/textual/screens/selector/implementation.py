@@ -266,6 +266,6 @@ def select_grouped_targets_textual(
             item_id=suppressed.id,
             label=suppressed.label,
             reason=suppressed.reason,
-    )
+        )
     values = _run_selector_with_impl(prompt=prompt, options=result.items, multi=multi, emit=emit)
     return _selection_from_values(values)

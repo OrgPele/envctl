@@ -19,8 +19,11 @@ from envctl_engine.state.models import RunState, ServiceRecord
 
 class CutoverGateTruthTests(unittest.TestCase):
     @staticmethod
-    def _fresh_manifest_timestamp() -> str:
-        return datetime.now(UTC).replace(microsecond=0).astimezone(UTC).isoformat()
+    def _fresh_timestamp(*, z_suffix: bool = False) -> str:
+        rendered = datetime.now(UTC).replace(microsecond=0).isoformat()
+        if z_suffix:
+            return rendered.replace("+00:00", "Z")
+        return rendered
 
     def _init_repo(self, root: Path) -> None:
         subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
@@ -45,7 +48,7 @@ class CutoverGateTruthTests(unittest.TestCase):
         manifest.write_text(
             json.dumps(
                 {
-                    "generated_at": self._fresh_manifest_timestamp(),
+                    "generated_at": self._fresh_timestamp(),
                     "commands": {"doctor": "python_complete"},
                     "modes": {},
                 }
@@ -56,7 +59,7 @@ class CutoverGateTruthTests(unittest.TestCase):
         gap_report.write_text(
             json.dumps(
                 {
-                    "generated_at": "2026-03-09T00:00:00Z",
+                    "generated_at": self._fresh_timestamp(z_suffix=True),
                     "summary": {
                         "gap_count": blocking_gaps,
                         "high_or_medium_gap_count": blocking_gaps,
@@ -216,6 +219,24 @@ class CutoverGateTruthTests(unittest.TestCase):
             self.assertEqual(len(evaluate_events), 1)
             self.assertEqual(evaluate_events[0].get("runtime_readiness_contract_passed"), True)
             self.assertEqual(evaluate_events[0].get("runtime_readiness_blocking_gap_count"), 0)
+
+    def test_doctor_reports_runtime_readiness_and_shipability_in_lockstep_on_healthy_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._write_required_files(repo)
+
+            engine = self._runtime(repo, runtime_root, {"ENVCTL_RUNTIME_TRUTH_MODE": "strict"})
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--doctor"], env={}))
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("runtime_readiness_status: pass", rendered)
+            self.assertIn("readiness.shipability: pass", rendered)
 
 
 if __name__ == "__main__":

@@ -1163,8 +1163,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
             (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
             env_local.write_text(
-                "VITE_BACKEND_URL=http://localhost:9999\n"
-                "VITE_API_URL=http://localhost:9999/api/v1\n",
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
                 encoding="utf-8",
             )
 
@@ -1185,8 +1184,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             env_local_contents = env_local.read_text(encoding="utf-8")
             self.assertEqual(
                 env_local_contents,
-                "VITE_BACKEND_URL=http://localhost:9999\n"
-                "VITE_API_URL=http://localhost:9999/api/v1\n",
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
             )
 
             frontend_envs = [

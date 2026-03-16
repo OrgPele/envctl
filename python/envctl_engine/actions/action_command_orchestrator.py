@@ -21,6 +21,7 @@ from envctl_engine.actions.action_command_support import (
 )
 from envctl_engine.actions.action_target_support import (
     ActionCommandResolution,
+    ActionTargetContext,
     execute_targeted_action,
 )
 from envctl_engine.actions.action_test_support import (
@@ -701,7 +702,6 @@ class ActionCommandOrchestrator:
         raw = rt.env.get(env_key)  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
         command_extra_env = dict(extra_env)
-        interactive_pr_action = command_name == "pr" and interactive_command
         stream_review_output = bool(
             command_name == "review"
             and not interactive_command
@@ -751,14 +751,16 @@ class ActionCommandOrchestrator:
             process_run=lambda command, cwd, env: (
                 subprocess.CompletedProcess(
                     args=command,
-                    returncode=(completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
-                        command,
-                        cwd=cwd,
-                        env=dict(env),
-                        timeout=300.0,
-                        show_spinner=False,
-                        echo_output=True,
-                    )).returncode,
+                    returncode=(
+                        completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
+                            command,
+                            cwd=cwd,
+                            env=dict(env),
+                            timeout=300.0,
+                            show_spinner=False,
+                            echo_output=True,
+                        )
+                    ).returncode,
                     stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
                     stderr=str(getattr(completed, "stderr", "") or ""),
                 )
@@ -1254,7 +1256,9 @@ class ActionCommandOrchestrator:
         )
         if preserve_previous:
             previous_manifest_path_raw = str(previous_entry.get("manifest_path", "") or "").strip()
-            previous_manifest = load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+            previous_manifest = (
+                load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+            )
             if previous_manifest is not None and previous_manifest.entries:
                 preserved = dict(previous_entry)
                 preserved["status"] = "failed"
@@ -1321,10 +1325,15 @@ class ActionCommandOrchestrator:
             if not source:
                 continue
             parsed = item.get("parsed")
-            raw_failed_tests = [
-                str(failed_test).strip()
-                for failed_test in list(getattr(parsed, "failed_tests", []) or []) if str(failed_test).strip()
-            ] if parsed is not None else []
+            raw_failed_tests = (
+                [
+                    str(failed_test).strip()
+                    for failed_test in list(getattr(parsed, "failed_tests", []) or [])
+                    if str(failed_test).strip()
+                ]
+                if parsed is not None
+                else []
+            )
             failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
                 source=source,
                 failed_tests=raw_failed_tests,
@@ -1621,8 +1630,7 @@ class ActionCommandOrchestrator:
     def _is_exception_context_marker(line: str) -> bool:
         lowered = line.strip().lower()
         return (
-            "during handling of the above exception" in lowered
-            or "the above exception was the direct cause" in lowered
+            "during handling of the above exception" in lowered or "the above exception was the direct cause" in lowered
         )
 
     @staticmethod
@@ -1732,7 +1740,9 @@ class ActionCommandOrchestrator:
                         )
             summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
             if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
-                summary_path = str(summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or "").strip()
+                summary_path = str(
+                    summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
+                ).strip()
                 if summary_path:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
@@ -1751,18 +1761,6 @@ class ActionCommandOrchestrator:
                 f" (total {total_known}, duration {format_duration(total_duration)})"
             )
         print(self._colorize("======================================================================", fg="cyan"))
-
-    def _print_interactive_test_plan(self, execution_specs: list["_TestExecutionSpec"]) -> None:
-        grouped: dict[str, list[_TestExecutionSpec]] = {}
-        for execution in execution_specs:
-            grouped.setdefault(execution.project_name, []).append(execution)
-        print(self._colorize("Selected test targets:", fg="cyan", bold=True))
-        for project_name, specs in grouped.items():
-            print(f"  {self._colorize(project_name, fg='blue', bold=True)}")
-            for execution in specs:
-                suite_label = self._suite_display_name(execution.spec.source, failed_only=bool(route.flags.get("failed")))
-                suite_text = self._colorize(suite_label, fg="magenta")
-                print(f"    - {suite_text}")
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:

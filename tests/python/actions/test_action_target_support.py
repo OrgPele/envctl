@@ -95,7 +95,9 @@ class ActionTargetSupportTests(unittest.TestCase):
             interactive_command=True,
             resolve_command=lambda _context: ActionCommandResolution(command=["sh", "-lc", "exit 1"], cwd=Path("/tmp")),
             build_env=lambda _context: {},
-            process_run=lambda _command, _cwd, _env: _Completed(returncode=1, stdout="stdout detail", stderr="stderr detail"),
+            process_run=lambda _command, _cwd, _env: _Completed(
+                returncode=1, stdout="stdout detail", stderr="stderr detail"
+            ),
             emit_status=lambda _message: None,
             interactive_print_failures=False,
             on_failure=lambda _context, output: captured.append(output),

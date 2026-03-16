@@ -53,7 +53,8 @@ def select_planning_counts_textual(
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
     emit: Callable[..., None] | None = None,
-) -> dict[str, int] | None:
+    build_only: bool = False,
+) -> dict[str, int] | None | object:
     if not planning_files:
         return {}
     if not _textual_importable():
@@ -102,7 +103,8 @@ def select_planning_counts_textual(
             Binding("/", "focus_filter", "Filter"),
             Binding("tab", "cycle_focus", "Focus"),
         ]
-        CSS = """
+        CSS = (
+            """
         Screen {
             align: center middle;
         }
@@ -133,7 +135,9 @@ def select_planning_counts_textual(
             align-horizontal: right;
             height: auto;
         }
-        """ + PLANNING_ROW_STYLES_CSS
+        """
+            + PLANNING_ROW_STYLES_CSS
+        )
 
         def __init__(self) -> None:
             super().__init__()
@@ -147,7 +151,6 @@ def select_planning_counts_textual(
 
         def compose(self) -> ComposeResult:
             filter_input = Input(placeholder="Filter planning files...", id="planning-filter")
-            filter_input.can_focus = False
             with Vertical(id="planning-shell"):
                 yield Static("Planning Selection", id="planning-title")
                 yield filter_input
@@ -221,6 +224,23 @@ def select_planning_counts_textual(
 
         def _status(self) -> Static:
             return self.query_one("#planning-status", Static)
+
+        def _focused_widget_id(self) -> str:
+            focused = getattr(self, "focused", None)
+            focused_id = str(getattr(focused, "id", "") or "").strip()
+            if focused_id:
+                return focused_id
+            if self._list().has_focus:
+                return "planning-list"
+            if self.query_one("#planning-filter", Input).has_focus:
+                return "planning-filter"
+            return "unknown"
+
+        def _focus_order(self) -> tuple[str, ...]:
+            focus_order = ["planning-filter", "planning-list", "btn-cancel"]
+            if not self.query_one("#btn-run", Button).disabled:
+                focus_order.append("btn-run")
+            return tuple(focus_order)
 
         def _focused_row(self) -> _PlanningRow | None:
             return self._controller.focused_row(self._list().index)
@@ -346,17 +366,22 @@ def select_planning_counts_textual(
             list_view = self._list()
             index = self._controller.ensure_list_index(list_view.index)
             apply_selectable_list_index(list_view, index)
-            self.query_one("#planning-filter", Input).can_focus = False
             focus_selectable_list(self, list_view, index)
+
+        def action_focus_button(self, button_id: str) -> None:
+            self.query_one(f"#{button_id}", Button).focus()
 
         def action_cycle_focus(self) -> None:
             next_target = self._controller.cycle_focus_target(
-                filter_has_focus=self.query_one("#planning-filter", Input).has_focus
+                current_target=self._focused_widget_id(),
+                focus_order=self._focus_order(),
             )
-            if next_target == "list":
+            if next_target == "planning-list":
                 self.action_focus_list()
-            else:
+            elif next_target == "planning-filter":
                 self.action_focus_filter()
+            else:
+                self.action_focus_button(next_target)
 
         def _result(self) -> dict[str, int]:
             has_existing = any(row.existing > 0 for row in self._rows)
@@ -400,8 +425,14 @@ def select_planning_counts_textual(
             await self._toggle_model_index(model_index)
 
         async def on_key(self, event: Key) -> None:
-            if self.focused is self.query_one("#planning-filter", Input) and handle_text_edit_key_alias(
-                widget=self.query_one("#planning-filter", Input),
+            filter_input = self.query_one("#planning-filter", Input)
+            if event.key == "tab":
+                event.stop()
+                event.prevent_default()
+                self.action_cycle_focus()
+                return
+            if self.focused is filter_input and handle_text_edit_key_alias(
+                widget=filter_input,
                 event=event,
             ):
                 return
@@ -497,6 +528,8 @@ def select_planning_counts_textual(
                 term_program=run_policy.term_program,
             )
             app = PlanningSelectorApp()
+            if build_only:
+                return app
             try:
                 return app.run(mouse=run_policy.mouse)
             finally:

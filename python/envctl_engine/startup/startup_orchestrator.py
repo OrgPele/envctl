@@ -298,9 +298,7 @@ class StartupOrchestrator:
             if hasattr(rt.config, "startup_enabled_for_mode")
             else True
         )
-        allow_disabled_dashboard = not mode_runs_enabled and (
-            route.command == "plan" or route_is_implicit_start(route)
-        )
+        allow_disabled_dashboard = not mode_runs_enabled and (route.command == "plan" or route_is_implicit_start(route))
         session.disabled_startup_mode = allow_disabled_dashboard
         if not allow_disabled_dashboard:
             return None
@@ -334,7 +332,9 @@ class StartupOrchestrator:
         requested_command = session.requested_command
         if requested_command == "plan":
             raw_orch_group = str(rt.env.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
-            debug_orch_groups = {token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()}
+            debug_orch_groups = {
+                token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()
+            }
         else:
             debug_orch_groups = set()
         if requested_command != "restart" and rt._auto_resume_start_enabled(route):
@@ -487,7 +487,9 @@ class StartupOrchestrator:
         if route.command == "plan" and bool(route.flags.get("planning_prs")):
             rt._emit("planning.projects.start", projects=[context.name for context in session.selected_contexts])
             code = rt._run_pr_action(route, session.selected_contexts)
-            rt._emit("planning.projects.finish", code=code, projects=[context.name for context in session.selected_contexts])
+            rt._emit(
+                "planning.projects.finish", code=code, projects=[context.name for context in session.selected_contexts]
+            )
             if code == 0:
                 print("Planning PR mode complete; skipping service startup.")
             return code
@@ -502,7 +504,6 @@ class StartupOrchestrator:
         return None
 
     def _prepare_execution(self, session: StartupSession) -> None:
-        rt = self.runtime
         route = session.effective_route
         prewarm_started = time.monotonic()
         self._maybe_prewarm_docker(route=route, mode=session.runtime_mode)
@@ -532,8 +533,7 @@ class StartupOrchestrator:
         )
         debug_suppress_plan_progress = bool(
             session.requested_command == "plan"
-            and str(rt.env.get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower()
-            in {"1", "true", "yes", "on"}
+            and str(rt.env.get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower() in {"1", "true", "yes", "on"}
         )
         route_for_execution = Route(
             command=route.command,
@@ -608,7 +608,9 @@ class StartupOrchestrator:
                                     completed[context.name] = result
                                     if use_single_spinner:
                                         done = len(session.resumed_context_names) + len(completed)
-                                        progress_message = f"Started {done}/{len(session.selected_contexts)} project(s)..."
+                                        progress_message = (
+                                            f"Started {done}/{len(session.selected_contexts)} project(s)..."
+                                        )
                                         active_spinner.update(progress_message)
                                         rt._emit(
                                             "ui.spinner.lifecycle",
@@ -626,7 +628,9 @@ class StartupOrchestrator:
                                         context=context,
                                         warnings=result.warnings,
                                         route=route_for_execution,
-                                        project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                                        project_spinner_group=project_spinner_group
+                                        if use_project_spinner_group
+                                        else None,
                                     )
                                 except RuntimeError as exc:
                                     failures.append(str(exc))

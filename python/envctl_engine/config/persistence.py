@@ -8,7 +8,6 @@ import tempfile
 from envctl_engine.config import (
     CONFIG_MANAGED_BLOCK_END,
     CONFIG_MANAGED_BLOCK_START,
-    CONFIG_PRIMARY_FILENAME,
     LocalConfigState,
     PortDefaults,
     StartupProfile,
@@ -374,15 +373,30 @@ def _managed_block_sections(
         append_once(directory_keys, "BACKEND_DIR")
     if _component_enabled_any(values, "frontend") and rendered["FRONTEND_DIR"] != defaults["FRONTEND_DIR"]:
         append_once(directory_keys, "FRONTEND_DIR")
-    if _component_runs_any(values, "backend") and rendered["ENVCTL_BACKEND_START_CMD"] != defaults["ENVCTL_BACKEND_START_CMD"]:
+    if (
+        _component_runs_any(values, "backend")
+        and rendered["ENVCTL_BACKEND_START_CMD"] != defaults["ENVCTL_BACKEND_START_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_BACKEND_START_CMD")
-    if _component_runs_any(values, "frontend") and rendered["ENVCTL_FRONTEND_START_CMD"] != defaults["ENVCTL_FRONTEND_START_CMD"]:
+    if (
+        _component_runs_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_START_CMD"] != defaults["ENVCTL_FRONTEND_START_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_START_CMD")
-    if _component_enabled_any(values, "backend") and rendered["ENVCTL_BACKEND_TEST_CMD"] != defaults["ENVCTL_BACKEND_TEST_CMD"]:
+    if (
+        _component_enabled_any(values, "backend")
+        and rendered["ENVCTL_BACKEND_TEST_CMD"] != defaults["ENVCTL_BACKEND_TEST_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_BACKEND_TEST_CMD")
-    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_CMD"] != defaults["ENVCTL_FRONTEND_TEST_CMD"]:
+    if (
+        _component_enabled_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_TEST_CMD"] != defaults["ENVCTL_FRONTEND_TEST_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_TEST_CMD")
-    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_PATH"] != defaults["ENVCTL_FRONTEND_TEST_PATH"]:
+    if (
+        _component_enabled_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_TEST_PATH"] != defaults["ENVCTL_FRONTEND_TEST_PATH"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_TEST_PATH")
     sections.append(directory_keys)
 
@@ -463,7 +477,11 @@ def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> 
 
 def _backend_uses_port_any(values: ManagedConfigValues) -> bool:
     return bool(
-        (values.main_profile.startup_enable and values.main_profile.backend_enable and values.main_backend_expect_listener)
+        (
+            values.main_profile.startup_enable
+            and values.main_profile.backend_enable
+            and values.main_backend_expect_listener
+        )
         or (
             values.trees_profile.startup_enable
             and values.trees_profile.backend_enable

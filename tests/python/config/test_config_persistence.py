@@ -20,7 +20,6 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
     parse_dependency_env_section,
-    render_default_dependency_env_section,
 )
 from envctl_engine.config.persistence import (
     ManagedConfigValues,
@@ -133,8 +132,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 "FOO=bar\n"
                 "# >>> envctl managed startup config >>>\n"
                 "ENVCTL_DEFAULT_MODE=main\n"
-                "# <<< envctl managed startup config <<<\n\n"
-                + dependency_section,
+                "# <<< envctl managed startup config <<<\n\n" + dependency_section,
                 encoding="utf-8",
             )
             local_state = LocalConfigState(
@@ -175,8 +173,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 "FOO=bar\n"
                 "# >>> envctl managed startup config >>>\n"
                 "ENVCTL_DEFAULT_MODE=main\n"
-                "# <<< envctl managed startup config <<<\n\n"
-                + backend_section,
+                "# <<< envctl managed startup config <<<\n\n" + backend_section,
                 encoding="utf-8",
             )
             local_state = LocalConfigState(
@@ -324,13 +321,17 @@ class ConfigPersistenceTests(unittest.TestCase):
 
         self.assertEqual(example_values["ENVCTL_PLANNING_DIR"], DEFAULTS["ENVCTL_PLANNING_DIR"])
         for key, value in expected_mapping.items():
-            if key in {
-                "ENVCTL_BACKEND_START_CMD",
-                "ENVCTL_FRONTEND_START_CMD",
-                "ENVCTL_BACKEND_TEST_CMD",
-                "ENVCTL_FRONTEND_TEST_CMD",
-                "ENVCTL_FRONTEND_TEST_PATH",
-            } and value == "":
+            if (
+                key
+                in {
+                    "ENVCTL_BACKEND_START_CMD",
+                    "ENVCTL_FRONTEND_START_CMD",
+                    "ENVCTL_BACKEND_TEST_CMD",
+                    "ENVCTL_FRONTEND_TEST_CMD",
+                    "ENVCTL_FRONTEND_TEST_PATH",
+                }
+                and value == ""
+            ):
                 continue
             self.assertEqual(example_values.get(key), value, msg=key)
         example_text = example_path.read_text(encoding="utf-8")
@@ -376,11 +377,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(entries[1].line_number, 5)
 
     def test_parse_dependency_env_section_rejects_invalid_lines(self) -> None:
-        text = (
-            f"{CONFIG_DEPENDENCY_ENV_START}\n"
-            "NOT_VALID\n"
-            f"{CONFIG_DEPENDENCY_ENV_END}\n"
-        )
+        text = f"{CONFIG_DEPENDENCY_ENV_START}\nNOT_VALID\n{CONFIG_DEPENDENCY_ENV_END}\n"
 
         with self.assertRaisesRegex(ValueError, "line 2"):
             parse_dependency_env_section(text)

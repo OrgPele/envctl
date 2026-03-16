@@ -339,8 +339,7 @@ def _dashboard_project_pr_map(self: Any, *, state: RunState, projects: list[str]
     results: dict[str, tuple[str, str] | None] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(projects))) as executor:
         future_map = {
-            executor.submit(_dashboard_project_pr, self, state=state, project=project): project
-            for project in projects
+            executor.submit(_dashboard_project_pr, self, state=state, project=project): project for project in projects
         }
         for future in concurrent.futures.as_completed(future_map):
             results[future_map[future]] = future.result()
