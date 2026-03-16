@@ -262,6 +262,5 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
 
-
 if __name__ == "__main__":
     unittest.main()

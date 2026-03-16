@@ -13,6 +13,31 @@ Changed single-mode `envctl review` so it compares against a resolved base branc
 ### Verification
 - `PYTHONPATH=python python3 -m unittest discover -s tests/python/actions -t .`
 - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.runtime.test_cli_router_parity tests.python.runtime.test_command_router_contract`
+## 2026-03-16 - Repo wrapper now honors explicit path invocation
+
+### Scope
+Adjusted the clone-compatibility wrapper so explicit wrapper-path execution stays on the selected repo wrapper, while bare `envctl` keeps the installed-command preference when the repo wrapper shadows another binary on `PATH`.
+
+### Key behavior changes
+- `bin/envctl`
+  - preserves the original wrapper invocation token across Python-version re-exec
+  - delegates redirect policy to launcher support instead of applying PATH shadowing unconditionally
+- `python/envctl_engine/runtime/launcher_support.py`
+  - keeps PATH discovery in `find_shadowed_installed_envctl(...)`
+  - adds wrapper-intent and redirect-policy helpers for explicit-path vs bare-name execution
+  - keeps `ENVCTL_USE_REPO_WRAPPER=1` as the force-wrapper override
+- `tests/python/runtime/test_cli_packaging.py`
+  - adds helper-level coverage for explicit absolute/relative/symlinked wrapper paths, bare-name behavior, override handling, and preserved `argv[0]`
+  - adds subprocess smoke coverage for explicit-path execution, bare-name redirect behavior, and forced-wrapper override
+- Documentation updated:
+  - `docs/reference/commands.md`
+  - `docs/operations/troubleshooting.md`
+  - `docs/developer/python-runtime-guide.md`
+  - `docs/developer/runtime-lifecycle.md`
+
+### Verification
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging`
+  - result: `Ran 15 tests`, `OK`
 
 ## 2026-03-12 - envctl 1.1.0 release
 

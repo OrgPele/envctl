@@ -26,6 +26,7 @@ Examples:
 
 _BLOCK_START = "# >>> envctl PATH >>>"
 _BLOCK_END = "# <<< envctl PATH <<<"
+ORIGINAL_WRAPPER_ARGV0_ENVVAR = "ENVCTL_WRAPPER_ORIGINAL_ARGV0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,28 +41,103 @@ def launcher_usage_text() -> str:
 
 def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
     env_map = os.environ if env is None else env
-    path_value = env_map.get("PATH", "")
-    if not path_value:
-        return None
-    try:
-        current_resolved = current_binary.resolve()
-    except OSError:
-        current_resolved = current_binary
+    current_resolved = _resolved_path(current_binary)
     seen: set[Path] = {current_resolved}
-    for entry in path_value.split(os.pathsep):
-        if not entry:
-            continue
-        candidate = Path(entry).expanduser() / "envctl"
-        if not candidate.is_file() or not os.access(candidate, os.X_OK):
-            continue
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            resolved = candidate
+    for candidate in _path_envctl_candidates(env_map):
+        resolved = _resolved_path(candidate)
         if resolved in seen:
             continue
         return resolved
     return None
+
+
+def _path_envctl_candidates(env: Mapping[str, str]) -> list[Path]:
+    path_value = env.get("PATH", "")
+    if not path_value:
+        return []
+    candidates: list[Path] = []
+    for entry in path_value.split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry).expanduser() / "envctl"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            candidates.append(candidate)
+    return candidates
+
+
+def _resolved_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _effective_invocation_argv0(current_binary: Path, argv0: str, env: Mapping[str, str] | None = None) -> str:
+    env_map = os.environ if env is None else env
+    preserved = env_map.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
+    if not preserved:
+        return argv0
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    if not any(separator in argv0 for separator in separators):
+        return argv0
+    candidate = Path(argv0).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    if _resolved_path(candidate) != _resolved_path(current_binary):
+        return argv0
+    return preserved
+
+
+def is_explicit_wrapper_path(
+    current_binary: Path,
+    argv0: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> bool:
+    env_map = os.environ if env is None else env
+    invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
+    if not invocation:
+        return False
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    if not any(separator in invocation for separator in separators):
+        return False
+    candidate = Path(invocation).expanduser()
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() if cwd is None else cwd) / candidate
+    current_resolved = _resolved_path(current_binary)
+    candidate_resolved = _resolved_path(candidate)
+    if candidate_resolved != current_resolved:
+        return False
+    # Shebang-launched scripts on macOS can receive the PATH-resolved shim path as argv[0]
+    # even when the user typed a bare `envctl`. Treat a PATH entry that differs from the
+    # real wrapper path as bare-name intent so the installed-command safety behavior stays on.
+    if candidate.is_absolute() and candidate != current_resolved:
+        if any(path_candidate == candidate for path_candidate in _path_envctl_candidates(env_map)):
+            return False
+    return True
+
+
+def select_envctl_reexec_target(
+    current_binary: Path,
+    argv0: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+    alternate: Path | None = None,
+) -> Path | None:
+    env_map = os.environ if env is None else env
+    if env_map.get("ENVCTL_USE_REPO_WRAPPER") == "1":
+        return None
+    if is_explicit_wrapper_path(current_binary, argv0, env=env_map, cwd=cwd):
+        return None
+    if alternate is not None:
+        return alternate
+    return find_shadowed_installed_envctl(current_binary, env=env_map)
 
 
 def is_repo_root(path: Path) -> bool:
