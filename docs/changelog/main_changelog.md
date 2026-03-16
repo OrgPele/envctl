@@ -1,3 +1,18 @@
+## 2026-03-16 - Review base provenance and branch-relative single-mode review
+
+### Scope
+Changed single-mode `envctl review` so it compares against a resolved base branch instead of only showing the current worktree status against `HEAD`, and persisted worktree origin-branch provenance for envctl-created worktrees.
+
+### Key behavior changes
+- Added `--review-base <branch>` as the explicit override for single-mode review.
+- Review base resolution now follows: explicit override, persisted worktree provenance, attached-branch upstream, repo default branch.
+- Built-in review output now includes base branch metadata plus diff stat, changed files, full diff, and working tree/untracked files from the merge-base through the current worktree state.
+- Repo-local `utils/analyze-tree-changes.sh` helpers now receive `base-branch=...` and `base-source=...` so helper output can align with the built-in review path.
+- New envctl-created worktrees persist provenance under `.envctl-state/worktree-provenance.json`, including source branch/ref and resolution reason.
+
+### Verification
+- `PYTHONPATH=python python3 -m unittest discover -s tests/python/actions -t .`
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.runtime.test_cli_router_parity tests.python.runtime.test_command_router_contract`
 ## 2026-03-16 - Repo wrapper now honors explicit path invocation
 
 ### Scope
@@ -13024,6 +13039,54 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
   - No new config/env keys.
   - No data/state migrations.
 
+## 2026-03-16 - Fix PR selector space key handling
+
+- Scope:
+  - Fixed the interactive PR selector so `Space` toggles the focused row once before submit instead of only refreshing the selector view.
+
+- Key behavior changes:
+  - `python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Removed duplicate `space` handling from the PR selector's direct key hook and left toggle behavior on the selector binding path.
+    - Kept explicit `Enter` suppression for list selection to avoid double-submit behavior.
+    - Added `build_only` support to the PR flow factory so the selector can be exercised by focused UI tests.
+  - `tests/python/ui/test_pr_flow.py`
+    - Added a regression test that presses `Space` in the PR selector before `Enter` and verifies the selection count changes.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_pr_flow tests.python.ui.test_text_input_dialog tests.python.ui.test_dashboard_orchestrator_restart_selector`
+    - Result: pass (`42` tests, `4` skipped because `textual` is not installed in this environment).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No migrations.
+
+## 2026-03-16 - Fix PR selector focused-row toggle
+
+- Scope:
+  - Corrected the PR selector so `Space` toggles the live focused row instead of a stale cached index.
+
+- Key behavior changes:
+  - `python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Toggle/status/navigation now read from the live `ListView` focus index.
+  - `tests/python/ui/test_pr_flow.py`
+    - Added a regression test covering move-down + `Space` + confirm selecting the second project.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_pr_flow tests.python.ui.test_text_input_dialog tests.python.ui.test_dashboard_orchestrator_restart_selector`
+    - Result: pass (`43` tests, `5` skipped because `textual` is not installed in this environment).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No migrations.
+
 ## 2026-03-10 - Draft runtime facade refactor plan
 
 - Scope:
@@ -13680,6 +13743,135 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
 
 - Risks/notes:
   - Suite rows still require rich backend; if `rich.progress` is unavailable, fallback single-line progress remains active by design.
+
+## 2026-03-16 - Attach envctl-created worktrees to branches and mark detached PR attempts as skipped
+
+- Scope:
+  - Fixed envctl worktree setup so created trees are attached to an envctl branch instead of being left detached.
+  - Fixed project action persistence so detached-HEAD PR runs no longer appear as successful in dashboard state.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/planning/worktree_domain.py`
+    - Replaced detached worktree creation with branch-attached creation using `<feature>-<iteration>` branch names.
+    - Reuses the resolved source ref for the start point when available and falls back to the current `HEAD` commit when necessary.
+    - Resets an existing local envctl branch name on recreate so deleted/recreated worktrees keep the expected branch.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/actions/action_command_orchestrator.py`
+    - Classifies `pr` action output that skips due to detached HEAD as `skipped` before persisting `project_action_reports`.
+    - Suppresses interactive "PR created" status emission for skipped detached-head runs.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/planning/test_planning_worktree_setup.py`
+    - Added coverage for branch-attached creation, provenance retention, placeholder fallback, and existing-branch reset behavior.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/actions/test_action_command_orchestrator_targets.py`
+    - Added regression coverage for detached-head PR skips persisting as `skipped`.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/planning/worktree_domain.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/actions/action_command_orchestrator.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/planning/test_planning_worktree_setup.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/actions/test_action_command_orchestrator_targets.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli`
+    - Result: pass (`50 passed`).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - Existing detached worktrees are not retroactively reattached; they still need manual checkout or recreation.
+  - Detached-head skip classification is currently specific to `pr` actions, matching the user-visible issue investigated here.
+
+## 2026-03-16 - Fix follow-up selector test fixture and runtime contracts
+
+- Scope:
+  - Cleaned up post-merge test drift caused by the selector fixture shape and runtime inventory contract updates.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+    - PR flow tests now build valid branch selector items using the current selector model fields (`id`, `kind`, `scope_signature`).
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/runtime/test_cutover_gate_truth.py`
+    - Cutover gate fixture now writes a fresh parity-manifest timestamp so shipability passes in the clean temporary repo setup.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/runtime_feature_matrix.json`
+    - Regenerated to reflect the current parser/docs inventory, including `--review-base`.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/python_runtime_gap_report.json`
+    - Regenerated to stay consistent with the refreshed runtime feature matrix payload.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/runtime/test_cutover_gate_truth.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/runtime_feature_matrix.json`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/contracts/python_runtime_gap_report.json`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+    - Result: pass (`17 passed`, `2 skipped` because `textual` is not installed).
+  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.ui.test_pr_flow tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_runtime_feature_inventory`
+    - Result: pass (`67 passed`, `2 skipped` because `textual` is not installed).
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - Textual-specific selector execution still depends on having `textual` installed in the test environment.
+
+## 2026-03-16 - Fix PR flow keyboard selection race after merge
+
+- Scope:
+  - Fixed a PR selector timing bug where rapid `Down` + `Space` input could still act on the stale top-row widget state.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Keyboard navigation and toggle state now use the app-maintained current index instead of reading back `ListView.index` between renders.
+    - Status text now reflects the cached focused row immediately, even before the next render cycle settles.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+    - Result: pass (`140 passed`).
+  - `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Result: pass.
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - The direct Textual PR flow test path is still not runnable in this environment because `textual` is unavailable here.
+
+## 2026-03-16 - Fix PR flow first-key race under real Textual execution
+
+- Scope:
+  - Closed the remaining PR selector bug reproduced only when the Textual widget stack was actually installed and running.
+
+- Key behavior changes:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Initial PR flow rendering is now awaited on mount so the first keyboard interaction operates on a stable list.
+    - Row rebuilds preserve the live `ListView` index instead of resetting from stale cached state.
+    - This screen now focuses and reapplies list index directly, avoiding the deferred helper callback that could overwrite an immediate `Down` key.
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+    - Updated to assert `Static` content through `render()` and to pause after directional input in the real Textual driver.
+
+- Files/modules touched:
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/python/envctl_engine/ui/dashboard/pr_flow.py`
+  - `/Users/kfiramar/projects/envctl/trees/broken_review_fix/1/tests/python/ui/test_pr_flow.py`
+
+- Tests run + results:
+  - `PYTHONPATH=python /tmp/envctl-textual-venv/bin/python -m unittest tests.python.ui.test_pr_flow`
+    - Result: pass (`2 passed`).
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_command_orchestrator_targets tests.python.actions.test_actions_cli tests.python.actions.test_actions_parity tests.python.runtime.test_cli_router_parity`
+    - Result: pass (`140 passed`).
+  - `python3 -m py_compile python/envctl_engine/ui/dashboard/pr_flow.py`
+    - Result: pass.
+
+- Config/env/migrations:
+  - No new config/env keys.
+  - No data/state migrations.
+
+- Risks/notes:
+  - The Textual verification here used a temporary non-repo venv for reproduction because the default shell environment still lacks `textual`.
 
 ## 2026-03-03 - Remove conflicting action-level spinner during interactive test suite-row mode
 

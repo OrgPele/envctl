@@ -46,6 +46,8 @@ def build_action_extra_env(route: Route) -> dict[str, str]:
     extra: dict[str, str] = {}
     if isinstance(route.flags.get("pr_base"), str):
         extra["ENVCTL_PR_BASE"] = str(route.flags["pr_base"])
+    if isinstance(route.flags.get("review_base"), str):
+        extra["ENVCTL_REVIEW_BASE"] = str(route.flags["review_base"])
     if isinstance(route.flags.get("pr_body"), str):
         extra["ENVCTL_PR_BODY"] = str(route.flags["pr_body"])
     if isinstance(route.flags.get("commit_message"), str):

@@ -136,6 +136,34 @@ class ActionCommandTargetTests(unittest.TestCase):
             runtime._emitted,
         )
 
+    def test_pr_success_handler_persists_skipped_for_detached_head(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        runtime._dashboard_pr_url_cache = {"stale": ("expires", None)}
+        runtime._latest_state = RunState(run_id="run-1", mode="main")
+
+        handler = orchestrator._project_action_success_handler("pr", "main", True)  # noqa: SLF001
+        self.assertIsNotNone(handler)
+
+        handler(  # type: ignore[misc]
+            SimpleNamespace(name="Main", root=Path("/tmp"), index=1, total=1, target_obj=SimpleNamespace(name="Main")),
+            SimpleNamespace(stdout="Skipping Main (detached HEAD).\n", stderr="", returncode=0),
+        )
+
+        assert runtime._latest_state is not None
+        metadata = runtime._latest_state.metadata.get("project_action_reports")
+        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
+        project_entry = metadata.get("Main")
+        self.assertIsInstance(project_entry, dict)
+        assert isinstance(project_entry, dict)
+        pr_entry = project_entry.get("pr")
+        self.assertIsInstance(pr_entry, dict)
+        assert isinstance(pr_entry, dict)
+        self.assertEqual(pr_entry.get("status"), "skipped")
+        self.assertEqual(runtime._dashboard_pr_url_cache, {})
+        self.assertEqual(runtime._emitted, [])
+
     def test_project_action_failure_handler_persists_summary_and_report_path(self) -> None:
         runtime = _RuntimeStub()
         runtime._latest_state = RunState(run_id="run-1", mode="main")

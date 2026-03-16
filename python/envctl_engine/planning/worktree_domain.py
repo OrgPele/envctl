@@ -33,6 +33,10 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
+WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
+WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+
+
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
     policy = resolve_spinner_policy(getattr(self, "env", {}))
     emit_spinner_policy(
@@ -167,12 +171,7 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
     target = feature_root / iteration
-    result = self.process_runner.run(
-        ["git", "-C", str(self.config.base_dir), "worktree", "add", "--detach", str(target)],
-        cwd=self.config.base_dir,
-        env=self._command_env(port=0),
-        timeout=120.0,
-    )
+    result = _run_worktree_add(self, feature=feature, iteration=iteration, target=target, env=self._command_env(port=0))
     if getattr(result, "returncode", 1) != 0:
         error = self._worktree_add_failure(
             feature=feature,
@@ -182,6 +181,8 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
         )
         if error:
             return error
+    else:
+        _write_worktree_provenance(self, target=target)
     return None
 
 
@@ -930,12 +931,7 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
     for _ in range(count):
         iteration = self._next_available_iteration(existing_iters)
         target = feature_root / str(iteration)
-        result = self.process_runner.run(
-            ["git", "-C", str(self.config.base_dir), "worktree", "add", "--detach", str(target)],
-            cwd=self.config.base_dir,
-            env=setup_env,
-            timeout=120.0,
-        )
+        result = _run_worktree_add(self, feature=feature, iteration=str(iteration), target=target, env=setup_env)
         if getattr(result, "returncode", 1) != 0:
             error = self._worktree_add_failure(
                 feature=feature,
@@ -945,6 +941,8 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
             )
             if error:
                 return error
+        else:
+            _write_worktree_provenance(self, target=target)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         existing_iters.add(iteration)
     return None
@@ -975,11 +973,132 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
     return f"failed creating worktree {feature}/{iteration}: {reason}"
 
 
+def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
+    branch_name = _worktree_branch_name(feature=feature, iteration=iteration)
+    start_point = _worktree_start_point(self)
+    branch_flag = "-B" if _worktree_branch_exists(self, branch_name=branch_name) else "-b"
+    command = [
+        "git",
+        "-C",
+        str(self.config.base_dir),
+        "worktree",
+        "add",
+        branch_flag,
+        branch_name,
+        str(target),
+    ]
+    if start_point:
+        command.append(start_point)
+    return self.process_runner.run(
+        command,
+        cwd=self.config.base_dir,
+        env=env,
+        timeout=120.0,
+    )
+
+
+def _worktree_branch_name(*, feature: str, iteration: str) -> str:
+    return f"{feature}-{iteration}"
+
+
+def _worktree_branch_exists(self: Any, *, branch_name: str) -> bool:
+    normalized = branch_name.strip()
+    if not normalized:
+        return False
+    return bool(_git_command_output(self, ["rev-parse", "--verify", f"refs/heads/{normalized}"]).strip())
+
+
+def _worktree_start_point(self: Any) -> str | None:
+    provenance = _build_worktree_provenance(self) or {}
+    for key in ("source_ref", "source_branch"):
+        candidate = str(provenance.get(key, "")).strip()
+        if candidate and _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    head_commit = _git_command_output(self, ["rev-parse", "HEAD"]).strip()
+    return head_commit or None
+
+
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
     raw = self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK") or self.config.raw.get(
         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
     )
     return parse_bool(raw, False)
+
+
+def _write_worktree_provenance(self: Any, *, target: Path) -> None:
+    provenance = _build_worktree_provenance(self)
+    if provenance is None or not target.is_dir():
+        return
+    path = target / WORKTREE_PROVENANCE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def _build_worktree_provenance(self: Any) -> dict[str, object] | None:
+    source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if source_branch and source_branch != "HEAD":
+        return _worktree_provenance_payload(self, source_branch=source_branch, resolution_reason="attached_branch")
+
+    default_branch = _detect_default_branch(self)
+    if not default_branch:
+        return None
+    return _worktree_provenance_payload(
+        self,
+        source_branch=default_branch,
+        resolution_reason="default_branch_detached_head",
+    )
+
+
+def _worktree_provenance_payload(
+    self: Any,
+    *,
+    source_branch: str,
+    resolution_reason: str,
+) -> dict[str, object]:
+    source_ref = _resolve_branch_ref(self, source_branch=source_branch)
+    return {
+        "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
+        "source_branch": source_branch,
+        "source_ref": source_ref or source_branch,
+        "resolution_reason": resolution_reason,
+        "created_from_repo": str(self.config.base_dir.resolve()),
+        "recorded_at": datetime.now(tz=UTC).isoformat(),
+    }
+
+
+def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:
+    normalized = source_branch.strip()
+    if not normalized:
+        return ""
+    for candidate in (f"origin/{normalized}", normalized):
+        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return normalized
+
+
+def _detect_default_branch(self: Any) -> str:
+    ref = _git_command_output(self, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+    if ref.startswith("origin/"):
+        return ref.split("origin/", 1)[1]
+    for candidate in ("main", "master"):
+        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return "main"
+
+
+def _git_command_output(self: Any, args: list[str]) -> str:
+    result = self.process_runner.run(
+        ["git", "-C", str(self.config.base_dir), *args],
+        cwd=self.config.base_dir,
+        env=self._command_env(port=0),
+        timeout=30.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return ""
+    return str(getattr(result, "stdout", ""))
 
 
 def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:

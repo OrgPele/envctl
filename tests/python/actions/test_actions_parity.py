@@ -845,6 +845,25 @@ class ActionsParityTests(unittest.TestCase):
             extra = engine.action_command_orchestrator.action_extra_env(route)
             self.assertEqual(extra.get("ENVCTL_ANALYZE_SCOPE"), "backend")
 
+    def test_review_action_extra_env_forwards_explicit_review_base_only_when_supplied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            explicit_route = parse_route(
+                ["review", "--review-base", "release/2026.03"],
+                env={"ENVCTL_DEFAULT_MODE": "main"},
+            )
+            explicit_extra = engine.action_command_orchestrator.action_extra_env(explicit_route)
+            self.assertEqual(explicit_extra.get("ENVCTL_REVIEW_BASE"), "release/2026.03")
+
+            implicit_route = parse_route(["review"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            implicit_extra = engine.action_command_orchestrator.action_extra_env(implicit_route)
+            self.assertNotIn("ENVCTL_REVIEW_BASE", implicit_extra)
+
     def test_git_actions_fallback_to_system_python_when_repo_has_no_venv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

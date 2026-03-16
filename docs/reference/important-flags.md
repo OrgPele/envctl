@@ -31,6 +31,7 @@ Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather t
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
+| `--review-base <branch>` | Force the base branch for single-mode `review`, overriding provenance, upstream, and default-branch fallback. |
 
 ## Worktree Orchestration
 | Flag | Purpose |

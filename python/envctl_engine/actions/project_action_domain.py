@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
+import json
 from pathlib import Path
 import os
 import shutil
@@ -17,6 +18,8 @@ from envctl_engine.ui.color_policy import colors_enabled
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
 COMMIT_MESSAGE_MAX_CHARS = 16_000
+WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
+WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,18 @@ class ActionProjectContext:
     @property
     def interactive(self) -> bool:
         return parse_bool(self.env.get("ENVCTL_ACTION_INTERACTIVE"), False) and bool(sys.stdin.isatty())
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewBaseResolution:
+    base_branch: str
+    base_ref: str
+    source: str
+    merge_base: str
+
+
+class ReviewBaseResolutionError(RuntimeError):
+    """Raised when envctl cannot determine a usable review base."""
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
@@ -152,6 +167,14 @@ def run_review_action(context: ActionProjectContext) -> int:
 
     mode = _resolve_analyze_mode(context)
     scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
+    review_base: ReviewBaseResolution | None = None
+    if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
+        try:
+            review_base = _resolve_review_base(context, git_root)
+        except ReviewBaseResolutionError as exc:
+            print(str(exc))
+            return 1
+
     helper = context.repo_root / "utils" / "analyze-tree-changes.sh"
     if helper.is_file() and os.access(helper, os.X_OK):
         iterations = _analysis_iterations(context, mode=mode)
@@ -162,10 +185,50 @@ def run_review_action(context: ActionProjectContext) -> int:
                 iterations=iterations,
                 mode=mode,
                 scope=scope,
+                review_base=review_base,
             )
 
-    diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
-    status = _git_output(git_root, ["status", "--porcelain"]).strip()
+    if review_base is None:
+        diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
+        status = _git_output(git_root, ["status", "--porcelain"]).strip()
+        output_path = _tree_diffs_output_path(
+            context,
+            "review",
+            f"review_{sanitize_label(context.project_name)}_{mode}",
+        )
+        _write_markdown_lines(
+            output_path,
+            [
+                f"# Review Summary: {context.project_name}",
+                "",
+                f"Mode: {mode}",
+                f"Scope: {scope}",
+                "",
+                "## Diff Stat",
+                diff_stat or "(no diff)",
+                "",
+                "## Working Tree",
+                status or "(clean)",
+                "",
+            ],
+        )
+        _print_review_completion(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_path.parent,
+            summary_path=output_path,
+            all_in_one_path=output_path,
+            stats=[],
+            tree_count=1,
+        )
+        return 0
+
+    diff_left = review_base.merge_base or review_base.base_ref
+    diff_stat = _git_output(git_root, ["diff", "--find-renames", "--stat", diff_left]).strip()
+    changed_files = _git_output(git_root, ["diff", "--find-renames", "--name-status", diff_left]).strip()
+    full_diff = _git_output(git_root, ["diff", "--find-renames", diff_left]).strip()
+    status = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"]).strip()
     output_path = _tree_diffs_output_path(
         context,
         "review",
@@ -179,10 +242,28 @@ def run_review_action(context: ActionProjectContext) -> int:
             f"Mode: {mode}",
             f"Scope: {scope}",
             "",
+            "## Base branch",
+            review_base.base_branch,
+            "",
+            "## Base resolution source",
+            review_base.source,
+            "",
+            "## Base ref",
+            review_base.base_ref,
+            "",
+            "## Merge base",
+            review_base.merge_base or "(merge-base unavailable)",
+            "",
             "## Diff Stat",
             diff_stat or "(no diff)",
             "",
-            "## Working Tree",
+            "## Changed files",
+            changed_files or "(no changed files)",
+            "",
+            "## Full diff",
+            full_diff or "(no diff)",
+            "",
+            "## Working tree / untracked files",
             status or "(clean)",
             "",
         ],
@@ -281,6 +362,135 @@ def _resolve_analyze_mode(context: ActionProjectContext) -> str:
     if explicit in {"single", "grouped"}:
         return explicit
     return "single"
+
+
+def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> ReviewBaseResolution:
+    explicit = str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip()
+    if explicit:
+        resolved = _resolve_review_base_candidate(git_root, base_branch=explicit, source="explicit")
+        if resolved is None:
+            raise ReviewBaseResolutionError(
+                f"Review base '{explicit}' could not be resolved. Supply --review-base <branch> with an existing branch."
+            )
+        return resolved
+
+    if context.project_root.resolve() != context.repo_root.resolve():
+        provenance = _load_worktree_provenance(context.project_root)
+        resolved = _resolve_provenance_review_base(git_root, provenance)
+        if resolved is not None:
+            return resolved
+
+    resolved = _resolve_upstream_review_base(git_root)
+    if resolved is not None:
+        return resolved
+
+    default_branch = detect_default_branch(git_root).strip()
+    resolved = _resolve_review_base_candidate(git_root, base_branch=default_branch, source="default_branch")
+    if resolved is not None:
+        return resolved
+    raise ReviewBaseResolutionError(
+        "Unable to resolve a review base automatically. Supply --review-base <branch>."
+    )
+
+
+def _resolve_provenance_review_base(
+    git_root: Path,
+    provenance: Mapping[str, object] | None,
+) -> ReviewBaseResolution | None:
+    if not provenance:
+        return None
+    source_branch = str(provenance.get("source_branch", "")).strip()
+    source_ref = str(provenance.get("source_ref", "")).strip()
+    if source_branch:
+        return _resolve_review_base_candidate(
+            git_root,
+            base_branch=source_branch,
+            source="provenance",
+            preferred_ref=source_ref,
+        )
+    if source_ref:
+        return _resolve_review_base_candidate(
+            git_root,
+            base_branch=_branch_name_from_ref(source_ref),
+            source="provenance",
+            preferred_ref=source_ref,
+        )
+    return None
+
+
+def _resolve_upstream_review_base(git_root: Path) -> ReviewBaseResolution | None:
+    head_branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if not head_branch or head_branch == "HEAD":
+        return None
+    upstream_ref = _git_output(git_root, ["rev-parse", "--abbrev-ref", f"{head_branch}@{{upstream}}"]).strip()
+    if not upstream_ref or upstream_ref == "HEAD":
+        return None
+    return _resolve_review_base_candidate(
+        git_root,
+        base_branch=_branch_name_from_ref(upstream_ref),
+        source="upstream",
+        preferred_ref=upstream_ref,
+    )
+
+
+def _resolve_review_base_candidate(
+    git_root: Path,
+    *,
+    base_branch: str,
+    source: str,
+    preferred_ref: str = "",
+) -> ReviewBaseResolution | None:
+    normalized_branch = _branch_name_from_ref(base_branch)
+    base_ref = _resolve_review_base_ref(git_root, base_branch=base_branch, preferred_ref=preferred_ref)
+    if not base_ref:
+        return None
+    merge_base = _git_output(git_root, ["merge-base", "HEAD", base_ref]).strip()
+    return ReviewBaseResolution(
+        base_branch=normalized_branch or base_branch.strip(),
+        base_ref=base_ref,
+        source=source,
+        merge_base=merge_base,
+    )
+
+
+def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref: str = "") -> str:
+    branch = base_branch.strip()
+    candidates: list[str] = []
+    for candidate in (
+        preferred_ref.strip(),
+        branch,
+        "" if not branch or branch.startswith("origin/") else f"origin/{branch}",
+        "" if not branch.startswith("origin/") else branch.split("origin/", 1)[1],
+    ):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if _git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return ""
+
+
+def _branch_name_from_ref(ref: str) -> str:
+    cleaned = ref.strip()
+    if cleaned.startswith("origin/"):
+        return cleaned.split("origin/", 1)[1]
+    return cleaned
+
+
+def _load_worktree_provenance(project_root: Path) -> Mapping[str, object] | None:
+    path = project_root / WORKTREE_PROVENANCE_PATH
+    if not path.is_file():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    schema_version = int(loaded.get("schema_version", 0) or 0)
+    if schema_version > WORKTREE_PROVENANCE_SCHEMA_VERSION:
+        return None
+    return loaded
 
 
 def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
@@ -529,6 +739,7 @@ def _run_analyze_helper(
     iterations: list[str],
     mode: str,
     scope: str,
+    review_base: ReviewBaseResolution | None,
 ) -> int:
     project_root = context.project_root.resolve()
     family_dir = _project_family_dir(project_root)
@@ -545,6 +756,14 @@ def _run_analyze_helper(
         f"approach={approach}",
         "output-dir=" + str(output_dir),
     ]
+    if review_base is not None:
+        args.extend(
+            [
+                f"base-branch={review_base.base_branch}",
+                f"base-source={review_base.source}",
+                f"base-ref={review_base.base_ref}",
+            ]
+        )
     if scope != "all":
         args.append(f"scope={scope}")
     if not (mode == "grouped" and len(iterations) > 1):
