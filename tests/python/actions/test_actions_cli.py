@@ -164,6 +164,66 @@ class ActionsCliTests(unittest.TestCase):
             self.assertNotIn("## Commits", captured_body[0])
             self.assertLessEqual(len(captured_body[0]), domain.PR_BODY_MAX_CHARS)
 
+    def test_pr_action_prefers_main_task_h1_for_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / "MAIN_TASK.md").write_text("# Envctl `--version` Flag Plan\n\nDetails\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/title-from-task\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/title-from-task", "origin/main"]:
+                    return "mbase123\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "### Scope\n"
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/title-from-task",
+                ]:
+                    return "abc123\x1ffallback commit\x1ffallback body\x1e"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/101\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+
+            self.assertEqual(code, 0)
+            gh_create = next(
+                command for command in calls if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]
+            )
+            self.assertIn("--title", gh_create)
+            self.assertIn("Envctl --version Flag Plan", gh_create)
+            self.assertNotIn("### Scope", gh_create)
+
     def test_pr_action_truncates_large_commit_messages_to_recent_content(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -705,6 +765,47 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(len(captured_commit_message), 1)
             self.assertLessEqual(len(captured_commit_message[0]), domain.COMMIT_MESSAGE_MAX_CHARS)
             self.assertTrue(captured_commit_message[0].endswith("[truncated]"))
+
+    def test_commit_action_skips_markdown_subheadings_in_latest_changelog_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
+            changelog.parent.mkdir(parents=True, exist_ok=True)
+            changelog.write_text(
+                "## 2026-03-17 - Example\n\n"
+                "### Scope\n"
+                "Use the real summary line\n\n"
+                "### Details\n"
+                "- item one\n",
+                encoding="utf-8",
+            )
+            captured_commit_message: list[str] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] ok\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(captured_commit_message[0], "Use the real summary line\n\n### Details\n- item one")
 
     def test_analyze_action_branch_relative_review_uses_explicit_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
