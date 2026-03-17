@@ -318,10 +318,9 @@ def _print_dashboard_tests_row(
     icon = "✓" if passed else "✗"
     color = ok_color if passed else bad_color
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
-    print(f"      {color}{icon}{reset} tests: {dim}({timestamp}){reset}")
+    print(f"      {color}{icon}{reset} tests: {summary_path} {dim}({timestamp}){reset}")
     for line in summary_excerpt_from_entry(entry, max_lines=3):
         print(f"        {line}")
-    print(f"      {summary_path}")
 
 
 def _dashboard_project_pr(self: Any, *, state: RunState, project: str) -> tuple[str, str] | None:

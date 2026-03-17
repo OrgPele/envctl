@@ -291,6 +291,8 @@ def create_selector_app(
                         await self.action_nav_down()
                     elif action == "up":
                         await self.action_nav_up()
+                    elif action == "submit":
+                        await self.action_submit(cause="initial_navigation_submit")
 
             asyncio.create_task(_run_initial_navigation())
 

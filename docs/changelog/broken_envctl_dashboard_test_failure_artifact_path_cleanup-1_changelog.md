@@ -48,3 +48,31 @@ Implemented the interactive dashboard failed-test artifact cleanup from `MAIN_TA
 ### Risks / notes
 - Suite-context capture is intentionally cleaned before persistence, so operators get a diagnostic artifact rather than verbatim raw logs. If a future parser depends on unfiltered terminal chrome, it should read the underlying subprocess streams directly instead of this summary file.
 - The targeted verification used `unittest` because the repo-local `.venv` and `pytest` entrypoint referenced in `MAIN_TASK.md` were not present in this worktree.
+
+## 2026-03-17 - Follow-up: inline dashboard test artifact row formatting
+
+### Scope
+Adjusted the dashboard `tests:` row formatting so the artifact path and timestamp render on the same line, with the timestamp moved to the end of the path line.
+
+### Key behavior changes
+- `python/envctl_engine/ui/dashboard/rendering.py`
+  - `tests:` rows now render as `✓/✗ tests: <short-path> (<timestamp>)`
+  - removed the extra newline that previously printed the summary path on its own line
+- `tests/python/ui/test_dashboard_rendering_parity.py`
+  - updated rendering assertions to require the single-line path-plus-timestamp contract for both passed and failed statuses
+
+### Files / modules touched
+- `python/envctl_engine/ui/dashboard/rendering.py`
+- `tests/python/ui/test_dashboard_rendering_parity.py`
+- `docs/changelog/broken_envctl_dashboard_test_failure_artifact_path_cleanup-1_changelog.md`
+
+### Tests run + results
+- `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_rendering_parity`
+  - result: `Ran 14 tests`, `OK`
+
+### Config / env / migrations
+- No migrations.
+- No config changes.
+
+### Risks / notes
+- This is a presentation-only change for the dashboard snapshot row; summary excerpt rendering remains unchanged below that line.
