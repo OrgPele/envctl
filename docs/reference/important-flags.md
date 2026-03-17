@@ -7,6 +7,7 @@ These are the highest-value flags for daily use.
 | --- | --- |
 | `--resume` | Resume previous runtime state and session mapping quickly. |
 | `--repo <path>` | Resolve and operate on a repo from outside that repo tree. |
+| `--version` | Print the current `envctl` package version and exit without repo/bootstrap/runtime startup. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
 | `--main` | Run main mode only (skip trees). |
@@ -21,6 +22,7 @@ Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag i
 Allowed values are `main` and `trees` (default: `main`).
 Engine note: Python runtime is the only supported runtime path.
 Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
+Launcher note: `--version` is launcher-owned and intentionally stays out of the runtime supported-command inventory.
 
 ## Targeting
 | Flag | Purpose |

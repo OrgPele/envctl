@@ -13039,6 +13039,49 @@ Aligned Python action UX with shell expectations by surfacing real command outpu
   - No new config/env keys.
   - No data/state migrations.
 
+## 2026-03-17 - Launcher-owned `--version` for installed command and repo wrapper
+
+### Scope
+Added a supported launcher-level `--version` flag so the package-installed `envctl` command and the explicit source wrapper (`./bin/envctl`) report the same version string without needing repo detection, `.envctl`, or runtime startup.
+
+### Key behavior changes
+- `python/envctl_engine/runtime/launcher_support.py`
+  - added centralized version resolution that prefers installed package metadata and falls back to source-checkout `pyproject.toml`
+  - raises concise launcher errors when neither source is usable
+- `python/envctl_engine/runtime/launcher_cli.py`
+  - handles `--version` before repo-root resolution and runtime forwarding
+  - allows `--repo` syntactically but ignores it for version reporting
+  - rejects trailing positional arguments after `--version`
+- `python/envctl_engine/runtime/cli.py`
+  - mirrors the same pre-routing `--version` behavior for the installed console-script entrypoint without adding a runtime command
+- `tests/python/runtime/test_launcher_version.py`
+  - added helper and launcher/runtime-entrypoint coverage for version resolution and argument handling
+- `tests/python/runtime/test_cli_packaging.py`
+  - added editable-install, regular-install, and explicit-wrapper subprocess smoke coverage for `--version`
+- Documentation updated:
+  - `README.md`
+  - `docs/user/getting-started.md`
+  - `docs/user/faq.md`
+  - `docs/operations/troubleshooting.md`
+  - `docs/reference/commands.md`
+  - `docs/reference/important-flags.md`
+  - `docs/developer/command-surface.md`
+  - `docs/developer/python-runtime-guide.md`
+
+### Verification
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_launcher_version tests.python.runtime.test_cli_packaging`
+  - result: `Ran 35 tests`, `OK`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_command_exit_codes tests.python.runtime.test_cli_router_parity tests.python.runtime.test_command_dispatch_matrix tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_launcher_version tests.python.runtime.test_cli_packaging`
+  - result: `Ran 125 tests`, `OK`
+
+### Config / env / migrations
+- No config schema changes.
+- No migrations.
+- Existing `ENVCTL_ROOT_DIR` support is reused only as an optional source-checkout fallback hint for version resolution.
+
+### Risks / notes
+- Source-checkout fallback still depends on `pyproject.toml` staying aligned with release metadata; tests now cover this path, but version drift between installed metadata and source metadata would still surface if release discipline regresses.
+
 ## 2026-03-16 - Fix PR selector space key handling
 
 - Scope:

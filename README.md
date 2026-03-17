@@ -46,6 +46,9 @@ This is the point where normal local development usually starts breaking down: t
 pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
 
+# Verify the installed launcher and version
+envctl --version
+
 # 2) Go to a target repo
 cd /path/to/your-project
 

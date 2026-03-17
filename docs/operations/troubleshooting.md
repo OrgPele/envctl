@@ -29,6 +29,7 @@ That sequence answers four different questions:
 ## Installed command is missing or wrong
 - Verify the install:
   - `command -v envctl`
+  - `envctl --version`
   - `pipx list`
 - Reinstall the package if needed:
   - `pipx install "git+https://github.com/kfiramar/envctl.git"`
@@ -36,6 +37,7 @@ That sequence answers four different questions:
 - If `pipx` says it is using an unsupported Python version, point it at a supported one explicitly with `--python`.
 - `pipx` does not automatically reuse the Python from your activated `.venv`.
 - If you intentionally use the clone-compatibility wrapper, use:
+  - `./bin/envctl --version`
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
 - Wrapper precedence:

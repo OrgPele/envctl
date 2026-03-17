@@ -12,6 +12,7 @@ from envctl_engine.runtime.launcher_support import (
     launcher_doctor_text,
     launcher_usage_text,
     parse_install_options,
+    resolve_envctl_version,
     resolve_repo_root,
 )
 
@@ -73,6 +74,11 @@ def run(argv: Sequence[str] | None = None) -> int:
     root = _envctl_root()
     try:
         argv, repo_arg = _extract_repo_arg(argv)
+        if argv and argv[0] == "--version":
+            if len(argv) != 1:
+                raise LauncherError("--version does not accept additional arguments")
+            print(f"envctl {resolve_envctl_version(project_root=root)}")
+            return 0
         if argv and argv[0] in {"--help", "-h"}:
             print(launcher_usage_text(), end="")
             return 0

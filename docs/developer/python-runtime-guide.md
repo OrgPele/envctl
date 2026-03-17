@@ -29,6 +29,7 @@ Current control flow:
 Key boundary decisions:
 
 - The launcher resolves repo root and prepares the Python runtime handoff.
+- Launcher-owned flags such as `--version` must resolve before repo detection, config bootstrap, prereq checks, or runtime dispatch.
 - Source checkouts should use `bin/envctl`; explicit wrapper paths stay on that exact wrapper, while bare `envctl` still prefers an installed command on `PATH`.
 - Direct module execution from the repo root requires `PYTHONPATH=python`.
 - Contributor and release-readiness validation should run from the editable repo-local install (`.venv/bin/python -m pip install -e '.[dev]'`) so the canonical `pytest -q` lane and packaging/build smoke exercise the installed runtime.
@@ -42,6 +43,7 @@ Key boundary decisions:
 
 Before dispatching it:
 
+- strips launcher-level repo/version arguments first
 - parses the initial route with enough config context to honor `ENVCTL_DEFAULT_MODE`
 - discovers repo-local config state
 - bootstraps `.envctl` when required
@@ -54,6 +56,8 @@ Before dispatching it:
   - `2`: controlled quit / interrupt
 
 Commands that intentionally skip config bootstrap are limited. That is why `show-config`, `show-state`, `explain-startup`, and the `--list-*` inspection commands are safe in unconfigured repos, while startup commands are not.
+
+The installed console-script entrypoint also shares launcher support helpers for `install`, `uninstall`, and `--version` before route parsing so those surfaces do not expand the runtime command inventory.
 
 ## Runtime Object Graph
 

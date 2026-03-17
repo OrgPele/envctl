@@ -9,6 +9,7 @@ If you are intentionally running from a clone of the `envctl` repo and want the 
 ./bin/envctl doctor [--repo <path>]
 ./bin/envctl install [--shell-file <path>] [--dry-run]
 ./bin/envctl uninstall [--shell-file <path>] [--dry-run]
+./bin/envctl [--repo <path>] --version
 ```
 
 Notes:
@@ -18,6 +19,18 @@ Notes:
 - the preferred user path is the package-installed `envctl` command on your `PATH`
 - bare `envctl` keeps the installed-command preference when a repo wrapper shadows another `envctl` later on `PATH`
 - `ENVCTL_USE_REPO_WRAPPER=1` remains the override when you need to force repo-wrapper behavior for an ambiguous PATH-based launch
+- `--version` is launcher-owned and works without repo resolution, `.envctl`, or runtime startup
+
+## Launcher Verification
+
+Use these when you want to verify the installed command or an explicit repo wrapper before running against a repo:
+
+```bash
+envctl --version
+./bin/envctl --version
+```
+
+`--version` does not add a runtime command and does not appear in `list-commands`.
 
 ## Inspection Commands
 
