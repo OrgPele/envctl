@@ -49,6 +49,40 @@ Risks / notes:
 - The launch flow uses bounded sleeps between shell startup, AI CLI launch, and slash-command injection; timing may still need adjustment on slower or heavily customized cmux setups.
 - `implement_plan` is added as an alias, not a replacement. Existing `implement_task` workflows remain valid.
 
+## 2026-03-17 - Restore implement_plan as the plan-agent launch default
+
+Scope:
+- Realigned the optional post-`--plan` cmux launch flow with `MAIN_TASK.md` so envctl defaults newly launched agent surfaces to `implement_plan` again.
+- Kept prompt installation coverage and prompt alias support intact while updating launch-focused tests and docs to match the restored contract.
+
+Key behavior changes:
+- `ENVCTL_PLAN_AGENT_PRESET` now defaults to `implement_plan` in the plan-agent launch config and launch helper resolution path.
+- Codex/OpenCode launch tests now explicitly cover the `implement_plan` default while tolerating the current readiness-polling sequence instead of overfitting to every intermediate `cmux read-screen` call.
+- User-facing docs now describe `implement_plan` as the default launch preset and `implement_task` as a backward-compatible available preset.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/config/__init__.py`
+- `python/envctl_engine/config/profile_defaults.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_prompt_install_support.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_launch_sequence_uses_cmux_commands_for_codex tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_launch_sequence_supports_opencode_and_current_workspace_fallback` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support tests.python.runtime.test_prereq_policy tests.python.runtime.test_prompt_install_support tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_engine_runtime_real_startup tests.python.startup.test_startup_orchestrator_flow tests.python.config.test_config_persistence` -> passed
+
+Config / env / migrations:
+- Restored the plan-agent launch default preset to `ENVCTL_PLAN_AGENT_PRESET=implement_plan`.
+- No migrations.
+
+Risks / notes:
+- The broader runtime diagnostics printed during regression runs still report pre-existing parity/readiness warnings unrelated to this feature change.
+- `install-prompts` continues to support both `implement_plan` and `implement_task`; the change here is specifically the default used by the plan-agent launch flow.
+
 ## 2026-03-17 - PTY selector test hermeticity follow-up
 
 Scope:
@@ -254,3 +288,257 @@ Config / env / migrations:
 
 Risks / notes:
 - This assumes current Codex prompt invocation is routed through `/prompts:<preset>`. If the Codex CLI changes that command namespace again, only the launch formatter should need adjustment.
+
+## 2026-03-17 - Harden prompt submission timing for Codex and OpenCode
+
+Scope:
+- Adjusted plan-agent terminal launch timing so slower CLI startup and prompt confirmation flows are handled reliably.
+
+Key behavior changes:
+- OpenCode now waits longer after startup before envctl types the prompt command, which gives the CLI time to finish loading.
+- Both Codex and OpenCode now receive a second `Enter` after the prompt command so the prompt is both selected and submitted.
+- Codex keeps using `/prompts:<preset>` and OpenCode keeps using `/<preset>`; only the launch timing and final confirmation flow changed.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- The OpenCode startup delay is a fixed default chosen from current observed behavior. If startup time varies materially by machine or future CLI release, making the delay configurable may still be worthwhile.
+
+## 2026-03-17 - Probe OpenCode readiness from cmux screen state
+
+Scope:
+- Replaced the blind OpenCode startup sleep with a best-effort readiness probe that reads the launched cmux surface until the CLI looks interactive.
+
+Key behavior changes:
+- OpenCode launch now polls `cmux read-screen` for the new surface instead of always waiting a fixed delay before sending the preset command.
+- The readiness probe strips ANSI sequences, ignores common loading text, and looks for a prompt-like marker near the bottom of the screen.
+- If no ready screen pattern appears before the timeout window ends, envctl still proceeds, so launch behavior degrades back to timeout-based rather than hanging indefinitely.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- The OpenCode readiness matcher is intentionally generic. If a future OpenCode release changes its prompt shape or startup text substantially, the matcher may miss readiness and fall back to the timeout path.
+
+## 2026-03-17 - Paste OpenCode prompt commands through cmux buffer
+
+Scope:
+- Changed the final OpenCode prompt injection step to use cmux paste semantics instead of plain terminal text send.
+
+Key behavior changes:
+- OpenCode prompt commands are now sent with `cmux set-buffer` plus `cmux paste-buffer` before the confirmation Enter presses.
+- Codex remains on the existing direct text-send path.
+- This avoids the case where OpenCode appears fully loaded but ignores the direct prompt text injection.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- This relies on current cmux buffer commands continuing to work as documented. If cmux changes `set-buffer` / `paste-buffer` semantics, the OpenCode prompt-injection path would need to be adjusted.
+
+## 2026-03-17 - Recognize loaded OpenCode composer layout
+
+Scope:
+- Updated the OpenCode readiness matcher to recognize the actual loaded composer screen observed in cmux instead of waiting only for a prompt-glyph layout.
+
+Key behavior changes:
+- The OpenCode readiness probe now treats the composer layout as ready when the surface shows the loaded `Ask anything...` UI together with command/status affordances such as `ctrl+p commands` and `/status`.
+- This prevents the launch flow from timing out and sending the preset before OpenCode has actually reached its interactive composer state.
+- Existing loading text such as `Loading workspace...` is still treated as not ready.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- The matcher still depends on broadly stable OpenCode UI text. If OpenCode substantially changes its composer copy, status strip, or command hints, the probe may again fall back to the timeout path until the matcher is updated.
+
+## 2026-03-17 - Launch OpenCode directly via respawn command
+
+Scope:
+- Reworked the OpenCode bootstrap path so envctl no longer types `opencode` into an interactive shell and instead starts it directly from the pane respawn command.
+
+Key behavior changes:
+- OpenCode surfaces now respawn with a direct command equivalent to `zsh -lc 'cd <worktree> && exec opencode'`.
+- The old fragile sequence of typing `cd <worktree>`, pressing Enter, typing `opencode`, and pressing Enter is skipped for OpenCode only.
+- After the direct launch, envctl still waits for the loaded OpenCode composer screen and then injects the preset command.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- This assumes the configured OpenCode command is safe to `exec` directly from the respawn shell command. If users rely on complex shell-only wrappers in `ENVCTL_PLAN_AGENT_CLI_CMD`, quoting may need further tightening.
+
+## 2026-03-17 - Restore caller focus and stabilize prompt submission
+
+Scope:
+- Improved the interactive cmux handoff so envctl returns to the caller surface quickly and makes prompt submission less jumpy.
+
+Key behavior changes:
+- When envctl is launched from a cmux terminal in the same workspace, the newly created plan-agent surface is immediately repositioned with `move-surface --focus false`, which returns focus to the original caller tab as soon as possible.
+- After envctl injects the preset command, it now sends an `End` key before the first `Enter`, so submission happens from the end of the inserted text instead of the beginning.
+- Added a longer pre-submit settle delay before the first `Enter` to give the CLI composer more time to absorb pasted or typed prompt text.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- Best-effort focus restoration depends on the caller having `CMUX_WORKSPACE_ID` and `CMUX_SURFACE_ID` in its environment, which is true for normal cmux-launched terminals but not for arbitrary external callers.
+
+## 2026-03-17 - Restore typed interactive launch flow for OpenCode
+
+Scope:
+- Corrected the new OpenCode launch path so it follows the authoritative `MAIN_TASK.md` interaction model instead of bypassing the shell with a respawn bootstrap shortcut.
+
+Key behavior changes:
+- OpenCode surfaces now respawn as a normal shell again instead of `exec`-ing OpenCode directly from the pane command.
+- Envctl now types the same explicit steps for OpenCode that the spec requires for plan-agent terminals: `cd <worktree>`, launch the CLI, wait for readiness, then send the preset slash command through `cmux send` / `send-key`.
+- The OpenCode readiness probe remains in place, so envctl still waits for the interactive surface to look ready before sending the slash command.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_orchestrator_flow` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- OpenCode prompt delivery now strictly follows the typed-shell contract from the spec. If a future OpenCode release again becomes sensitive to direct `cmux send` input timing, the readiness probe or retry policy may need further tuning without reintroducing the bootstrap shortcut.
+
+## 2026-03-17 - Default plan-agent prompt contract aligned to implement_task and revalidated live
+
+Scope:
+- Aligned the remaining default plan-agent preset surfaces to the repo-supported `implement_task` contract and revalidated the live cmux launch flow for both Codex and OpenCode.
+
+Key behavior changes:
+- Changed the default plan-agent preset from `implement_plan` to `implement_task` in the runtime config layer, launch support, and `install-prompts`.
+- Kept `implement_plan` available as an explicit backward-compatible alias preset, but stopped using it as the default launch target.
+- Updated Codex plan-agent launches to type `/prompts:implement_task` by default and OpenCode launches to type `/implement_task` by default.
+- Tightened launch tests around the real interactive contract: dynamic screen polling, prompt-picker readiness, prompt-submit readiness, `ctrl+e` cursor positioning, and caller-focus restoration with `cmux move-surface --focus true`.
+- Revalidated the live flow against real `cmux`, `codex`, and `opencode` binaries. Both CLIs accepted and submitted the implementation prompt, and the caller surface was restored immediately after launch.
+
+Files / modules touched:
+- `python/envctl_engine/config/__init__.py`
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/runtime/prompt_install_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_prompt_install_support.py`
+- `docs/reference/configuration.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support tests.python.runtime.test_prompt_install_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy tests.python.runtime.test_engine_runtime_command_parity` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_real_startup.EngineRuntimeRealStartupTests.test_plan_feature_launches_only_new_worktrees tests.python.runtime.test_engine_runtime_real_startup.EngineRuntimeRealStartupTests.test_plan_planning_prs_does_not_invoke_plan_agent_launch tests.python.runtime.test_engine_runtime_real_startup.EngineRuntimeRealStartupTests.test_plan_launch_failure_preserves_created_worktree` -> passed
+- Live Codex validation via a real `launch_plan_agent_terminals(...)` harness in `workspace:1` -> passed, prompt content appeared in the launched Codex surface, caller surface restored
+- Live OpenCode validation via a real `launch_plan_agent_terminals(...)` harness in `workspace:1` -> passed, prompt content appeared in the launched OpenCode surface, caller surface restored
+
+Config / env / migrations:
+- No new config keys.
+- Default `ENVCTL_PLAN_AGENT_PRESET` is now `implement_task`.
+- No migrations.
+
+Risks / notes:
+- Live verification depended on the locally installed Codex and OpenCode prompt presets already existing for `implement_task`.
+- `implement_plan` remains installable and usable explicitly, but users relying on the old implicit default now need to set `ENVCTL_PLAN_AGENT_PRESET=implement_plan` if they want to preserve that exact behavior.
+
+## 2026-03-17 - Extend AI readiness fallback window and lock in background-first handoff
+
+Scope:
+- Increased the bounded dynamic startup window for Codex/OpenCode launches and tightened the handoff contract so the caller surface is restored before the rest of the bootstrap sequence continues.
+
+Key behavior changes:
+- Codex and OpenCode now each get up to 5.0 seconds of dynamic `read-screen` polling before envctl falls back and proceeds.
+- The launch sequence remains background-first: envctl restores focus back to the caller immediately after creating the new surface, then continues respawn, CLI startup, polling, and prompt submission against the unfocused target surface.
+- Added order-sensitive coverage to ensure the early focus restoration happens before the shell respawn/bootstrap path.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- “Background” remains best-effort and depends on cmux honoring unfocused `send` / `send-key` against the launched surface, which is what current live validation showed.

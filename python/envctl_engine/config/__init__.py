@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from envctl_engine.actions.actions_test import (
     canonicalize_frontend_test_path,
@@ -41,8 +41,8 @@ def _bool_text(value: bool) -> str:
 def _build_defaults() -> dict[str, str]:
     main_profile = default_profile_settings("main")
     trees_profile = default_profile_settings("trees")
-    main_dependencies = dict(main_profile["dependencies"])
-    trees_dependencies = dict(trees_profile["dependencies"])
+    main_dependencies = cast(Mapping[str, bool], main_profile["dependencies"])
+    trees_dependencies = cast(Mapping[str, bool], trees_profile["dependencies"])
     return {
         "ENVCTL_DEFAULT_MODE": "main",
         "BACKEND_DIR": "backend",
@@ -73,7 +73,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
         "ENVCTL_PLAN_AGENT_CLI": "codex",
-        "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
+        "ENVCTL_PLAN_AGENT_PRESET": "implement_plan",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",

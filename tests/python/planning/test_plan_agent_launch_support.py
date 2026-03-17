@@ -6,15 +6,15 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from envctl_engine.config import load_config
-from envctl_engine.planning.plan_agent_launch_support import (
-    CreatedPlanWorktree,
-    launch_plan_agent_terminals,
-)
+from envctl_engine.planning import plan_agent_launch_support as launch_support
+from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.command_router import parse_route
+
+_screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
+_prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_screen_looks_ready")
 
 
 class _RecordingRunner:
@@ -30,8 +30,33 @@ class _RecordingRunner:
         return subprocess.CompletedProcess(args=list(cmd), returncode=0, stdout="", stderr="")
 
 
+def _monotonic_counter(*, start: float = 0.0, step: float = 0.05):
+    value = start - step
+
+    def _next() -> float:
+        nonlocal value
+        value += step
+        return value
+
+    return _next
+
+
+class _RuntimeHarness:
+    def __init__(self, *, config: object, env: dict[str, str], process_runner: _RecordingRunner) -> None:
+        self.config = config
+        self.env = env
+        self.process_runner = process_runner
+        self._plan_agent_events: list[dict[str, object]] = []
+
+    def _command_exists(self, command: str) -> bool:
+        return command in {"cmux", "codex", "opencode", "zsh"}
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self._plan_agent_events.append({"event": event, **payload})
+
+
 class PlanAgentLaunchSupportTests(unittest.TestCase):
-    def _runtime(self, repo: Path, runtime: Path, *, env: dict[str, str] | None = None) -> object:
+    def _runtime(self, repo: Path, runtime: Path, *, env: dict[str, str] | None = None) -> _RuntimeHarness:
         resolved_env = {
             "RUN_REPO_ROOT": str(repo),
             "RUN_SH_RUNTIME_DIR": str(runtime),
@@ -40,14 +65,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         config = load_config(resolved_env)
         events: list[dict[str, object]] = []
         runner = _RecordingRunner()
-        return SimpleNamespace(
-            config=config,
-            env=resolved_env,
-            process_runner=runner,
-            _command_exists=lambda command: command in {"cmux", "codex", "opencode", "zsh"},
-            _emit=lambda event, **payload: events.append({"event": event, **payload}),
-            _plan_agent_events=events,
-        )
+        harness = _RuntimeHarness(config=config, env=resolved_env, process_runner=runner)
+        harness._plan_agent_events = events
+        return harness
 
     def test_disabled_feature_returns_skipped_without_running_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -177,10 +197,61 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "• Booting MCP server: playwright (0s • esc to interrupt)\n"
+                            "› Explain this codebase\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› Explain this codebase\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "  /prompts:implement_plan\n"
+                            "  /prompts:implement_plan.bak-20260313-192914\n"
+                            "  /prompts:implement_plan\n"
+                            "  Sisyphus (Ultraworker)\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout="  /prompts:implement_plan\n  Sisyphus (Ultraworker)\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None):
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None) as sleep_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -188,20 +259,33 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertEqual(
-                rt.process_runner.calls,
-                [
-                    ["cmux", "new-surface", "--workspace", "workspace:7"],
-                    ["cmux", "rename-tab", "--workspace", "workspace:7", "--surface", "surface:9", "feature-a-1"],
-                    ["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"],
-                    ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"],
-                    ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "enter"],
-                    ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "codex"],
-                    ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "enter"],
-                    ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"],
-                    ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "enter"],
-                ],
+            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:7"])
+            focus_restore = [
+                "cmux",
+                "move-surface",
+                "--surface",
+                "surface:1",
+                "--before",
+                "surface:9",
+                "--workspace",
+                "workspace:7",
+                "--focus",
+                "true",
+            ]
+            self.assertIn(["cmux", "rename-tab", "--workspace", "workspace:7", "--surface", "surface:9", "feature-a-1"], rt.process_runner.calls)
+            self.assertIn(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "codex"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_plan"], rt.process_runner.calls)
+            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]), 2)
+            self.assertLess(rt.process_runner.calls.index(focus_restore), rt.process_runner.calls.index(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"]))
+            self.assertGreaterEqual(
+                rt.process_runner.calls.count(focus_restore),
+                2,
             )
+            self.assertGreaterEqual(len(sleep_mock.call_args_list), 2)
+            self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
+            self.assertIn(0.1, [call.args[0] for call in sleep_mock.call_args_list[1:]])
 
     def test_launch_sequence_supports_opencode_and_current_workspace_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -227,11 +311,47 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="Loading workspace...\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout='  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo  ⊙ 3 MCP /status    1.2.27\n',
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "  ┃ /implement_plan                                                   ┃\n"
+                            "  ┃ /implement_plan.bak-20260313-192914                               ┃\n"
+                            "  ┃ /implement_plan.bak-20260315-173140                               ┃\n"
+                            "  ┃                                                                 \n"
+                            "  ┃  /implement_plan                                                 \n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "  ┃                                                                 \n"
+                            "  ┃  /implement_plan                                                 \n"
+                            "  ┃                                                                 \n"
+                            "  ┃  Sisyphus (Ultraworker)                                          \n"
+                        ),
+                        stderr="",
+                    ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None):
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None) as sleep_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -240,14 +360,78 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "current-workspace"])
-            self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "opencode"],
-                rt.process_runner.calls,
+            self.assertEqual(
+                rt.process_runner.calls[3],
+                ["cmux", "respawn-pane", "--workspace", "workspace:4", "--surface", "surface:12", "--command", "zsh"],
             )
-            self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "/implement_task"],
-                rt.process_runner.calls,
-            )
+            self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "enter"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "/implement_plan"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
+            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:4", "--surface", "surface:12", "--lines", "80"]), 3)
+            self.assertEqual(rt.process_runner.calls[-1], ["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "enter"])
+            self.assertGreaterEqual(len(sleep_mock.call_args_list), 2)
+            self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
+            self.assertIn(0.1, [call.args[0] for call in sleep_mock.call_args_list[1:]])
+
+    def test_opencode_ready_screen_accepts_loaded_composer_layout(self) -> None:
+        screen = '  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo  ⊙ 3 MCP /status    1.2.27\n'
+        self.assertTrue(launch_support._screen_looks_ready("opencode", screen))
+
+    def test_codex_ready_screen_requires_boot_to_finish(self) -> None:
+        loading = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "• Booting MCP server: playwright (0s • esc to interrupt)\n"
+            "› Explain this codebase\n"
+        )
+        model_loading = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     loading   /model to change             │\n"
+            "│ directory: ~/repo                                 │\n"
+            "› /prompts:implement_task\n"
+        )
+        ready = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "› Explain this codebase\n"
+        )
+        self.assertFalse(_screen_looks_ready("codex", loading))
+        self.assertFalse(_screen_looks_ready("codex", model_loading))
+        self.assertTrue(_screen_looks_ready("codex", ready))
+
+    def test_ai_cli_ready_window_uses_five_second_fallback(self) -> None:
+        self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 5.0)
+        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 5.0)
+
+    def test_opencode_ready_screen_rejects_loading_text_even_with_prompt_glyphs(self) -> None:
+        screen = "Loading workspace...\n  ›\n"
+        self.assertFalse(_screen_looks_ready("opencode", screen))
+
+    def test_opencode_prompt_submit_screen_waits_for_single_selected_command(self) -> None:
+        pending = (
+            "  ┃ /implement_task                                                   ┃\n"
+            "  ┃ /implement_task.bak-20260313-192914                               ┃\n"
+            "  ┃ /implement_task.bak-20260315-173140                               ┃\n"
+            "  ┃                                                                 \n"
+            "  ┃  /implement_task                                                 \n"
+        )
+        ready = (
+            "  ┃                                                                 \n"
+            "  ┃  /implement_task                                                 \n"
+            "  ┃                                                                 \n"
+            "  ┃  Sisyphus (Ultraworker)                                          \n"
+        )
+        broken = "  ┃ No matching items ┃\n  ┃  /implement_task/implement_task\n"
+        self.assertFalse(_prompt_submit_screen_looks_ready("opencode", pending, "/implement_task"))
+        self.assertFalse(_prompt_submit_screen_looks_ready("opencode", broken, "/implement_task"))
+        self.assertTrue(_prompt_submit_screen_looks_ready("opencode", ready, "/implement_task"))
 
     def test_explicit_workspace_override_implies_enablement_and_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

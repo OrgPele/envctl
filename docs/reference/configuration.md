@@ -138,7 +138,7 @@ There is no simple/advanced split in the current UI.
 | --- | --- | --- |
 | `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
-| `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name typed after the AI CLI starts. Codex launches send `/prompts:<preset>`; OpenCode launches send `/<preset>`. |
+| `ENVCTL_PLAN_AGENT_PRESET` | `implement_plan` | Prompt preset name typed after the AI CLI starts. Codex launches send `/prompts:<preset>`; OpenCode launches send `/<preset>`. `implement_task` remains available as a backward-compatible preset. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` instead of falling back to the currently selected workspace. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |

@@ -36,7 +36,7 @@ Current built-in presets:
 - `merge_trees_into_dev`
 - `create_plan`
 
-`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as an alias preset.
+`implement_plan` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_plan`; `implement_task` remains available as a backward-compatible preset.
 
 ## Parallel Implementation Loop
 

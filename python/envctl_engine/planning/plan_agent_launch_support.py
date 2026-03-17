@@ -12,10 +12,45 @@ from envctl_engine.config import EngineConfig
 from envctl_engine.shared.parsing import parse_bool
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
-_DEFAULT_PRESET = "implement_task"
+_DEFAULT_PRESET = "implement_plan"
 _DEFAULT_SHELL = "zsh"
 _SURFACE_READY_DELAY_SECONDS = 0.15
-_CLI_READY_DELAY_SECONDS = 0.35
+_DEFAULT_CLI_READY_DELAY_SECONDS = 0.35
+_CLI_READY_DELAY_SECONDS_BY_CLI = {
+    "codex": 5.0,
+    "opencode": 5.0,
+}
+_CLI_READY_POLL_INTERVAL_SECONDS = 0.1
+_READ_SCREEN_LINE_COUNT = 80
+_PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
+_PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
+_PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
+_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
+_CODEX_LOADING_MARKERS = (
+    "booting mcp server",
+    "starting mcp server",
+    "model:     loading",
+    "model: loading",
+)
+_CODEX_READY_MARKERS = (
+    "openai codex",
+    "model:",
+    "directory:",
+)
+_OPENCODE_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›❯»][ \t]*.*$")
+_OPENCODE_LOADING_MARKERS = (
+    "loading",
+    "starting",
+    "initializing",
+    "please wait",
+)
+_OPENCODE_READY_MARKERS = (
+    "ask anything",
+    "ctrl+p commands",
+    "/status",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,7 +171,7 @@ def plan_agent_launch_prereq_commands(
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
     workspace_id = _resolve_workspace_id(runtime, launch_config)
-    payload = {
+    payload: dict[str, object] = {
         "enabled": launch_config.enabled,
         "cli": launch_config.cli,
         "preset": launch_config.preset,
@@ -255,15 +290,17 @@ def _launch_single_worktree(
             status="failed",
             reason=create_error or "surface_create_failed",
         )
+    _best_effort_restore_caller_focus(runtime, workspace_id=workspace_id, surface_id=surface_id)
     runtime._emit(
         "planning.agent_launch.surface_created",
         workspace_id=workspace_id,
         surface_id=surface_id,
         worktree=worktree.name,
     )
+    respawn_command = _surface_respawn_command(launch_config, worktree)
     commands = [
         ["cmux", "rename-tab", "--workspace", workspace_id, "--surface", surface_id, worktree.name],
-        ["cmux", "respawn-pane", "--workspace", workspace_id, "--surface", surface_id, "--command", launch_config.shell],
+        ["cmux", "respawn-pane", "--workspace", workspace_id, "--surface", surface_id, "--command", respawn_command],
     ]
     for command in commands:
         error = _run_cmux_command(runtime, command)
@@ -276,17 +313,14 @@ def _launch_single_worktree(
                 reason=error,
             )
     time.sleep(_SURFACE_READY_DELAY_SECONDS)
-    typed_steps = [
-        shlex.quote(str(worktree.root)),
-        launch_config.cli_command,
-        _slash_command(launch_config.cli, launch_config.preset),
-    ]
-    send_errors = [
-        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=f"cd {typed_steps[0]}"),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
-        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=typed_steps[1]),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
-    ]
+    typed_steps = [_slash_command(launch_config.cli, launch_config.preset)]
+    send_errors = _launch_cli_bootstrap_commands(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        worktree=worktree,
+    )
     for error in send_errors:
         if error is not None:
             return PlanAgentLaunchOutcome(
@@ -296,10 +330,21 @@ def _launch_single_worktree(
                 status="failed",
                 reason=error,
             )
-    time.sleep(_CLI_READY_DELAY_SECONDS)
+    _wait_for_cli_ready(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+    )
     final_errors = [
-        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=typed_steps[2]),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
+        _send_prompt_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            cli=launch_config.cli,
+            text=typed_steps[0],
+        ),
+        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="ctrl+e"),
     ]
     for error in final_errors:
         if error is not None:
@@ -310,6 +355,39 @@ def _launch_single_worktree(
                 status="failed",
                 reason=error,
             )
+    _wait_for_prompt_picker_ready(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+        prompt_text=typed_steps[0],
+    )
+    submit_error = _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
+    if submit_error is not None:
+        return PlanAgentLaunchOutcome(
+            worktree_name=worktree.name,
+            worktree_root=worktree.root,
+            surface_id=surface_id,
+            status="failed",
+            reason=submit_error,
+        )
+    _wait_for_prompt_submit_ready(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+        prompt_text=typed_steps[0],
+    )
+    confirm_error = _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
+    if confirm_error is not None:
+        return PlanAgentLaunchOutcome(
+            worktree_name=worktree.name,
+            worktree_root=worktree.root,
+            surface_id=surface_id,
+            status="failed",
+            reason=confirm_error,
+        )
+    _best_effort_restore_caller_focus(runtime, workspace_id=workspace_id, surface_id=surface_id)
     runtime._emit(
         "planning.agent_launch.command_sent",
         workspace_id=workspace_id,
@@ -335,6 +413,58 @@ def _create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str
     if getattr(result, "returncode", 1) != 0:
         return None, _completed_process_error_text(result)
     return _surface_id_from_output(str(getattr(result, "stdout", ""))), None
+
+
+def _best_effort_restore_caller_focus(runtime: Any, *, workspace_id: str, surface_id: str) -> None:
+    env = getattr(runtime, "env", {})
+    caller_workspace = str(env.get("CMUX_WORKSPACE_ID", "")).strip() if isinstance(env, dict) else ""
+    caller_surface = str(env.get("CMUX_SURFACE_ID", "")).strip() if isinstance(env, dict) else ""
+    if caller_workspace and caller_surface and caller_workspace == workspace_id:
+        _run_cmux_command_allow_failure(
+            runtime,
+            [
+                "cmux",
+                "move-surface",
+                "--surface",
+                caller_surface,
+                "--before",
+                surface_id,
+                "--workspace",
+                workspace_id,
+                "--focus",
+                "true",
+            ],
+            reason="focus_restore_failed",
+        )
+        return
+    if caller_workspace and caller_workspace != workspace_id:
+        _run_cmux_command_allow_failure(
+            runtime,
+            ["cmux", "select-workspace", "--workspace", caller_workspace],
+            reason="focus_restore_failed",
+        )
+
+
+def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
+    _ = worktree
+    return launch_config.shell
+
+
+def _launch_cli_bootstrap_commands(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    worktree: CreatedPlanWorktree,
+) -> list[str | None]:
+    typed_root = shlex.quote(str(worktree.root))
+    return [
+        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=f"cd {typed_root}"),
+        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
+        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=launch_config.cli_command),
+        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
+    ]
 
 
 def _surface_id_from_output(raw: str) -> str | None:
@@ -489,6 +619,11 @@ def _send_surface_text(runtime: Any, *, workspace_id: str, surface_id: str, text
     )
 
 
+def _send_prompt_text(runtime: Any, *, workspace_id: str, surface_id: str, cli: str, text: str) -> str | None:
+    _ = cli
+    return _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=text)
+
+
 def _send_surface_key(runtime: Any, *, workspace_id: str, surface_id: str, key: str) -> str | None:
     return _run_cmux_command(
         runtime,
@@ -508,6 +643,23 @@ def _run_cmux_command(runtime: Any, command: list[str]) -> str | None:
     error = _completed_process_error_text(result)
     runtime._emit("planning.agent_launch.failed", reason="cmux_command_failed", command=command[1], error=error)
     return error
+
+
+def _run_cmux_command_allow_failure(runtime: Any, command: list[str], *, reason: str) -> None:
+    result = runtime.process_runner.run(
+        command,
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(result, "returncode", 1) == 0:
+        return
+    runtime._emit(
+        "planning.agent_launch.notice",
+        reason=reason,
+        command=command[1],
+        error=_completed_process_error_text(result),
+    )
 
 
 def _completed_process_error_text(result: object) -> str:
@@ -548,6 +700,149 @@ def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig)
             continue
         missing.append(command)
     return missing
+
+
+def _cli_ready_delay_seconds(cli: str) -> float:
+    normalized = str(cli).strip().lower()
+    return float(_CLI_READY_DELAY_SECONDS_BY_CLI.get(normalized, _DEFAULT_CLI_READY_DELAY_SECONDS))
+
+
+def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> None:
+    normalized_cli = str(cli).strip().lower()
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    if normalized_cli not in {"codex", "opencode"}:
+        time.sleep(timeout_seconds)
+        return
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _screen_looks_ready(normalized_cli, screen):
+            return
+        time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+
+
+def _read_surface_screen(runtime: Any, *, workspace_id: str, surface_id: str) -> str:
+    result = runtime.process_runner.run(
+        [
+            "cmux",
+            "read-screen",
+            "--workspace",
+            workspace_id,
+            "--surface",
+            surface_id,
+            "--lines",
+            str(_READ_SCREEN_LINE_COUNT),
+        ],
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return ""
+    return str(getattr(result, "stdout", ""))
+
+
+def _wait_for_prompt_submit_ready(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cli: str,
+    prompt_text: str,
+) -> None:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli != "opencode":
+        if normalized_cli != "codex":
+            time.sleep(_PROMPT_SUBMIT_READY_DELAY_SECONDS)
+            return
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _prompt_submit_screen_looks_ready(normalized_cli, screen, prompt_text):
+            return
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+
+
+def _wait_for_prompt_picker_ready(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cli: str,
+    prompt_text: str,
+) -> None:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"codex", "opencode"}:
+        time.sleep(_PROMPT_PRE_SUBMIT_DELAY_SECONDS)
+        return
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _prompt_picker_screen_looks_ready(normalized_cli, screen, prompt_text):
+            return
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+
+
+def _prompt_picker_screen_looks_ready(cli: str, screen: str, prompt_text: str) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"codex", "opencode"}:
+        return True
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if "unrecognized command" in lower_text or "no matching items" in lower_text:
+        return False
+    normalized_prompt = str(prompt_text).strip().lower()
+    if not normalized_prompt:
+        return False
+    return lower_text.count(normalized_prompt) > 1
+
+
+def _prompt_submit_screen_looks_ready(cli: str, screen: str, prompt_text: str) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"codex", "opencode"}:
+        return True
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if "no matching items" in lower_text:
+        return False
+    normalized_prompt = str(prompt_text).strip().lower()
+    if not normalized_prompt:
+        return True
+    if lower_text.count(normalized_prompt) != 1:
+        return False
+    return True
+
+
+def _screen_looks_ready(cli: str, screen: str) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    cleaned = _strip_ansi_sequences(screen)
+    if normalized_cli == "codex":
+        lower_text = cleaned.lower()
+        if any(marker in lower_text for marker in _CODEX_LOADING_MARKERS):
+            return False
+        if not all(marker in lower_text for marker in _CODEX_READY_MARKERS):
+            return False
+        lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
+        for line in lines[-6:]:
+            if _CODEX_READY_PROMPT_RE.match(line):
+                return True
+        return False
+    if normalized_cli != "opencode":
+        return False
+    lower_text = cleaned.lower()
+    if any(marker in lower_text for marker in _OPENCODE_LOADING_MARKERS):
+        return False
+    if all(marker in lower_text for marker in _OPENCODE_READY_MARKERS):
+        return True
+    lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
+    for line in lines[-6:]:
+        if _OPENCODE_READY_PROMPT_RE.match(line):
+            return True
+    return False
+
+
+def _strip_ansi_sequences(raw: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", str(raw or "")).replace("\r", "")
 
 
 def _slash_command(cli: str, preset: str) -> str:
