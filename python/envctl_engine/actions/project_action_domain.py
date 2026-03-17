@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -21,6 +21,8 @@ PR_TITLE_MAX_CHARS = 240
 COMMIT_MESSAGE_MAX_CHARS = 16_000
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
+ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +73,7 @@ def run_commit_action(context: ActionProjectContext) -> int:
         print(f"No changes to commit for {branch}.")
         return 0
 
-    commit_message, message_file, error = _resolve_commit_message(context, branch=branch)
+    commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
     if error:
         print(error)
         return 1
@@ -91,6 +93,12 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if commit.returncode != 0:
         _print_error("git commit failed", commit)
         return 1
+
+    if ledger_path is not None:
+        advance_error = _advance_commit_ledger_pointer(ledger_path)
+        if advance_error:
+            print(advance_error)
+            return 1
 
     remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
     push = _run_git(git_root, ["push", "-u", remote, branch])
@@ -327,28 +335,69 @@ def _resolve_commit_message(
     context: ActionProjectContext,
     *,
     branch: str,
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str | None, Path | None]:
     commit_message = str(context.env.get("ENVCTL_COMMIT_MESSAGE", "")).strip()
     commit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
     if commit_message:
-        return commit_message, "", None
+        return commit_message, "", None, None
     if commit_message_file:
         path = Path(commit_message_file)
         if path.is_file() and _file_has_text(path):
-            return "", str(path), None
-        return "", "", f"Commit message file is missing or empty: {commit_message_file}"
+            return "", str(path), None, None
+        return "", "", f"Commit message file is missing or empty: {commit_message_file}", None
 
-    changelog = _tree_changelog_path(context)
-    if changelog is not None:
-        commit_message = _latest_changelog_commit_message(_read_text(changelog), max_chars=COMMIT_MESSAGE_MAX_CHARS)
-        if commit_message:
-            return "", str(_write_commit_message_file(commit_message)), None
+    ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
+    payload, error = _read_commit_ledger_segment(ledger_path)
+    if error:
+        return "", "", error, None
+    return "", str(_write_commit_message_file(payload)), None, ledger_path
 
-    main_task = context.project_root / "MAIN_TASK.md"
-    if main_task.is_file() and _file_has_text(main_task):
-        return "", str(main_task), None
 
-    return "", "", f"MAIN_TASK.md is missing or empty and no commit message provided for {branch}."
+def _read_commit_ledger_segment(path: Path) -> tuple[str, str | None]:
+    if not path.exists():
+        _atomic_write(path, f"# Envctl Commit Log\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n")
+
+    text = _read_text(path)
+    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
+    if marker_count == 0:
+        return "", (
+            f"Envctl commit log is malformed: {path} is missing the required pointer marker "
+            f"'{ENVCTL_COMMIT_POINTER_MARKER}'."
+        )
+    if marker_count > 1:
+        return "", f"Envctl commit log is malformed: {path} contains multiple pointer markers."
+
+    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
+    del before
+    payload = _normalize_text_block(after)
+    if not payload:
+        return "", (
+            f"Envctl commit log is empty after the pointer in {path}. Provide --commit-message, "
+            f"--commit-message-file, or append a new summary to {path}."
+        )
+    return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
+
+
+def _advance_commit_ledger_pointer(path: Path) -> str | None:
+    if not path.exists():
+        return f"Envctl commit log disappeared before pointer advance: {path}"
+    text = _read_text(path)
+    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
+    if marker_count == 0:
+        return f"Envctl commit log is malformed during pointer advance: {path} is missing the required pointer marker."
+    if marker_count > 1:
+        return f"Envctl commit log is malformed during pointer advance: {path} contains multiple pointer markers."
+    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
+    archived_before = _normalize_text_block(before)
+    payload = _normalize_text_block(after)
+    parts = [part for part in (archived_before, payload) if part]
+    archived = "\n\n".join(parts).strip()
+    updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
+    try:
+        _atomic_write(path, updated)
+    except OSError as exc:
+        return f"Failed to advance envctl commit log pointer in {path}: {exc}"
+    return None
 
 
 def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> str:
@@ -732,6 +781,21 @@ def _write_commit_message_file(message: str) -> Path:
     ) as handle:
         handle.write(message)
         return Path(handle.name)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        Path(temp_name).replace(path)
+    finally:
+        try:
+            if Path(temp_name).exists():
+                Path(temp_name).unlink()
+        except OSError:
+            pass
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
