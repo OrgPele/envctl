@@ -1,183 +1,293 @@
-# Envctl Dashboard Test Failure Artifact Path Cleanup
+# Envctl Dynamic Run Reuse And Smart Resume Plan
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Make the interactive dashboard and test action output show a single saved artifact path for failed test detail instead of echoing redundant inline failure logs.
-  - Ensure the file referenced by the dashboard path is complete enough for operators to diagnose suite-level failures, including failures where envctl cannot derive rerunnable selectors.
-  - Keep failed-test rerun support (`failed_tests_manifest.json`) intact while improving the operator-facing artifact contract.
+  - Reuse an existing `run_id` when the user is reopening the same effective environment instead of always creating a fresh run.
+  - Extend run reuse beyond current service-bearing auto-resume so identical dashboard-only tree sessions can also reopen the same run when safe.
+  - Keep resume truth-driven: every reuse path must still reconcile runtime health before the dashboard is shown as current.
+  - Prevent wrong-run reuse by matching on stronger identity than just project names.
 - Non-goals:
-  - Changing test command selection, parallelism policy, or failed-test rerun semantics beyond the artifact/reporting path.
-  - Reworking non-test project action failure reporting (`migrate`, `review`, `pr`, `commit`), which already uses separate `report_path` handling.
-  - Changing runtime state root layout outside the existing run-scoped artifact tree.
+  - Reusing `session_id`; session boundaries should stay fresh per CLI launch.
+  - Reusing runs across different modes (`main` vs `trees`).
+  - Reusing runs when configuration, selected roots, or startup profile changed materially.
+  - Scanning historical `runs/*` to build a best-effort merged candidate.
 - Assumptions:
-  - The operator-visible problem is the legacy dashboard path because the user repro text matches `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_snapshot` output (`Development Environment - Interactive Mode`, `run_id`, `session_id`, `Configured Services`, `tests:`).
-  - The desired dashboard behavior is: show the saved artifact path once, keep the dashboard itself concise, and move complete failure context into the saved file behind that path.
+  - The correct candidate for reuse remains the latest scoped state returned by `RuntimeStateRepository.load_latest(...)`, not arbitrary historical runs (`python/envctl_engine/state/repository.py:182`).
+  - A reused run may be reopened by many sessions over time; `session_id` continues to provide per-launch diagnostic separation (`python/envctl_engine/runtime/engine_runtime_event_support.py:119`).
+  - The current tree/dashboard user complaint is a concrete symptom of a broader run-reuse policy gap, not just a dashboard rendering bug.
 
 ## Goal (user experience)
-After a failed `test` command from the interactive dashboard, the operator should see one stable `tests:` / `failure summary:` artifact path per affected project and should not see redundant suite log excerpts inline in the dashboard command area. Opening the referenced file should show the complete cleaned failure context for that project, including generic suite failures such as startup/import/configuration crashes where envctl cannot extract rerunnable test selectors.
+When a user launches `envctl` into the same repo, mode, and selected tree set with effectively the same startup configuration, envctl should reopen the existing run instead of minting a redundant new one. The dashboard should feel continuous, existing test/action state should still be present because the same run was reused, and runtime truth should still be rechecked so stale processes are not silently trusted. When the environment is materially different, envctl should clearly fall back to a fresh run.
 
 ## Business logic and data model mapping
-- Command dispatch and ownership:
-  - `python/envctl_engine/runtime/engine_runtime_dispatch.py:dispatch_command` routes action commands to `runtime.action_command_orchestrator.execute(...)`.
-  - `python/envctl_engine/runtime/engine_runtime.py:_run_test_action` delegates `test` routes to `ActionCommandOrchestrator.run_test_action(...)`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_test_action` delegates execution to `python/envctl_engine/actions/action_test_runner.py:run_test_action`.
-- Test execution and failure summarization:
-  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` builds per-suite outcomes and currently stores `failure_summary` via `_summarize_failure_output(...)`.
-  - `python/envctl_engine/test_output/test_runner.py:TestRunner.run_tests`, `_run_with_streaming(...)` populate parser results and return cleaned subprocess stdout/stderr.
-  - `python/envctl_engine/test_output/parser_base.py:TestResult` carries `failed_tests`, `error_details`, and summary counts consumed by artifact persistence.
-- Persisted state and artifact model:
-  - `python/envctl_engine/state/models.py:RunState.metadata` stores `project_test_summaries`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` writes `project_test_summaries`, `project_test_results_root`, and `project_test_results_updated_at`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes:
-    - `summary_path`: `runs/<run_id>/test-results/<stamp>/<project>/failed_tests_summary.txt`
-    - `short_summary_path`: `runs/<run_id>/ft_<digest>.txt`
-    - `manifest_path`: `failed_tests_manifest.json`
-    - `state_path`: `test_state.txt`
-- Dashboard/UI rendering:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_print_test_suite_overview(...)` prints per-project `failure summary:` paths after suite execution.
-  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` renders the persistent `tests:` dashboard row from `project_test_summaries`.
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` suppresses a detached duplicate block when saved test summaries already exist.
+- Fresh startup and run creation:
+  - `python/envctl_engine/startup/startup_orchestrator.py:_create_session`
+  - `python/envctl_engine/runtime/engine_runtime_runtime_support.py:new_run_id`
+  - `python/envctl_engine/startup/finalization.py:build_planning_dashboard_state`
+  - `python/envctl_engine/startup/finalization.py:build_success_run_state`
+  - `python/envctl_engine/startup/finalization.py:build_failure_run_state`
+- Current auto-resume / run reuse decisions:
+  - `python/envctl_engine/startup/startup_orchestrator.py:_resolve_auto_resume`
+  - `python/envctl_engine/runtime/engine_runtime_startup_support.py:auto_resume_start_enabled`
+  - `python/envctl_engine/runtime/engine_runtime_startup_support.py:load_auto_resume_state`
+  - `python/envctl_engine/startup/startup_selection_support.py:state_matches_selected_projects`
+  - `python/envctl_engine/startup/startup_selection_support.py:state_covers_selected_projects`
+  - `python/envctl_engine/startup/startup_selection_support.py:state_project_names`
+- Resume behavior:
+  - `python/envctl_engine/startup/resume_orchestrator.py:execute`
+  - `python/envctl_engine/startup/resume_restore_support.py:restore_missing`
+- Startup-disabled dashboard behavior:
+  - `python/envctl_engine/startup/startup_orchestrator.py:_resolve_disabled_startup_mode`
+  - `python/envctl_engine/config/__init__.py:EngineConfig.startup_enabled_for_mode`
+- Inspection and diagnostics that must stay aligned:
+  - `python/envctl_engine/runtime/inspection_support.py:_print_startup_explanation`
+  - `python/envctl_engine/debug/debug_bundle_diagnostics.py`
+- State repository and latest-view persistence:
+  - `python/envctl_engine/state/repository.py:save_run`
+  - `python/envctl_engine/state/repository.py:save_resume_state`
+  - `python/envctl_engine/runtime/engine_runtime_artifacts.py:write_artifacts`
+- Relevant tests:
+  - `tests/python/runtime/test_engine_runtime_startup_support.py`
+  - `tests/python/runtime/test_engine_runtime_real_startup.py`
+  - `tests/python/startup/test_startup_orchestrator_flow.py`
+  - `tests/python/runtime/test_lifecycle_parity.py`
+  - `tests/python/runtime/test_engine_runtime_command_parity.py`
+  - `tests/python/debug/test_debug_bundle_generation.py`
 
 ## Current behavior (verified in code)
-- Failed test runs already persist per-project artifacts and state metadata:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` creates a new `test-results/run_<timestamp>/` directory under `runs/<run_id>/`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes both `failed_tests_summary.txt` and the shorter `ft_<digest>.txt` alias, then persists those paths into `RunState.metadata["project_test_summaries"]`.
-- The dashboard snapshot already knows how to show a path instead of file contents:
-  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` prints:
-    - `✓/✗ tests: (<timestamp>)`
-    - the summary path on the next line
-  - `tests/python/actions/test_actions_parity.py:test_test_action_persists_failed_test_summary_artifacts...` verifies the dashboard renders `short_summary_path` and does not render the deeper `summary_path` when both are present.
-- Interactive dashboard failure handling already avoids a second detached “failure details” block:
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` only checks whether saved summary paths exist and returns `True` so `Command failed (exit 1).` is not printed again.
-  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py:test_interactive_test_failure_with_saved_summary_skips_duplicate_dashboard_failure_block` locks in that suppression.
-- The remaining inline noise comes from test action execution, not from the dashboard row:
-  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints `failure: ...` for every failed suite during interactive runs.
-  - `_print_test_suite_overview(...)` then prints `failure summary:` plus the saved artifact path, so the operator sees both the inline excerpt and the saved path.
-- The saved failure text is incomplete in generic suite-failure scenarios:
-  - `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` takes only the first non-empty stream (`stderr` first, else `stdout`) and truncates to the first three non-empty lines.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` persists that already-truncated `failure_summary` when `parsed.failed_tests` is empty.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_format_summary_error_lines(...)` further compacts/truncates lines to a 60-line structured subset before writing the summary file.
-  - The generic failure fallback string is currently `Test command failed before envctl could extract failed tests.` if no snippet survives.
-- Parser fallback also leaves completeness gaps when output is only on stderr:
-  - `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` calls `parser.parse_output(clean_stdout)` when streaming callbacks are unavailable, so stderr-only failure content is not parsed into `TestResult.error_details`.
-- Config/docs surface for this behavior is minimal:
-  - `docs/reference/configuration.md` documents test execution controls (`ENVCTL_ACTION_TEST_PARALLEL`, `ENVCTL_ACTION_TEST_PARALLEL_MAX`) and dashboard backend policy, but no config key currently governs failed-summary completeness or dashboard artifact-only rendering.
-  - `docs/developer/state-and-artifacts.md` establishes `runs/<run_id>/` as the authoritative per-run artifact location.
+- Fresh startup always allocates a new run id before any reuse decision:
+  - `StartupOrchestrator._create_session(...)` sets `session.run_id = rt._new_run_id()` and prints it immediately.
+  - `new_run_id(...)` always generates a new `run-<timestamp>-<random>` value and binds it to debug mode.
+- Current run reuse exists, but it is narrow:
+  - `_resolve_auto_resume(...)` can convert startup into `resume` for exact project match and trees subset match.
+  - `_resolve_auto_resume(...)` can also preserve an existing run for plan superset expansion by keeping prior services/requirements in memory and only starting new contexts.
+- Current matching is project-name based, not root/config based:
+  - `state_matches_selected_projects(...)` compares selected context names to project names derived from `state.services` and `state.requirements`.
+  - `state_covers_selected_projects(...)` uses the same project-name-only model.
+- Current auto-resume candidate loading is restricted to states with resumable services:
+  - `load_auto_resume_state(...)` rejects states with `metadata["failed"]` and rejects any state where `state_has_resumable_services(...)` is false.
+  - This means dashboard-only planning states written by disabled startup mode are never eligible for reuse.
+- Disabled startup mode always creates a fresh planning/dashboard run:
+  - `_resolve_disabled_startup_mode(...)` builds a new planning dashboard state and writes artifacts immediately.
+  - This happens before `_resolve_auto_resume(...)` in the startup phase order.
+- Resume itself is already health-aware:
+  - `ResumeOrchestrator.execute(...)` loads the latest state, reconciles truth, optionally restores missing services, saves the reconciled state, and optionally enters the dashboard.
+- Inspection/debug surfaces reflect the current narrow policy:
+  - `inspection_support._print_startup_explanation(...)` only reports exact/subset auto-resume.
+  - debug diagnostics aggregate `state.auto_resume.skipped` reasons such as `project_selection_mismatch`.
 
 ## Root cause(s) / gaps
-- `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` is intentionally terse, so generic suite failures lose important detail before they ever reach the persisted summary file.
-- `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` ignores `stderr` during non-streaming parser fallback, so stderr-only failures are underrepresented in `TestResult.error_details`.
-- `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints inline `failure:` excerpts in interactive mode even though `project_test_summaries` already produce the saved artifact path surfaced by `_print_test_suite_overview(...)` and the dashboard snapshot.
-- `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` reads `short_summary_path`/`summary_path` directly instead of reusing the orchestrator’s short-path repair logic, so older state entries without `short_summary_path` can still render the deeper `failed_tests_summary.txt` path.
+- The existing architecture already supports same-run reuse, but only for startup paths backed by active services. That is too narrow for the actual operator mental model of “same environment reopened.”
+- Run-reuse eligibility is based on project names alone, which is unsafe if different roots or changed worktrees happen to share the same display names.
+- Startup-disabled dashboard sessions short-circuit into fresh run creation before the reuse logic ever runs.
+- There is no persisted startup identity/fingerprint in `RunState.metadata` to answer “is this still the same effective environment?” without brittle heuristics.
+- `explain-startup` and debug diagnostics reflect current behavior and would become misleading if reuse semantics changed without updating them.
+- Because a new run is created before the reuse decision, startup UX and run-history semantics are biased toward run proliferation rather than continuity.
 
 ## Plan
-### 1) Define the operator-facing failed-test artifact contract
-- Keep `RunState.metadata["project_test_summaries"]` as the canonical dashboard input, but tighten the meaning of the displayed path:
-  - the displayed path must always refer to the operator-facing artifact that contains the complete cleaned failure context for that project
-  - the dashboard should never need to inline suite logs when that artifact exists
-- Confirm the displayed path stays run-scoped under `python/envctl_engine/state/repository.py:RuntimeStateRepository.run_dir_path(...)` / `test_results_dir_path(...)`.
-- Preserve rerun selector state in `failed_tests_manifest.json`; do not overload the manifest with dashboard rendering concerns.
+### 1) Introduce a unified run-reuse eligibility model
+- Add a dedicated support module, likely under `python/envctl_engine/startup/` or `python/envctl_engine/runtime/`, for example `run_reuse_support.py`.
+- Replace the current split between:
+  - candidate loading in `load_auto_resume_state(...)`
+  - name-only project matching in `state_matches_selected_projects(...)`
+  - ad hoc branch logic in `_resolve_auto_resume(...)`
+- The new helper should return a structured decision object containing:
+  - `candidate_state`
+  - `decision_kind`
+    - `resume_exact`
+    - `resume_subset`
+    - `reuse_expand`
+    - `resume_dashboard_exact`
+    - `fresh_run`
+  - `reason`
+  - `selected_projects`
+  - `state_projects`
+  - optional mismatch details
+- Reuse should continue to be latest-state only and mode-scoped only.
 
-### 2) Replace truncated generic failure snippets with complete cleaned project failure content
-- Update `python/envctl_engine/actions/action_test_runner.py` so suite outcomes keep a richer failure payload than the current `_summarize_failure_output(...)` three-line snippet.
-- Planned implementation shape:
-  - add a helper that merges both `stderr` and `stdout` in deterministic order, strips ANSI/progress markers, preserves source labels when both streams are present, and does not drop later lines prematurely
-  - keep a short status snippet only for event/status text if needed, but persist the full cleaned failure text in the outcome payload used by `_write_failed_tests_summary(...)`
-- Update `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` / `_write_failed_tests_summary(...)` so generic suite failures write the full cleaned failure body into the saved artifact instead of the pre-truncated summary.
-- For parsed failures (`failed_tests` present), keep the current per-test structure but append enough suite-level context to make the artifact self-sufficient when the extracted per-test snippet is not enough.
-- Edge cases to cover explicitly:
-  - stderr-only startup/import/config crashes
-  - stdout-only framework crashes
-  - both streams populated with distinct content
-  - failed-only reruns that preserve a previous manifest when selector extraction fails (`preserved_after_failed_only_extraction_failure`)
+### 2) Persist a stable environment identity in run metadata
+- Extend startup/finalization state builders to persist reuse-relevant metadata on every new run:
+  - normalized selected project roots
+  - startup-enabled flag for the mode
+  - effective service enablement for backend/frontend
+  - effective dependency enablement for the mode
+  - a computed startup identity fingerprint
+- The fingerprint should be built from stable, operator-meaningful config and selection inputs, not ephemeral runtime truth:
+  - mode
+  - selected project names + normalized roots
+  - startup enabled
+  - backend/frontend enabled flags
+  - dependency enablement for the mode
+  - possibly directories relevant to runtime start behavior (`BACKEND_DIR`, `FRONTEND_DIR`)
+- Keep the fingerprint payload explicit enough to debug in metadata, and add a condensed hash for cheap equality checks.
 
-### 3) Stop printing inline suite failure logs when a saved artifact path will be shown
-- Update `python/envctl_engine/actions/action_test_runner.py:run_test_action` to stop printing `failure: ...` excerpts during interactive test execution once the saved summary path is the intended operator-facing surface.
-- Keep concise suite status lines (`passed/failed`, counts, duration), but route operators to the persisted file path rather than echoing raw log snippets inline.
-- Ensure `_print_test_suite_overview(...)` remains the single post-run textual pointer surface by printing `failure summary:` and the artifact path once per failed project.
-- Do not regress non-interactive CLI output for cases where no artifact can be written; the fallback should still surface a failure reason if persistence itself fails.
+### 3) Tighten project matching from names to project identity
+- Replace name-only reuse decisions with a stronger identity model:
+  - project name
+  - normalized root from `metadata["project_roots"]`
+- Exact reuse:
+  - selected project identities equal prior project identities
+- Subset reuse:
+  - selected project identities are a subset of prior identities
+- Expand reuse:
+  - prior project identities are a subset of selected identities
+- If prior root data is missing in older states, allow a backward-compatible fallback to name-only matching but mark the decision as weaker and emit a diagnostic reason.
 
-### 4) Unify dashboard path rendering on the short alias path
-- Reuse `python/envctl_engine/ui/dashboard/orchestrator.py:_test_summary_display_path(...)` / `_ensure_short_test_summary_path(...)` from `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` rather than duplicating raw path selection.
-- This keeps the interactive dashboard on the stable `ft_<digest>.txt` alias even for older state entries that only persisted `summary_path`.
-- Preserve existing cleanup semantics in `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py:_prune_project_metadata(...)` so both the deep summary path and the short alias are still removed on worktree cleanup.
+### 4) Expand candidate eligibility beyond “has running services”
+- Split “can reuse this run” from “can resume application services from this run.”
+- Add two candidate classes:
+  - service-bearing states: current resume semantics with truth reconciliation and optional restore
+  - dashboard-only states: latest state with no resumable services but valid dashboard/project metadata for the same identity
+- This change should allow a disabled-startup tree dashboard to reopen the same run when:
+  - mode matches
+  - selected project identities match
+  - startup profile fingerprint matches
+  - prior state is not marked failed
+- Keep rejecting failed or mode-mismatched candidates.
 
-### 5) Close parser fallback gaps that currently hide failure detail
-- Update `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` so non-streaming fallback parsing sees the combined cleaned failure output rather than only `clean_stdout`.
-- Ensure `TestResult.error_details` can still be populated when pytest/unittest/jest emit critical failure context on stderr.
-- Keep progress-marker stripping and parser semantics stable for successful runs.
+### 5) Reorder startup flow so reuse is evaluated before forced fresh planning runs
+- Today `_resolve_disabled_startup_mode(...)` runs before `_resolve_auto_resume(...)`.
+- Refactor the startup phase order so that after project selection, envctl evaluates run reuse before deciding to build a fresh planning/dashboard run.
+- Recommended sequence:
+  1. validate route
+  2. handle restart pre-stop
+  3. select contexts
+  4. evaluate run reuse
+  5. if reuse applies, route into resume/reopen behavior
+  6. otherwise, handle disabled-startup fresh dashboard state or normal startup
+- This is the key orchestration change needed for dashboard-only runs to stay on the same `run_id`.
 
-### 6) Tighten documentation and changelog evidence around the new artifact-only dashboard contract
-- Update the relevant changelog and, if repo standards require, the developer docs that describe run-scoped artifacts so they explicitly say:
-  - dashboard shows a saved failure artifact path
-  - inline dashboard log excerpts are intentionally suppressed
-  - the displayed file contains the complete cleaned failure context for the project
-- If the artifact contents remain a structured summary plus appended raw context rather than literal raw logs, document that distinction so operators know what to expect.
+### 6) Add a dashboard-resume path for startup-disabled modes
+- Introduce a reuse path distinct from service resume for startup-disabled dashboards.
+- For `resume_dashboard_exact`:
+  - load the existing latest state
+  - verify identity and startup fingerprint match
+  - optionally refresh dashboard-owned metadata that is derived from current config, such as hidden commands or banner text
+  - save via `save_resume_state(...)` to keep latest-view files current
+  - enter the interactive dashboard or return batch success as appropriate
+- Do not fabricate services or requirements in this path.
+- Keep `run_id` unchanged and `session_id` fresh.
+
+### 7) Keep truth checks mandatory for service-bearing reuse
+- Preserve the current resume contract for `resume_exact` and `resume_subset`:
+  - `ResumeOrchestrator.execute(...)` stays the path of record
+  - reconcile truth
+  - optionally restore missing services
+  - save reconciled state
+- For `reuse_expand`, keep the existing incremental-start behavior but gate it behind the stronger identity/fingerprint checks.
+- If truth reconciliation shows the candidate run is stale or the resume path fails, fall back to a fresh run and emit a specific skip reason.
+
+### 8) Preserve clear run-history semantics
+- Explicitly define the new run model in docs:
+  - a run can span multiple CLI sessions if envctl determines the environment is the same
+  - a session is always per launch
+  - a fresh run is created only when identity or startup contract changed materially, or when reuse is unsafe
+- Add metadata such as:
+  - `run_reuse_count`
+  - `last_reopened_at`
+  - `last_reuse_reason`
+- Keep these as metadata only; do not change repository pointer layout or per-run directory shape.
+
+### 9) Update inspection, diagnostics, and operator explanations
+- Extend `inspection_support._print_startup_explanation(...)` to surface the richer decision space:
+  - `resume_exact`
+  - `resume_subset`
+  - `reuse_expand`
+  - `resume_dashboard_exact`
+  - precise mismatch reasons such as `project_root_mismatch`, `startup_fingerprint_mismatch`, `failed_state`, `mode_mismatch`
+- Extend debug diagnostics aggregation to preserve the new skip reasons without breaking existing summaries.
+- Emit new startup events such as:
+  - `state.run_reuse.evaluate`
+  - `state.run_reuse.applied`
+  - `state.run_reuse.skipped`
+  - `state.dashboard_resume`
+
+### 10) Keep fallback behavior explicit and safe
+- Fresh run should still be the fallback when:
+  - `--no-resume` is present
+  - mode differs
+  - project roots differ
+  - startup fingerprint differs
+  - previous state is failed
+  - reconcile/restore detects unrecoverable drift
+- The fallback should not silently mutate the previous run into an incompatible shape.
+- The user-facing inspection/debug output should explain why a fresh run was chosen.
 
 ## Tests (add these)
 ### Backend tests
-- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
-  - add coverage for generic suite failures where stderr and stdout both contain unique content and assert the persisted `failed_tests_summary.txt` / `ft_<digest>.txt` file contains the full cleaned merged context
-  - add a regression proving interactive `test` output no longer prints `failure: ...` when `failure summary:` path output is present
-  - add coverage for stderr-only generic failures so the saved summary is still complete
-  - add coverage preserving failed-only rerun behavior when selector extraction fails but the previous manifest remains authoritative
-- Extend [tests/python/test_output/test_test_runner_streaming_fallback.py](/Users/kfiramar/projects/current/envctl/tests/python/test_output/test_test_runner_streaming_fallback.py):
-  - add a non-streaming fallback test where all failure detail is in stderr and verify parser results still capture the failure
-  - add a fallback test for combined stdout/stderr failure parsing to ensure no stream is silently discarded
+- Extend `tests/python/runtime/test_engine_runtime_startup_support.py`
+  - new run-reuse eligibility helper accepts exact root/config match
+  - root mismatch rejects reuse even when project names match
+  - startup fingerprint mismatch rejects reuse
+  - dashboard-only latest state is eligible for dashboard resume
+  - failed state remains ineligible
+- Extend `tests/python/startup/test_startup_orchestrator_flow.py`
+  - disabled startup mode reopens an existing dashboard run instead of building a fresh one when identity matches
+  - disabled startup mode still creates a fresh planning state when identity or fingerprint differs
 
 ### Frontend tests
-- Extend [tests/python/ui/test_dashboard_rendering_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_rendering_parity.py):
-  - add a case where only `summary_path` exists and assert dashboard rendering repairs or prefers the short `ft_<digest>.txt` alias path
-  - keep current `tests:` row assertions but change them to reflect the stabilized short-path contract when appropriate
-- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
-  - verify interactive test failures still suppress duplicate dashboard-only failure blocks after the inline `failure:` log removal
+- Extend `tests/python/runtime/test_engine_runtime_command_parity.py`
+  - `explain-startup --json` reports the richer run-reuse decision and reason for disabled-startup dashboards
+- Extend `tests/python/runtime/test_lifecycle_parity.py`
+  - resumed/reopened run output remains consistent with existing resume banner rules
+  - fresh session retains a new session id even when run id is reused
 
 ### Integration/E2E tests
-- Prefer expanding [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) as the primary integration contract because this bug crosses test execution, artifact persistence, resume state, and dashboard snapshot rendering in one controlled path.
-- If a higher-level interactive regression harness is needed, add one focused dashboard-loop test in [tests/python/ui/test_terminal_ui_dashboard_loop.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_terminal_ui_dashboard_loop.py) to confirm the post-failure return-to-dashboard flow shows the prompt after the artifact path summary without inline failure log spam.
-- No new BATS suite is required unless unit/integration coverage cannot reproduce the exact interactive regression.
+- Extend `tests/python/runtime/test_engine_runtime_real_startup.py`
+  - exact tree-plan match reuses the prior run id
+  - disabled tree dashboard relaunch reuses the prior run id instead of creating a new one
+  - config/profile change forces a fresh run
+  - project-root change forces a fresh run
+  - `--no-resume` forces a fresh run even when identity matches
+  - expand path still preserves existing run and starts only new projects under the stronger identity checks
+- Extend `tests/python/debug/test_debug_bundle_generation.py`
+  - new run-reuse skip reasons appear in diagnostics summaries
 
 ## Observability / logging (if relevant)
-- Keep existing status events, but separate “operator path pointer” from “diagnostic snippet” semantics:
-  - `test.suite.finish` and `test.suite.summary` remain the machine-readable event sources
-  - `test.summary.persisted` should continue to emit the persisted run directory
-- If implementation introduces a richer outcome field for full failure content, emit a bounded event or metric only for metadata such as:
-  - artifact written / skipped
-  - bytes/lines captured
-  - whether both stdout and stderr contributed
-- Avoid emitting the full failure body into runtime events; the artifact file is the intended durable surface.
+- Emit a structured reuse evaluation event before the decision is applied:
+  - candidate run id
+  - current session id
+  - mode
+  - selected project identities
+  - fingerprint match result
+  - final decision kind
+- Emit explicit skip reasons instead of overloading everything into `project_selection_mismatch`.
+- Keep `explain-startup` aligned with the same decision helper to avoid drift between runtime behavior and inspection output.
 
 ## Rollout / verification
-- Implement in this order:
-  1. richer failure capture in `action_test_runner.py`
-  2. summary writer updates in `action_command_orchestrator.py`
-  3. inline interactive failure-log suppression
-  4. dashboard short-path rendering unification
-  5. parser fallback fix in `test_runner.py`
-- Verification commands for the implementation phase:
-  - `./.venv/bin/python -m pytest tests/python/actions/test_actions_parity.py -q`
-  - `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_rendering_parity.py tests/python/ui/test_dashboard_orchestrator_restart_selector.py -q`
-  - `./.venv/bin/python -m pytest tests/python/test_output/test_test_runner_streaming_fallback.py -q`
-- Manual verification target:
-  - trigger a known failing `test` command from the interactive dashboard and confirm:
-    - dashboard output shows only the failure artifact path, not inline suite logs
-    - the referenced `ft_<digest>.txt` file contains the complete cleaned failure context
-    - `test --failed` behavior still uses `failed_tests_manifest.json` correctly
+- Phase 1:
+  - add persisted startup identity/fingerprint metadata
+  - add run-reuse decision helper with unit coverage
+- Phase 2:
+  - refactor startup orchestration order so reuse is evaluated before disabled-startup fresh state creation
+  - implement dashboard-resume path and preserve current service resume path
+- Phase 3:
+  - update inspection/debug surfaces
+  - expand integration coverage and relaunch scenarios
+- Verification commands:
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_startup_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_orchestrator_flow`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_lifecycle_parity`
+  - `PYTHONPATH=python python3 -m unittest tests.python.debug.test_debug_bundle_generation`
 
 ## Definition of done
-- Interactive dashboard-driven `test` failures no longer dump redundant suite log excerpts inline when a saved failure artifact path exists.
-- The path shown in the dashboard/test summary points to a stable run-scoped file that contains complete cleaned failure context for the affected project.
-- Generic suite failures that previously produced truncated “suite failed before envctl could extract failed tests” snippets now preserve enough detail for diagnosis.
-- Non-streaming parser fallback no longer loses stderr-only failure detail.
-- Focused action, dashboard, and parser regression tests cover the new contract.
+- Exact same-environment launches reuse the prior `run_id` instead of creating a redundant new run.
+- Reused runs still go through truth-aware resume or dashboard-reopen validation before being treated as current.
+- Disabled-startup tree dashboards can reopen the same run when project identity and startup fingerprint match.
+- Different project roots or materially different startup configuration force a fresh run.
+- `session_id` remains fresh on every CLI launch.
+- `explain-startup` and debug diagnostics accurately describe the reuse decision.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: making the artifact “complete” can reintroduce terminal chrome or excessively large files if raw output is copied without cleanup.
-  - Mitigation: strip ANSI/progress noise, preserve source labels, and bound only truly pathological output sizes while keeping materially complete failure content.
-- Risk: changing summary-file contents could unintentionally break tests or tooling that assumed the older concise summary format.
-  - Mitigation: keep headings/path names stable, preserve `failed_tests_manifest.json` as the rerun contract, and update tests/docs for the new content guarantees.
-- Risk: suppressing inline `failure:` excerpts could reduce immediate signal when artifact persistence fails.
-  - Mitigation: keep an explicit fallback message when summary persistence itself fails or when no saved artifact path is available.
+- Risk: broadening run reuse can blur the meaning of a run from “one startup attempt” into “one environment lineage.”
+  - Mitigation: document the new semantics explicitly and keep fresh sessions distinct with new `session_id`s.
+- Risk: weak identity matching could reopen the wrong run for a renamed or moved tree.
+  - Mitigation: require root-aware identity and startup fingerprint matching; only use name-only fallback for older states with missing root metadata.
+- Risk: reused dashboard-only states could look current even when config changed.
+  - Mitigation: include startup-enabled/service/dependency profile data in the fingerprint and reject reuse on mismatch.
+- Risk: orchestration-order changes could regress existing exact/subset/expand auto-resume flows.
+  - Mitigation: preserve current branch semantics and extend the existing real-startup tests rather than replacing them.
 
 ## Open questions (only if unavoidable)
-- None. The repo evidence is sufficient to plan the change without blocking clarification.
+- None. The repo evidence is sufficient to plan a stricter same-run reuse design built on the existing auto-resume architecture.

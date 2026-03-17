@@ -33,6 +33,12 @@ def state_project_names(*, runtime: StartupRuntime, state: RunState) -> set[str]
         project_name = runtime._project_name_from_service(service_name)
         if isinstance(project_name, str) and project_name.strip():
             names.add(project_name.strip())
+    metadata_roots = state.metadata.get("project_roots")
+    if isinstance(metadata_roots, dict):
+        for project_name in metadata_roots:
+            normalized = str(project_name).strip()
+            if normalized:
+                names.add(normalized)
     return names
 
 

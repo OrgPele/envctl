@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RunState
@@ -25,17 +26,18 @@ def build_planning_dashboard_state(
     run_id: str,
     project_contexts: list[ProjectContextLike],
     configured_service_types: list[str],
+    base_metadata: dict[str, object] | None = None,
 ) -> RunState:
-    run_state = RunState(
-        run_id=run_id,
-        mode=runtime_mode,
-        services={},
-        requirements={},
-        pointers={},
-        metadata={
+    metadata = build_startup_identity_metadata(
+        runtime,
+        runtime_mode=runtime_mode,
+        project_contexts=project_contexts,
+        base_metadata=base_metadata,
+    )
+    metadata.update(
+        {
             "command": route.command,
             "repo_scope_id": runtime.config.runtime_scope_id,
-            "project_roots": {context.name: str(context.root) for context in project_contexts},
             "dashboard_configured_service_types": configured_service_types,
             "dashboard_hidden_commands": [
                 "stop",
@@ -51,24 +53,42 @@ def build_planning_dashboard_state(
             "dashboard_banner": (
                 f"envctl runs are disabled for {runtime_mode}; planning and action commands remain available."
             ),
-        },
+        }
+    )
+    run_state = RunState(
+        run_id=run_id,
+        mode=runtime_mode,
+        services={},
+        requirements={},
+        pointers={},
+        metadata=metadata,
     )
     run_state.pointers = _build_pointer_map(runtime, run_id)
     return run_state
 
 
 def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed: bool) -> RunState:
+    if session.run_id is None:
+        raise RuntimeError("run_id must be resolved before building run state")
+    metadata = build_startup_identity_metadata(
+        runtime,
+        runtime_mode=session.runtime_mode,
+        project_contexts=session.selected_contexts,
+        base_metadata=session.base_metadata,
+    )
+    metadata.update(
+        {
+            "command": session.effective_route.command,
+            "repo_scope_id": runtime.config.runtime_scope_id,
+        }
+    )
     run_state = RunState(
         run_id=session.run_id,
         mode=session.runtime_mode,
         services=session.merged_services,
         requirements=session.merged_requirements,
         pointers={},
-        metadata={
-            "command": session.effective_route.command,
-            "repo_scope_id": runtime.config.runtime_scope_id,
-            "project_roots": {context.name: str(context.root) for context in session.selected_contexts},
-        },
+        metadata=metadata,
     )
     if failed:
         run_state.metadata["failed"] = True

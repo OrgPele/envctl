@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
 from envctl_engine.state.models import RunState
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
@@ -139,6 +140,9 @@ class ResumeOrchestrator:
             missing_count=len(missing_services),
             missing_services=missing_services,
         )
+        reuse_reason = route.flags.get("_run_reuse_reason")
+        if isinstance(reuse_reason, str) and reuse_reason.strip():
+            state.metadata = mark_run_reused(state.metadata, reason=reuse_reason.strip())
         save_started = time.monotonic()
         runtime_map = state_repository.save_resume_state(  # type: ignore[attr-defined]
             state=state,

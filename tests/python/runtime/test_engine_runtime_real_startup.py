@@ -17,6 +17,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
@@ -3220,6 +3221,194 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
+
+    def test_exact_tree_plan_match_reuses_prior_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            second_session_id = second_engine._current_session_id()
+            with redirect_stdout(StringIO()):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
+            self.assertNotEqual(first_engine._current_session_id(), second_session_id)
+
+    def test_disabled_tree_dashboard_relaunch_reuses_prior_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                extra={"TREES_STARTUP_ENABLE": "false", "ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            first_engine = PythonEngineRuntime(config, env={})
+            with redirect_stdout(StringIO()):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(config, env={})
+            with redirect_stdout(StringIO()):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
+            self.assertEqual(second_state.metadata.get("last_reuse_reason"), "resume_dashboard_exact")
+
+    def test_config_profile_change_forces_fresh_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime, extra={"BACKEND_DIR": "api"}), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertNotEqual(second_state.run_id, first_state.run_id)
+
+    def test_project_root_change_forces_fresh_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            context = engine._discover_projects(mode="trees")[0]
+            wrong_root_context = ProjectContext(name=context.name, root=repo / "trees" / "feature-a" / "99", ports=context.ports)
+            metadata = startup_support.build_startup_identity_metadata(
+                engine,
+                runtime_mode="trees",
+                project_contexts=[wrong_root_context],
+            )
+            engine.state_repository.save_resume_state(
+                state=RunState(
+                    run_id="run-wrong-root",
+                    mode="trees",
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(wrong_root_context.root / "backend"),
+                            pid=9999,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    metadata={**metadata, "repo_scope_id": engine.config.runtime_scope_id},
+                ),
+                emit=lambda *args, **kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+
+            def fake_result(selected_context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=selected_context.name, health="healthy"),
+                    services={
+                        f"{selected_context.name} Backend": ServiceRecord(
+                            name=f"{selected_context.name} Backend",
+                            type="backend",
+                            cwd=str(selected_context.root / "backend"),
+                            pid=1234,
+                            requested_port=selected_context.ports["backend"].requested,
+                            actual_port=selected_context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            latest = engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertNotEqual(latest.run_id, "run-wrong-root")
 
     def test_resume_rejects_state_without_resumable_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
