@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
+from envctl_engine.planning.plan_agent_launch_support import PlanAgentLaunchResult
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
@@ -2118,6 +2119,98 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(fake_runner.start_background_calls, [])
             self.assertIn("Planning PR mode complete; skipping service startup.", out.getvalue())
+
+    def test_plan_feature_launches_only_new_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            launches: list[list[str]] = []
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                side_effect=lambda _runtime, *, route, created_worktrees: (
+                    launches.append([item.name for item in created_worktrees]),
+                    PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                )[1],
+            ):
+                first_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+                second_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            self.assertEqual(launches, [["feature_task-1"], []])
+
+    def test_plan_planning_prs_does_not_invoke_plan_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"},
+                ),
+                env={"ENVCTL_ACTION_PR_CMD": "sh -lc 'exit 0'", "CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals") as launch_mock:
+                code = engine.dispatch(parse_route(["--planning-prs", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
+    def test_plan_launch_failure_preserves_created_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                return_value=PlanAgentLaunchResult(status="failed", reason="missing_executables", outcomes=()),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
 
     def test_service_log_and_runner_flags_are_forwarded_to_service_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -16,6 +16,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.planning.plan_agent_launch_support import PlanSelectionResult
 from envctl_engine.ui.spinner_service import SpinnerPolicy
 
 
@@ -372,6 +373,77 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             provenance = self._read_provenance(repo / "trees" / "implementations_task" / "1")
             self.assertEqual(provenance.get("source_branch"), "release/2026.03")
             self.assertEqual(provenance.get("source_ref"), "origin/release/2026.03")
+
+    def test_plan_sync_reports_created_worktree_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
+
+            result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                plan_counts={"implementations/task.md": 2},
+                raw_projects=[],
+                keep_plan=True,
+            )
+
+            self.assertIsNone(result.error)
+            self.assertEqual([item.name for item in result.created_worktrees], ["implementations_task-1", "implementations_task-2"])
+            self.assertEqual(
+                [item.root for item in result.created_worktrees],
+                [
+                    (repo / "trees" / "implementations_task" / "1").resolve(),
+                    (repo / "trees" / "implementations_task" / "2").resolve(),
+                ],
+            )
+            self.assertTrue((result.created_worktrees[0].root / "MAIN_TASK.md").is_file())
+            self.assertEqual(result.created_worktrees[0].plan_file, "implementations/task.md")
+
+    def test_plan_sync_reports_only_new_worktrees_as_launch_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                plan_counts={"implementations/task.md": 2},
+                raw_projects=raw_projects,
+                keep_plan=True,
+            )
+
+            self.assertIsNone(result.error)
+            self.assertEqual(len(result.raw_projects), 2)
+            self.assertEqual([item.name for item in result.created_worktrees], ["implementations_task-2"])
+
+    def test_plan_selection_records_launch_candidates_for_startup_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
+            route = parse_route(["--plan", "implementations/task"], env={})
+
+            selected = engine._select_plan_projects(route, [])
+
+            selection_result = engine.planning_worktree_orchestrator.last_plan_selection_result()
+            self.assertIsInstance(selection_result, PlanSelectionResult)
+            self.assertEqual([ctx.name for ctx in selected], ["implementations_task-1"])
+            self.assertEqual([item.name for item in selection_result.created_worktrees], ["implementations_task-1"])
 
     def test_setup_worktree_creation_resets_existing_branch_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

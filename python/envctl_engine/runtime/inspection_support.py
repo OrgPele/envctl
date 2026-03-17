@@ -12,6 +12,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
+from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
 from envctl_engine.runtime.command_router import list_supported_commands, parse_route
 from envctl_engine.runtime.engine_runtime_startup_support import (
     auto_resume_start_enabled,
@@ -139,6 +140,14 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             }
             for entry in local_state.frontend_dependency_env_templates
         ],
+        "plan_agent": {
+            "enabled": runtime.config.plan_agent_terminals_enable,
+            "cli": runtime.config.plan_agent_cli,
+            "preset": runtime.config.plan_agent_preset,
+            "shell": runtime.config.plan_agent_shell,
+            "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
+            "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
+        },
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -162,6 +171,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         or "project_slot"
     )
     print(f"preferred_port_strategy: {preferred_strategy}")
+    print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
     return 0
 
 
@@ -368,6 +378,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         },
         "dependencies": enabled_dependencies,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
+        "plan_agent_launch": inspect_plan_agent_launch(runtime, route=startup_route),
     }
     if not startup_enabled:
         payload["reason"] = "config_startup_disabled"

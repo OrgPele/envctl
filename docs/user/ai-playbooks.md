@@ -29,11 +29,14 @@ Notes:
 
 Current built-in presets:
 
+- `implement_plan`
 - `implement_task`
 - `review_task_imp`
 - `continue_task`
 - `merge_trees_into_dev`
 - `create_plan`
+
+`implement_plan` is the default preset used by the optional post-`--plan` cmux launch flow. `implement_task` remains installed for backward compatibility.
 
 ## Parallel Implementation Loop
 
@@ -45,6 +48,20 @@ envctl test --all
 ```
 
 Use this to run many implementations at the same time and inspect behavior in one place.
+
+To auto-open one AI terminal per newly created planning worktree in your current `cmux` workspace:
+
+```dotenv
+ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
+ENVCTL_PLAN_AGENT_CLI=codex
+ENVCTL_PLAN_AGENT_PRESET=implement_plan
+```
+
+Then run:
+
+```bash
+envctl --plan backend/checkout
+```
 
 ## Compare Implementations
 

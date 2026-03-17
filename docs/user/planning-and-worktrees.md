@@ -46,6 +46,27 @@ envctl --list-trees --json
 envctl explain-startup --json
 ```
 
+## Optional Cmux Agent Launch
+
+`--plan` can now open one new `cmux` terminal surface per newly created worktree when the feature is enabled in config or env:
+
+```dotenv
+ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
+ENVCTL_PLAN_AGENT_CLI=codex
+ENVCTL_PLAN_AGENT_PRESET=implement_plan
+ENVCTL_PLAN_AGENT_SHELL=zsh
+ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
+```
+
+Behavior:
+
+- only runs for `--plan`
+- only launches for worktrees created during the current reconciliation
+- skips `--planning-prs`
+- skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
+
+Each launched surface stays interactive. Envctl creates the tab, renames it to the worktree name, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the slash preset command.
+
 ## Selection Input
 When passing plan selections, you can use any of these forms:
 - `folder/task`
@@ -132,6 +153,13 @@ Useful follow-up commands:
 envctl errors --all
 envctl restart --project <tree-name>
 envctl logs --project <tree-name> --logs-follow
+```
+
+Recommended inspection before enabling auto-launch:
+
+```bash
+envctl show-config --json
+envctl explain-startup --json
 ```
 
 ## Headless Planning

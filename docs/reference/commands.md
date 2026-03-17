@@ -63,6 +63,7 @@ Behavior:
 
 - installs built-in prompt files into user-local AI CLI directories
 - built-in presets:
+  - `implement_plan`
   - `implement_task`
   - `review_task_imp`
   - `continue_task`
@@ -199,6 +200,15 @@ envctl --plan
 envctl --parallel-plan
 envctl --sequential-plan
 ```
+
+Optional plan-agent launch config for `--plan`:
+
+- `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
+- `ENVCTL_PLAN_AGENT_PRESET=implement_plan` selects the slash command preset
+- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
+- `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
+- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text
 
 Debug and diagnostics:
 

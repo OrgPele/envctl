@@ -107,6 +107,75 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertIn("python3.12 -m venv .venv", str(reason))
             self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", str(reason))
 
+    def test_plan_does_not_require_cmux_or_ai_cli_when_feature_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"cmux", "codex", "opencode"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertTrue(ok)
+            self.assertIsNone(reason)
+
+    def test_plan_feature_enabled_requires_cmux_and_selected_ai_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"cmux", "opencode"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("cmux", str(reason))
+            self.assertIn("opencode", str(reason))
+
 
 if __name__ == "__main__":
     unittest.main()
