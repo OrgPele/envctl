@@ -1,441 +1,320 @@
-# Envctl Dynamic Run Reuse And Smart Resume Plan
+# Envctl Plan Cmux AI Terminal Launch
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Reuse an existing `run_id` when the user is reopening the same effective environment instead of always creating a fresh run.
-  - Extend run reuse beyond current service-bearing auto-resume so identical dashboard-only tree sessions can also reopen the same run when safe.
-  - Keep resume truth-driven: every reuse path must still reconcile runtime health before the dashboard is shown as current.
-  - Prevent wrong-run reuse by matching on stronger identity than just project names.
+  - Add an optional `--plan` workflow mode that, when enabled, opens one new `cmux` terminal surface for each newly created planning worktree.
+  - In each launched surface, enter the created worktree, start the selected AI CLI (`codex` or `opencode`), and trigger the envctl-managed implementation command automatically.
+  - Keep the feature bounded to envctl-managed planning/worktree flows rather than ad hoc terminal automation scattered across startup code.
+  - Preserve current `--plan` behavior exactly when the feature is disabled or when no new worktrees are created.
 - Non-goals:
-  - Reusing `session_id`; session boundaries should stay fresh per CLI launch.
-  - Reusing runs across different modes (`main` vs `trees`).
-  - Reusing runs when configuration, selected roots, or startup profile changed materially.
-  - Scanning historical `runs/*` to build a best-effort merged candidate.
+  - Changing normal service startup, dashboard, resume, or runtime-state semantics beyond emitting bounded launch diagnostics.
+  - Auto-launching AI terminals for existing worktrees on every `--plan` rerun in the first iteration.
+  - Extending the feature to `--setup-worktrees`, `--setup-worktree`, direct `resume`, `restart`, or `--planning-prs` in the first iteration.
+  - Implementing generic editor/window-management integration beyond `cmux`.
 - Assumptions:
-  - The correct candidate for reuse remains the latest scoped state returned by `RuntimeStateRepository.load_latest(...)`, not arbitrary historical runs (`python/envctl_engine/state/repository.py:182`).
-  - A reused run may be reopened by many sessions over time; `session_id` continues to provide per-launch diagnostic separation (`python/envctl_engine/runtime/engine_runtime_event_support.py:119`).
-  - The current tree/dashboard user complaint is a concrete symptom of a broader run-reuse policy gap, not just a dashboard rendering bug.
+  - The intended target is the caller’s current `cmux` workspace/window, not arbitrary detached workspaces elsewhere on the machine.
+  - The right first trigger set is “newly created planning worktrees during this `--plan` sync”, because rerunning `--plan` against already-existing worktrees should not silently duplicate tabs/surfaces.
+  - The AI command should be envctl-owned rather than depending on a user’s undocumented local alias; repo evidence currently exposes `implement_task`, not `implement_plan`, so the feature must define a canonical preset/command contract explicitly.
+  - `cmux` command capabilities are available externally and include `new-surface`, `respawn-pane`, `send`, `send-key`, `rename-tab`, and caller-scoped environment variables such as `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID` (`cmux --help`).
 
 ## Goal (user experience)
-When a user launches `envctl` into the same repo, mode, and selected tree set with effectively the same startup configuration, envctl should reopen the existing run instead of minting a redundant new one. The dashboard should feel continuous, existing test/action state should still be present because the same run was reused, and runtime truth should still be rechecked so stale processes are not silently trusted. When the environment is materially different, envctl should clearly fall back to a fresh run.
+When the operator runs `envctl --plan` with the feature enabled and envctl creates new worktrees, envctl should also open matching `cmux` terminal surfaces in the current workspace, one per new worktree. Each new surface should remain a normal interactive shell tab: envctl should rename it, type `cd <worktree>`, type the configured AI CLI (`codex` or `opencode`), then type the envctl implementation slash command, leaving the session interactive so the operator can continue working in that same tab when the agent finishes. If the feature is disabled, prerequisites are missing, or no new worktrees were created, `--plan` should keep its current behavior and print/emit a clear skip reason instead of partially launching terminals.
 
 ## Business logic and data model mapping
-- Fresh startup and run creation:
-  - `python/envctl_engine/startup/startup_orchestrator.py:_create_session`
-  - `python/envctl_engine/runtime/engine_runtime_runtime_support.py:new_run_id`
-  - `python/envctl_engine/startup/finalization.py:build_planning_dashboard_state`
-  - `python/envctl_engine/startup/finalization.py:build_success_run_state`
-  - `python/envctl_engine/startup/finalization.py:build_failure_run_state`
-- Current auto-resume / run reuse decisions:
-  - `python/envctl_engine/startup/startup_orchestrator.py:_resolve_auto_resume`
-  - `python/envctl_engine/runtime/engine_runtime_startup_support.py:auto_resume_start_enabled`
-  - `python/envctl_engine/runtime/engine_runtime_startup_support.py:load_auto_resume_state`
-  - `python/envctl_engine/startup/startup_selection_support.py:state_matches_selected_projects`
-  - `python/envctl_engine/startup/startup_selection_support.py:state_covers_selected_projects`
-  - `python/envctl_engine/startup/startup_selection_support.py:state_project_names`
-- Resume behavior:
-  - `python/envctl_engine/startup/resume_orchestrator.py:execute`
-  - `python/envctl_engine/startup/resume_restore_support.py:restore_missing`
-- Startup-disabled dashboard behavior:
-  - `python/envctl_engine/startup/startup_orchestrator.py:_resolve_disabled_startup_mode`
-  - `python/envctl_engine/config/__init__.py:EngineConfig.startup_enabled_for_mode`
-- Inspection and diagnostics that must stay aligned:
-  - `python/envctl_engine/runtime/inspection_support.py:_print_startup_explanation`
-  - `python/envctl_engine/debug/debug_bundle_diagnostics.py`
-- State repository and latest-view persistence:
-  - `python/envctl_engine/state/repository.py:save_run`
-  - `python/envctl_engine/state/repository.py:save_resume_state`
-  - `python/envctl_engine/runtime/engine_runtime_artifacts.py:write_artifacts`
-- Relevant tests:
-  - `tests/python/runtime/test_engine_runtime_startup_support.py`
+- `--plan` route parsing and command ownership:
+  - `python/envctl_engine/runtime/command_router.py:parse_route`
+  - `python/envctl_engine/runtime/command_router.py:_phase_resolve_command_mode`
+  - `python/envctl_engine/runtime/command_router.py:_phase_bind_flags`
+- Startup orchestration and current planning entrypoint:
+  - `python/envctl_engine/startup/startup_orchestrator.py:StartupOrchestrator.execute`
+  - `python/envctl_engine/startup/startup_orchestrator.py:_select_contexts`
+  - `python/envctl_engine/runtime/engine_runtime.py:_select_plan_projects`
+- Planning/worktree creation and `MAIN_TASK.md` seeding:
+  - `python/envctl_engine/planning/worktree_domain.py:_select_plan_projects`
+  - `python/envctl_engine/planning/worktree_domain.py:_sync_plan_worktrees_from_plan_counts`
+  - `python/envctl_engine/planning/worktree_domain.py:_sync_single_plan_worktree_target`
+  - `python/envctl_engine/planning/worktree_domain.py:_create_feature_worktrees`
+  - `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan`
+  - `python/envctl_engine/planning/__init__.py:planning_feature_name`
+  - `python/envctl_engine/planning/__init__.py:select_projects_for_plan_files`
+- Runtime/config/process helpers that would own the new integration:
+  - `python/envctl_engine/config/__init__.py:EngineConfig`
+  - `python/envctl_engine/runtime/cli.py:check_prereqs`
+  - `python/envctl_engine/runtime/engine_runtime_commands.py:split_command`
+  - `python/envctl_engine/runtime/engine_runtime_commands.py:command_exists`
+  - `python/envctl_engine/shared/process_runner.py:ProcessRunner.run`
+- AI prompt preset ownership:
+  - `python/envctl_engine/runtime/prompt_install_support.py:run_install_prompts_command`
+  - `python/envctl_engine/runtime/prompt_install_support.py:_available_presets`
+  - `python/envctl_engine/runtime/prompt_templates/implement_task.md`
+  - `python/envctl_engine/runtime/prompt_templates/create_plan.md`
+- Relevant docs/tests:
+  - `docs/user/planning-and-worktrees.md`
+  - `docs/user/ai-playbooks.md`
+  - `docs/reference/commands.md`
+  - `tests/python/planning/test_planning_worktree_setup.py`
   - `tests/python/runtime/test_engine_runtime_real_startup.py`
+  - `tests/python/runtime/test_prompt_install_support.py`
+  - `tests/python/runtime/test_prereq_policy.py`
   - `tests/python/startup/test_startup_orchestrator_flow.py`
-  - `tests/python/runtime/test_lifecycle_parity.py`
-  - `tests/python/runtime/test_engine_runtime_command_parity.py`
-  - `tests/python/debug/test_debug_bundle_generation.py`
 
 ## Current behavior (verified in code)
-- Fresh startup always allocates a new run id before any reuse decision:
-  - `StartupOrchestrator._create_session(...)` sets `session.run_id = rt._new_run_id()` and prints it immediately.
-  - `new_run_id(...)` always generates a new `run-<timestamp>-<random>` value and binds it to debug mode.
-- Current run reuse exists, but it is narrow:
-  - `_resolve_auto_resume(...)` can convert startup into `resume` for exact project match and trees subset match.
-  - `_resolve_auto_resume(...)` can also preserve an existing run for plan superset expansion by keeping prior services/requirements in memory and only starting new contexts.
-- Current matching is project-name based, not root/config based:
-  - `state_matches_selected_projects(...)` compares selected context names to project names derived from `state.services` and `state.requirements`.
-  - `state_covers_selected_projects(...)` uses the same project-name-only model.
-- Current auto-resume candidate loading is restricted to states with resumable services:
-  - `load_auto_resume_state(...)` rejects states with `metadata["failed"]` and rejects any state where `state_has_resumable_services(...)` is false.
-  - This means dashboard-only planning states written by disabled startup mode are never eligible for reuse.
-- Disabled startup mode always creates a fresh planning/dashboard run:
-  - `_resolve_disabled_startup_mode(...)` builds a new planning dashboard state and writes artifacts immediately.
-  - This happens before `_resolve_auto_resume(...)` in the startup phase order.
-- Resume itself is already health-aware:
-  - `ResumeOrchestrator.execute(...)` loads the latest state, reconciles truth, optionally restores missing services, saves the reconciled state, and optionally enters the dashboard.
-- Inspection/debug surfaces reflect the current narrow policy:
-  - `inspection_support._print_startup_explanation(...)` only reports exact/subset auto-resume.
-  - debug diagnostics aggregate `state.auto_resume.skipped` reasons such as `project_selection_mismatch`.
+- `plan` is a normal startup route that resolves through planning/worktree selection before any startup/resume logic:
+  - `StartupOrchestrator.execute(...)` runs `_select_contexts(...)`, then disabled-startup/auto-resume/startup phases.
+  - `_select_contexts(...)` calls `rt._select_plan_projects(route, project_contexts)` when `route.command == "plan"`.
+- Planning selection can create/delete worktrees and seed `MAIN_TASK.md`, but it does not surface a structured “created worktrees” result today:
+  - `_select_plan_projects(...)` resolves plan counts and calls `_sync_plan_worktrees_from_plan_counts(...)`.
+  - `_sync_single_plan_worktree_target(...)` calls `_create_feature_worktrees(...)` when desired count exceeds existing count.
+  - `_create_feature_worktrees(...)` creates git worktrees, writes provenance, and calls `_seed_main_task_from_plan(...)`, but returns only `str | None` for error and discards the created targets once finished.
+- Worktree creation is currently file/system oriented only:
+  - New plan-created worktrees get `MAIN_TASK.md` copied from the selected plan file.
+  - No code in `planning/`, `startup/`, or runtime dispatch launches user terminals, editors, `cmux`, `codex`, or `opencode`.
+- Installed AI prompt support is currently file installation only:
+  - `run_install_prompts_command(...)` writes prompt files to user-local CLI directories.
+  - Built-in preset registry currently includes `implement_task`, `review_task_imp`, `continue_task`, `merge_trees_into_dev`, and `create_plan`.
+  - Default preset is `_DEFAULT_PRESET = "implement_task"`.
+- The repo does not currently expose the user-mentioned `implement_plan` preset/command:
+  - `docs/user/ai-playbooks.md`, `docs/reference/commands.md`, and `tests/python/runtime/test_prompt_install_support.py` all lock in `implement_task` and `create_plan`, not `implement_plan`.
+- Config and prereq surfaces do not currently know about this feature:
+  - `EngineConfig` has planning path/root settings (`ENVCTL_PLANNING_DIR`, `TREES_DIR_NAME`) but nothing for `cmux`, AI CLI selection, or automated post-plan launch.
+  - `check_prereqs(...)` only checks for `git`, conditional `docker`, conditional `lsof`, and the Python `rich` module.
+- `--planning-prs` is already a plan-adjacent special flow that intentionally skips startup after acting on the selected plan contexts:
+  - `StartupOrchestrator._resolve_auto_resume(...)` branches on `route.flags["planning_prs"]` and runs PR actions instead of normal startup.
+  - That makes `--planning-prs` a separate behavior surface that should not implicitly inherit terminal-launch side effects in the first change.
 
 ## Root cause(s) / gaps
-- The existing architecture already supports same-run reuse, but only for startup paths backed by active services. That is too narrow for the actual operator mental model of “same environment reopened.”
-- Run-reuse eligibility is based on project names alone, which is unsafe if different roots or changed worktrees happen to share the same display names.
-- Startup-disabled dashboard sessions short-circuit into fresh run creation before the reuse logic ever runs.
-- There is no persisted startup identity/fingerprint in `RunState.metadata` to answer “is this still the same effective environment?” without brittle heuristics.
-- `explain-startup` and debug diagnostics reflect current behavior and would become misleading if reuse semantics changed without updating them.
-- Because a new run is created before the reuse decision, startup UX and run-history semantics are biased toward run proliferation rather than continuity.
+- The planning layer does not currently preserve enough structured information about newly created worktrees to support a clean post-create launch hook.
+- There is no isolated module that owns “launch external agent terminals for new plan worktrees”; adding shell/`cmux` calls directly inside low-level worktree helpers would make planning logic harder to test and reason about.
+- The runtime/config layer has no opt-in settings for:
+  - feature enablement
+  - AI CLI choice
+  - preset/command name
+  - launch shell/command override
+  - failure policy when `cmux` or the AI CLI is unavailable
+- The prompt installer contract and the requested `/implement_plan` command name do not currently align.
+- Tests currently verify worktree creation, plan sync, and prompt installation independently, but there is no coverage for a combined “new worktree -> AI surface launched” flow.
 
 ## Plan
-### 1) Introduce a unified run-reuse eligibility model
-- Add a dedicated support module, likely under `python/envctl_engine/startup/` or `python/envctl_engine/runtime/`, for example `run_reuse_support.py`.
-- Replace the current split between:
-  - candidate loading in `load_auto_resume_state(...)`
-  - name-only project matching in `state_matches_selected_projects(...)`
-  - ad hoc branch logic in `_resolve_auto_resume(...)`
-- The new helper should return a structured decision object containing:
-  - `candidate_state`
-  - `decision_kind`
-    - `resume_exact`
-    - `resume_subset`
-    - `reuse_expand`
-    - `resume_dashboard_exact`
-    - `fresh_run`
-  - `reason`
-  - `selected_projects`
-  - `state_projects`
-  - optional mismatch details
-- Reuse should continue to be latest-state only and mode-scoped only.
+### 1) Define a narrow first-version feature contract
+- Scope the feature to `route.command == "plan"` only, and only when the route is using the normal planning/worktree-selection flow rather than `route.flags["planning_prs"]`.
+- Trigger launches only for worktrees created during the current planning reconciliation, not all selected contexts and not all pre-existing trees.
+- Default behavior when disabled must remain exactly as it is today: no extra prerequisites, no terminal launch, no new output beyond existing planning/startup messaging.
+- First-version failure policy should be explicit:
+  - if the feature is disabled: do nothing
+  - if enabled but no new worktrees were created: do nothing and emit a skip event
+  - if enabled but envctl is not running inside `cmux` and no explicit workspace target is configured: skip/fail with a clear message
+  - if enabled but `cmux` or the selected AI CLI executable is missing: stop before launch side effects and report the missing executable(s)
+- Document this as a local interactive productivity feature, not a headless/CI workflow primitive.
 
-### 2) Persist a stable environment identity in run metadata
-- Extend startup/finalization state builders to persist reuse-relevant metadata on every new run:
-  - normalized selected project roots
-  - startup-enabled flag for the mode
-  - effective service enablement for backend/frontend
-  - effective dependency enablement for the mode
-  - a computed startup identity fingerprint
-- The fingerprint should be built from stable, operator-meaningful config and selection inputs, not ephemeral runtime truth:
-  - mode
-  - selected project names + normalized roots
-  - startup enabled
-  - backend/frontend enabled flags
-  - dependency enablement for the mode
-  - possibly directories relevant to runtime start behavior (`BACKEND_DIR`, `FRONTEND_DIR`)
-- Keep the fingerprint payload explicit enough to debug in metadata, and add a condensed hash for cheap equality checks.
+### 2) Add explicit config/env ownership for plan terminal launch
+- Extend `python/envctl_engine/config/__init__.py` defaults and `EngineConfig` to carry a small, explicit feature surface. Recommended first-version keys:
+  - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=false`
+  - `ENVCTL_PLAN_AGENT_CLI=codex`
+  - `ENVCTL_PLAN_AGENT_PRESET=implement_plan`
+  - `ENVCTL_PLAN_AGENT_SHELL=zsh`
+  - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true`
+  - optional advanced override: `ENVCTL_PLAN_AGENT_CLI_CMD=` for custom executable/path
+- Keep the feature config-driven rather than adding new CLI parser flags in the first iteration; the user asked for an optional feature “when set to on”, and config/env keeps the route surface smaller.
+- Reuse the normal config precedence rules already implemented in `load_config(...)` so `.envctl`, environment overrides, `show-config`, and tests remain consistent.
+- Add docs for the new keys to the relevant user/reference surfaces once implementation exists.
 
-### 3) Tighten project matching from names to project identity
-- Replace name-only reuse decisions with a stronger identity model:
-  - project name
-  - normalized root from `metadata["project_roots"]`
-- Exact reuse:
-  - selected project identities equal prior project identities
-- Subset reuse:
-  - selected project identities are a subset of prior identities
-- Expand reuse:
-  - prior project identities are a subset of selected identities
-- If prior root data is missing in older states, allow a backward-compatible fallback to name-only matching but mark the decision as weaker and emit a diagnostic reason.
+### 3) Introduce a structured planning sync result that preserves newly created worktrees
+- Refactor the current tuple/string return flow around `_sync_plan_worktrees_from_plan_counts(...)` and `_create_feature_worktrees(...)` so planning code can return structured metadata instead of only `projects, error`.
+- Recommended shape:
+  - a small dataclass such as `PlanWorktreeSyncResult` or `PlanSelectionResult`
+  - fields for:
+    - `raw_projects`
+    - `selected_contexts`
+    - `created_worktrees` (name/root/plan file)
+    - `removed_worktrees`
+    - `archived_plan_files`
+    - `error`
+- `_create_feature_worktrees(...)` should return the actual created targets for this sync pass, not just success/failure.
+- `_select_plan_projects(...)` should become the place that aggregates:
+  - selected plan contexts
+  - created worktrees
+  - any sync error
+- This keeps low-level worktree creation pure and gives startup/orchestration layers a reliable handoff point for launching terminals after successful planning sync.
 
-### 4) Expand candidate eligibility beyond “has running services”
-- Split “can reuse this run” from “can resume application services from this run.”
-- Add two candidate classes:
-  - service-bearing states: current resume semantics with truth reconciliation and optional restore
-  - dashboard-only states: latest state with no resumable services but valid dashboard/project metadata for the same identity
-- This change should allow a disabled-startup tree dashboard to reopen the same run when:
-  - mode matches
-  - selected project identities match
-  - startup profile fingerprint matches
-  - prior state is not marked failed
-- Keep rejecting failed or mode-mismatched candidates.
+### 4) Add a dedicated plan-agent launch support module
+- Introduce a focused support/orchestrator module, for example:
+  - `python/envctl_engine/planning/plan_agent_launch_support.py`
+  - or `python/envctl_engine/planning/cmux_agent_launch.py`
+- This module should own:
+  - config resolution for the feature
+  - prerequisite validation for `cmux` + selected AI CLI
+  - `cmux` workspace/surface targeting
+  - AI CLI launch command construction
+  - command/preset injection after the CLI starts
+  - bounded event emission / user-facing skip reasons
+- Keep `worktree_domain.py` free of raw `cmux` command composition beyond calling this helper with a structured list of created worktrees.
+- Use existing helpers/patterns where possible:
+  - `command_exists(...)` for executable detection
+  - `ProcessRunner.run(...)` for shelling out
+  - `_command_env(...)` for consistent env propagation where appropriate
 
-### 5) Reorder startup flow so reuse is evaluated before forced fresh planning runs
-- Today `_resolve_disabled_startup_mode(...)` runs before `_resolve_auto_resume(...)`.
-- Refactor the startup phase order so that after project selection, envctl evaluates run reuse before deciding to build a fresh planning/dashboard run.
-- Recommended sequence:
-  1. validate route
-  2. handle restart pre-stop
-  3. select contexts
-  4. evaluate run reuse
-  5. if reuse applies, route into resume/reopen behavior
-  6. otherwise, handle disabled-startup fresh dashboard state or normal startup
-- This is the key orchestration change needed for dashboard-only runs to stay on the same `run_id`.
+### 5) Standardize the envctl-owned AI command contract
+- Resolve the mismatch between the requested `/implement_plan` name and the repo’s current `implement_task` preset before wiring automated launch behavior.
+- Recommended first-version contract:
+  - add a new prompt template alias `python/envctl_engine/runtime/prompt_templates/implement_plan.md`
+  - keep `implement_task.md` for backward compatibility
+  - make the new feature default to `/implement_plan`
+  - allow `ENVCTL_PLAN_AGENT_PRESET` to override this when needed
+- Update `prompt_install_support.py`, docs, and tests so `install-prompts --preset all` installs the new alias too.
+- If implementation decides not to add an alias, then the feature must default to `/implement_task` and document that explicitly; do not silently assume `/implement_plan` already exists because repo evidence says it does not.
 
-### 6) Add a dashboard-resume path for startup-disabled modes
-- Introduce a reuse path distinct from service resume for startup-disabled dashboards.
-- For `resume_dashboard_exact`:
-  - load the existing latest state
-  - verify identity and startup fingerprint match
-  - optionally refresh dashboard-owned metadata that is derived from current config, such as hidden commands or banner text
-  - save via `save_resume_state(...)` to keep latest-view files current
-  - enter the interactive dashboard or return batch success as appropriate
-- Do not fabricate services or requirements in this path.
-- Keep `run_id` unchanged and `session_id` fresh.
+### 6) Define the `cmux` launch choreography explicitly and isolate quoting/ordering
+- The launch helper should follow a deterministic sequence per created worktree:
+  1. identify the target `cmux` workspace/pane from caller context (prefer `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID`; avoid global workspace scanning in v1)
+  2. create a new terminal surface in that workspace/window and leave it as a normal shell surface
+  3. rename the new tab/surface to the worktree/project name for operator clarity
+  4. type `cd <worktree-root>` into the shell and press Enter
+  5. type the selected AI CLI executable (`codex` or `opencode`) into the shell and press Enter
+  6. after the AI CLI is visibly active, type the slash command text (for example `/implement_plan`) and press Enter
+- Keep command/text composition centralized and quoted safely; avoid ad hoc string concatenation in multiple files.
+- Do not use a headless or one-shot shell command such as `zsh -lc 'cd ... && codex ...'` as the primary workflow. The feature should drive a live shell surface by typing into it so the operator can keep using that same terminal session afterward.
+- Use `cmux send` + `cmux send-key Enter` for each typed step (`cd`, CLI launch, slash command`) rather than hiding those steps inside an initial pane bootstrap command.
+- Add a short bounded wait/retry strategy between:
+  - surface creation and the first typed shell command
+  - AI CLI launch and slash-command send
+  so envctl does not type ahead of the actual interactive process state.
+- Keep all `cmux` command sequencing in one helper so later timing adjustments do not touch planning logic.
 
-### 7) Keep truth checks mandatory for service-bearing reuse
-- Preserve the current resume contract for `resume_exact` and `resume_subset`:
-  - `ResumeOrchestrator.execute(...)` stays the path of record
-  - reconcile truth
-  - optionally restore missing services
-  - save reconciled state
-- For `reuse_expand`, keep the existing incremental-start behavior but gate it behind the stronger identity/fingerprint checks.
-- If truth reconciliation shows the candidate run is stale or the resume path fails, fall back to a fresh run and emit a specific skip reason.
+### 7) Hook terminal launch after successful planning sync, not deep inside creation loops
+- Do not launch terminals directly from `_create_feature_worktrees(...)`; that function currently runs inside per-plan reconciliation and would create partial side effects before the overall selection result is known.
+- Preferred orchestration point:
+  - after `_select_plan_projects(...)` has finished syncing and resolved the selected contexts
+  - before startup continues into disabled-startup / auto-resume / service launch
+- Concretely, this likely means either:
+  - extending `StartupOrchestrator._select_contexts(...)` to receive a structured planning-selection result and invoke the launch helper there, or
+  - adding a thin post-selection planning hook in the planning orchestrator that runs once per command after sync succeeds
+- This ordering preserves a clean contract:
+  - plan selection/sync succeeds first
+  - new worktree launch side effects happen once
+  - normal startup logic continues unchanged afterward
 
-### 8) Preserve clear run-history semantics
-- Explicitly define the new run model in docs:
-  - a run can span multiple CLI sessions if envctl determines the environment is the same
-  - a session is always per launch
-  - a fresh run is created only when identity or startup contract changed materially, or when reuse is unsafe
-- Add metadata such as:
-  - `run_reuse_count`
-  - `last_reopened_at`
-  - `last_reuse_reason`
-- Keep these as metadata only; do not change repository pointer layout or per-run directory shape.
+### 8) Keep runtime-state persistence and diagnostics bounded
+- Do not persist raw `cmux` surface IDs or shell commands into run state; they are UI/session-ephemeral and not part of envctl’s durable environment truth.
+- Instead, emit bounded events such as:
+  - `planning.agent_launch.evaluate`
+  - `planning.agent_launch.skipped`
+  - `planning.agent_launch.surface_created`
+  - `planning.agent_launch.command_sent`
+  - `planning.agent_launch.failed`
+- Event payloads should include:
+  - feature enabled/disabled
+  - selected AI CLI
+  - created worktree count
+  - launched worktree names
+  - skip/failure reason
+- If a small persisted summary is helpful, keep it to counts/reasons in `RunState.metadata` only; do not serialize live `cmux` refs or full shell commands.
 
-### 9) Update inspection, diagnostics, and operator explanations
-- Extend `inspection_support._print_startup_explanation(...)` to surface the richer decision space:
-  - `resume_exact`
-  - `resume_subset`
-  - `reuse_expand`
-  - `resume_dashboard_exact`
-  - precise mismatch reasons such as `project_root_mismatch`, `startup_fingerprint_mismatch`, `failed_state`, `mode_mismatch`
-- Extend debug diagnostics aggregation to preserve the new skip reasons without breaking existing summaries.
-- Emit new startup events such as:
-  - `state.run_reuse.evaluate`
-  - `state.run_reuse.applied`
-  - `state.run_reuse.skipped`
-  - `state.dashboard_resume`
+### 9) Extend prereq/inspection/doc surfaces only when the feature is enabled
+- Keep `check_prereqs(...)` unchanged for the default-off path so ordinary `plan` users do not suddenly require `cmux`, `codex`, or `opencode`.
+- Add a feature-aware prereq branch that activates only when `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` resolves true and the route is `plan`.
+- Update `show-config`/docs so operators can see the effective feature settings.
+- Update user docs:
+  - `docs/user/planning-and-worktrees.md` for the new optional post-plan launch behavior
+  - `docs/user/ai-playbooks.md` for the new recommended multi-worktree AI flow
+  - `docs/reference/commands.md` for config/preset naming and installation expectations
+- If `explain-startup --json` currently owns all pre-start explanation surfaces for `plan`, add a bounded note there so operators can see whether post-plan AI terminal launch will run or be skipped.
 
-### 10) Keep fallback behavior explicit and safe
-- Fresh run should still be the fallback when:
-  - `--no-resume` is present
-  - mode differs
-  - project roots differ
-  - startup fingerprint differs
-  - previous state is failed
-  - reconcile/restore detects unrecoverable drift
-- The fallback should not silently mutate the previous run into an incompatible shape.
-- The user-facing inspection/debug output should explain why a fresh run was chosen.
+### 10) Preserve clear first-version safety boundaries
+- First implementation should skip launch entirely for:
+  - `--planning-prs`
+  - no newly created worktrees
+  - missing `cmux` caller context when strict context is required
+  - missing AI CLI executable
+  - planning sync failures
+- Do not let a partial launch continue silently after one worktree succeeds and another fails; the helper should return per-worktree outcomes and print/emit a clear summary.
+- Keep launch failures separate from worktree creation failures:
+  - failed worktree creation should behave exactly as today
+  - successful worktree creation plus failed terminal launch should preserve the new worktree and report the launch error cleanly
 
 ## Tests (add these)
 ### Backend tests
-- Extend `tests/python/runtime/test_engine_runtime_startup_support.py`
-  - new run-reuse eligibility helper accepts exact root/config match
-  - root mismatch rejects reuse even when project names match
-  - startup fingerprint mismatch rejects reuse
-  - dashboard-only latest state is eligible for dashboard resume
-  - failed state remains ineligible
-- Extend `tests/python/startup/test_startup_orchestrator_flow.py`
-  - disabled startup mode reopens an existing dashboard run instead of building a fresh one when identity matches
-  - disabled startup mode still creates a fresh planning state when identity or fingerprint differs
+- Extend `tests/python/planning/test_planning_worktree_setup.py`:
+  - `_create_feature_worktrees(...)` or the new sync result captures created worktree roots/names explicitly
+  - plan sync with mixed existing/new targets reports only the newly created worktrees as launch candidates
+  - launch hook is not invoked when sync fails
+  - `MAIN_TASK.md` seeding still happens before launch candidates are returned
+- Add a focused unit test module for the new launch helper, for example `tests/python/planning/test_plan_agent_launch_support.py`:
+  - disabled feature -> skip result
+  - enabled feature with no created worktrees -> skip result
+  - missing `cmux` -> failure/skip reason
+  - missing selected AI CLI executable -> failure/skip reason
+  - command composition for `codex` and `opencode`
+  - `cmux` command sequencing uses `new-surface`, rename, `send`, and `send-key` in the expected order for `cd`, CLI launch, and slash-command typing
+  - workspace context resolution prefers caller env (`CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID`)
+- Extend `tests/python/runtime/test_prereq_policy.py`:
+  - ordinary `plan` still does not require `cmux` or AI CLIs when feature is disabled
+  - enabled plan-agent mode fails prereq validation cleanly when `cmux` or selected AI CLI is missing
 
 ### Frontend tests
-- Extend `tests/python/runtime/test_engine_runtime_command_parity.py`
-  - `explain-startup --json` reports the richer run-reuse decision and reason for disabled-startup dashboards
-- Extend `tests/python/runtime/test_lifecycle_parity.py`
-  - resumed/reopened run output remains consistent with existing resume banner rules
-  - fresh session retains a new session id even when run id is reused
+- Extend `tests/python/runtime/test_prompt_install_support.py`:
+  - new alias preset `implement_plan` is discovered and installed if that design is chosen
+  - generated output/docs remain ordered and deterministic for `--preset all`
+- Extend `tests/python/runtime/test_engine_runtime_command_parity.py` only if `explain-startup --json` or command-surface inspection changes:
+  - plan-agent launch state/reason is surfaced consistently when enabled
 
 ### Integration/E2E tests
-- Extend `tests/python/runtime/test_engine_runtime_real_startup.py`
-  - exact tree-plan match reuses the prior run id
-  - disabled tree dashboard relaunch reuses the prior run id instead of creating a new one
-  - config/profile change forces a fresh run
-  - project-root change forces a fresh run
-  - `--no-resume` forces a fresh run even when identity matches
-  - expand path still preserves existing run and starts only new projects under the stronger identity checks
-- Extend `tests/python/debug/test_debug_bundle_generation.py`
-  - new run-reuse skip reasons appear in diagnostics summaries
+- Extend `tests/python/runtime/test_engine_runtime_real_startup.py`:
+  - `--plan` with feature enabled and one newly created worktree invokes the launch helper exactly once for that new worktree
+  - rerunning the same `--plan` with no new worktrees does not relaunch surfaces
+  - mixed selection where one worktree already exists and one is newly created launches only the new one
+  - `--planning-prs` does not invoke the launch helper
+  - launch failure reports cleanly while preserving successful worktree creation
+- Extend `tests/python/startup/test_startup_orchestrator_flow.py`:
+  - planning-selection handoff into the new post-sync launch hook happens before normal startup continuation
+  - disabled-startup planning mode still gets the same post-plan launch behavior when the feature is enabled, because the feature is about worktree creation rather than service startup
 
 ## Observability / logging (if relevant)
-- Emit a structured reuse evaluation event before the decision is applied:
-  - candidate run id
-  - current session id
-  - mode
-  - selected project identities
-  - fingerprint match result
-  - final decision kind
-- Emit explicit skip reasons instead of overloading everything into `project_selection_mismatch`.
-- Keep `explain-startup` aligned with the same decision helper to avoid drift between runtime behavior and inspection output.
-
-## Rollout / verification
-- Phase 1:
-  - add persisted startup identity/fingerprint metadata
-  - add run-reuse decision helper with unit coverage
-- Phase 2:
-  - refactor startup orchestration order so reuse is evaluated before disabled-startup fresh state creation
-  - implement dashboard-resume path and preserve current service resume path
-- Phase 3:
-  - update inspection/debug surfaces
-  - expand integration coverage and relaunch scenarios
-- Verification commands:
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_startup_support`
-  - `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_orchestrator_flow`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_lifecycle_parity`
-  - `PYTHONPATH=python python3 -m unittest tests.python.debug.test_debug_bundle_generation`
-
-## Definition of done
-- Exact same-environment launches reuse the prior `run_id` instead of creating a redundant new run.
-- Reused runs still go through truth-aware resume or dashboard-reopen validation before being treated as current.
-- Disabled-startup tree dashboards can reopen the same run when project identity and startup fingerprint match.
-- Different project roots or materially different startup configuration force a fresh run.
-- `session_id` remains fresh on every CLI launch.
-- `explain-startup` and debug diagnostics accurately describe the reuse decision.
-
-## Risk register (trade-offs or missing tests)
-- Risk: broadening run reuse can blur the meaning of a run from “one startup attempt” into “one environment lineage.”
-  - Mitigation: document the new semantics explicitly and keep fresh sessions distinct with new `session_id`s.
-- Risk: weak identity matching could reopen the wrong run for a renamed or moved tree.
-  - Mitigation: require root-aware identity and startup fingerprint matching; only use name-only fallback for older states with missing root metadata.
-- Risk: reused dashboard-only states could look current even when config changed.
-  - Mitigation: include startup-enabled/service/dependency profile data in the fingerprint and reject reuse on mismatch.
-- Risk: orchestration-order changes could regress existing exact/subset/expand auto-resume flows.
-  - Mitigation: preserve current branch semantics and extend the existing real-startup tests rather than replacing them.
-
-## Open questions (only if unavoidable)
-- None. The repo evidence is sufficient to plan a stricter same-run reuse design built on the existing auto-resume architecture.
-  - Make failed `test` runs in the interactive dashboard show one saved artifact path per affected project instead of mixing that path with redundant inline failure excerpts.
-  - Ensure the saved file behind the dashboard path is materially complete for suite-level failures, including cases where envctl cannot derive rerunnable failed tests.
-  - Keep failed-test rerun support intact through `failed_tests_manifest.json`.
-  - Treat this as follow-on work after dynamic run reuse, not as a prerequisite for startup/resume changes.
-- Non-goals:
-  - Changing run reuse, smart resume, `run_id` reuse, or any startup/session semantics.
-  - Reworking non-test project action failures (`migrate`, `review`, `pr`, `commit`), which already use separate failure-report handling.
-  - Changing runtime artifact roots outside the existing run-scoped tree.
-- Assumptions:
-  - The current operator pain remains in the legacy dashboard/test-output path, not in startup orchestration.
-  - The desired UX is still: dashboard shows a stable file path once, and the file contains the useful failure detail.
-
-## Goal (user experience)
-After a failed dashboard-driven `test` command, the operator should see a clean `tests:` / `failure summary:` path for each failed project and should not need to parse duplicated inline suite logs in the dashboard output. Opening the referenced file should reveal enough cleaned failure context to diagnose the failure, including generic suite crashes and extraction failures.
-
-## Business logic and data model mapping
-- Test execution and outcome capture:
-  - `python/envctl_engine/actions/action_test_runner.py:run_test_action`
-  - `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output`
-  - `python/envctl_engine/test_output/test_runner.py:TestRunner.run_tests`
-  - `python/envctl_engine/test_output/test_runner.py:_run_with_streaming`
-- Failed-summary persistence:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts`
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary`
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures`
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_print_test_suite_overview`
-- Dashboard rendering / failure suppression:
-  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_test_summary_display_path`
-- State/artifact contract:
-  - `python/envctl_engine/state/models.py:RunState`
-  - `python/envctl_engine/state/repository.py:RuntimeStateRepository.test_results_dir_path`
-  - `docs/developer/state-and-artifacts.md`
-
-## Current behavior (verified in code)
-- Failed test runs persist both a deep summary path and a short alias path through `project_test_summaries`.
-- The dashboard snapshot already renders a `tests:` row that points at the saved file path rather than printing file contents.
-- Interactive dashboard failure handling already suppresses a second detached dashboard-only failure block when saved summaries exist.
-- Redundant inline failure noise still comes from the test action path itself:
-  - `action_test_runner.py:run_test_action` prints per-suite `failure: ...` excerpts during interactive runs.
-  - `_print_test_suite_overview(...)` then prints the saved artifact path, so users see both.
-- Generic suite-failure detail is still too lossy:
-  - `_summarize_failure_output(...)` collapses to the first non-empty stream and only a few lines.
-  - `_collect_generic_suite_failures(...)` persists that truncated text for non-parsed failures.
-- Non-streaming parser fallback still parses only cleaned stdout, so stderr-only failures can lose useful detail before summary generation.
-
-## Root cause(s) / gaps
-- The operator-facing dashboard contract says “see the saved file,” but the test execution path still emits inline failure snippets before that artifact path is shown.
-- Generic suite-failure persistence uses a short status snippet rather than a fuller cleaned failure body.
-- The dashboard renderer and orchestrator already prefer the short alias path, but older states can still depend on fallback path repair logic that is not shared everywhere.
-- Parser fallback underrepresents stderr-only failures, which reduces the quality of saved summaries.
-
-## Plan
-### 1) Keep the scope narrow and independent from startup/resume work
-- Limit this change to test execution, failed-summary persistence, and dashboard rendering.
-- Do not touch:
-  - `startup_orchestrator.py`
-  - run reuse helpers
-  - session/run identity logic
-- Document this explicitly in the implementation PR so it stays decoupled from the run-reuse branch.
-
-### 2) Promote the saved failed-summary file to the single operator-facing surface
-- Update `python/envctl_engine/actions/action_test_runner.py:run_test_action` so interactive test execution stops printing inline `failure: ...` excerpts once the saved summary path is the intended operator-facing output.
-- Keep concise suite status/count/duration lines.
-- Keep `_print_test_suite_overview(...)` as the single textual handoff surface by printing the saved `failure summary:` path once per failed project.
-- Preserve a fallback inline message only if summary persistence itself fails and no artifact path exists.
-
-### 3) Make generic suite-failure summaries materially complete
-- Replace the current truncated `_summarize_failure_output(...)` persistence contract with a richer cleaned failure body for outcome storage.
-- Merge stderr/stdout deterministically, strip ANSI/progress noise, preserve source separation where useful, and avoid collapsing to only the first few lines.
-- Feed that richer payload into `_collect_generic_suite_failures(...)` and `_write_failed_tests_summary(...)` so the saved file contains enough context for startup/import/configuration crashes and similar non-parsed failures.
-- Preserve the existing per-test structure for parsed failures, but allow suite-level context to be appended when needed.
-
-### 4) Close stderr-only parser fallback gaps
-- Update `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` so non-streaming fallback parsing sees combined cleaned failure output rather than stdout alone.
-- Ensure parsed `error_details` can still be populated when pytest or other runners emit material failure context on stderr.
-- Keep successful-run behavior and progress-marker stripping stable.
-
-### 5) Unify dashboard path selection on the short alias path
-- Reuse `_test_summary_display_path(...)` / `_ensure_short_test_summary_path(...)` from the orchestrator inside the dashboard rendering path so the UI consistently prefers `ft_<digest>.txt`.
-- Keep cleanup semantics unchanged so both the deep summary path and short alias are still removed by existing lifecycle cleanup logic.
-
-### 6) Update docs/changelog for the artifact-only dashboard contract
-- Clarify in the relevant changelog/docs that:
-  - the dashboard points to the saved failure artifact
-  - inline suite log spam is intentionally suppressed
-  - the saved file is expected to contain cleaned diagnostic context, not just rerun metadata
-
-## Tests (add these)
-### Backend tests
-- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
-  - generic suite failure with distinct stdout/stderr content persists the full cleaned merged context
-  - interactive `test` output no longer prints `failure: ...` when the saved summary path is shown
-  - stderr-only generic failures still produce a useful saved summary
-  - failed-only rerun behavior remains unchanged when selector extraction fails
-- Extend [tests/python/test_output/test_test_runner_streaming_fallback.py](/Users/kfiramar/projects/current/envctl/tests/python/test_output/test_test_runner_streaming_fallback.py):
-  - stderr-only failure parsing in non-streaming fallback
-  - combined stdout/stderr fallback parsing
-
-### Frontend tests
-- Extend [tests/python/ui/test_dashboard_rendering_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_rendering_parity.py):
-  - renderer prefers or repairs to the short alias path when only `summary_path` is present
-- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
-  - interactive test failures still suppress duplicate dashboard-only failure blocks after inline failure-log removal
-
-### Integration/E2E tests
-- Prefer extending [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) as the main integration contract because it already spans test execution, summary persistence, state update, and dashboard snapshot rendering.
-- Add one focused dashboard-loop regression in [tests/python/ui/test_terminal_ui_dashboard_loop.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_terminal_ui_dashboard_loop.py) only if needed to prove the post-failure return-to-dashboard flow remains clean.
-
-## Observability / logging (if relevant)
-- Keep existing machine-readable events such as `test.suite.finish`, `test.suite.summary`, and `test.summary.persisted`.
-- If richer failure-body capture is added, emit only bounded metadata about artifact creation and capture source composition; do not emit the full failure body into events.
+- Emit bounded events rather than raw shell/script output.
+- Print one concise operator-facing summary after the launch phase, for example:
+  - launched surfaces count
+  - skipped count
+  - failure count with short reason
+- Avoid printing raw `cmux` command strings unless debug mode explicitly asks for them.
+- If a readiness/inspection surface is updated, reuse the same reason vocabulary as runtime events to avoid drift.
 
 ## Rollout / verification
 - Implement in this order:
-  1. richer failure-body capture in `action_test_runner.py`
-  2. summary writer updates in `action_command_orchestrator.py`
-  3. inline interactive failure-log suppression
-  4. dashboard short-path unification
-  5. parser fallback fix in `test_runner.py`
-- Verification commands:
-  - `./.venv/bin/python -m pytest tests/python/actions/test_actions_parity.py -q`
-  - `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_rendering_parity.py tests/python/ui/test_dashboard_orchestrator_restart_selector.py -q`
-  - `./.venv/bin/python -m pytest tests/python/test_output/test_test_runner_streaming_fallback.py -q`
-- Manual verification:
-  - trigger a known failing dashboard `test` run
-  - confirm the dashboard shows the saved path without inline suite log spam
-  - confirm the referenced summary file contains useful cleaned detail
-  - confirm `test --failed` still uses `failed_tests_manifest.json` correctly
+  1. config/env surface plus structured planning sync result
+  2. isolated `cmux`/AI launch helper with unit tests
+  3. planning/startup orchestration hook
+  4. prompt preset alias/contract resolution
+  5. docs and inspection/prereq updates
+- Verification commands for implementation phase:
+  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_planning_worktree_setup`
+  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prereq_policy`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prompt_install_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup`
+  - `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_orchestrator_flow`
+- Manual verification targets:
+  - inside an existing `cmux` workspace, run `envctl --plan <selection>` with the feature enabled and verify one new surface opens per newly created worktree
+  - confirm each new surface stays a normal interactive shell tab, is renamed correctly, receives typed `cd <worktree>`, then typed `codex`/`opencode`, then typed `/implement_plan`
+  - confirm the operator can continue using the same terminal session after the AI CLI finishes rather than landing in a closed or headless session
+  - rerun the same `--plan` and confirm no duplicate surfaces are opened when no additional worktrees are created
+  - disable the feature and confirm `--plan` behavior matches today exactly
 
 ## Definition of done
-- Dashboard-driven `test` failures no longer print redundant inline suite failure excerpts when a saved artifact path exists.
-- The displayed path resolves to a stable run-scoped file that contains materially complete cleaned failure detail for the affected project.
-- Generic suite failures preserve enough diagnostic detail for operators to debug without reading raw terminal noise.
-- Parser fallback no longer loses stderr-only failure detail.
-- Focused action, dashboard, and parser regressions cover the new contract.
+- `envctl --plan` can optionally launch `cmux` AI terminals for newly created worktrees when explicitly enabled.
+- The launch logic is isolated in a dedicated helper/module rather than embedded in low-level worktree creation code.
+- Worktree creation still seeds `MAIN_TASK.md`, writes provenance, and behaves as before when the feature is disabled.
+- The feature has explicit prereq/config/docs coverage and does not affect default-off users.
+- The canonical AI command contract (`implement_plan` alias or documented alternative) is explicit and tested.
+- Automated tests cover planning sync metadata, launch helper behavior, prompt preset contract, and real startup handoff.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: making saved summaries more complete can reintroduce terminal chrome or excessively large files.
-  - Mitigation: strip ANSI/progress noise and bound only pathological output while keeping materially useful context.
-- Risk: changing summary contents can break tests or tooling that assumed the old terse format.
-  - Mitigation: keep file names and manifest semantics stable; update tests/docs that rely on summary content.
-- Risk: removing inline failure excerpts can reduce immediate signal if artifact persistence fails.
-  - Mitigation: keep an explicit fallback inline error only when no artifact path can be produced.
+- Risk: `cmux` timing between CLI launch and slash-command send may be flaky across machines.
+  - Mitigation: centralize the typed-input wait/send policy in one helper, use bounded retries, and keep targeted unit/integration coverage around command ordering.
+- Risk: tying the feature to `CMUX_WORKSPACE_ID` / caller context may be too strict for some workflows.
+  - Mitigation: start with caller-context targeting for safety; add explicit workspace overrides only if real usage proves necessary.
+- Risk: adding an `implement_plan` alias changes the prompt installer contract and may surprise users who only know `implement_task`.
+  - Mitigation: keep `implement_task` intact, add the alias as backward-compatible expansion, and document both names clearly.
+- Risk: launch side effects could accidentally fire for existing worktrees if the planning sync summary is underspecified.
+  - Mitigation: capture created worktrees explicitly in structured sync results and lock the behavior with tests.
 
 ## Open questions (only if unavoidable)
-- None.
+- None. Repo evidence is sufficient to write the implementation plan. The one contract mismatch (`implement_plan` vs `implement_task`) should be resolved as part of implementation rather than blocking the plan.

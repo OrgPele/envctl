@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.planning.plan_agent_launch_support import PlanSelectionResult, PlanWorktreeSyncResult
 from envctl_engine.planning.worktree_domain import (
     _apply_setup_worktree_selection as domain_apply_setup_worktree_selection,
     _initial_plan_selected_counts as domain_initial_plan_selected_counts,
@@ -29,6 +30,7 @@ class PlanningWorktreeOrchestrator:
 
     def __init__(self, runtime: Any) -> None:
         self._runtime = runtime
+        self._last_plan_selection_result = PlanSelectionResult(raw_projects=[], selected_contexts=[])
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._runtime, name)
@@ -46,6 +48,9 @@ class PlanningWorktreeOrchestrator:
 
     def select_plan_projects(self, route: Route, project_contexts: list[Any]) -> list[Any]:
         return self._select_plan_projects(route, project_contexts)
+
+    def last_plan_selection_result(self) -> PlanSelectionResult:
+        return self._last_plan_selection_result
 
     def prompt_planning_selection(
         self,
@@ -114,7 +119,7 @@ class PlanningWorktreeOrchestrator:
         plan_counts: dict[str, int],
         raw_projects: list[tuple[str, Path]],
         keep_plan: bool,
-    ) -> tuple[list[tuple[str, Path]], str | None]:
+    ) -> PlanWorktreeSyncResult:
         return self._sync_plan_worktrees_from_plan_counts(
             plan_counts=plan_counts,
             raw_projects=raw_projects,

@@ -10,6 +10,7 @@ from typing import Callable
 
 from envctl_engine.runtime.command_router import Route, RouteError, parse_route
 from envctl_engine.config import EngineConfig, discover_local_config_state, load_config
+from envctl_engine.planning.plan_agent_launch_support import plan_agent_launch_prereq_commands
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
@@ -39,6 +40,8 @@ def check_prereqs(route: Route, config: EngineConfig) -> tuple[bool, str | None]
         required_tools.add("docker")
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
+    if route.command == "plan" and not bool(route.flags.get("planning_prs")):
+        required_tools.update(plan_agent_launch_prereq_commands(config))
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"

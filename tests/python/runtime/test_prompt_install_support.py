@@ -66,7 +66,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Would install continue_task for codex", rendered)
             self.assertIn("Would install merge_trees_into_dev for codex", rendered)
             self.assertIn("Would install create_plan for codex", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 5)
+            self.assertIn("Would install implement_plan for codex", rendered)
+            self.assertEqual(rendered.count("codex: planned "), 6)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,6 +89,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 [
                     str(Path(tmpdir) / ".codex" / "prompts" / "continue_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "create_plan.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "implement_plan.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "implement_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "merge_trees_into_dev.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "review_task_imp.md"),
@@ -178,6 +180,24 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("continue_task", _available_presets())
         self.assertIn("merge_trees_into_dev", _available_presets())
         self.assertIn("create_plan", _available_presets())
+        self.assertIn("implement_plan", _available_presets())
+
+    def test_install_prompts_can_install_implement_plan_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "implement_plan", "--dry-run", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["preset"], "implement_plan")
+            self.assertEqual(payload["results"][0]["message"], "Would install implement_plan for codex")
 
     def test_renderers_produce_expected_target_shapes(self) -> None:
         template = _load_template("implement_task")

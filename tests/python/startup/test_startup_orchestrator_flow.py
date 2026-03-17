@@ -9,6 +9,11 @@ from unittest.mock import patch
 
 from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    PlanAgentLaunchResult,
+    PlanSelectionResult,
+)
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
@@ -350,6 +355,49 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             written_state = captured["state"]
             self.assertEqual(written_state.run_id, "run-fresh-expand-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)
+
+    def test_plan_launch_hook_runs_before_disabled_startup_dashboard_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(
+                repo,
+                runtime,
+                extra={
+                    "TREES_STARTUP_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            order: list[str] = []
+            engine.planning_worktree_orchestrator._last_plan_selection_result = PlanSelectionResult(
+                raw_projects=[(context.name, context.root)],
+                selected_contexts=[context],
+                created_worktrees=(CreatedPlanWorktree(name=context.name, root=Path(context.root), plan_file="feature/task.md"),),
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    side_effect=lambda *args, **kwargs: (
+                        order.append("launch"),
+                        PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                    )[1],
+                ),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda *args, **kwargs: order.append("write_artifacts"),
+                ),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(order, ["launch", "write_artifacts"])
 
 
 if __name__ == "__main__":
