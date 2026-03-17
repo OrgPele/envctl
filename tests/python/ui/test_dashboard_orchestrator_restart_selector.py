@@ -1522,6 +1522,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertNotIn("Command failed (exit 1).", out.getvalue())
         rendered = strip_ansi(out.getvalue())
         self.assertNotIn("Test failure summary for Main:", rendered)
+        self.assertNotIn("/tmp/runtime/run_1/ft_deadbeef00.txt", rendered)
         self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
 
     def test_interactive_test_success_pauses_before_returning_to_dashboard(self) -> None:

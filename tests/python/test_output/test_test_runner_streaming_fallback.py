@@ -265,6 +265,62 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             runtime.process_runner.calls,
         )
 
+    def test_run_tests_fallback_parses_stderr_only_pytest_failures(self) -> None:
+        class _PytestStderrOnlyRunner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cmd, cwd, env, timeout
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", "pytest"],
+                    returncode=1,
+                    stdout="",
+                    stderr=(
+                        "FAILED tests/test_auth.py::test_login - AssertionError: expected 200, got 500\n"
+                        "============================== 1 failed in 0.03s ==============================\n"
+                    ),
+                )
+
+        runtime = _RuntimeStreamingStub(_PytestStderrOnlyRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+
+        completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        assert runner.last_result is not None
+        self.assertEqual(runner.last_result.failed_tests, ["tests/test_auth.py::test_login"])
+        self.assertEqual(
+            runner.last_result.error_details["tests/test_auth.py::test_login"],
+            "AssertionError: expected 200, got 500",
+        )
+        self.assertTrue(runner.last_result.counts_detected)
+        self.assertEqual(runner.last_result.failed, 1)
+
+    def test_run_tests_fallback_parses_combined_stdout_and_stderr_failure_output(self) -> None:
+        class _PytestSplitStreamsRunner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cmd, cwd, env, timeout
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", "pytest"],
+                    returncode=1,
+                    stdout="========================= 1 failed, 2 passed in 0.04s =========================\n",
+                    stderr="FAILED tests/test_auth.py::test_login - AssertionError: expected 200, got 500\n",
+                )
+
+        runtime = _RuntimeStreamingStub(_PytestSplitStreamsRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+
+        completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        assert runner.last_result is not None
+        self.assertTrue(runner.last_result.counts_detected)
+        self.assertEqual(runner.last_result.passed, 2)
+        self.assertEqual(runner.last_result.failed, 1)
+        self.assertEqual(runner.last_result.failed_tests, ["tests/test_auth.py::test_login"])
+        self.assertEqual(
+            runner.last_result.error_details["tests/test_auth.py::test_login"],
+            "AssertionError: expected 200, got 500",
+        )
+
     def test_detect_test_type_identifies_bun_run_test_as_jest_family(self) -> None:
         runtime = _RuntimeStub()
         runner = TestRunner(runtime, verbose=False)

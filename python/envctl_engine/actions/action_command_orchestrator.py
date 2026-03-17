@@ -1204,6 +1204,7 @@ class ActionCommandOrchestrator:
 
         failures = self._collect_failed_tests(outcomes, project_name=project_name)
         generic_suite_failures = self._collect_generic_suite_failures(outcomes, project_name=project_name)
+        suite_failure_contexts = self._collect_suite_failure_contexts(outcomes, project_name=project_name)
         manifest_entries = self._collect_failed_test_manifest_entries(outcomes, project_name=project_name)
         failed_only = any(
             bool(item.get("failed_only", False))
@@ -1225,6 +1226,13 @@ class ActionCommandOrchestrator:
                 if error_text:
                     for detail in self._format_summary_error_lines(str(error_text)):
                         lines.append(f"    {detail}")
+                lines.append("")
+            for suite_name, context_text in suite_failure_contexts:
+                clean_suite_name = strip_ansi(str(suite_name)).strip()
+                lines.append(f"[{clean_suite_name}]")
+                lines.append("suite context:")
+                for detail in self._format_summary_error_lines(str(context_text)):
+                    lines.append(f"    {detail}")
                 lines.append("")
         elif generic_suite_failures:
             for suite_name, summary in generic_suite_failures:
@@ -1388,7 +1396,7 @@ class ActionCommandOrchestrator:
             failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
             if failed_tests:
                 continue
-            summary = str(item.get("failure_summary", "") or "").strip()
+            summary = str(item.get("failure_details", "") or item.get("failure_summary", "") or "").strip()
             if not summary:
                 summary = "Test command failed before envctl could extract failed tests."
             suite_name = self._suite_display_name(
@@ -1396,6 +1404,35 @@ class ActionCommandOrchestrator:
                 failed_only=bool(item.get("failed_only", False)),
             )
             collected.append((suite_name, summary))
+        return collected
+
+    def _collect_suite_failure_contexts(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        project_name: str | None = None,
+    ) -> list[tuple[str, str]]:
+        collected: list[tuple[str, str]] = []
+        ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+        for item in ordered:
+            if project_name is not None:
+                item_project_name = str(item.get("project_name", "")).strip()
+                if item_project_name != project_name:
+                    continue
+            if int(item.get("returncode", 0) or 0) == 0:
+                continue
+            parsed = item.get("parsed")
+            failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
+            if not failed_tests:
+                continue
+            context_text = str(item.get("failure_details", "") or "").strip()
+            if not context_text:
+                continue
+            suite_name = self._suite_display_name(
+                str(item.get("suite", "suite")),
+                failed_only=bool(item.get("failed_only", False)),
+            )
+            collected.append((suite_name, context_text))
         return collected
 
     @staticmethod

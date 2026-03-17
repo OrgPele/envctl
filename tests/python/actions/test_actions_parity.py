@@ -390,7 +390,7 @@ class ActionsParityTests(unittest.TestCase):
                 msg=status_messages,
             )
 
-    def test_interactive_test_action_prints_failure_excerpt(self) -> None:
+    def test_interactive_test_action_omits_inline_failure_excerpt_when_summary_artifact_is_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -406,6 +406,26 @@ class ActionsParityTests(unittest.TestCase):
                 stderr="ImportError: cannot import name 'x' from 'y'\n",
             )
             engine.process_runner = fake_runner  # type: ignore[assignment]
+            state = RunState(
+                run_id="run-interactive-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
 
             route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
@@ -420,8 +440,9 @@ class ActionsParityTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("failure: ", rendered)
-            self.assertIn("ImportError: cannot import name 'x' from 'y'", rendered)
+            self.assertNotIn("failure: ", rendered)
+            self.assertIn("failure summary:", rendered)
+            self.assertIn("ft_", rendered)
 
     def test_action_commands_require_explicit_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1124,6 +1145,160 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("AssertionError: expected 201, got 500", rendered)
             self.assertIn(short_summary_path, rendered)
             self.assertNotIn(summary_path, rendered)
+
+    def test_test_action_writes_generic_suite_failure_summary_with_combined_cleaned_streams(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            engine.process_runner = _FakeRunner(returncode=1)  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-generic-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _GenericFailureRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout=(
+                            "Collecting tests...\n"
+                            "RuntimeConfigError: frontend env is missing API_URL\n"
+                            "stdout unique detail\n"
+                        ),
+                        stderr=(
+                            "\x1b[31mImportError: cannot import name 'settings' from 'app.config'\x1b[0m\n"
+                            "stderr unique detail\n"
+                        ),
+                    )
+
+            dispatch_out = StringIO()
+            with (
+                redirect_stdout(dispatch_out),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _GenericFailureRunner),
+            ):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route.flags = {**route.flags, "interactive_command": True, "batch": True}
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            refreshed = engine._try_load_existing_state(mode="trees", strict_mode_match=False)
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            entry = refreshed.metadata["project_test_summaries"]["feature-a-1"]
+            assert isinstance(entry, dict)
+            summary_path = Path(str(entry["summary_path"]))
+            short_summary_path = Path(str(entry["short_summary_path"]))
+            summary_text = summary_path.read_text(encoding="utf-8")
+
+            self.assertEqual(summary_text, short_summary_path.read_text(encoding="utf-8"))
+            self.assertIn("- suite failed before envctl could extract failed tests", summary_text)
+            self.assertIn("stderr:", summary_text)
+            self.assertIn("stdout:", summary_text)
+            self.assertIn("ImportError: cannot import name 'settings' from 'app.config'", summary_text)
+            self.assertIn("stderr unique detail", summary_text)
+            self.assertIn("RuntimeConfigError: frontend env is missing API_URL", summary_text)
+            self.assertIn("stdout unique detail", summary_text)
+            self.assertNotIn("\x1b", summary_text)
+            self.assertIn("failure summary:", dispatch_out.getvalue())
+            self.assertNotIn("failure: ", dispatch_out.getvalue())
+
+    def test_test_action_writes_generic_suite_failure_summary_for_stderr_only_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            engine.process_runner = _FakeRunner(returncode=1)  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-stderr-only-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _StderrOnlyFailureRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            "  File \"/tmp/project/conftest.py\", line 4, in <module>\n"
+                            "ModuleNotFoundError: No module named 'missing_dependency'\n"
+                        ),
+                    )
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _StderrOnlyFailureRunner):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            refreshed = engine._try_load_existing_state(mode="trees", strict_mode_match=False)
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            entry = refreshed.metadata["project_test_summaries"]["feature-a-1"]
+            assert isinstance(entry, dict)
+            summary_text = Path(str(entry["summary_path"])).read_text(encoding="utf-8")
+
+            self.assertIn("Traceback (most recent call last):", summary_text)
+            self.assertIn("ModuleNotFoundError: No module named 'missing_dependency'", summary_text)
+            self.assertNotIn("stdout:", summary_text)
 
     def test_envctl_repo_test_bootstrap_creates_repo_local_venv_and_installs_dev_deps(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
