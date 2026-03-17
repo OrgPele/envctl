@@ -16,6 +16,7 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.command_router import list_supported_commands
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RunState, ServiceRecord
 
@@ -1085,6 +1086,77 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "config_startup_disabled")
         self.assertEqual(payload["dependencies"], [])
         self.assertEqual(payload["services"], {"backend": False, "frontend": False})
+
+    def test_explain_startup_json_reports_dashboard_reuse_decision_for_disabled_startup(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        runtime_root = Path(tmpdir.name) / "runtime"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime_root),
+                "MAIN_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+        context = runtime._discover_projects(mode="main")[0]
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="main",
+            project_contexts=[context],
+        )
+        runtime.state_repository.save_resume_state(
+            state=RunState(
+                run_id="run-dashboard",
+                mode="main",
+                services={},
+                requirements={},
+                metadata={
+                    **metadata,
+                    "dashboard_runs_disabled": True,
+                    "repo_scope_id": config.runtime_scope_id,
+                },
+            ),
+            emit=lambda *args, **kwargs: None,
+            runtime_map_builder=lambda _state: {},
+        )
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["mode"], "main")
+        self.assertEqual(payload["run_reuse"]["decision_kind"], "resume_dashboard_exact")
+        self.assertEqual(payload["run_reuse"]["reason"], "exact_match")
+        self.assertEqual(payload["run_reuse"]["run_id"], "run-dashboard")
+
+    def test_explain_startup_json_preserves_plan_selection_semantics(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_DEFAULT_MODE": "trees",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["command"], "plan")
+        self.assertEqual(payload["selection"]["reason"], "no_planning_files")
+        self.assertEqual(payload["selection"]["selected_projects"], [])
 
 
 if __name__ == "__main__":

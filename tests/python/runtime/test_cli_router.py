@@ -55,6 +55,17 @@ class CliRouterTests(unittest.TestCase):
         route = parse_route(["--init"], env={})
         self.assertEqual(route.command, "config")
 
+    def test_explain_startup_takes_precedence_over_plan_tokens_regardless_of_order(self) -> None:
+        for argv in (
+            ["--explain-startup", "--plan", "feature-a", "--json"],
+            ["--plan", "--explain-startup", "feature-a", "--json"],
+        ):
+            route = parse_route(argv, env={})
+            self.assertEqual(route.command, "explain-startup")
+            self.assertEqual(route.mode, "trees")
+            self.assertEqual(route.passthrough_args, ["feature-a"])
+            self.assertTrue(bool(route.flags.get("json")))
+
 
 if __name__ == "__main__":
     unittest.main()

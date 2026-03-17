@@ -20,6 +20,7 @@ config_module = importlib.import_module("envctl_engine.config")
 runtime_module = importlib.import_module("envctl_engine.runtime.engine_runtime")
 models_module = importlib.import_module("envctl_engine.state.models")
 state_module = importlib.import_module("envctl_engine.state")
+startup_support = importlib.import_module("envctl_engine.runtime.engine_runtime_startup_support")
 
 parse_route = command_router.parse_route
 load_config = config_module.load_config
@@ -517,7 +518,7 @@ class LifecycleParityTests(unittest.TestCase):
             engine._discover_projects = lambda **_kwargs: [context]  # type: ignore[assignment]
             engine._select_plan_projects = lambda route, contexts: contexts  # type: ignore[assignment]
             engine._start_project_context = lambda **_kwargs: self.fail("project startup should not run")  # type: ignore[assignment]
-            engine._try_load_existing_state = lambda **_kwargs: self.fail("auto-resume should not run")  # type: ignore[assignment]
+            engine._try_load_existing_state = lambda **_kwargs: None  # type: ignore[assignment]
 
             out = StringIO()
             with redirect_stdout(out):
@@ -554,7 +555,7 @@ class LifecycleParityTests(unittest.TestCase):
             )
             engine._discover_projects = lambda **_kwargs: [context]  # type: ignore[assignment]
             engine._start_project_context = lambda **_kwargs: self.fail("project startup should not run")  # type: ignore[assignment]
-            engine._try_load_existing_state = lambda **_kwargs: self.fail("auto-resume should not run")  # type: ignore[assignment]
+            engine._try_load_existing_state = lambda **_kwargs: None  # type: ignore[assignment]
             engine._write_artifacts = lambda *_args, **_kwargs: None  # type: ignore[assignment]
             engine._should_enter_post_start_interactive = lambda _route: True  # type: ignore[assignment]
 
@@ -575,6 +576,68 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertEqual(len(seen_state), 1)
             self.assertEqual(seen_state[0].mode, "main")
             self.assertEqual(seen_state[0].metadata.get("dashboard_configured_service_types"), ["backend", "frontend"])
+
+    def test_dashboard_reopen_uses_same_run_id_but_fresh_session_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_STARTUP_ENABLE": "false",
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            context = ProjectContext(
+                name="Main",
+                root=repo,
+                ports={
+                    "backend": PortPlan("Main", 8000, 8000, 8000, "requested"),
+                    "frontend": PortPlan("Main", 9000, 9000, 9000, "requested"),
+                },
+            )
+            first_engine = PythonEngineRuntime(config, env={})
+            metadata = startup_support.build_startup_identity_metadata(
+                first_engine,
+                runtime_mode="main",
+                project_contexts=[context],
+            )
+            first_engine.state_repository.save_resume_state(
+                state=RunState(
+                    run_id="run-dashboard",
+                    mode="main",
+                    services={},
+                    requirements={},
+                    metadata={
+                        **metadata,
+                        "dashboard_runs_disabled": True,
+                        "repo_scope_id": config.runtime_scope_id,
+                    },
+                ),
+                emit=lambda *args, **kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+            second_engine = PythonEngineRuntime(config, env={})
+            second_engine._discover_projects = lambda **_kwargs: [context]  # type: ignore[assignment]
+            second_engine._should_enter_post_start_interactive = lambda _route: False  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = second_engine.dispatch(parse_route(["--batch"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0)
+            latest = second_engine.state_repository.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertEqual(latest.run_id, "run-dashboard")
+            self.assertEqual(latest.metadata.get("last_reuse_reason"), "resume_dashboard_exact")
+            rendered = out.getvalue()
+            self.assertNotIn("Resumed run_id=", rendered)
+            self.assertIn("run-dashboard", rendered)
+            self.assertIn("session_id:", rendered)
 
     def test_explicit_start_still_blocks_when_main_runs_are_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
