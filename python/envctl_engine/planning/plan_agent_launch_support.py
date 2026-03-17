@@ -12,7 +12,7 @@ from envctl_engine.config import EngineConfig
 from envctl_engine.shared.parsing import parse_bool
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
-_DEFAULT_PRESET = "implement_plan"
+_DEFAULT_PRESET = "implement_task"
 _DEFAULT_SHELL = "zsh"
 _SURFACE_READY_DELAY_SECONDS = 0.15
 _DEFAULT_CLI_READY_DELAY_SECONDS = 0.35

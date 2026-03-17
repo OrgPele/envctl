@@ -205,7 +205,7 @@ Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
-- `ENVCTL_PLAN_AGENT_PRESET=implement_plan` selects the prompt preset name by default
+- `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - Codex launches send `/prompts:<preset>` while OpenCode launches send `/<preset>`
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`

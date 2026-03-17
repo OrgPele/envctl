@@ -73,7 +73,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
         "ENVCTL_PLAN_AGENT_CLI": "codex",
-        "ENVCTL_PLAN_AGENT_PRESET": "implement_plan",
+        "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",

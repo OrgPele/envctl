@@ -184,6 +184,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
                     "CMUX_WORKSPACE_ID": "workspace:7",
                     "CMUX_SURFACE_ID": "surface:1",
                 },
@@ -229,9 +230,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         args=["cmux"],
                         returncode=0,
                         stdout=(
-                            "  /prompts:implement_plan\n"
-                            "  /prompts:implement_plan.bak-20260313-192914\n"
-                            "  /prompts:implement_plan\n"
+                            "  /prompts:implement_task\n"
+                            "  /prompts:implement_task.bak-20260313-192914\n"
+                            "  /prompts:implement_task\n"
                             "  Sisyphus (Ultraworker)\n"
                         ),
                         stderr="",
@@ -240,7 +241,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  /prompts:implement_plan\n  Sisyphus (Ultraworker)\n",
+                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
@@ -276,7 +277,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "codex"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_plan"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"], rt.process_runner.calls)
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]), 2)
             self.assertLess(rt.process_runner.calls.index(focus_restore), rt.process_runner.calls.index(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"]))
             self.assertGreaterEqual(
@@ -298,6 +299,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
                     "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "false",
                 },
             )
@@ -324,11 +326,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         args=["cmux"],
                         returncode=0,
                         stdout=(
-                            "  ┃ /implement_plan                                                   ┃\n"
-                            "  ┃ /implement_plan.bak-20260313-192914                               ┃\n"
-                            "  ┃ /implement_plan.bak-20260315-173140                               ┃\n"
+                            "  ┃ /implement_task                                                   ┃\n"
+                            "  ┃ /implement_task.bak-20260313-192914                               ┃\n"
+                            "  ┃ /implement_task.bak-20260315-173140                               ┃\n"
                             "  ┃                                                                 \n"
-                            "  ┃  /implement_plan                                                 \n"
+                            "  ┃  /implement_task                                                 \n"
                         ),
                         stderr="",
                     ),
@@ -338,7 +340,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         returncode=0,
                         stdout=(
                             "  ┃                                                                 \n"
-                            "  ┃  /implement_plan                                                 \n"
+                            "  ┃  /implement_task                                                 \n"
                             "  ┃                                                                 \n"
                             "  ┃  Sisyphus (Ultraworker)                                          \n"
                         ),
@@ -367,7 +369,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "enter"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "/implement_plan"], rt.process_runner.calls)
+            self.assertIn(["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", "/implement_task"], rt.process_runner.calls)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:4", "--surface", "surface:12", "--lines", "80"]), 3)
             self.assertEqual(rt.process_runner.calls[-1], ["cmux", "send-key", "--workspace", "workspace:4", "--surface", "surface:12", "enter"])
