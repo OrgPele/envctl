@@ -200,6 +200,12 @@ envctl --parallel-plan
 envctl --sequential-plan
 ```
 
+Commit defaults:
+
+- `envctl commit` now reads its default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `--commit-message` or `--commit-message-file`
+- keep exactly one `### Envctl pointer ###` marker in that file
+- append new implementation summaries immediately before the pointer marker so the next default commit consumes the queued segment after the marker
+
 Debug and diagnostics:
 
 ```bash
