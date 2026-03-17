@@ -89,4 +89,4 @@ Use this structure (adapt section names only if truly necessary):
 - Plan matches existing todo/plans/ quality and depth.
 - Every claim is grounded in code or documented evidence.
 - Tests and verification steps are concrete and complete.
-- Changelog entry appended.
+- Plan file written with no implementation-side ledger update required.
