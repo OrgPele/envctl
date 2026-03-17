@@ -31,6 +31,7 @@ def ensure_local_config(
         _emit_local_config_event(emit, "config.bootstrap.cancelled", local_state)
         raise RuntimeError("Configuration wizard cancelled. envctl requires a local .envctl file to continue.")
     message = _save_message(result)
+    _emit_ignore_status_event(emit, local_state=local_state, result=result)
     _emit_local_config_event(emit, "config.bootstrap.saved", local_state, saved_path=str(result.save_result.path))
     return ConfigCommandResult(changed=True, message=message)
 
@@ -48,6 +49,7 @@ def edit_local_config(
     if result is None:
         _emit_local_config_event(emit, "config.command.cancelled", local_state)
         return ConfigCommandResult(changed=False, message="Configuration edit cancelled.")
+    _emit_ignore_status_event(emit, local_state=local_state, result=result)
     _emit_local_config_event(emit, "config.command.saved", local_state, saved_path=str(result.save_result.path))
     return ConfigCommandResult(changed=True, message=_save_message(result))
 
@@ -126,4 +128,30 @@ def _emit_local_config_event(
         config_path=str(local_state.config_file_path),
         legacy_source_path=str(local_state.legacy_source_path) if local_state.legacy_source_path is not None else None,
         **payload,
+    )
+
+
+def _emit_ignore_status_event(
+    emit: Callable[..., None] | None,
+    *,
+    local_state: LocalConfigState,
+    result: ConfigWizardResult,
+) -> None:
+    status = result.save_result.ignore_status
+    if not callable(emit) or status is None:
+        return
+    if status.code in {"updated_existing_global_excludes", "already_present"}:
+        event = "config.ignore.global.updated"
+    elif status.code == "missing_global_excludes_configuration":
+        event = "config.ignore.global.skipped"
+    else:
+        event = "config.ignore.global.warning"
+    _emit_local_config_event(
+        emit,
+        event,
+        local_state,
+        ignore_status=status.code,
+        ignore_scope=status.scope,
+        ignore_target_path=str(status.target_path) if status.target_path is not None else None,
+        ignore_warning=status.warning,
     )

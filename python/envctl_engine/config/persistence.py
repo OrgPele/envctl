@@ -15,6 +15,7 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
+from envctl_engine.config.git_global_ignore import GlobalIgnoreStatus, ensure_envctl_global_ignores
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.actions.actions_test import (
@@ -51,6 +52,7 @@ class ConfigSaveResult:
     path: Path
     ignore_updated: bool
     ignore_warning: str | None
+    ignore_status: GlobalIgnoreStatus | None = None
 
 
 @dataclass(slots=True)
@@ -557,34 +559,22 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     merged = merge_managed_block(existing_text, render_managed_block(canonical_values))
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
-    ignore_updated, ignore_warning = ensure_local_config_ignored(local_state.base_dir)
+    ignore_status = ensure_global_ignore_status(local_state.base_dir)
     return ConfigSaveResult(
         path=local_state.config_file_path,
-        ignore_updated=ignore_updated,
-        ignore_warning=ignore_warning,
+        ignore_updated=ignore_status.updated,
+        ignore_warning=ignore_status.warning,
+        ignore_status=ignore_status,
     )
 
 
-def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
-    warnings: list[str] = []
-    gitignore_updated = False
-    exclude_updated = False
-    try:
-        gitignore_updated = _ensure_ignore_patterns(
-            Path(base_dir) / ".gitignore",
-            (".envctl*", "trees/", "MAIN_TASK.md"),
-        )
-    except OSError as exc:
-        warnings.append(f"Could not update .gitignore: {exc}")
+def ensure_global_ignore_status(base_dir: Path) -> GlobalIgnoreStatus:
+    return ensure_envctl_global_ignores(base_dir)
 
-    exclude_path = Path(base_dir) / ".git" / "info" / "exclude"
-    try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        exclude_updated = _ensure_ignore_patterns(exclude_path, (".envctl*",))
-    except OSError as exc:
-        warnings.append(f"Could not update .git/info/exclude: {exc}")
-    warning_text = "; ".join(warnings) if warnings else None
-    return gitignore_updated or exclude_updated, warning_text
+
+def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
+    status = ensure_global_ignore_status(base_dir)
+    return status.updated, status.warning
 
 
 def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:

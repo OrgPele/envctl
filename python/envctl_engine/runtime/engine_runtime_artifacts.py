@@ -179,9 +179,12 @@ def _cached_runtime_readiness_payload(runtime: Any) -> str | None:
 
 def _runtime_readiness_async_enabled(runtime: Any) -> bool:
     env = getattr(runtime, "env", None)
-    if not isinstance(env, dict) or not env:
+    if not isinstance(env, dict):
         return False
-    raw = str(env.get("ENVCTL_ASYNC_RUNTIME_READINESS_REPORT", "true")).strip().lower()
+    raw_value = env.get("ENVCTL_ASYNC_RUNTIME_READINESS_REPORT")
+    if raw_value is None:
+        return False
+    raw = str(raw_value).strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

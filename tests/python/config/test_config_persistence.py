@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -23,6 +26,7 @@ from envctl_engine.config import (
 )
 from envctl_engine.config.persistence import (
     ManagedConfigValues,
+    ensure_global_ignore_status,
     ensure_local_config_ignored,
     managed_values_from_mapping,
     managed_values_to_mapping,
@@ -33,6 +37,40 @@ from envctl_engine.config.persistence import (
 
 
 class ConfigPersistenceTests(unittest.TestCase):
+    def _init_git_repo(self, root: Path) -> None:
+        subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _isolated_git_env(self, tmpdir: str, *, excludes_path: Path | None = None) -> dict[str, str]:
+        home = Path(tmpdir) / "home"
+        xdg = Path(tmpdir) / "xdg"
+        home.mkdir(parents=True, exist_ok=True)
+        xdg.mkdir(parents=True, exist_ok=True)
+        global_config = Path(tmpdir) / "gitconfig"
+        global_config.write_text("", encoding="utf-8")
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg),
+            "GIT_CONFIG_GLOBAL": str(global_config),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        if excludes_path is not None:
+            subprocess.run(
+                ["git", "config", "--global", "core.excludesFile", str(excludes_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        return env
+
     def test_merge_managed_block_preserves_unknown_lines(self) -> None:
         values = ManagedConfigValues(
             default_mode="trees",
@@ -451,43 +489,92 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("The shared section below applies to both backend and frontend launches.", upgraded)
         self.assertIn("DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}", upgraded)
 
+    def test_ignore_local_config_updates_configured_global_excludes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            repo_exclude_path = repo / ".git" / "info" / "exclude"
+            repo_exclude_before = repo_exclude_path.read_text(encoding="utf-8")
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            excludes_path.write_text("# existing user rule\n*.local\n", encoding="utf-8")
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
+
+            with patch.dict(os.environ, env, clear=True):
+                updated, warning = ensure_local_config_ignored(repo)
+
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            excludes_text = excludes_path.read_text(encoding="utf-8")
+            self.assertIn("*.local", excludes_text)
+            self.assertIn(".envctl*", excludes_text)
+            self.assertIn("MAIN_TASK.md", excludes_text)
+            self.assertIn("OLD_TASK_*.md", excludes_text)
+            self.assertIn("trees/", excludes_text)
+            self.assertIn("trees-*", excludes_text)
+            self.assertFalse((repo / ".gitignore").exists())
+            self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
+
     def test_ignore_local_config_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+            self._init_git_repo(repo)
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
 
-            updated_first, warning_first = ensure_local_config_ignored(repo)
-            updated_second, warning_second = ensure_local_config_ignored(repo)
-            exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-            gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
+            with patch.dict(os.environ, env, clear=True):
+                updated_first, warning_first = ensure_local_config_ignored(repo)
+                updated_second, warning_second = ensure_local_config_ignored(repo)
+            exclude_text = excludes_path.read_text(encoding="utf-8")
             exclude_lines = exclude_text.splitlines()
-            gitignore_lines = gitignore_text.splitlines()
 
             self.assertTrue(updated_first)
             self.assertIsNone(warning_first)
             self.assertFalse(updated_second)
             self.assertIsNone(warning_second)
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
-            self.assertEqual(gitignore_lines.count(".envctl*"), 1)
-            self.assertEqual(gitignore_lines.count("trees/"), 1)
-            self.assertEqual(gitignore_lines.count("MAIN_TASK.md"), 1)
+            self.assertEqual(exclude_lines.count("MAIN_TASK.md"), 1)
+            self.assertEqual(exclude_lines.count("OLD_TASK_*.md"), 1)
+            self.assertEqual(exclude_lines.count("trees/"), 1)
+            self.assertEqual(exclude_lines.count("trees-*"), 1)
+            self.assertFalse((repo / ".gitignore").exists())
 
-    def test_ignore_local_config_does_not_duplicate_existing_gitignore_entries(self) -> None:
+    def test_ignore_local_config_warns_when_global_excludes_are_not_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
-            (repo / ".gitignore").write_text(".envctl*\ntrees/\nMAIN_TASK.md\n", encoding="utf-8")
+            self._init_git_repo(repo)
+            repo_exclude_path = repo / ".git" / "info" / "exclude"
+            repo_exclude_before = repo_exclude_path.read_text(encoding="utf-8")
+            env = self._isolated_git_env(tmpdir)
 
-            updated, warning = ensure_local_config_ignored(repo)
+            with patch.dict(os.environ, env, clear=True):
+                updated, warning = ensure_local_config_ignored(repo)
 
-            gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
-            exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-            exclude_lines = exclude_text.splitlines()
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            assert warning is not None
+            self.assertIn("global", warning.lower())
+            self.assertFalse((repo / ".gitignore").exists())
+            self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
 
-            self.assertTrue(updated)
-            self.assertIsNone(warning)
-            self.assertEqual(gitignore_text, ".envctl*\ntrees/\nMAIN_TASK.md\n")
-            self.assertEqual(exclude_lines.count(".envctl*"), 1)
+    def test_global_ignore_status_distinguishes_lookup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+
+            class _Result:
+                returncode = 2
+                stdout = ""
+                stderr = "fatal: bad config file"
+
+            with patch("envctl_engine.config.git_global_ignore.subprocess.run", return_value=_Result()):
+                status = ensure_global_ignore_status(repo)
+
+            self.assertEqual(status.code, "global_excludes_lookup_failed")
+            self.assertFalse(status.updated)
+            self.assertIsNone(status.target_path)
+            self.assertIsNotNone(status.warning)
 
 
 if __name__ == "__main__":

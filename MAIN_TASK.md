@@ -1,183 +1,239 @@
-# Envctl Dashboard Test Failure Artifact Path Cleanup
+# Envctl Global Ignore For Local Artifacts Plan
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Make the interactive dashboard and test action output show a single saved artifact path for failed test detail instead of echoing redundant inline failure logs.
-  - Ensure the file referenced by the dashboard path is complete enough for operators to diagnose suite-level failures, including failures where envctl cannot derive rerunnable selectors.
-  - Keep failed-test rerun support (`failed_tests_manifest.json`) intact while improving the operator-facing artifact contract.
+  - Stop mutating repo-local ignore files for envctl-owned local workflow artifacts during config save/bootstrap.
+  - Move envctl’s ignore contract to a per-user Git global excludes workflow so local files such as `.envctl` and `MAIN_TASK.md` stop appearing as repo changes without being committed into project `.gitignore`.
+  - Make the config wizard, headless `config` command output, and release/shipability checks reflect the new global-ignore source of truth.
+  - Centralize the envctl artifact ignore inventory so new local-only workflow files are added in one place instead of drifting across docs, prompts, and tests.
 - Non-goals:
-  - Changing test command selection, parallelism policy, or failed-test rerun semantics beyond the artifact/reporting path.
-  - Reworking non-test project action failure reporting (`migrate`, `review`, `pr`, `commit`), which already uses separate `report_path` handling.
-  - Changing runtime state root layout outside the existing run-scoped artifact tree.
+  - Changing `.envctl` from a repo-local file to a user-global config file. The config file remains repo-local; only ignore management changes.
+  - Reworking commit/PR behavior that consumes `MAIN_TASK.md` (`python/envctl_engine/actions/project_action_domain.py`).
+  - Changing tracked planning files under `todo/plans/`.
+  - Automatically deleting legacy `.gitignore` entries from arbitrary downstream repos; existing local repo ignores can remain until users clean them up manually.
 - Assumptions:
-  - The operator-visible problem is the legacy dashboard path because the user repro text matches `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_snapshot` output (`Development Environment - Interactive Mode`, `run_id`, `session_id`, `Configured Services`, `tests:`).
-  - The desired dashboard behavior is: show the saved artifact path once, keep the dashboard itself concise, and move complete failure context into the saved file behind that path.
+  - The current minimum envctl local-only artifact set is grounded in repo evidence and should initially include:
+    - `.envctl*` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+    - `MAIN_TASK.md` from `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan` and `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source` / `_pr_body` / `_main_task_title`
+    - `OLD_TASK_*.md` because `python/envctl_engine/runtime/prompt_templates/continue_task.md` instructs rotating `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`
+    - nested worktree roots under `trees/` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+    - flat worktree roots `trees-*` because `python/envctl_engine/planning/worktree_domain.py:_preferred_tree_root_for_feature` and `tests/python/planning/test_discovery_topology.py:test_discovers_flat_trees_dash_feature_roots` already support them
+  - Global Git configuration is more sensitive than repo-local `.gitignore`, so envctl should not silently replace a user’s existing global excludes file.
 
 ## Goal (user experience)
-After a failed `test` command from the interactive dashboard, the operator should see one stable `tests:` / `failure summary:` artifact path per affected project and should not see redundant suite log excerpts inline in the dashboard command area. Opening the referenced file should show the complete cleaned failure context for that project, including generic suite failures such as startup/import/configuration crashes where envctl cannot extract rerunnable test selectors.
+When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl-managed worktree roots out of normal `git status` by relying on the user’s global Git excludes setup instead of editing the repository’s `.gitignore` or `.git/info/exclude`. The wizard and CLI output should explain the global-ignore contract clearly, and release/readiness tooling should behave consistently when these files are ignored globally.
 
 ## Business logic and data model mapping
-- Command dispatch and ownership:
-  - `python/envctl_engine/runtime/engine_runtime_dispatch.py:dispatch_command` routes action commands to `runtime.action_command_orchestrator.execute(...)`.
-  - `python/envctl_engine/runtime/engine_runtime.py:_run_test_action` delegates `test` routes to `ActionCommandOrchestrator.run_test_action(...)`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_test_action` delegates execution to `python/envctl_engine/actions/action_test_runner.py:run_test_action`.
-- Test execution and failure summarization:
-  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` builds per-suite outcomes and currently stores `failure_summary` via `_summarize_failure_output(...)`.
-  - `python/envctl_engine/test_output/test_runner.py:TestRunner.run_tests`, `_run_with_streaming(...)` populate parser results and return cleaned subprocess stdout/stderr.
-  - `python/envctl_engine/test_output/parser_base.py:TestResult` carries `failed_tests`, `error_details`, and summary counts consumed by artifact persistence.
-- Persisted state and artifact model:
-  - `python/envctl_engine/state/models.py:RunState.metadata` stores `project_test_summaries`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` writes `project_test_summaries`, `project_test_results_root`, and `project_test_results_updated_at`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes:
-    - `summary_path`: `runs/<run_id>/test-results/<stamp>/<project>/failed_tests_summary.txt`
-    - `short_summary_path`: `runs/<run_id>/ft_<digest>.txt`
-    - `manifest_path`: `failed_tests_manifest.json`
-    - `state_path`: `test_state.txt`
-- Dashboard/UI rendering:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_print_test_suite_overview(...)` prints per-project `failure summary:` paths after suite execution.
-  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` renders the persistent `tests:` dashboard row from `project_test_summaries`.
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` suppresses a detached duplicate block when saved test summaries already exist.
+- Config persistence and save result contract:
+  - `python/envctl_engine/config/persistence.py:save_local_config`
+  - `python/envctl_engine/config/persistence.py:ConfigSaveResult`
+  - `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+  - `python/envctl_engine/config/persistence.py:_ensure_ignore_patterns`
+  - `python/envctl_engine/config/persistence.py:config_review_text`
+- Interactive/bootstrap and headless command surfaces:
+  - `python/envctl_engine/config/wizard_domain.py:ensure_local_config`
+  - `python/envctl_engine/config/wizard_domain.py:edit_local_config`
+  - `python/envctl_engine/config/wizard_domain.py:_save_message`
+  - `python/envctl_engine/config/command_support.py:run_config_command`
+  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
+  - `python/envctl_engine/ui/textual/screens/config_wizard.py` review-step summary text
+- Downstream consumers of envctl local workflow artifacts:
+  - `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan`
+  - `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source`
+  - `python/envctl_engine/actions/project_action_domain.py:_pr_body`
+  - `python/envctl_engine/actions/project_action_domain.py:_main_task_title`
+- Release/readiness behavior that already depends on Git ignore semantics:
+  - `python/envctl_engine/shell/release_gate.py:evaluate_shipability`
+  - `scripts/release_shipability_gate.py:main`
+- Documentation surfaces that currently describe repo-local ignore mutation:
+  - `docs/user/first-run-wizard.md`
+  - `README.md`
+  - `docs/reference/configuration.md`
+  - `docs/developer/config-and-bootstrap.md`
+  - `docs/user/getting-started.md`
+  - `docs/user/python-engine-guide.md`
 
 ## Current behavior (verified in code)
-- Failed test runs already persist per-project artifacts and state metadata:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` creates a new `test-results/run_<timestamp>/` directory under `runs/<run_id>/`.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes both `failed_tests_summary.txt` and the shorter `ft_<digest>.txt` alias, then persists those paths into `RunState.metadata["project_test_summaries"]`.
-- The dashboard snapshot already knows how to show a path instead of file contents:
-  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` prints:
-    - `✓/✗ tests: (<timestamp>)`
-    - the summary path on the next line
-  - `tests/python/actions/test_actions_parity.py:test_test_action_persists_failed_test_summary_artifacts...` verifies the dashboard renders `short_summary_path` and does not render the deeper `summary_path` when both are present.
-- Interactive dashboard failure handling already avoids a second detached “failure details” block:
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` only checks whether saved summary paths exist and returns `True` so `Command failed (exit 1).` is not printed again.
-  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py:test_interactive_test_failure_with_saved_summary_skips_duplicate_dashboard_failure_block` locks in that suppression.
-- The remaining inline noise comes from test action execution, not from the dashboard row:
-  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints `failure: ...` for every failed suite during interactive runs.
-  - `_print_test_suite_overview(...)` then prints `failure summary:` plus the saved artifact path, so the operator sees both the inline excerpt and the saved path.
-- The saved failure text is incomplete in generic suite-failure scenarios:
-  - `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` takes only the first non-empty stream (`stderr` first, else `stdout`) and truncates to the first three non-empty lines.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` persists that already-truncated `failure_summary` when `parsed.failed_tests` is empty.
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_format_summary_error_lines(...)` further compacts/truncates lines to a 60-line structured subset before writing the summary file.
-  - The generic failure fallback string is currently `Test command failed before envctl could extract failed tests.` if no snippet survives.
-- Parser fallback also leaves completeness gaps when output is only on stderr:
-  - `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` calls `parser.parse_output(clean_stdout)` when streaming callbacks are unavailable, so stderr-only failure content is not parsed into `TestResult.error_details`.
-- Config/docs surface for this behavior is minimal:
-  - `docs/reference/configuration.md` documents test execution controls (`ENVCTL_ACTION_TEST_PARALLEL`, `ENVCTL_ACTION_TEST_PARALLEL_MAX`) and dashboard backend policy, but no config key currently governs failed-summary completeness or dashboard artifact-only rendering.
-  - `docs/developer/state-and-artifacts.md` establishes `runs/<run_id>/` as the authoritative per-run artifact location.
+- Saving config always writes the repo-local `.envctl`, then mutates repo-local ignore files:
+  - `save_local_config(...)` calls `ensure_local_config_ignored(local_state.base_dir)` immediately after writing `.envctl`.
+  - `ensure_local_config_ignored(...)` appends `.envctl*`, `trees/`, and `MAIN_TASK.md` to `<repo>/.gitignore`.
+  - The same helper appends only `.envctl*` to `<repo>/.git/info/exclude`.
+- The save-result contract is too coarse to describe where ignore changes happened:
+  - `ConfigSaveResult` only exposes `ignore_updated: bool` and `ignore_warning: str | None`.
+  - `config_review_text(...)`, `wizard_domain._save_message(...)`, and `_run_headless_config_command(...)` can only display generic ignore text, not “global ignore configured”, “global ignore missing”, or “global ignore requires consent”.
+- Wizard/docs currently promise repo `.gitignore` edits:
+  - `python/envctl_engine/ui/textual/screens/config_wizard.py` hard-codes review copy saying “`.envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible.`”
+  - `docs/user/first-run-wizard.md` says save “tries to add `.envctl*` and `trees/` to the repo `.gitignore`.”
+- The artifact inventory is incomplete and split across unrelated modules:
+  - `ensure_local_config_ignored(...)` does not cover `OLD_TASK_*.md`, even though prompt templates explicitly rotate `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`.
+  - `ensure_local_config_ignored(...)` does not cover `trees-*`, even though worktree discovery/creation supports flat roots through `_preferred_tree_root_for_feature(...)` and `_trees_root_for_worktree(...)`.
+  - Worktree-local `.envctl-state/worktree-provenance.json` exists, but because it lives inside worktree roots it is effectively covered when the worktree root itself is ignored.
+- Shipability already honors Git’s standard ignore stack:
+  - `evaluate_shipability(...)` calls `git ls-files --others --exclude-standard -- <required scopes>`.
+  - That means moving envctl artifacts from repo `.gitignore` to a global excludes file changes release-gate results even if no repo files change.
+- Repo evidence shows envctl relies on these local files in daily workflows:
+  - new worktrees receive `MAIN_TASK.md` copied from the selected plan via `_seed_main_task_from_plan(...)`
+  - PR title/body and commit-message fallback logic read `MAIN_TASK.md` via `project_action_domain.py`
+  - current envctl repo `.gitignore` still contains `.envctl*`, indicating the project itself is relying on repo-local ignores today
 
 ## Root cause(s) / gaps
-- `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` is intentionally terse, so generic suite failures lose important detail before they ever reach the persisted summary file.
-- `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` ignores `stderr` during non-streaming parser fallback, so stderr-only failures are underrepresented in `TestResult.error_details`.
-- `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints inline `failure:` excerpts in interactive mode even though `project_test_summaries` already produce the saved artifact path surfaced by `_print_test_suite_overview(...)` and the dashboard snapshot.
-- `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` reads `short_summary_path`/`summary_path` directly instead of reusing the orchestrator’s short-path repair logic, so older state entries without `short_summary_path` can still render the deeper `failed_tests_summary.txt` path.
+- The ignore contract is implemented as repo mutation inside config persistence, which conflicts with the requested per-user/global workflow and leaks envctl-specific local files into tracked repo hygiene.
+- There is no single authoritative helper for “envctl-owned local artifacts”, so new workflow files can appear in prompts or planning code without ever being added to ignore management.
+- The current save-result/output contract cannot represent global-ignore bootstrap states such as “existing global excludes updated”, “global excludes missing”, or “user declined global config mutation”.
+- Release-gate tests cover tracked/untracked required-scope behavior, but there is no regression proving envctl artifacts ignored through global excludes remain invisible to `--exclude-standard`.
+- Global Git config mutation is a user-scope side effect and therefore needs an explicit bootstrap/consent policy; the current code has no such policy because repo `.gitignore` edits were comparatively low-risk.
 
 ## Plan
-### 1) Define the operator-facing failed-test artifact contract
-- Keep `RunState.metadata["project_test_summaries"]` as the canonical dashboard input, but tighten the meaning of the displayed path:
-  - the displayed path must always refer to the operator-facing artifact that contains the complete cleaned failure context for that project
-  - the dashboard should never need to inline suite logs when that artifact exists
-- Confirm the displayed path stays run-scoped under `python/envctl_engine/state/repository.py:RuntimeStateRepository.run_dir_path(...)` / `test_results_dir_path(...)`.
-- Preserve rerun selector state in `failed_tests_manifest.json`; do not overload the manifest with dashboard rendering concerns.
+### 1) Define an authoritative envctl local-artifact ignore inventory
+- Add a single source of truth under `python/envctl_engine/config/` for envctl local-only artifact patterns instead of embedding them inline inside `ensure_local_config_ignored(...)`.
+- Seed the initial pattern list from verified repo evidence:
+  - `.envctl*`
+  - `MAIN_TASK.md`
+  - `OLD_TASK_*.md`
+  - `trees/`
+  - `trees-*`
+- Keep tracked planning assets out of this list:
+  - `todo/plans/**` stays tracked by design (`docs/user/planning-and-worktrees.md`)
+  - `docs/changelog/**` stays tracked
+- Document why `.envctl-state/**` is not separately listed:
+  - it is already nested under ignored worktree roots
+  - adding a root-level `.envctl-state/` ignore would be speculative because repo-root `.envctl-state` is not a documented current contract
 
-### 2) Replace truncated generic failure snippets with complete cleaned project failure content
-- Update `python/envctl_engine/actions/action_test_runner.py` so suite outcomes keep a richer failure payload than the current `_summarize_failure_output(...)` three-line snippet.
-- Planned implementation shape:
-  - add a helper that merges both `stderr` and `stdout` in deterministic order, strips ANSI/progress markers, preserves source labels when both streams are present, and does not drop later lines prematurely
-  - keep a short status snippet only for event/status text if needed, but persist the full cleaned failure text in the outcome payload used by `_write_failed_tests_summary(...)`
-- Update `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` / `_write_failed_tests_summary(...)` so generic suite failures write the full cleaned failure body into the saved artifact instead of the pre-truncated summary.
-- For parsed failures (`failed_tests` present), keep the current per-test structure but append enough suite-level context to make the artifact self-sufficient when the extracted per-test snippet is not enough.
-- Edge cases to cover explicitly:
-  - stderr-only startup/import/config crashes
-  - stdout-only framework crashes
-  - both streams populated with distinct content
-  - failed-only reruns that preserve a previous manifest when selector extraction fails (`preserved_after_failed_only_extraction_failure`)
+### 2) Replace repo-local ignore mutation with a global-excludes manager
+- Replace `ensure_local_config_ignored(...)` with a helper dedicated to Git global excludes management, ideally in a focused module such as `python/envctl_engine/config/git_ignore.py` to keep subprocess/home-path logic out of general persistence code.
+- The helper should:
+  - resolve the current global excludes target from Git config rather than assuming repo-local files
+  - preserve any existing user-managed content in that file
+  - add/remove only an envctl-managed block so repeated saves stay idempotent
+  - stop writing `<repo>/.gitignore`
+  - stop writing `<repo>/.git/info/exclude`
+- Bootstrap policy should be explicit:
+  - if a global excludes file is already configured, update it in place
+  - if no global excludes file is configured, do not silently overwrite unrelated global Git state
+  - instead, either:
+    - add an explicit one-time consent path during interactive config save, or
+    - return a structured warning telling the user how to enable envctl’s global ignore setup
+- Keep the helper narrow:
+  - only manage envctl’s artifact block
+  - never reformat the whole user file
+  - never delete non-envctl ignore rules
 
-### 3) Stop printing inline suite failure logs when a saved artifact path will be shown
-- Update `python/envctl_engine/actions/action_test_runner.py:run_test_action` to stop printing `failure: ...` excerpts during interactive test execution once the saved summary path is the intended operator-facing surface.
-- Keep concise suite status lines (`passed/failed`, counts, duration), but route operators to the persisted file path rather than echoing raw log snippets inline.
-- Ensure `_print_test_suite_overview(...)` remains the single post-run textual pointer surface by printing `failure summary:` and the artifact path once per failed project.
-- Do not regress non-interactive CLI output for cases where no artifact can be written; the fallback should still surface a failure reason if persistence itself fails.
+### 3) Expand the save-result contract so UX can report global-ignore state precisely
+- Extend `ConfigSaveResult` beyond the current boolean `ignore_updated` so downstream callers can distinguish:
+  - `updated_existing_global_excludes`
+  - `already_present`
+  - `missing_global_excludes_configuration`
+  - `permission_or_write_failure`
+  - `user_declined_global_git_config_change` if interactive consent is added
+- Keep compatibility for existing JSON callers where possible:
+  - retain `ignore_updated` as a coarse boolean if needed
+  - add structured fields such as `ignore_scope`, `ignore_target_path`, and/or `ignore_status`
+- Update:
+  - `python/envctl_engine/config/wizard_domain.py:_save_message`
+  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
+  - `python/envctl_engine/config/persistence.py:config_review_text`
+  so output explains the new global-ignore contract instead of referencing repo `.gitignore`
 
-### 4) Unify dashboard path rendering on the short alias path
-- Reuse `python/envctl_engine/ui/dashboard/orchestrator.py:_test_summary_display_path(...)` / `_ensure_short_test_summary_path(...)` from `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` rather than duplicating raw path selection.
-- This keeps the interactive dashboard on the stable `ft_<digest>.txt` alias even for older state entries that only persisted `summary_path`.
-- Preserve existing cleanup semantics in `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py:_prune_project_metadata(...)` so both the deep summary path and the short alias are still removed on worktree cleanup.
+### 4) Rework interactive and headless config UX around the new contract
+- Update the config wizard review step in `python/envctl_engine/ui/textual/screens/config_wizard.py` so it no longer promises repo `.gitignore` edits.
+- If interactive consent is part of the chosen bootstrap policy, keep it in the config/bootstrap flow rather than hidden deep in persistence code so the user understands a global Git setting may change.
+- Update `docs/user/first-run-wizard.md`, `README.md`, `docs/user/getting-started.md`, `docs/user/python-engine-guide.md`, `docs/reference/configuration.md`, and `docs/developer/config-and-bootstrap.md` to say:
+  - `.envctl` remains repo-local
+  - envctl local workflow artifacts are expected to be ignored through the user’s global Git excludes setup
+  - repo `.gitignore` is no longer auto-mutated by envctl
+- Add a short developer note in `docs/developer/config-and-bootstrap.md` covering the new ownership boundary:
+  - repo-local persistence writes `.envctl`
+  - user-global persistence manages envctl’s ignore block
 
-### 5) Close parser fallback gaps that currently hide failure detail
-- Update `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` so non-streaming fallback parsing sees the combined cleaned failure output rather than only `clean_stdout`.
-- Ensure `TestResult.error_details` can still be populated when pytest/unittest/jest emit critical failure context on stderr.
-- Keep progress-marker stripping and parser semantics stable for successful runs.
+### 5) Align release/readiness behavior and repository cleanup expectations
+- Add coverage proving `python/envctl_engine/shell/release_gate.py:evaluate_shipability` behaves correctly when envctl artifacts are hidden by global excludes rather than repo `.gitignore`.
+- Update this repository’s own ignore policy after the feature lands:
+  - remove envctl-owned local-artifact entries from this repo’s tracked `.gitignore`
+  - do not build code that auto-rewrites downstream repos’ tracked `.gitignore` files to remove historical entries
+- Keep release-gate semantics unchanged for genuinely untracked required-scope files; only envctl local artifacts should disappear via standard Git ignore rules.
 
-### 6) Tighten documentation and changelog evidence around the new artifact-only dashboard contract
-- Update the relevant changelog and, if repo standards require, the developer docs that describe run-scoped artifacts so they explicitly say:
-  - dashboard shows a saved failure artifact path
-  - inline dashboard log excerpts are intentionally suppressed
-  - the displayed file contains the complete cleaned failure context for the project
-- If the artifact contents remain a structured summary plus appended raw context rather than literal raw logs, document that distinction so operators know what to expect.
+### 6) Add transition-safe diagnostics and migration guidance
+- Emit bounded config events when ignore setup is attempted/completed/fails so bootstrap behavior remains diagnosable:
+  - suggested event family: `config.ignore.global.updated`, `config.ignore.global.skipped`, `config.ignore.global.warning`
+- Avoid emitting the full contents of the global ignores file; only emit status and the resolved path when useful.
+- Add migration notes for operators:
+  - existing repo `.gitignore` lines may remain temporarily and are harmless
+  - new envctl versions will no longer add them
+  - root-level `MAIN_TASK.md`/`OLD_TASK_*.md` visibility now depends on global excludes being configured
 
 ## Tests (add these)
 ### Backend tests
-- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
-  - add coverage for generic suite failures where stderr and stdout both contain unique content and assert the persisted `failed_tests_summary.txt` / `ft_<digest>.txt` file contains the full cleaned merged context
-  - add a regression proving interactive `test` output no longer prints `failure: ...` when `failure summary:` path output is present
-  - add coverage for stderr-only generic failures so the saved summary is still complete
-  - add coverage preserving failed-only rerun behavior when selector extraction fails but the previous manifest remains authoritative
-- Extend [tests/python/test_output/test_test_runner_streaming_fallback.py](/Users/kfiramar/projects/current/envctl/tests/python/test_output/test_test_runner_streaming_fallback.py):
-  - add a non-streaming fallback test where all failure detail is in stderr and verify parser results still capture the failure
-  - add a fallback test for combined stdout/stderr failure parsing to ensure no stream is silently discarded
+- Extend `tests/python/config/test_config_persistence.py`:
+  - verify the new helper updates only the global excludes target and leaves repo `.gitignore` / `.git/info/exclude` untouched
+  - verify idempotent envctl-managed block updates
+  - verify the expanded artifact set includes `OLD_TASK_*.md` and flat `trees-*`
+  - verify missing/unwritable global excludes configuration returns a structured warning instead of mutating repo files
+- Extend `tests/python/config/test_config_command_support.py`:
+  - verify JSON output includes the new ignore status fields
+  - verify non-JSON output surfaces actionable global-ignore warnings when setup is incomplete
+- Extend `tests/python/runtime/test_release_shipability_gate.py`:
+  - add a repo fixture where `MAIN_TASK.md` or `.envctl` exists under required scopes but is ignored through a temporary global excludes configuration, and assert `evaluate_shipability(...)` stays green
+  - keep a regression proving unrelated untracked files in required scopes still fail the gate
+- Extend `tests/python/runtime/test_release_shipability_gate_cli.py`:
+  - add one CLI-level regression that runs `scripts/release_shipability_gate.py` with a temporary global Git config / excludes file and verifies the output remains clean
 
 ### Frontend tests
-- Extend [tests/python/ui/test_dashboard_rendering_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_rendering_parity.py):
-  - add a case where only `summary_path` exists and assert dashboard rendering repairs or prefers the short `ft_<digest>.txt` alias path
-  - keep current `tests:` row assertions but change them to reflect the stabilized short-path contract when appropriate
-- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
-  - verify interactive test failures still suppress duplicate dashboard-only failure blocks after the inline `failure:` log removal
+- Extend `tests/python/config/test_config_wizard_textual.py`:
+  - verify the review-step copy no longer promises repo `.gitignore` mutation
+  - if interactive consent is added, cover the review/confirm state that introduces global Git configuration
+- Extend `tests/python/config/test_config_wizard_domain.py`:
+  - verify save messages reflect global-ignore outcomes correctly
+  - verify interactive bootstrap/edit flows surface warnings instead of silently claiming local `.gitignore` updates
 
 ### Integration/E2E tests
-- Prefer expanding [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) as the primary integration contract because this bug crosses test execution, artifact persistence, resume state, and dashboard snapshot rendering in one controlled path.
-- If a higher-level interactive regression harness is needed, add one focused dashboard-loop test in [tests/python/ui/test_terminal_ui_dashboard_loop.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_terminal_ui_dashboard_loop.py) to confirm the post-failure return-to-dashboard flow shows the prompt after the artifact path summary without inline failure log spam.
-- No new BATS suite is required unless unit/integration coverage cannot reproduce the exact interactive regression.
+- Prefer focused Python integration coverage over broad BATS for this change:
+  - `tests/python/config/test_config_command_support.py` should exercise a real `config --set` / `config --stdin-json` save path against a temporary git repo plus temporary global Git config
+  - `tests/python/runtime/test_release_shipability_gate_cli.py` should exercise the shipped CLI script against the same style of isolated global-config fixture
+- No frontend/browser or runtime-startup E2E lane is required because startup behavior and service orchestration are unchanged.
 
 ## Observability / logging (if relevant)
-- Keep existing status events, but separate “operator path pointer” from “diagnostic snippet” semantics:
-  - `test.suite.finish` and `test.suite.summary` remain the machine-readable event sources
-  - `test.summary.persisted` should continue to emit the persisted run directory
-- If implementation introduces a richer outcome field for full failure content, emit a bounded event or metric only for metadata such as:
-  - artifact written / skipped
-  - bytes/lines captured
-  - whether both stdout and stderr contributed
-- Avoid emitting the full failure body into runtime events; the artifact file is the intended durable surface.
+- Keep new diagnostics at the config/bootstrap layer only.
+- Emit status-oriented events, not full file contents:
+  - whether envctl updated an existing global excludes file
+  - whether no global excludes file was configured
+  - whether a write failed or the user declined consent
+- Avoid logging raw ignore-file bodies or unrelated user ignore patterns.
 
 ## Rollout / verification
-- Implement in this order:
-  1. richer failure capture in `action_test_runner.py`
-  2. summary writer updates in `action_command_orchestrator.py`
-  3. inline interactive failure-log suppression
-  4. dashboard short-path rendering unification
-  5. parser fallback fix in `test_runner.py`
-- Verification commands for the implementation phase:
-  - `./.venv/bin/python -m pytest tests/python/actions/test_actions_parity.py -q`
-  - `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_rendering_parity.py tests/python/ui/test_dashboard_orchestrator_restart_selector.py -q`
-  - `./.venv/bin/python -m pytest tests/python/test_output/test_test_runner_streaming_fallback.py -q`
-- Manual verification target:
-  - trigger a known failing `test` command from the interactive dashboard and confirm:
-    - dashboard output shows only the failure artifact path, not inline suite logs
-    - the referenced `ft_<digest>.txt` file contains the complete cleaned failure context
-    - `test --failed` behavior still uses `failed_tests_manifest.json` correctly
+- Implementation order:
+  1. centralize the artifact inventory
+  2. introduce the global-excludes helper and expanded `ConfigSaveResult`
+  3. rewire config persistence/wizard/headless messaging
+  4. add release-gate/global-excludes tests
+  5. update docs
+  6. clean this repo’s tracked `.gitignore` entries once the new contract is live
+- Verification commands:
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence`
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_command_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_wizard_domain tests.python.config.test_config_wizard_textual`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli`
+- Manual verification:
+  - in a temporary git repo with no `.gitignore`, run `envctl config` and confirm `.envctl` is saved while repo `.gitignore` remains unchanged
+  - create `MAIN_TASK.md` and verify `git status --short` stays clean when the configured global excludes file contains the envctl block
+  - verify a repo with an existing user global excludes file keeps pre-existing lines unchanged
+  - verify missing global-ignore bootstrap produces a clear actionable warning instead of a silent failure
 
 ## Definition of done
-- Interactive dashboard-driven `test` failures no longer dump redundant suite log excerpts inline when a saved failure artifact path exists.
-- The path shown in the dashboard/test summary points to a stable run-scoped file that contains complete cleaned failure context for the affected project.
-- Generic suite failures that previously produced truncated “suite failed before envctl could extract failed tests” snippets now preserve enough detail for diagnosis.
-- Non-streaming parser fallback no longer loses stderr-only failure detail.
-- Focused action, dashboard, and parser regression tests cover the new contract.
+- Config save/bootstrap no longer edits repo `.gitignore` or `.git/info/exclude`.
+- Envctl local-only artifacts are managed through a single authoritative global-ignore inventory.
+- Wizard, CLI output, and docs consistently describe the global-ignore contract.
+- Release-gate tests prove envctl artifacts ignored through global excludes do not create false shipability failures.
+- This repo’s tracked ignore policy no longer carries envctl-only local artifact patterns once the new behavior is in place.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: making the artifact “complete” can reintroduce terminal chrome or excessively large files if raw output is copied without cleanup.
-  - Mitigation: strip ANSI/progress noise, preserve source labels, and bound only truly pathological output sizes while keeping materially complete failure content.
-- Risk: changing summary-file contents could unintentionally break tests or tooling that assumed the older concise summary format.
-  - Mitigation: keep headings/path names stable, preserve `failed_tests_manifest.json` as the rerun contract, and update tests/docs for the new content guarantees.
-- Risk: suppressing inline `failure:` excerpts could reduce immediate signal when artifact persistence fails.
-  - Mitigation: keep an explicit fallback message when summary persistence itself fails or when no saved artifact path is available.
+- Risk: mutating user-global Git config is a broader side effect than mutating repo `.gitignore`.
+  - Mitigation: require explicit consent when envctl would need to create/configure a global excludes target, and preserve existing user content with an envctl-managed block.
+- Risk: removing repo-local ignore mutation before a user has global excludes configured will make `.envctl` / `MAIN_TASK.md` appear as untracked files again.
+  - Mitigation: return actionable warnings and keep docs/wizard copy explicit about the prerequisite.
+- Risk: flat worktree roots (`trees-*`) are supported by discovery but were never part of the old ignore contract, so broadening the inventory could hide files users intentionally wanted visible.
+  - Mitigation: scope the new patterns only to envctl-managed worktree root conventions and document the behavior change in migration notes.
+- Risk: existing downstream repos may retain historical `.gitignore` entries, producing mixed local-vs-global ignore states during transition.
+  - Mitigation: do not auto-delete downstream repo entries; limit automatic cleanup to this repository and document the transition as additive/safe.
 
 ## Open questions (only if unavoidable)
-- None. The repo evidence is sufficient to plan the change without blocking clarification.
+- None.

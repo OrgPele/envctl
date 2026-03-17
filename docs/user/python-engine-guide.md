@@ -31,6 +31,8 @@ Behavior:
 - if `.envctl` is missing and you run a normal operational command interactively, runtime opens the setup wizard and writes `.envctl`
 - if `.envctl` is missing and there is no interactive TTY, runtime exits with a clear error instead of guessing
 
+The `.envctl` file remains repo-local. Envctl-owned local workflow artifacts such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots are expected to be ignored through Git global excludes, not by auto-editing the repository `.gitignore`.
+
 Useful commands:
 
 ```bash
