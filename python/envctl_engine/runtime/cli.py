@@ -13,6 +13,7 @@ from envctl_engine.config import EngineConfig, discover_local_config_state, load
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
+from envctl_engine.runtime.launcher_support import resolve_envctl_version
 from envctl_engine.runtime.engine_runtime import dispatch_route
 from envctl_engine.shell.release_gate import CANONICAL_BOOTSTRAP_COMMANDS
 
@@ -84,6 +85,18 @@ def run(
     try:
         try:
             argv, repo_arg = _extract_repo_arg(argv)
+            if argv and argv[0] == "--version":
+                if len(argv) != 1:
+                    print("--version does not accept additional arguments", file=sys.stderr)
+                    return 1
+                project_root = env_map.get("ENVCTL_ROOT_DIR")
+                version_root = Path(project_root).expanduser().resolve() if project_root else None
+                try:
+                    print(f"envctl {resolve_envctl_version(project_root=version_root)}")
+                except LauncherError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
+                return 0
             if argv and argv[0] in {"install", "uninstall"}:
                 try:
                     options = parse_install_options(list(argv[1:]), env=env_map)

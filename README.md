@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kfiramar/envctl/releases/tag/1.3.1"><img src="https://img.shields.io/badge/release-1.3.1-2ea043" alt="Release 1.3.1"></a>
+  <a href="https://github.com/kfiramar/envctl/releases/tag/1.3.2"><img src="https://img.shields.io/badge/release-1.3.2-2ea043" alt="Release 1.3.2"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12--3.14-3776AB" alt="Python 3.12-3.14"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-readable-0969DA" alt="Documentation"></a>
   <a href="docs/changelog/main_changelog.md"><img src="https://img.shields.io/badge/changelog-main-7A3EFF" alt="Changelog"></a>
@@ -45,6 +45,9 @@ This is the point where normal local development usually starts breaking down: t
 # 1) Install envctl once so it is available in every shell
 pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
+
+# Verify the installed launcher and version
+envctl --version
 
 # 2) Go to a target repo
 cd /path/to/your-project
@@ -126,6 +129,24 @@ Project docs:
   - `bun`, `pnpm`, `yarn`, or `npm`, depending on the repo
 
 `envctl` bootstraps target-repo dependencies from the repo itself, so tools such as `pytest` are usually installed as part of the backend project rather than separately for `envctl`.
+
+## Contributor Validation
+
+If you are changing `envctl` itself, use the canonical bootstrap and validation lane:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+.venv/bin/python -m build
+.venv/bin/python scripts/release_shipability_gate.py --repo .
+```
+
+To verify the release gate runs the same authoritative test lane:
+
+```bash
+.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
+```
 
 ## Configuration
 

@@ -14,6 +14,7 @@ pipx ensurepath
 Then use it against any target repo:
 
 ```bash
+envctl --version
 envctl --repo /absolute/path/to/project --resume
 ```
 
@@ -46,6 +47,16 @@ pipx ensurepath
 ```
 
 Use editable/source installs only when you are developing `envctl` itself.
+
+## How do I verify which `envctl` version is installed?
+
+Run:
+
+```bash
+envctl --version
+```
+
+This is a launcher-level check, so it works outside a repo and before `.envctl` bootstrap.
 
 ## Does `envctl` need any external system tools?
 

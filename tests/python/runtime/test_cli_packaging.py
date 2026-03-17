@@ -24,6 +24,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 class CliPackagingTests(unittest.TestCase):
     @staticmethod
+    def _package_version() -> str:
+        payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        return str(payload["project"]["version"])
+
+    @staticmethod
     def _interpreter_can_import(python_bin: str, module_name: str) -> bool:
         result = subprocess.run(
             [
@@ -430,9 +435,39 @@ class CliPackagingTests(unittest.TestCase):
         self.assertIn("envctl Python runtime", result.stdout)
         self.assertIn("Commands:", result.stdout)
 
+    def test_editable_install_exposes_envctl_version(self) -> None:
+        expected_version = self._package_version()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self._installed_env(editable=True) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "--version"],
+                    capture_output=True,
+                    text=True,
+                    cwd=tmpdir,
+                    env=env["env"],
+                    check=False,
+                )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), f"envctl {expected_version}")
+
     def test_editable_install_with_dependencies_imports_runtime_packages(self) -> None:
         with self._installed_env(editable=True, install_deps=True) as env:
             self._assert_runtime_dependencies_available(env)
+
+    def test_regular_install_exposes_envctl_version(self) -> None:
+        expected_version = self._package_version()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "--version"],
+                    capture_output=True,
+                    text=True,
+                    cwd=tmpdir,
+                    env=env["env"],
+                    check=False,
+                )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), f"envctl {expected_version}")
 
     def test_regular_install_supports_doctor_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -487,6 +522,23 @@ class CliPackagingTests(unittest.TestCase):
             self.assertEqual(install.returncode, 0, msg=install.stderr)
             self.assertEqual(uninstall.returncode, 0, msg=uninstall.stderr)
             self.assertNotIn("# >>> envctl PATH >>>", shell_file.read_text(encoding="utf-8"))
+
+    def test_explicit_repo_wrapper_subprocess_reports_version_without_repo(self) -> None:
+        expected_version = self._package_version()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = dict(os.environ)
+            result = subprocess.run(
+                [str(REPO_ROOT / "bin" / "envctl"), "--version"],
+                capture_output=True,
+                text=True,
+                cwd=tmpdir,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), f"envctl {expected_version}")
+        self.assertNotIn("shadowing installed envctl", result.stderr)
 
     def _assert_runtime_dependencies_available(self, env: dict[str, object]) -> None:
         result = subprocess.run(

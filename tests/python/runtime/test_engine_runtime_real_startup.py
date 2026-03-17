@@ -3542,8 +3542,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIn("feature-a-1", plain)
             self.assertIn("Backend: http://localhost:8000 (PID: 1111)", plain)
             self.assertIn("Frontend: http://localhost:9002 (PID: 2222)", plain)
-            self.assertIn("log:\n      /tmp/backend.log", plain)
-            self.assertIn("log:\n      /tmp/frontend.log", plain)
+            self.assertIn("log: /tmp/backend.log", plain)
+            self.assertIn("log: /tmp/frontend.log", plain)
             self.assertIn("n8n: http://localhost:5678 [Healthy]", plain)
 
     def test_plan_without_selection_and_without_tty_fails_when_planning_files_exist(self) -> None:

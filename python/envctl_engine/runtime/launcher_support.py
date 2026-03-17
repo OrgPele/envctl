@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from importlib import metadata as importlib_metadata
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import tomllib
 
 
 class LauncherError(RuntimeError):
@@ -15,12 +17,14 @@ USAGE_TEXT = """Usage:
   envctl doctor [--repo <path>]
   envctl install [--shell-file <path>] [--dry-run]
   envctl uninstall [--shell-file <path>] [--dry-run]
+  envctl [--repo <path>] --version
   envctl --help
 
 Examples:
   envctl
   envctl --main
   envctl --repo /path/to/your/repo --resume
+  envctl --version
   envctl doctor --repo /path/to/your/repo
 """
 
@@ -37,6 +41,50 @@ class InstallOptions:
 
 def launcher_usage_text() -> str:
     return USAGE_TEXT
+
+
+def resolve_envctl_version(*, project_root: Path | None = None) -> str:
+    try:
+        return str(importlib_metadata.version("envctl"))
+    except importlib_metadata.PackageNotFoundError:
+        pass
+    except Exception as exc:
+        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
+
+    for pyproject_path in _candidate_version_files(project_root):
+        if not pyproject_path.is_file():
+            continue
+        try:
+            payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: {exc}") from exc
+        project = payload.get("project")
+        if not isinstance(project, dict):
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing [project] table")
+        version = project.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing project.version")
+        return version.strip()
+
+    raise LauncherError("Could not determine envctl version from installed package metadata or pyproject.toml.")
+
+
+def _candidate_version_files(project_root: Path | None) -> list[Path]:
+    candidates: list[Path] = []
+    roots: list[Path] = []
+    if project_root is not None:
+        roots.append(project_root.expanduser())
+    try:
+        source_root = Path(__file__).resolve().parents[3]
+    except (IndexError, OSError):
+        source_root = None
+    if source_root is not None and source_root not in roots:
+        roots.append(source_root)
+    for root in roots:
+        candidate = root / "pyproject.toml"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
 
 
 def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:

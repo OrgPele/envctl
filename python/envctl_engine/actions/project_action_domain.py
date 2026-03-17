@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -494,6 +495,12 @@ def _load_worktree_provenance(project_root: Path) -> Mapping[str, object] | None
 
 
 def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
+    explicit = _normalize_title_text(str(context.env.get("ENVCTL_PR_TITLE", "")))
+    if explicit:
+        return explicit[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
+    main_task_title = _main_task_title(context.project_root)
+    if main_task_title:
+        return main_task_title[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
     subject = _git_output(git_root, ["log", "-1", "--pretty=%s"]).strip()
     title = subject or f"{context.project_name}: {head_branch}"
     title = " ".join(title.split())
@@ -639,14 +646,53 @@ def _latest_changelog_commit_message(text: str, *, max_chars: int) -> str:
         return _truncate_pr_body(normalized, max_chars=max_chars)
     body = _normalize_text_block("\n".join(section_lines))
     if body:
-        first_line, *rest = body.splitlines()
-        subject = first_line.strip() or latest_heading
-        remainder = "\n".join(rest).strip()
+        subject, remainder = _select_changelog_subject(body, fallback=latest_heading)
+        if not subject:
+            subject = latest_heading
         commit_message = subject if not remainder else f"{subject}\n\n{remainder}"
         return _truncate_pr_body(commit_message, max_chars=max_chars)
     if latest_heading:
         return _truncate_pr_body(latest_heading, max_chars=max_chars)
     return ""
+
+
+def _select_changelog_subject(body: str, *, fallback: str) -> tuple[str, str]:
+    lines = body.splitlines()
+    subject_index = -1
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^#{1,6}\s+", line):
+            continue
+        subject_index = index
+        break
+    if subject_index == -1:
+        return fallback.strip(), ""
+    subject = lines[subject_index].strip()
+    remainder = "\n".join(lines[subject_index + 1 :]).strip()
+    return subject, remainder
+
+
+def _main_task_title(project_root: Path) -> str:
+    main_task = project_root / "MAIN_TASK.md"
+    if not main_task.is_file():
+        return ""
+    text = _read_text(main_task)
+    if not text.strip():
+        return ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("# "):
+            continue
+        return _normalize_title_text(line[2:])
+    return ""
+
+
+def _normalize_title_text(text: str) -> str:
+    cleaned = text.replace("`", " ")
+    cleaned = " ".join(cleaned.split())
+    return cleaned.strip()
 
 
 def _truncate_pr_body(text: str, *, max_chars: int) -> str:

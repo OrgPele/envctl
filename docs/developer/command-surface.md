@@ -16,6 +16,7 @@ Launcher-owned examples:
 - `envctl install`
 - `envctl uninstall`
 - `envctl doctor --repo /path`
+- `envctl --version`
 - repo-root resolution via `--repo`
 
 Runtime-owned examples:
@@ -29,6 +30,8 @@ Runtime-owned examples:
 - `debug-pack`
 
 Do not document or implement these as one undifferentiated command surface. The boundary is real and affects errors, prerequisites, tests, and docs.
+
+`--version` is the current example of a launcher-owned flag that must stay outside `SUPPORTED_COMMANDS` and `list_supported_commands()`.
 
 ## Canonical Parser Contract
 

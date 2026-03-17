@@ -38,9 +38,12 @@ Why this is the default:
 To verify installation:
 
 ```bash
+envctl --version
 envctl --help
 envctl doctor --repo /absolute/path/to/repo
 ```
+
+`envctl --version` is launcher-level, so it works before repo detection, `.envctl` bootstrap, or runtime startup.
 
 Important notes:
 
