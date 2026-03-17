@@ -17,21 +17,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 class ValidationWorkflowContractTests(unittest.TestCase):
     def test_authoritative_docs_share_the_same_bootstrap_and_validation_lane(self) -> None:
-        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         contributing = (REPO_ROOT / "docs" / "developer" / "contributing.md").read_text(encoding="utf-8")
         testing = (REPO_ROOT / "docs" / "developer" / "testing-and-validation.md").read_text(encoding="utf-8")
 
         for command in CANONICAL_BOOTSTRAP_COMMANDS:
-            self.assertIn(command, readme)
             self.assertIn(command, contributing)
             self.assertIn(command, testing)
-        self.assertIn(CANONICAL_VALIDATION_COMMAND_DISPLAY, readme)
         self.assertIn(CANONICAL_VALIDATION_COMMAND_DISPLAY, contributing)
         self.assertIn(CANONICAL_VALIDATION_COMMAND_DISPLAY, testing)
-        self.assertIn(CANONICAL_BUILD_COMMAND_DISPLAY, readme)
         self.assertIn(CANONICAL_BUILD_COMMAND_DISPLAY, contributing)
         self.assertIn(CANONICAL_BUILD_COMMAND_DISPLAY, testing)
-        self.assertIn(CANONICAL_RELEASE_GATE_COMMAND, readme)
         self.assertIn(CANONICAL_RELEASE_GATE_COMMAND, contributing)
         self.assertIn(CANONICAL_RELEASE_GATE_WITH_TESTS_COMMAND, testing)
 

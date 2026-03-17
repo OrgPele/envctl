@@ -130,24 +130,6 @@ Project docs:
 
 `envctl` bootstraps target-repo dependencies from the repo itself, so tools such as `pytest` are usually installed as part of the backend project rather than separately for `envctl`.
 
-## Contributor Validation
-
-If you are changing `envctl` itself, use the canonical bootstrap and validation lane:
-
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pytest -q
-.venv/bin/python -m build
-.venv/bin/python scripts/release_shipability_gate.py --repo .
-```
-
-To verify the release gate runs the same authoritative test lane:
-
-```bash
-.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
-```
-
 ## Configuration
 
 `envctl` writes and maintains a repo-local `.envctl`.
