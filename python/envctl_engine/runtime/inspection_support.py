@@ -12,11 +12,12 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
-from envctl_engine.runtime.command_router import list_supported_commands
+from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
+from envctl_engine.runtime.command_router import list_supported_commands, parse_route
 from envctl_engine.runtime.engine_runtime_startup_support import (
     auto_resume_start_enabled,
+    evaluate_run_reuse,
     effective_start_mode,
-    load_auto_resume_state,
     tree_parallel_startup_config,
 )
 from envctl_engine.startup.startup_selection_support import (
@@ -139,6 +140,15 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             }
             for entry in local_state.frontend_dependency_env_templates
         ],
+        "plan_agent": {
+            "enabled": runtime.config.plan_agent_terminals_enable,
+            "cli": runtime.config.plan_agent_cli,
+            "preset": runtime.config.plan_agent_preset,
+            "shell": runtime.config.plan_agent_shell,
+            "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
+            "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
+            "cmux_workspace": runtime.config.plan_agent_cmux_workspace or None,
+        },
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -162,6 +172,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         or "project_slot"
     )
     print(f"preferred_port_strategy: {preferred_strategy}")
+    print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
     return 0
 
 
@@ -196,8 +207,9 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
 
 
 def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool) -> int:
+    startup_route = _startup_route_for_explanation(runtime, route)
     runtime_mode = effective_start_mode(runtime, route)
-    batch = runtime._batch_mode_requested(route)
+    batch = runtime._batch_mode_requested(startup_route)
     can_tty = runtime._can_interactive_tty()
     projects = runtime._discover_projects(mode=runtime_mode)
     startup = runtime.startup_orchestrator
@@ -209,9 +221,9 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         "preselected_projects": [],
     }
 
-    if getattr(route, "command", "") == "plan":
+    if getattr(startup_route, "command", "") == "plan":
         planning_files = list_planning_files(runtime.config.planning_dir)
-        selection_raw = ",".join(getattr(route, "passthrough_args", [])).strip()
+        selection_raw = ",".join(getattr(startup_route, "passthrough_args", [])).strip()
         if selection_raw:
             if planning_files:
                 try:
@@ -243,7 +255,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
             else:
                 filtered = filter_projects_for_plan(
                     [(project.name, project.root) for project in projects],
-                    getattr(route, "passthrough_args", []),
+                    getattr(startup_route, "passthrough_args", []),
                     strict_no_match=runtime.config.plan_strict_selection,
                 )
                 selection_info.update(
@@ -276,7 +288,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     elif (
         runtime_mode == "trees"
         and not getattr(route, "projects", None)
-        and not getattr(route, "passthrough_args", None)
+        and not getattr(startup_route, "passthrough_args", None)
     ):
         preselected = _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
         selection_info.update({"required": True, "preselected_projects": preselected})
@@ -292,8 +304,8 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
             )
         else:
             selection_info.update({"reason": "interactive_tree_start_selector", "selected_projects": []})
-    elif getattr(route, "projects", None):
-        allowed = {project.lower() for project in route.projects}
+    elif getattr(startup_route, "projects", None):
+        allowed = {project.lower() for project in startup_route.projects}
         selection_info.update(
             {
                 "reason": "explicit_project_filters",
@@ -303,43 +315,31 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
 
     selected_project_count = len(selection_info.get("selected_projects", []))
     auto_resume = {
-        "eligible": auto_resume_start_enabled(route),
+        "eligible": auto_resume_start_enabled(startup_route),
         "existing_state_found": False,
         "exact_match": False,
         "subset_match": False,
         "will_resume": False,
         "reason": None,
     }
-    if auto_resume["eligible"] and selected_project_count > 0:
-        state = load_auto_resume_state(runtime, runtime_mode)
-        if state is not None:
-            auto_resume["existing_state_found"] = True
-            selected_contexts = [
-                project for project in projects if project.name in set(selection_info["selected_projects"])
-            ]
-            exact_match = startup._state_matches_selected_projects(
-                runtime=runtime, state=state, contexts=selected_contexts
-            )
-            subset_match = (
-                not exact_match
-                and runtime_mode == "trees"
-                and startup._state_covers_selected_projects(runtime=runtime, state=state, contexts=selected_contexts)
-            )
-            auto_resume.update(
-                {
-                    "exact_match": exact_match,
-                    "subset_match": subset_match,
-                    "will_resume": exact_match or subset_match,
-                    "reason": "exact" if exact_match else ("subset" if subset_match else "project_selection_mismatch"),
-                    "run_id": state.run_id,
-                }
-            )
-        else:
-            auto_resume["reason"] = "no_matching_state"
-    elif auto_resume["eligible"]:
-        auto_resume["reason"] = "no_selected_projects"
-    else:
-        auto_resume["reason"] = "auto_resume_disabled"
+    selected_contexts = [project for project in projects if project.name in set(selection_info["selected_projects"])]
+    run_reuse_decision = evaluate_run_reuse(
+        runtime,
+        runtime_mode=runtime_mode,
+        route=startup_route,
+        contexts=selected_contexts,
+    )
+    auto_resume.update(
+        {
+            "existing_state_found": run_reuse_decision.candidate_state is not None,
+            "exact_match": run_reuse_decision.decision_kind in {"resume_exact", "resume_dashboard_exact"},
+            "subset_match": run_reuse_decision.decision_kind == "resume_subset",
+            "will_resume": run_reuse_decision.decision_kind in {"resume_exact", "resume_subset"},
+            "reason": run_reuse_decision.reason,
+        }
+    )
+    if run_reuse_decision.candidate_state is not None:
+        auto_resume["run_id"] = run_reuse_decision.candidate_state.run_id
 
     profile = runtime.config.profile_for_mode(runtime_mode)
     startup_enabled = runtime.config.startup_enabled_for_mode(runtime_mode)
@@ -355,12 +355,23 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         project_count=max(selected_project_count, len(projects)),
     )
     payload = {
-        "command": getattr(route, "command", "start"),
+        "command": getattr(startup_route, "command", "start"),
         "mode": runtime_mode,
         "headless": batch or not can_tty,
         "interactive_tty": can_tty,
         "selection": selection_info,
         "auto_resume": auto_resume,
+        "run_reuse": {
+            "decision_kind": run_reuse_decision.decision_kind,
+            "reason": run_reuse_decision.reason,
+            "run_id": run_reuse_decision.candidate_state.run_id if run_reuse_decision.candidate_state is not None else None,
+            "will_reuse_run": run_reuse_decision.will_reuse_run,
+            "will_resume_services": run_reuse_decision.will_resume_services,
+            "selected_projects": run_reuse_decision.selected_projects,
+            "state_projects": run_reuse_decision.state_projects,
+            "weak_identity": run_reuse_decision.weak_identity,
+            "mismatch_details": run_reuse_decision.mismatch_details,
+        },
         "startup_enabled": startup_enabled,
         "services": {
             "backend": runtime.config.service_enabled_for_mode(runtime_mode, "backend"),
@@ -368,6 +379,7 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
         },
         "dependencies": enabled_dependencies,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
+        "plan_agent_launch": inspect_plan_agent_launch(runtime, route=startup_route),
     }
     if not startup_enabled:
         payload["reason"] = "config_startup_disabled"
@@ -381,6 +393,10 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     print(f"headless: {payload['headless']}")
     print(f"selected_projects: {', '.join(selection_info.get('selected_projects', [])) or 'none'}")
     print(f"auto_resume: {auto_resume['will_resume']} ({auto_resume['reason']})")
+    print(
+        "run_reuse: "
+        f"{payload['run_reuse']['will_reuse_run']} ({payload['run_reuse']['decision_kind']}: {payload['run_reuse']['reason']})"
+    )
     deps = ", ".join(enabled_dependencies) or "none"
     print(f"dependencies: {deps}")
     if payload.get("reason"):
@@ -388,3 +404,23 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     if selection_info.get("message"):
         print(str(selection_info["message"]))
     return 0
+
+
+def _startup_route_for_explanation(runtime: Any, route: object) -> object:
+    raw_args = [
+        str(token)
+        for token in list(getattr(route, "raw_args", []) or [])
+        if str(token).strip() not in {"--explain-startup", "explain-startup"}
+    ]
+    env = {**getattr(getattr(runtime, "config", None), "raw", {}), **getattr(runtime, "env", {})}
+    try:
+        return parse_route(raw_args or ["start"], env=env)
+    except Exception:
+        return type(route)(
+            command="start",
+            mode=getattr(route, "mode", "main"),
+            raw_args=getattr(route, "raw_args", []),
+            passthrough_args=getattr(route, "passthrough_args", []),
+            projects=getattr(route, "projects", []),
+            flags=dict(getattr(route, "flags", {})),
+        )

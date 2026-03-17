@@ -76,3 +76,38 @@ Adjusted the dashboard `tests:` row formatting so the artifact path and timestam
 
 ### Risks / notes
 - This is a presentation-only change for the dashboard snapshot row; summary excerpt rendering remains unchanged below that line.
+
+## 2026-03-17 - Follow-up: suppress duplicate interactive failure status when artifact exists
+
+### Scope
+Finished the remaining interactive failure-path cleanup by suppressing the dashboard-loop `ui.status` failure snippet when envctl already persisted a per-project failed-summary artifact, while keeping the inline fallback when persistence cannot produce a summary path.
+
+### Key behavior changes
+- `python/envctl_engine/actions/action_test_runner.py`
+  - added `_failed_summary_artifact_available(...)` to detect whether a failed project already has a persisted summary path
+  - interactive `test` failures now skip the final `Test command failed: ...` status message when the saved failure artifact exists
+  - retained the inline status fallback for failed interactive runs that could not persist a summary artifact
+- `tests/python/actions/test_actions_parity.py`
+  - tightened the persisted-artifact regression to assert that the failure snippet does not leak through `ui.status` events
+  - added coverage for the no-artifact fallback so the inline failure reason still appears when persistence is unavailable
+
+### Files / modules touched
+- `python/envctl_engine/actions/action_test_runner.py`
+- `tests/python/actions/test_actions_parity.py`
+- `docs/changelog/broken_envctl_dashboard_test_failure_artifact_path_cleanup-1_changelog.md`
+
+### Tests run + results
+- `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_parity`
+  - result: `Ran 96 tests`, `OK`
+- `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_rendering_parity tests.python.ui.test_dashboard_orchestrator_restart_selector`
+  - result: `Ran 52 tests`, `OK`
+- `PYTHONPATH=python python3 -m unittest tests.python.test_output.test_test_runner_streaming_fallback`
+  - result: `Ran 12 tests`, `OK (skipped=1)`
+
+### Config / env / migrations
+- No migrations.
+- No new config keys or environment variables.
+- Artifact paths remain under the existing run-scoped runtime tree.
+
+### Risks / notes
+- The suppression is intentionally keyed off persisted per-project summary paths rather than a broader “any failure happened” signal, so interactive fallback messaging still appears when state is missing or summary persistence fails.

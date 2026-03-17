@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    PlanSelectionResult,
+    PlanWorktreeSyncResult,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
@@ -440,6 +445,7 @@ def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
 def _select_plan_projects(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
+    setattr(self, "_last_plan_selection_result", PlanSelectionResult(raw_projects=[], selected_contexts=[]))
     raw_projects = [(ctx.name, ctx.root) for ctx in project_contexts]
     planning_files = list_planning_files(self.config.planning_dir)
     selection_raw = ",".join(route.passthrough_args).strip()
@@ -457,19 +463,45 @@ def _select_plan_projects(
             except ValueError as exc:
                 self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
                 print(str(exc))
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error=str(exc)),
+                )
                 return []
-            raw_projects, sync_error = self._sync_plan_worktrees_from_plan_counts(
+            sync_result = self._sync_plan_worktrees_from_plan_counts(
                 plan_counts=plan_counts,
                 raw_projects=raw_projects,
                 keep_plan=keep_plan,
             )
-            if sync_error:
-                print(sync_error)
+            raw_projects = list(sync_result.raw_projects)
+            if sync_result.error:
+                print(sync_result.error)
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=[],
+                        created_worktrees=sync_result.created_worktrees,
+                        error=sync_result.error,
+                    ),
+                )
                 return []
             refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
             duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
             if duplicate_error:
                 print(duplicate_error)
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=[],
+                        created_worktrees=sync_result.created_worktrees,
+                        error=duplicate_error,
+                    ),
+                )
                 return []
             filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
             if filtered:
@@ -480,8 +512,28 @@ def _select_plan_projects(
                     plans=list(plan_counts.keys()),
                 )
                 selected_names = {name for name, _ in filtered}
-                return [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+                selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=selected_contexts,
+                        created_worktrees=sync_result.created_worktrees,
+                    ),
+                )
+                return selected_contexts
             print("No tree paths found for selected planning file(s).")
+            setattr(
+                self,
+                "_last_plan_selection_result",
+                PlanSelectionResult(
+                    raw_projects=raw_projects,
+                    selected_contexts=[],
+                    created_worktrees=sync_result.created_worktrees,
+                    error="No tree paths found for selected planning file(s).",
+                ),
+            )
             return []
 
         filtered = filter_projects_for_plan(
@@ -491,14 +543,34 @@ def _select_plan_projects(
         )
         if not filtered:
             print("No tree paths found for requested project filter(s): " + ", ".join(route.passthrough_args) + ".")
+            setattr(
+                self,
+                "_last_plan_selection_result",
+                PlanSelectionResult(
+                    raw_projects=raw_projects,
+                    selected_contexts=[],
+                    error="No tree paths found for requested project filter(s).",
+                ),
+            )
             return []
         selected_names = {name for name, _ in filtered}
-        return [ctx for ctx in project_contexts if ctx.name in selected_names]
+        selected_contexts = [ctx for ctx in project_contexts if ctx.name in selected_names]
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=selected_contexts),
+        )
+        return selected_contexts
 
     if not planning_files:
         print(
             f"No planning files found in {self.config.planning_dir}. "
             "Pass explicit selectors (for example: envctl --plan feature-a) or use --trees."
+        )
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files found."),
         )
         return []
 
@@ -507,38 +579,94 @@ def _select_plan_projects(
             "No TTY available for planning selection. "
             "Run 'envctl --list-trees --json' and retry with '--headless --plan <selector>'."
         )
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No TTY available."),
+        )
         return []
 
     plan_counts = self._prompt_planning_selection(planning_files, raw_projects)
     if plan_counts is None:
         print("Planning selection cancelled.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="Planning selection cancelled."),
+        )
         return []
     if not plan_counts:
         print("No planning files selected.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files selected."),
+        )
         return []
 
-    raw_projects, sync_error = self._sync_plan_worktrees_from_plan_counts(
+    sync_result = self._sync_plan_worktrees_from_plan_counts(
         plan_counts=plan_counts,
         raw_projects=raw_projects,
         keep_plan=keep_plan,
     )
-    if sync_error:
-        print(sync_error)
+    raw_projects = list(sync_result.raw_projects)
+    if sync_result.error:
+        print(sync_result.error)
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error=sync_result.error,
+            ),
+        )
         return []
     refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
     duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
     if duplicate_error:
         print(duplicate_error)
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error=duplicate_error,
+            ),
+        )
         return []
 
     positive_plan_counts = {plan_file: count for plan_file, count in plan_counts.items() if int(count) > 0}
     if not positive_plan_counts:
         print("Planning counts scaled to zero; no worktrees remain.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error="Planning counts scaled to zero; no worktrees remain.",
+            ),
+        )
         return []
 
     filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=positive_plan_counts)
     if not filtered:
         print("No tree paths found for selected planning file(s).")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error="No tree paths found for selected planning file(s).",
+            ),
+        )
         return []
 
     self._emit(
@@ -548,7 +676,17 @@ def _select_plan_projects(
         plans=list(positive_plan_counts.keys()),
     )
     selected_names = {name for name, _ in filtered}
-    return [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+    selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+    setattr(
+        self,
+        "_last_plan_selection_result",
+        PlanSelectionResult(
+            raw_projects=raw_projects,
+            selected_contexts=selected_contexts,
+            created_worktrees=sync_result.created_worktrees,
+        ),
+    )
+    return selected_contexts
 
 
 def _prompt_planning_selection(
@@ -796,8 +934,11 @@ def _sync_plan_worktrees_from_plan_counts(
     plan_counts: Mapping[str, int],
     raw_projects: list[tuple[str, Path]],
     keep_plan: bool,
-) -> tuple[list[tuple[str, Path]], str | None]:
+) -> PlanWorktreeSyncResult:
     projects = list(raw_projects)
+    created_worktrees: list[CreatedPlanWorktree] = []
+    removed_worktrees: list[str] = []
+    archived_plan_files: list[str] = []
     trees_root = self.config.base_dir / self.config.trees_dir_name
     trees_root.mkdir(parents=True, exist_ok=True)
     policy = _worktree_spinner_policy(self, op_id="worktree.sync")
@@ -820,7 +961,7 @@ def _sync_plan_worktrees_from_plan_counts(
         )
         try:
             for plan_file, desired_raw in plan_counts.items():
-                projects, sync_error = _sync_single_plan_worktree_target(
+                target_result = _sync_single_plan_worktree_target(
                     self,
                     plan_file=plan_file,
                     desired_raw=desired_raw,
@@ -830,8 +971,18 @@ def _sync_plan_worktrees_from_plan_counts(
                     active_spinner=active_spinner,
                     op_id="worktree.sync",
                 )
-                if sync_error is not None:
-                    return projects, sync_error
+                projects = list(target_result.raw_projects)
+                created_worktrees.extend(target_result.created_worktrees)
+                removed_worktrees.extend(target_result.removed_worktrees)
+                archived_plan_files.extend(target_result.archived_plan_files)
+                if target_result.error is not None:
+                    return PlanWorktreeSyncResult(
+                        raw_projects=projects,
+                        created_worktrees=tuple(created_worktrees),
+                        removed_worktrees=tuple(removed_worktrees),
+                        archived_plan_files=tuple(archived_plan_files),
+                        error=target_result.error,
+                    )
             _worktree_spinner_finish(
                 self,
                 enabled=enabled,
@@ -839,7 +990,12 @@ def _sync_plan_worktrees_from_plan_counts(
                 op_id="worktree.sync",
                 message="Planning worktree sync completed",
             )
-            return projects, None
+            return PlanWorktreeSyncResult(
+                raw_projects=projects,
+                created_worktrees=tuple(created_worktrees),
+                removed_worktrees=tuple(removed_worktrees),
+                archived_plan_files=tuple(archived_plan_files),
+            )
         except Exception:
             _worktree_spinner_fail(
                 self,
@@ -863,11 +1019,14 @@ def _sync_single_plan_worktree_target(
     enabled: bool,
     active_spinner: Any,
     op_id: str,
-) -> tuple[list[tuple[str, Path]], str | None]:
+) -> PlanWorktreeSyncResult:
     desired = max(0, int(desired_raw))
     feature = planning_feature_name(plan_file)
     candidates = self._feature_project_candidates(projects=projects, feature=feature)
     existing = len(candidates)
+    created_worktrees: tuple[CreatedPlanWorktree, ...] = ()
+    removed_worktrees: tuple[str, ...] = ()
+    archived_plan_files: tuple[str, ...] = ()
 
     if desired > existing:
         create_count = desired - existing
@@ -878,13 +1037,15 @@ def _sync_single_plan_worktree_target(
             op_id=op_id,
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
         )
-        create_error = self._create_feature_worktrees(
+        create_result = _create_feature_worktrees_result(
+            self,
             feature=feature,
             count=create_count,
             plan_file=plan_file,
         )
-        if create_error:
-            return projects, create_error
+        if create_result.error:
+            return PlanWorktreeSyncResult(raw_projects=projects, error=create_result.error)
+        created_worktrees = create_result.created_worktrees
         projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
         candidates = self._feature_project_candidates(projects=projects, feature=feature)
         existing = len(candidates)
@@ -907,8 +1068,13 @@ def _sync_single_plan_worktree_target(
             remove_count=remove_count,
         )
         if remove_error:
-            return projects, remove_error
+            return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
         print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
+        removed_worktrees = tuple(name for name, _root in sorted(
+            candidates,
+            key=lambda item: self._project_sort_key_for_feature(item[0], feature),
+            reverse=True,
+        )[:remove_count])
         projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
         if desired == 0:
             self._cleanup_empty_feature_root(feature=feature)
@@ -916,17 +1082,34 @@ def _sync_single_plan_worktree_target(
 
     if desired == 0 and existing > 0 and not keep_plan:
         self._move_plan_to_done(plan_file)
-    return projects, None
+        archived_plan_files = (plan_file,)
+    return PlanWorktreeSyncResult(
+        raw_projects=projects,
+        created_worktrees=created_worktrees,
+        removed_worktrees=removed_worktrees,
+        archived_plan_files=archived_plan_files,
+    )
 
 
 def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file: str) -> str | None:
+    return _create_feature_worktrees_result(self, feature=feature, count=count, plan_file=plan_file).error
+
+
+def _create_feature_worktrees_result(
+    self: Any,
+    *,
+    feature: str,
+    count: int,
+    plan_file: str,
+) -> PlanWorktreeSyncResult:
     if count <= 0:
-        return None
+        return PlanWorktreeSyncResult(raw_projects=[])
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
     existing_iters = {int(path.name) for path in feature_root.iterdir() if path.is_dir() and path.name.isdigit()}
     plan_path = self._planning_root() / plan_file
     setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
+    created_worktrees: list[CreatedPlanWorktree] = []
 
     for _ in range(count):
         iteration = self._next_available_iteration(existing_iters)
@@ -940,12 +1123,15 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
                 result=result,
             )
             if error:
-                return error
+                return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
         else:
             _write_worktree_provenance(self, target=target)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
+        created_worktrees.append(
+            CreatedPlanWorktree(name=f"{feature}-{iteration}", root=target.resolve(), plan_file=plan_file)
+        )
         existing_iters.add(iteration)
-    return None
+    return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees))
 
 
 def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Path, result: object) -> str | None:

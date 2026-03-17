@@ -973,13 +973,22 @@ class DashboardOrchestrator:
                 continue
             if not isinstance(entry, dict):
                 continue
+            status = str(entry.get("status", "") or "").strip().lower()
+            if status == "passed":
+                continue
+            for key in ("failed_tests", "failed_manifest_entries"):
+                raw_count = entry.get(key)
+                with suppress(TypeError, ValueError):
+                    if int(raw_count) > 0:
+                        return True
+            if summary_excerpt_from_entry(entry, max_lines=1):
+                return True
             if str(entry.get("manifest_path", "") or "").strip():
                 return True
             if str(entry.get("short_summary_path", "") or "").strip():
                 return True
             if str(entry.get("summary_path", "") or "").strip():
                 return True
-            status = str(entry.get("status", "") or "").strip().lower()
             if status == "failed":
                 return True
         return False

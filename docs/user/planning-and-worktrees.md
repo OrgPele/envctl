@@ -46,6 +46,39 @@ envctl --list-trees --json
 envctl explain-startup --json
 ```
 
+## Optional Cmux Agent Launch
+
+`--plan` can now open one new `cmux` terminal surface per newly created worktree when the feature is enabled in config or env:
+
+```dotenv
+ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
+ENVCTL_PLAN_AGENT_CLI=codex
+ENVCTL_PLAN_AGENT_PRESET=implement_task
+ENVCTL_PLAN_AGENT_SHELL=zsh
+ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
+```
+
+Shorthand aliases also work:
+
+```dotenv
+CMUX=true
+```
+
+Behavior:
+
+- only runs for `--plan`
+- only launches for worktrees created during the current reconciliation
+- skips `--planning-prs`
+- skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
+- when enabled without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
+- if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
+- the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
+- when a named target workspace does not exist yet, envctl creates it and then launches the new plan-agent surfaces there
+- `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
+- `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+
+Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
+
 ## Selection Input
 When passing plan selections, you can use any of these forms:
 - `folder/task`
@@ -132,6 +165,13 @@ Useful follow-up commands:
 envctl errors --all
 envctl restart --project <tree-name>
 envctl logs --project <tree-name> --logs-follow
+```
+
+Recommended inspection before enabling auto-launch:
+
+```bash
+envctl show-config --json
+envctl explain-startup --json
 ```
 
 ## Headless Planning

@@ -475,6 +475,10 @@ def write_diagnostics(staging_dir: Path) -> None:
         "resume.phase",
         "state.auto_resume",
         "state.auto_resume.skipped",
+        "state.run_reuse.evaluate",
+        "state.run_reuse.applied",
+        "state.run_reuse.skipped",
+        "state.dashboard_resume",
         "state.resume",
         "requirements.timing.component",
         "requirements.timing.summary",
@@ -509,7 +513,7 @@ def write_diagnostics(staging_dir: Path) -> None:
                 startup_projects = [str(project).strip() for project in raw_projects if str(project).strip()]
             continue
 
-        if event_name == "state.auto_resume.skipped":
+        if event_name in {"state.auto_resume.skipped", "state.run_reuse.skipped"}:
             reason = str(item.get("reason", "")).strip() or "unknown"
             resume_skip_reasons[reason] = resume_skip_reasons.get(reason, 0) + 1
             continue

@@ -63,6 +63,7 @@ Behavior:
 
 - installs built-in prompt files into user-local AI CLI directories
 - built-in presets:
+  - `implement_plan`
   - `implement_task`
   - `review_task_imp`
   - `continue_task`
@@ -199,6 +200,22 @@ envctl --plan
 envctl --parallel-plan
 envctl --sequential-plan
 ```
+
+Optional plan-agent launch config for `--plan`:
+
+- `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
+- `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
+- Codex launches send `/prompts:<preset>` while OpenCode launches send `/<preset>`
+- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
+- `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
+- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text
+- when enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`
+- `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123` targets an explicit cmux workspace and also enables the feature
+- `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title
+- when a named target workspace does not exist yet, envctl creates it before opening the new surfaces
+- `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
+- `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
 
 Debug and diagnostics:
 
