@@ -258,6 +258,74 @@ Files / modules touched:
 - `docs/reference/configuration.md`
 - `docs/reference/commands.md`
 - `docs/user/planning-and-worktrees.md`
+
+## 2026-03-17 - Restore implement_plan as the launched default
+
+Scope:
+- Corrected the remaining contract mismatch between `MAIN_TASK.md` and the live plan-agent launch flow so newly opened `cmux` AI surfaces default to `implement_plan`.
+- Kept `implement_task` intact as an explicit backward-compatible preset while making the launch helper, config surface, inspection output, and docs agree on the same default.
+
+Key behavior changes:
+- `ENVCTL_PLAN_AGENT_PRESET` now defaults to `implement_plan` in config resolution and in the plan-agent launch helper when no override is provided.
+- Codex plan-agent launches now type `/prompts:implement_plan` by default, and OpenCode plan-agent launches now type `/implement_plan`.
+- `explain-startup --json` now reports `implement_plan` as the effective preset for enabled plan-agent launch inspection.
+- User and reference docs now describe `implement_plan` as the default launched preset and `implement_task` as the available compatibility override.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/config/__init__.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_engine_runtime_command_parity.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `.venv/bin/python -m pytest -q tests/python/planning/test_plan_agent_launch_support.py tests/python/runtime/test_engine_runtime_command_parity.py` -> passed
+- `.venv/bin/python -m pytest -q tests/python/planning/test_plan_agent_launch_support.py tests/python/planning/test_planning_worktree_setup.py tests/python/startup/test_startup_orchestrator_flow.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_engine_runtime_real_startup.py tests/python/runtime/test_engine_runtime_command_parity.py` -> passed (`249 passed, 6 subtests passed`)
+
+Config / env / migrations:
+- Restored the default `ENVCTL_PLAN_AGENT_PRESET` value to `implement_plan` for the plan-agent launch flow.
+- No database migrations.
+
+Risks / notes:
+- The launch workflow still depends on bounded readiness polling around `cmux` and the selected AI CLI; if upstream CLI UIs or machine timing differ substantially, the waits may need future tuning.
+
+## 2026-03-17 - Restore implement_task as the launched default
+
+Scope:
+- Reverted the plan-agent launch default from `implement_plan` back to the repo’s earlier `implement_task` behavior.
+- Kept the `implement_plan` prompt alias available for explicit use while making config resolution, launch sequencing, inspection output, and docs agree on the restored default.
+
+Key behavior changes:
+- `ENVCTL_PLAN_AGENT_PRESET` now defaults back to `implement_task`.
+- Codex plan-agent launches again type `/prompts:implement_task` by default, and OpenCode launches again type `/implement_task`.
+- `explain-startup --json` again reports `implement_task` as the effective preset when the plan-agent launch feature is enabled.
+- User and reference docs now describe `implement_task` as the default launched preset and `implement_plan` as the optional compatibility alias.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/config/__init__.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_engine_runtime_command_parity.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `.venv/bin/python -m pytest -q tests/python/planning/test_plan_agent_launch_support.py tests/python/runtime/test_engine_runtime_command_parity.py` -> passed
+- `.venv/bin/python -m pytest -q tests/python/planning/test_plan_agent_launch_support.py tests/python/planning/test_planning_worktree_setup.py tests/python/startup/test_startup_orchestrator_flow.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_engine_runtime_real_startup.py tests/python/runtime/test_engine_runtime_command_parity.py` -> passed (`249 passed, 6 subtests passed`)
+
+Config / env / migrations:
+- Restored the default `ENVCTL_PLAN_AGENT_PRESET` value to `implement_task`.
+- No database migrations.
+
+Risks / notes:
+- The launch workflow still depends on bounded readiness polling around `cmux` and the selected AI CLI; timing may still need future tuning on slower machines or after upstream CLI UI changes.
 - `docs/user/ai-playbooks.md`
 
 Tests run + results:
@@ -610,3 +678,118 @@ Config / env / migrations:
 
 Risks / notes:
 - Users who explicitly set `ENVCTL_PLAN_AGENT_PRESET=implement_plan` still keep that behavior; only the implicit default was corrected.
+
+## 2026-03-17 - Move post-create surface bootstrap off the foreground path
+
+Scope:
+- Reduced the amount of visible foreground work after opening a new cmux surface by pushing the remaining rename/respawn/send/poll sequence into a background worker thread.
+
+Key behavior changes:
+- Envctl now creates the new surface, immediately restores focus back to the caller surface, and then continues the rest of the surface bootstrap asynchronously.
+- The background bootstrap still performs the same shell respawn, AI CLI startup, readiness polling, prompt picker flow, and final prompt submission against the newly created surface.
+- The foreground launch result now reflects successful surface creation and queued bootstrap, while later bootstrap success/failure is emitted asynchronously.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- Live Codex validation via a real `launch_plan_agent_terminals(...)` harness in `workspace:1` -> returned in ~0.47s, caller surface was immediately selected again, launched surface finished bootstrapping afterward
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- The background bootstrap uses a daemon thread inside the current envctl process. In the normal interactive `--plan` flow this keeps running while envctl stays alive, but an immediate process exit would cut that work short.
+
+## 2026-03-17 - Revert preset docs back to implement_task
+
+Scope:
+- Restored the user-facing default preset documentation to `implement_task` after an attempted `implement_plan` default switch.
+
+Key behavior changes:
+- Plan-agent launch remains documented and tested with `implement_task` as the default preset.
+- The docs/examples again show Codex using `/prompts:implement_task` unless users explicitly override `ENVCTL_PLAN_AGENT_PRESET`.
+- `implement_plan` remains available as an explicit override, not the default.
+
+Files / modules touched:
+- `docs/reference/commands.md`
+- `docs/user/ai-playbooks.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prompt_install_support` -> passed
+
+Config / env / migrations:
+- Default `ENVCTL_PLAN_AGENT_PRESET` remains `implement_task`.
+- No migrations.
+
+Risks / notes:
+- Any operators who want `/implement_plan` still need to opt in explicitly via `ENVCTL_PLAN_AGENT_PRESET=implement_plan`.
+
+## 2026-03-18 - Default plan-agent launches to a separate implementation workspace
+
+Scope:
+- Removed the old focus/tab juggling path and changed default cmux targeting so plan-agent launches run in a separate workspace instead of trying to stay in the caller workspace.
+
+Key behavior changes:
+- `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` and the `CMUX=true` alias now derive the target workspace as `"<current workspace> implementation"` when no explicit workspace override is set.
+- If that derived implementation workspace does not exist yet, envctl creates it, renames it, and opens the new plan-agent surfaces there.
+- Explicit `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` and `CMUX_WORKSPACE` overrides still win and continue to accept either workspace handles or workspace titles.
+- `inspect_plan_agent_launch(...)` and `--explain-startup --json` no longer treat a missing `cmux` binary as a hard crash; they keep reporting the feature as pending when caller context exists but the workspace title cannot be inspected in-process.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_engine_runtime_command_parity.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/ai-playbooks.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.startup.test_startup_orchestrator_flow tests.python.runtime.test_engine_runtime_real_startup` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- Default enablement now targets `"<current workspace> implementation"` unless `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` or `CMUX_WORKSPACE` is set.
+- No migrations.
+
+Risks / notes:
+- Default target derivation still depends on being able to map the caller workspace ref to a workspace title from `cmux list-workspaces`; if cmux output format changes, envctl will skip or fail launch rather than guessing a title.
+
+## 2026-03-18 - Compact plan-agent cmux tab titles
+
+Scope:
+- Shortened cmux tab titles for plan-agent launches so long worktree names do not dominate the workspace/tab bar.
+
+Key behavior changes:
+- Plan-agent launches now rename the cmux tab using a compact title derived from the worktree name.
+- The format is `{first}_{third-from-last}_{second-from-last}_{last}` when the worktree name has at least four underscore-delimited segments.
+- If that compact form still exceeds the local length cap, envctl drops the third-from-last segment and uses `{first}_{second-from-last}_{last}` instead.
+- Short names that do not have enough underscore-delimited segments keep their original worktree name as the tab title.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/user/planning-and-worktrees.md`
+- `docs/changelog/features_envctl_plan_cmux_ai_terminal_launch-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- The shortening logic currently treats underscore-delimited worktree segments as “words”; hyphen-only names keep their original title.

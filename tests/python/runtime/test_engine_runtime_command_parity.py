@@ -1182,6 +1182,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["plan_agent_launch"]["enabled"])
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
     def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
@@ -1207,7 +1210,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], "workspace:9")
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], "workspace:9")
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
     def test_explain_startup_json_reports_cmux_alias_enablement(self) -> None:
@@ -1233,7 +1238,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["plan_agent_launch"]["enabled"])
-        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], "workspace:4")
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
 
