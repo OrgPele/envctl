@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import re
 import threading
 import tempfile
 import time
@@ -277,10 +279,16 @@ class DashboardRenderingParityTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
+            expected_short = engine.runtime_root / "runs" / "run-1" / f"ft_{hashlib.sha1(b'Main').hexdigest()[:10]}.txt"
+            tests_line = next(line for line in output.splitlines() if "tests:" in line and str(expected_short) in line)
 
             self.assertIn("tests:", output)
-            self.assertIn(str(summary), output)
+            self.assertIn(str(expected_short), output)
             self.assertIn("✓ tests:", output)
+            self.assertRegex(tests_line, rf"✓ tests: {re.escape(str(expected_short))} \([A-Z][a-z]{{2}} \d{{2}} \d{{2}}:\d{{2}}\)")
+            self.assertTrue(expected_short.is_file())
+            self.assertEqual(expected_short.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8"))
+            self.assertNotIn(str(summary), output)
 
     def test_dashboard_renders_project_test_summary_link_with_failed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -343,12 +351,18 @@ class DashboardRenderingParityTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
+            expected_short = engine.runtime_root / "runs" / "run-1" / f"ft_{hashlib.sha1(b'Main').hexdigest()[:10]}.txt"
+            tests_line = next(line for line in output.splitlines() if "tests:" in line and str(expected_short) in line)
 
             self.assertIn("tests:", output)
-            self.assertIn(str(summary), output)
+            self.assertIn(str(expected_short), output)
             self.assertIn("✗ tests:", output)
+            self.assertRegex(tests_line, rf"✗ tests: {re.escape(str(expected_short))} \([A-Z][a-z]{{2}} \d{{2}} \d{{2}}:\d{{2}}\)")
             self.assertIn("tests/test_auth.py::test_signup_regression", output)
             self.assertIn("AssertionError: expected 201, got 500", output)
+            self.assertTrue(expected_short.is_file())
+            self.assertEqual(expected_short.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8"))
+            self.assertNotIn(str(summary), output)
 
     def test_dashboard_renders_active_project_pr_link(self) -> None:
         class _Runner:

@@ -298,8 +298,10 @@ def _print_dashboard_tests_row(
     entry = metadata.get(project)
     if not isinstance(entry, dict):
         return
-    summary_raw = entry.get("short_summary_path") or entry.get("summary_path")
-    if not isinstance(summary_raw, str) or not summary_raw.strip():
+    from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
+
+    summary_raw = DashboardOrchestrator._test_summary_display_path(project_name=project, entry=entry)
+    if not summary_raw.strip():
         return
     summary_path = Path(summary_raw).expanduser()
     if not summary_path.is_file():
@@ -316,10 +318,9 @@ def _print_dashboard_tests_row(
     icon = "✓" if passed else "✗"
     color = ok_color if passed else bad_color
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
-    print(f"      {color}{icon}{reset} tests: {dim}({timestamp}){reset}")
+    print(f"      {color}{icon}{reset} tests: {summary_path} {dim}({timestamp}){reset}")
     for line in summary_excerpt_from_entry(entry, max_lines=3):
         print(f"        {line}")
-    print(f"      {summary_path}")
 
 
 def _dashboard_project_pr(self: Any, *, state: RunState, project: str) -> tuple[str, str] | None:

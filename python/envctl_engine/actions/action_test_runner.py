@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.test_output.progress_markers import strip_progress_markers
 from envctl_engine.test_output.symbols import format_duration
 
 
@@ -18,17 +20,40 @@ def _render_command(command: list[str]) -> str:
     return " ".join(str(part) for part in command)
 
 
+def _clean_failure_lines(raw: object) -> list[str]:
+    if not isinstance(raw, str):
+        return []
+    cleaned_lines: list[str] = []
+    for line in raw.splitlines():
+        cleaned = strip_ansi(strip_progress_markers(line)).strip()
+        if cleaned:
+            cleaned_lines.append(cleaned)
+    return cleaned_lines
+
+
+def _format_failure_output_for_artifact(*, stdout: object, stderr: object, returncode: int) -> str:
+    stderr_lines = _clean_failure_lines(stderr)
+    stdout_lines = _clean_failure_lines(stdout)
+    if stderr_lines and stdout_lines:
+        return "\n".join(
+            [
+                "stderr:",
+                *stderr_lines,
+                "",
+                "stdout:",
+                *stdout_lines,
+            ]
+        )
+    lines = stderr_lines or stdout_lines
+    if not lines:
+        return f"exit:{returncode}"
+    return "\n".join(lines)
+
+
 def _summarize_failure_output(*, stdout: object, stderr: object, returncode: int) -> str:
-    chunks: list[str] = []
-    for raw in (stderr, stdout):
-        if not isinstance(raw, str):
-            continue
-        for line in raw.splitlines():
-            stripped = line.strip()
-            if stripped:
-                chunks.append(stripped)
-        if chunks:
-            break
+    chunks = _clean_failure_lines(stderr)
+    if not chunks:
+        chunks = _clean_failure_lines(stdout)
     if not chunks:
         return f"exit:{returncode}"
     snippet = " | ".join(chunks[:3])
@@ -486,14 +511,7 @@ def run_test_action(
                 f"  - {icon} {index_text} {suite_text} {status_text} "
                 f"({format_duration(duration_ms / 1000.0)}){counts_suffix}"
             )
-            if completed.returncode != 0:
-                failure_excerpt = _summarize_failure_output(
-                    stdout=getattr(completed, "stdout", ""),
-                    stderr=getattr(completed, "stderr", ""),
-                    returncode=int(getattr(completed, "returncode", 1)),
-                )
-                print(f"      failure: {orchestrator._colorize(failure_excerpt, fg='red')}")
-            elif parsed is not None and not counts_detected:
+            if completed.returncode == 0 and parsed is not None and not counts_detected:
                 print("      note: test command completed, but envctl could not extract test counts from the output.")
         suite_outcomes.append(
             {
@@ -508,6 +526,13 @@ def run_test_action(
                 "parsed": parsed,
                 "failed_only": failed_only,
                 "failure_summary": _summarize_failure_output(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                    returncode=int(getattr(completed, "returncode", 1)),
+                )
+                if completed.returncode != 0
+                else "",
+                "failure_details": _format_failure_output_for_artifact(
                     stdout=getattr(completed, "stdout", ""),
                     stderr=getattr(completed, "stderr", ""),
                     returncode=int(getattr(completed, "returncode", 1)),

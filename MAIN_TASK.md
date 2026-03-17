@@ -1,219 +1,183 @@
-# Envctl `--version` Flag Plan
+# Envctl Dashboard Test Failure Artifact Path Cleanup
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Add a supported `--version` flag that prints the current `envctl` version and exits successfully.
-  - Make version reporting work consistently for the package-installed command (`envctl`) and the clone-compatibility wrapper (`./bin/envctl`).
-  - Keep the implementation aligned with the existing launcher/runtime command boundary so version reporting does not depend on repo detection, config bootstrap, or runtime startup.
-  - Document the new version surface anywhere installation, command usage, or troubleshooting docs currently describe the launcher contract.
+  - Make the interactive dashboard and test action output show a single saved artifact path for failed test detail instead of echoing redundant inline failure logs.
+  - Ensure the file referenced by the dashboard path is complete enough for operators to diagnose suite-level failures, including failures where envctl cannot derive rerunnable selectors.
+  - Keep failed-test rerun support (`failed_tests_manifest.json`) intact while improving the operator-facing artifact contract.
 - Non-goals:
-  - Adding a new runtime command family unrelated to the user request.
-  - Changing release/versioning policy or the current package versioning source of truth.
-  - Reworking help output, command inventory, or direct inspection commands beyond what is required for `--version`.
+  - Changing test command selection, parallelism policy, or failed-test rerun semantics beyond the artifact/reporting path.
+  - Reworking non-test project action failure reporting (`migrate`, `review`, `pr`, `commit`), which already uses separate `report_path` handling.
+  - Changing runtime state root layout outside the existing run-scoped artifact tree.
 - Assumptions:
-  - The required user-facing behavior is `envctl --version`; no additional `version` subcommand is required unless a clear compatibility need is discovered during implementation.
-  - `--version` should be launcher-owned rather than runtime-owned because version reporting should work outside a repo and before any runtime bootstrap or prereq checks.
-  - The canonical version source should remain the package metadata in `pyproject.toml`, with a source-checkout fallback only if installed metadata is unavailable.
+  - The operator-visible problem is the legacy dashboard path because the user repro text matches `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_snapshot` output (`Development Environment - Interactive Mode`, `run_id`, `session_id`, `Configured Services`, `tests:`).
+  - The desired dashboard behavior is: show the saved artifact path once, keep the dashboard itself concise, and move complete failure context into the saved file behind that path.
 
 ## Goal (user experience)
-Users can run `envctl --version` from an installed pipx environment, from an editable install, or from an explicit repo wrapper path and get a single clear version string immediately, without needing to be inside a git repo or have `.envctl` configured. The docs should treat this as a normal verification step after installation and during troubleshooting.
+After a failed `test` command from the interactive dashboard, the operator should see one stable `tests:` / `failure summary:` artifact path per affected project and should not see redundant suite log excerpts inline in the dashboard command area. Opening the referenced file should show the complete cleaned failure context for that project, including generic suite failures such as startup/import/configuration crashes where envctl cannot extract rerunnable test selectors.
 
 ## Business logic and data model mapping
-- Wrapper/launcher entrypoints:
-  - `bin/envctl:main`
-  - `python/envctl_engine/runtime/launcher_cli.py:run`
-  - `python/envctl_engine/runtime/launcher_support.py:launcher_usage_text`
-- Runtime boundary and command-surface rules:
-  - `docs/developer/command-surface.md`
-  - `docs/developer/python-runtime-guide.md`
-- Runtime command inventory and help behavior:
-  - `python/envctl_engine/runtime/command_router.py`
-    - `COMMAND_ALIASES`
-    - `SUPPORTED_COMMANDS`
-    - `list_supported_commands()`
-  - `python/envctl_engine/runtime/engine_runtime.py:_print_help`
-  - `python/envctl_engine/runtime/inspection_support.py:dispatch_direct_inspection`
-- Packaging/version metadata:
-  - `pyproject.toml`
-  - `tests/python/runtime/test_cli_packaging.py`
-- Existing launcher/runtime behavior tests:
-  - `tests/python/runtime/test_command_exit_codes.py`
-  - `tests/python/runtime/test_cli_router_parity.py`
-  - `tests/python/runtime/test_command_dispatch_matrix.py`
-  - `tests/python/runtime/test_engine_runtime_command_parity.py`
+- Command dispatch and ownership:
+  - `python/envctl_engine/runtime/engine_runtime_dispatch.py:dispatch_command` routes action commands to `runtime.action_command_orchestrator.execute(...)`.
+  - `python/envctl_engine/runtime/engine_runtime.py:_run_test_action` delegates `test` routes to `ActionCommandOrchestrator.run_test_action(...)`.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:run_test_action` delegates execution to `python/envctl_engine/actions/action_test_runner.py:run_test_action`.
+- Test execution and failure summarization:
+  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` builds per-suite outcomes and currently stores `failure_summary` via `_summarize_failure_output(...)`.
+  - `python/envctl_engine/test_output/test_runner.py:TestRunner.run_tests`, `_run_with_streaming(...)` populate parser results and return cleaned subprocess stdout/stderr.
+  - `python/envctl_engine/test_output/parser_base.py:TestResult` carries `failed_tests`, `error_details`, and summary counts consumed by artifact persistence.
+- Persisted state and artifact model:
+  - `python/envctl_engine/state/models.py:RunState.metadata` stores `project_test_summaries`.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` writes `project_test_summaries`, `project_test_results_root`, and `project_test_results_updated_at`.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes:
+    - `summary_path`: `runs/<run_id>/test-results/<stamp>/<project>/failed_tests_summary.txt`
+    - `short_summary_path`: `runs/<run_id>/ft_<digest>.txt`
+    - `manifest_path`: `failed_tests_manifest.json`
+    - `state_path`: `test_state.txt`
+- Dashboard/UI rendering:
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_print_test_suite_overview(...)` prints per-project `failure summary:` paths after suite execution.
+  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` renders the persistent `tests:` dashboard row from `project_test_summaries`.
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` suppresses a detached duplicate block when saved test summaries already exist.
 
 ## Current behavior (verified in code)
-- The top-level wrapper (`bin/envctl`) does Python-version re-exec, installed-command shadow detection, and then hands off to `envctl_engine.runtime.launcher_cli:main`.
-- `python/envctl_engine/runtime/launcher_cli.py:run` currently handles:
-  - `--help` / `-h`
-  - `install`
-  - `uninstall`
-  - launcher-level `doctor`
-  - `--repo` extraction and forwarding to runtime
-- `python/envctl_engine/runtime/launcher_support.py:launcher_usage_text` documents `--help` but does not mention `--version`.
-- The runtime parser in `python/envctl_engine/runtime/command_router.py` knows `help` but has no `--version` alias, no `version` command, and `SUPPORTED_COMMANDS` currently contains exactly 33 commands without a version surface.
-- Runtime help output in `python/envctl_engine/runtime/engine_runtime.py:_print_help` prints the runtime banner and supported commands, but not the package version.
-- The command-dispatch and parity tests hard-code the current command inventory:
-  - `tests/python/runtime/test_command_dispatch_matrix.py` asserts there are 33 supported commands.
-  - `tests/python/runtime/test_engine_runtime_command_parity.py` asserts the same inventory and checks help output against `list_supported_commands()`.
-- Packaging tests already lock the package version in one place:
-  - `tests/python/runtime/test_cli_packaging.py:test_release_version_metadata_is_aligned_for_1_3_0`
-  - it asserts `pyproject.toml` version and README release badge alignment, but does not test a user-facing `--version` command.
-- User docs currently recommend install verification via `envctl --help` and `envctl doctor --repo ...`, but do not expose a version command:
-  - `README.md`
-  - `docs/user/getting-started.md`
-  - `docs/user/faq.md`
-  - `docs/operations/troubleshooting.md`
+- Failed test runs already persist per-project artifacts and state metadata:
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_test_summary_artifacts(...)` creates a new `test-results/run_<timestamp>/` directory under `runs/<run_id>/`.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_write_failed_tests_summary(...)` writes both `failed_tests_summary.txt` and the shorter `ft_<digest>.txt` alias, then persists those paths into `RunState.metadata["project_test_summaries"]`.
+- The dashboard snapshot already knows how to show a path instead of file contents:
+  - `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` prints:
+    - `✓/✗ tests: (<timestamp>)`
+    - the summary path on the next line
+  - `tests/python/actions/test_actions_parity.py:test_test_action_persists_failed_test_summary_artifacts...` verifies the dashboard renders `short_summary_path` and does not render the deeper `summary_path` when both are present.
+- Interactive dashboard failure handling already avoids a second detached “failure details” block:
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_print_test_failure_details(...)` only checks whether saved summary paths exist and returns `True` so `Command failed (exit 1).` is not printed again.
+  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py:test_interactive_test_failure_with_saved_summary_skips_duplicate_dashboard_failure_block` locks in that suppression.
+- The remaining inline noise comes from test action execution, not from the dashboard row:
+  - `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints `failure: ...` for every failed suite during interactive runs.
+  - `_print_test_suite_overview(...)` then prints `failure summary:` plus the saved artifact path, so the operator sees both the inline excerpt and the saved path.
+- The saved failure text is incomplete in generic suite-failure scenarios:
+  - `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` takes only the first non-empty stream (`stderr` first, else `stdout`) and truncates to the first three non-empty lines.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` persists that already-truncated `failure_summary` when `parsed.failed_tests` is empty.
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_format_summary_error_lines(...)` further compacts/truncates lines to a 60-line structured subset before writing the summary file.
+  - The generic failure fallback string is currently `Test command failed before envctl could extract failed tests.` if no snippet survives.
+- Parser fallback also leaves completeness gaps when output is only on stderr:
+  - `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` calls `parser.parse_output(clean_stdout)` when streaming callbacks are unavailable, so stderr-only failure content is not parsed into `TestResult.error_details`.
+- Config/docs surface for this behavior is minimal:
+  - `docs/reference/configuration.md` documents test execution controls (`ENVCTL_ACTION_TEST_PARALLEL`, `ENVCTL_ACTION_TEST_PARALLEL_MAX`) and dashboard backend policy, but no config key currently governs failed-summary completeness or dashboard artifact-only rendering.
+  - `docs/developer/state-and-artifacts.md` establishes `runs/<run_id>/` as the authoritative per-run artifact location.
 
 ## Root cause(s) / gaps
-- There is no launcher-owned version-reporting path today.
-- The existing command-surface split has a clear place for launcher-only functionality, but version reporting was never added there.
-- Adding `--version` incorrectly as a runtime command would create unnecessary churn:
-  - it would affect `SUPPORTED_COMMANDS`,
-  - expand dispatch/inventory tests,
-  - and make version reporting depend on repo/runtime bootstrap even though it should not.
-- There is no shared helper that resolves the package version for both installed and source-checkout contexts.
-- Documentation currently lacks a simple version verification step after installation and during troubleshooting.
+- `python/envctl_engine/actions/action_test_runner.py:_summarize_failure_output(...)` is intentionally terse, so generic suite failures lose important detail before they ever reach the persisted summary file.
+- `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` ignores `stderr` during non-streaming parser fallback, so stderr-only failures are underrepresented in `TestResult.error_details`.
+- `python/envctl_engine/actions/action_test_runner.py:run_test_action` prints inline `failure:` excerpts in interactive mode even though `project_test_summaries` already produce the saved artifact path surfaced by `_print_test_suite_overview(...)` and the dashboard snapshot.
+- `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` reads `short_summary_path`/`summary_path` directly instead of reusing the orchestrator’s short-path repair logic, so older state entries without `short_summary_path` can still render the deeper `failed_tests_summary.txt` path.
 
 ## Plan
-### 1) Add a launcher-owned version resolution helper
-- Introduce a dedicated helper in `python/envctl_engine/runtime/launcher_support.py` to resolve the user-facing envctl version.
-- Preferred lookup order:
-  1. installed package metadata (`importlib.metadata.version("envctl")`)
-  2. source-checkout fallback from `pyproject.toml` when running from the repo wrapper
-- Keep the helper small and deterministic:
-  - no repo detection
-  - no runtime/config/bootstrap dependency
-  - no network calls
-- Return a plain string version value only; formatting stays in the launcher layer.
-- Edge cases to handle explicitly:
-  - editable install where package metadata exists
-  - source wrapper execution where metadata may not exist yet
-  - malformed or missing fallback metadata should fail with a clear actionable launcher error rather than an unhandled exception
+### 1) Define the operator-facing failed-test artifact contract
+- Keep `RunState.metadata["project_test_summaries"]` as the canonical dashboard input, but tighten the meaning of the displayed path:
+  - the displayed path must always refer to the operator-facing artifact that contains the complete cleaned failure context for that project
+  - the dashboard should never need to inline suite logs when that artifact exists
+- Confirm the displayed path stays run-scoped under `python/envctl_engine/state/repository.py:RuntimeStateRepository.run_dir_path(...)` / `test_results_dir_path(...)`.
+- Preserve rerun selector state in `failed_tests_manifest.json`; do not overload the manifest with dashboard rendering concerns.
 
-### 2) Wire `--version` into the launcher contract, not the runtime command inventory
-- Update `python/envctl_engine/runtime/launcher_cli.py:run` to recognize `--version` before repo-root resolution and runtime forwarding.
-- Keep this behavior aligned with existing launcher-owned handling of `--help`:
-  - print version
-  - exit `0`
-  - do not require `--repo`
-  - do not call `runtime_cli.run(...)`
-- Update `python/envctl_engine/runtime/launcher_support.py:launcher_usage_text` to include `--version`.
-- Keep `python/envctl_engine/runtime/command_router.py` unchanged unless implementation discovers a concrete need for runtime awareness.
-  - Specifically, do not add `version` to `SUPPORTED_COMMANDS` or `COMMAND_ALIASES` unless the design intentionally expands the runtime command surface.
-- Decide and document behavior for mixed arguments:
-  - `envctl --version` should print version and exit.
-  - `envctl --repo /path --version` should either:
-    - print version and ignore `--repo`, or
-    - fail with a concise launcher usage error.
-  - Recommendation: allow `--repo` syntactically but ignore it for version reporting, because version is repo-independent and `--repo` is already stripped at launcher level.
-  - `envctl --version extra` should fail with a clear usage error rather than silently ignoring trailing arguments.
+### 2) Replace truncated generic failure snippets with complete cleaned project failure content
+- Update `python/envctl_engine/actions/action_test_runner.py` so suite outcomes keep a richer failure payload than the current `_summarize_failure_output(...)` three-line snippet.
+- Planned implementation shape:
+  - add a helper that merges both `stderr` and `stdout` in deterministic order, strips ANSI/progress markers, preserves source labels when both streams are present, and does not drop later lines prematurely
+  - keep a short status snippet only for event/status text if needed, but persist the full cleaned failure text in the outcome payload used by `_write_failed_tests_summary(...)`
+- Update `python/envctl_engine/actions/action_command_orchestrator.py:_collect_generic_suite_failures(...)` / `_write_failed_tests_summary(...)` so generic suite failures write the full cleaned failure body into the saved artifact instead of the pre-truncated summary.
+- For parsed failures (`failed_tests` present), keep the current per-test structure but append enough suite-level context to make the artifact self-sufficient when the extracted per-test snippet is not enough.
+- Edge cases to cover explicitly:
+  - stderr-only startup/import/config crashes
+  - stdout-only framework crashes
+  - both streams populated with distinct content
+  - failed-only reruns that preserve a previous manifest when selector extraction fails (`preserved_after_failed_only_extraction_failure`)
 
-### 3) Keep runtime help and command inventory semantics stable
-- Because `--version` is launcher-owned, preserve the current runtime `list_supported_commands()` contract and help inventory semantics.
-- Verify that:
-  - `list-supported` style outputs remain command-only,
-  - `runtime.dispatch(parse_route(["--help"], ...))` behavior stays unchanged,
-  - command parity manifests and dispatch matrix tests do not need version added as a runtime command.
-- If the team decides runtime help should mention that launcher-level `--version` exists, make that a doc/help copy change only, not a new runtime command.
+### 3) Stop printing inline suite failure logs when a saved artifact path will be shown
+- Update `python/envctl_engine/actions/action_test_runner.py:run_test_action` to stop printing `failure: ...` excerpts during interactive test execution once the saved summary path is the intended operator-facing surface.
+- Keep concise suite status lines (`passed/failed`, counts, duration), but route operators to the persisted file path rather than echoing raw log snippets inline.
+- Ensure `_print_test_suite_overview(...)` remains the single post-run textual pointer surface by printing `failure summary:` and the artifact path once per failed project.
+- Do not regress non-interactive CLI output for cases where no artifact can be written; the fallback should still surface a failure reason if persistence itself fails.
 
-### 4) Add packaging and launcher smoke coverage for `--version`
-- Extend `tests/python/runtime/test_cli_packaging.py` with user-facing version smoke tests for:
-  - editable install: installed `envctl --version` prints the package version
-  - non-editable install: installed `envctl --version` prints the package version
-  - explicit repo wrapper invocation: `./bin/envctl --version` reports the same version without redirect confusion
-- Add launcher-level unit tests covering:
-  - `python/envctl_engine/runtime/launcher_cli.py:run(["--version"])`
-  - invalid trailing args behavior
-  - `--repo` coexistence policy if supported
-- Avoid brittle tests that hard-code formatted prose beyond the essential version contract; assert the presence of the exact current package version and stable exit code.
+### 4) Unify dashboard path rendering on the short alias path
+- Reuse `python/envctl_engine/ui/dashboard/orchestrator.py:_test_summary_display_path(...)` / `_ensure_short_test_summary_path(...)` from `python/envctl_engine/ui/dashboard/rendering.py:_print_dashboard_project_tests_row(...)` rather than duplicating raw path selection.
+- This keeps the interactive dashboard on the stable `ft_<digest>.txt` alias even for older state entries that only persisted `summary_path`.
+- Preserve existing cleanup semantics in `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py:_prune_project_metadata(...)` so both the deep summary path and the short alias are still removed on worktree cleanup.
 
-### 5) Update command-surface and user docs
-- Update the docs that currently define launcher-owned behavior and install verification:
-  - `README.md`
-  - `docs/user/getting-started.md`
-  - `docs/user/faq.md`
-  - `docs/operations/troubleshooting.md`
-  - `docs/reference/commands.md`
-  - `docs/reference/important-flags.md`
-  - `docs/developer/command-surface.md`
-  - `docs/developer/python-runtime-guide.md` if needed for launcher/runtime boundary clarity
-- Documentation changes should make these points explicit:
-  - `--version` is a launcher-level flag
-  - it works without repo resolution or config bootstrap
-  - it is a valid post-install verification command
-  - it does not expand the runtime command inventory
+### 5) Close parser fallback gaps that currently hide failure detail
+- Update `python/envctl_engine/test_output/test_runner.py:_run_with_streaming(...)` so non-streaming fallback parsing sees the combined cleaned failure output rather than only `clean_stdout`.
+- Ensure `TestResult.error_details` can still be populated when pytest/unittest/jest emit critical failure context on stderr.
+- Keep progress-marker stripping and parser semantics stable for successful runs.
 
-### 6) Add release/changelog coverage
-- Append a changelog entry to `docs/changelog/main_changelog.md` when implementation lands.
-- The entry should note:
-  - new `--version` launcher flag
-  - source/install parity for version reporting
-  - any docs updates to install verification and troubleshooting guidance
+### 6) Tighten documentation and changelog evidence around the new artifact-only dashboard contract
+- Update the relevant changelog and, if repo standards require, the developer docs that describe run-scoped artifacts so they explicitly say:
+  - dashboard shows a saved failure artifact path
+  - inline dashboard log excerpts are intentionally suppressed
+  - the displayed file contains the complete cleaned failure context for the project
+- If the artifact contents remain a structured summary plus appended raw context rather than literal raw logs, document that distinction so operators know what to expect.
 
 ## Tests (add these)
 ### Backend tests
-- Extend `tests/python/runtime/test_cli_packaging.py`:
-  - editable install exposes `envctl --version`
-  - regular install exposes `envctl --version`
-  - explicit repo-wrapper `--version` path reports the same version
-- Add or extend launcher-specific tests, likely in `tests/python/runtime/test_command_exit_codes.py` or a new focused launcher test module:
-  - `--version` returns exit code `0`
-  - `--version` does not require repo bootstrap
-  - invalid trailing args fail cleanly if that policy is chosen
-- Add a focused helper test for version resolution fallback:
-  - package metadata path
-  - `pyproject.toml` fallback path
-  - clear failure when neither source is available
+- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
+  - add coverage for generic suite failures where stderr and stdout both contain unique content and assert the persisted `failed_tests_summary.txt` / `ft_<digest>.txt` file contains the full cleaned merged context
+  - add a regression proving interactive `test` output no longer prints `failure: ...` when `failure summary:` path output is present
+  - add coverage for stderr-only generic failures so the saved summary is still complete
+  - add coverage preserving failed-only rerun behavior when selector extraction fails but the previous manifest remains authoritative
+- Extend [tests/python/test_output/test_test_runner_streaming_fallback.py](/Users/kfiramar/projects/current/envctl/tests/python/test_output/test_test_runner_streaming_fallback.py):
+  - add a non-streaming fallback test where all failure detail is in stderr and verify parser results still capture the failure
+  - add a fallback test for combined stdout/stderr failure parsing to ensure no stream is silently discarded
 
 ### Frontend tests
-- No frontend/UI tests are required for the first implementation because `--version` is launcher/CLI-only and does not touch dashboard or selector behavior.
+- Extend [tests/python/ui/test_dashboard_rendering_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_rendering_parity.py):
+  - add a case where only `summary_path` exists and assert dashboard rendering repairs or prefers the short `ft_<digest>.txt` alias path
+  - keep current `tests:` row assertions but change them to reflect the stabilized short-path contract when appropriate
+- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
+  - verify interactive test failures still suppress duplicate dashboard-only failure blocks after the inline `failure:` log removal
 
 ### Integration/E2E tests
-- Add installed-command subprocess smoke in `tests/python/runtime/test_cli_packaging.py` for:
-  - editable install `envctl --version`
-  - wheel/non-editable install `envctl --version`
-- Add repo-wrapper subprocess smoke:
-  - `bin/envctl --version` from the source checkout
-  - confirm it does not depend on being inside a repo and does not emit wrapper-shadow noise for explicit path invocation
+- Prefer expanding [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) as the primary integration contract because this bug crosses test execution, artifact persistence, resume state, and dashboard snapshot rendering in one controlled path.
+- If a higher-level interactive regression harness is needed, add one focused dashboard-loop test in [tests/python/ui/test_terminal_ui_dashboard_loop.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_terminal_ui_dashboard_loop.py) to confirm the post-failure return-to-dashboard flow shows the prompt after the artifact path summary without inline failure log spam.
+- No new BATS suite is required unless unit/integration coverage cannot reproduce the exact interactive regression.
 
 ## Observability / logging (if relevant)
-- No new runtime observability is required.
-- Keep launcher behavior simple:
-  - version prints to stdout
-  - usage/argument errors print to stderr
-- If a dedicated launcher helper raises an error while resolving version, surface a concise launcher-level message rather than a traceback.
+- Keep existing status events, but separate “operator path pointer” from “diagnostic snippet” semantics:
+  - `test.suite.finish` and `test.suite.summary` remain the machine-readable event sources
+  - `test.summary.persisted` should continue to emit the persisted run directory
+- If implementation introduces a richer outcome field for full failure content, emit a bounded event or metric only for metadata such as:
+  - artifact written / skipped
+  - bytes/lines captured
+  - whether both stdout and stderr contributed
+- Avoid emitting the full failure body into runtime events; the artifact file is the intended durable surface.
 
 ## Rollout / verification
-- Implementation sequence:
-  1. add version-resolution helper
-  2. wire launcher `--version`
-  3. add unit and packaging smoke coverage
-  4. update docs
-  5. append changelog entry
-- Verification checklist:
-  1. `envctl --version` works from an installed environment.
-  2. `./bin/envctl --version` works from the source checkout.
-  3. `envctl --version` works outside a git repo.
-  4. `envctl --help` behavior remains unchanged except for usage text mentioning `--version`.
-  5. `list_supported_commands()` and runtime help command inventory remain stable unless intentionally updated.
-  6. Packaging tests confirm the printed version matches `pyproject.toml`.
+- Implement in this order:
+  1. richer failure capture in `action_test_runner.py`
+  2. summary writer updates in `action_command_orchestrator.py`
+  3. inline interactive failure-log suppression
+  4. dashboard short-path rendering unification
+  5. parser fallback fix in `test_runner.py`
+- Verification commands for the implementation phase:
+  - `./.venv/bin/python -m pytest tests/python/actions/test_actions_parity.py -q`
+  - `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_rendering_parity.py tests/python/ui/test_dashboard_orchestrator_restart_selector.py -q`
+  - `./.venv/bin/python -m pytest tests/python/test_output/test_test_runner_streaming_fallback.py -q`
+- Manual verification target:
+  - trigger a known failing `test` command from the interactive dashboard and confirm:
+    - dashboard output shows only the failure artifact path, not inline suite logs
+    - the referenced `ft_<digest>.txt` file contains the complete cleaned failure context
+    - `test --failed` behavior still uses `failed_tests_manifest.json` correctly
 
 ## Definition of done
-- `envctl --version` prints the current package version and exits `0`.
-- The flag works for installed commands and explicit repo wrapper paths.
-- Version reporting does not require repo detection, `.envctl`, or runtime bootstrap.
-- Launcher usage text and user/docs surfaces document `--version`.
-- Automated tests cover launcher, packaging, and source-wrapper version reporting.
-- `docs/changelog/main_changelog.md` includes the new behavior when implementation lands.
+- Interactive dashboard-driven `test` failures no longer dump redundant suite log excerpts inline when a saved failure artifact path exists.
+- The path shown in the dashboard/test summary points to a stable run-scoped file that contains complete cleaned failure context for the affected project.
+- Generic suite failures that previously produced truncated “suite failed before envctl could extract failed tests” snippets now preserve enough detail for diagnosis.
+- Non-streaming parser fallback no longer loses stderr-only failure detail.
+- Focused action, dashboard, and parser regression tests cover the new contract.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: sourcing version from more than one place can drift if fallback logic is careless.
-  - Mitigation: prefer package metadata first and keep `pyproject.toml` fallback narrow, tested, and centralized.
-- Risk: implementing `--version` as a runtime command would create unnecessary parity/test churn.
-  - Mitigation: keep it launcher-owned and avoid changing `SUPPORTED_COMMANDS` unless there is a deliberate product decision to add a runtime `version` command.
-- Risk: packaging smoke tests that assert exact formatting can become brittle across minor copy changes.
-  - Mitigation: assert the exact version value and exit code, but keep surrounding format expectations minimal.
+- Risk: making the artifact “complete” can reintroduce terminal chrome or excessively large files if raw output is copied without cleanup.
+  - Mitigation: strip ANSI/progress noise, preserve source labels, and bound only truly pathological output sizes while keeping materially complete failure content.
+- Risk: changing summary-file contents could unintentionally break tests or tooling that assumed the older concise summary format.
+  - Mitigation: keep headings/path names stable, preserve `failed_tests_manifest.json` as the rerun contract, and update tests/docs for the new content guarantees.
+- Risk: suppressing inline `failure:` excerpts could reduce immediate signal when artifact persistence fails.
+  - Mitigation: keep an explicit fallback message when summary persistence itself fails or when no saved artifact path is available.
 
 ## Open questions (only if unavoidable)
-- None. Repo evidence is sufficient to resolve the plan without blocking input.
+- None. The repo evidence is sufficient to plan the change without blocking clarification.

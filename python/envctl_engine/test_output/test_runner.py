@@ -214,7 +214,10 @@ class TestRunner:
                 run_kwargs["stdin"] = subprocess.DEVNULL
             completed = self.runtime.process_runner.run(command, **run_kwargs)
             stdout_text = str(getattr(completed, "stdout", "") or "")
+            stderr_text = str(getattr(completed, "stderr", "") or "")
             for line in stdout_text.splitlines():
+                parse_callback(line)
+            for line in stderr_text.splitlines():
                 parse_callback(line)
 
         clean_stdout = self._strip_progress_markers(str(getattr(completed, "stdout", "") or ""))
@@ -223,7 +226,7 @@ class TestRunner:
         if streamed_parse:
             parser.finalize()
         else:
-            parser.parse_output(clean_stdout)
+            parser.parse_output(self._combined_fallback_output(clean_stdout, clean_stderr))
 
         return subprocess.CompletedProcess(
             args=list(command),
@@ -261,6 +264,11 @@ class TestRunner:
             if cleaned:
                 lines.append(cleaned)
         return "\n".join(lines)
+
+    @staticmethod
+    def _combined_fallback_output(stdout: str, stderr: str) -> str:
+        chunks = [chunk for chunk in (stdout, stderr) if chunk]
+        return "\n".join(chunks)
 
     @staticmethod
     def _instrument_pytest_command(command: list[str]) -> list[str]:
