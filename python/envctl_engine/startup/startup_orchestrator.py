@@ -6,6 +6,7 @@ import threading
 import time
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
+from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
@@ -304,6 +305,18 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
+        if route.command == "plan" and not bool(route.flags.get("planning_prs")):
+            planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
+            selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
+            if callable(selection_getter):
+                selection_result = selection_getter()
+                selected_names = {context.name for context in project_contexts}
+                created_worktrees = tuple(
+                    worktree
+                    for worktree in getattr(selection_result, "created_worktrees", ())
+                    if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
+                )
+                launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None

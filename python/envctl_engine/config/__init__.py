@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from envctl_engine.actions.actions_test import (
     canonicalize_frontend_test_path,
@@ -41,8 +41,8 @@ def _bool_text(value: bool) -> str:
 def _build_defaults() -> dict[str, str]:
     main_profile = default_profile_settings("main")
     trees_profile = default_profile_settings("trees")
-    main_dependencies = dict(main_profile["dependencies"])
-    trees_dependencies = dict(trees_profile["dependencies"])
+    main_dependencies = cast(Mapping[str, bool], main_profile["dependencies"])
+    trees_dependencies = cast(Mapping[str, bool], trees_profile["dependencies"])
     return {
         "ENVCTL_DEFAULT_MODE": "main",
         "BACKEND_DIR": "backend",
@@ -71,6 +71,13 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_STRICT_N8N_BOOTSTRAP": "false",
         "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
+        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
+        "ENVCTL_PLAN_AGENT_CLI": "codex",
+        "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
+        "ENVCTL_PLAN_AGENT_SHELL": "zsh",
+        "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
+        "ENVCTL_PLAN_AGENT_CLI_CMD": "",
+        "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
         "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
         "ENVCTL_REQUIREMENTS_STRICT": "true",
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
@@ -312,6 +319,13 @@ class EngineConfig:
     strict_n8n_bootstrap: bool
     port_availability_mode: str
     plan_strict_selection: bool
+    plan_agent_terminals_enable: bool
+    plan_agent_cli: str
+    plan_agent_preset: str
+    plan_agent_shell: str
+    plan_agent_require_cmux_context: bool
+    plan_agent_cli_cmd: str
+    plan_agent_cmux_workspace: str
     runtime_truth_mode: str
     requirements_strict: bool
     main_profile: StartupProfile
@@ -389,6 +403,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()
     if default_mode not in {"main", "trees"}:
@@ -447,6 +462,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
     main_backend_expect_listener = parse_bool(resolved.get("MAIN_BACKEND_EXPECT_LISTENER"), True)
     trees_backend_expect_listener = parse_bool(resolved.get("TREES_BACKEND_EXPECT_LISTENER"), True)
+    plan_agent_cmux_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE", "") or "").strip()
+    plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
+        plan_agent_cmux_workspace
+    )
 
     return EngineConfig(
         base_dir=base_dir,
@@ -486,6 +505,14 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
             DEFAULTS["ENVCTL_PORT_AVAILABILITY_MODE"],
         ),
         plan_strict_selection=parse_bool(resolved.get("ENVCTL_PLAN_STRICT_SELECTION"), False),
+        plan_agent_terminals_enable=plan_agent_terminals_enable,
+        plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "codex") or "codex").strip().lower() or "codex",
+        plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_task") or "implement_task").strip()
+        or "implement_task",
+        plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
+        plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
+        plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
+        plan_agent_cmux_workspace=plan_agent_cmux_workspace,
         runtime_truth_mode=_parse_runtime_truth_mode(
             resolved.get("ENVCTL_RUNTIME_TRUTH_MODE"),
             DEFAULTS["ENVCTL_RUNTIME_TRUTH_MODE"],
@@ -510,6 +537,13 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_dependency_env_section_present=local_state.frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=local_state.frontend_dependency_env_template_errors,
     )
+
+
+def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
+    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "CMUX" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
+    if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
 
 
 def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:

@@ -1158,6 +1158,91 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["selection"]["reason"], "no_planning_files")
         self.assertEqual(payload["selection"]["selected_projects"], [])
 
+    def test_explain_startup_json_reports_plan_agent_launch_state(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], "workspace:9")
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], "workspace:9")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_cmux_alias_enablement(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "CMUX": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
 
 if __name__ == "__main__":
     unittest.main()
