@@ -411,6 +411,7 @@ class _ParserState:
     mode: str = ""
     command: str = "start"
     command_explicit: bool = False
+    explain_startup_requested: bool = False
     projects: list[str] = field(default_factory=list)
     passthrough: list[str] = field(default_factory=list)
     flags: dict[str, object] = field(default_factory=dict)
@@ -539,7 +540,10 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
-                state.command = mapped
+                if mapped == "explain-startup":
+                    state.explain_startup_requested = True
+                if mapped == "explain-startup" or not state.explain_startup_requested:
+                    state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
                 if forced_mode is not None:
@@ -591,7 +595,10 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 mapped = COMMAND_ALIASES.get(command_token)
                 if mapped is None:
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
-                state.command = mapped
+                if mapped == "explain-startup":
+                    state.explain_startup_requested = True
+                if mapped == "explain-startup" or not state.explain_startup_requested:
+                    state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
                 if forced_mode is not None:
@@ -816,7 +823,8 @@ def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
 
 def _handle_plan_flag(state: _ParserState, token: str) -> None:
     """Handle plan-related inline flags."""
-    state.command = "plan"
+    if not state.explain_startup_requested:
+        state.command = "plan"
     state.command_explicit = True
     state.mode = "trees"
 

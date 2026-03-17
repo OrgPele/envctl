@@ -10,9 +10,36 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
+
+
+def _pty_test_env(*, selector_impl: str | None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PYTHON_ROOT)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["TERM"] = str(env.get("TERM") or "xterm-256color")
+    for key in (
+        "ENVCTL_UI_SIMPLE_MENUS",
+        "ENVCTL_UI_SELECTOR_BACKEND",
+        "ENVCTL_UI_PROMPT_TOOLKIT",
+        "ENVCTL_UI_TEXTUAL_MOUSE",
+        "ENVCTL_UI_TEXTUAL_SELECTOR_SUBPROCESS",
+        "ENVCTL_UI_SELECTOR_FOCUS_REPORTING",
+        "ENVCTL_UI_SELECTOR_ESCDELAY",
+        "PROMPT_TOOLKIT_NO_CPR",
+        "ESCDELAY",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+    ):
+        env.pop(key, None)
+    if selector_impl is None:
+        env.pop("ENVCTL_UI_SELECTOR_IMPL", None)
+    else:
+        env["ENVCTL_UI_SELECTOR_IMPL"] = selector_impl
+    return env
 
 
 def _run_in_pty(
@@ -23,12 +50,7 @@ def _run_in_pty(
     warmup_seconds: float = 0.8,
 ) -> str:
     master_fd, slave_fd = pty.openpty()
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PYTHON_ROOT)
-    if selector_impl is None:
-        env.pop("ENVCTL_UI_SELECTOR_IMPL", None)
-    else:
-        env["ENVCTL_UI_SELECTOR_IMPL"] = selector_impl
+    env = _pty_test_env(selector_impl=selector_impl)
     proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-c", script],
         stdin=slave_fd,
@@ -80,12 +102,7 @@ def _run_in_pty_timed(
     timeout_seconds: float = 12.0,
 ) -> str:
     master_fd, slave_fd = pty.openpty()
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PYTHON_ROOT)
-    if selector_impl is None:
-        env.pop("ENVCTL_UI_SELECTOR_IMPL", None)
-    else:
-        env["ENVCTL_UI_SELECTOR_IMPL"] = selector_impl
+    env = _pty_test_env(selector_impl=selector_impl)
     proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-c", script],
         stdin=slave_fd,
@@ -169,6 +186,37 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
         )
         # Default textual selector clamps at the final row.
         output = _run_in_pty(script, b"\x1b[B" * 10 + b"\r", selector_impl=None)
+        self.assertRegex(output, r"RESULT_CANCELLED=False")
+        self.assertRegex(output, r"RESULT_PROJECTS=delta")
+
+    def test_project_selector_default_textual_ignores_parent_simple_menus_env_in_pty(self) -> None:
+        if not self._prompt_toolkit_available():
+            self.skipTest("prompt_toolkit is not installed")
+        if not self._textual_available():
+            self.skipTest("textual is not installed")
+        script = textwrap.dedent(
+            """
+            from envctl_engine.ui.textual.screens.selector import select_project_targets_textual
+
+            class P:
+                def __init__(self, name):
+                    self.name = name
+
+            projects = [P("alpha"), P("beta"), P("gamma"), P("delta")]
+            selection = select_project_targets_textual(
+                prompt="Test targets",
+                projects=projects,
+                allow_all=False,
+                allow_untested=False,
+                multi=False,
+                emit=None,
+            )
+            print("RESULT_PROJECTS=" + ",".join(selection.project_names))
+            print("RESULT_CANCELLED=" + str(selection.cancelled))
+            """
+        )
+        with patch.dict(os.environ, {"ENVCTL_UI_SIMPLE_MENUS": "1"}, clear=False):
+            output = _run_in_pty(script, b"\x1b[B" * 10 + b"\r", selector_impl=None)
         self.assertRegex(output, r"RESULT_CANCELLED=False")
         self.assertRegex(output, r"RESULT_PROJECTS=delta")
 

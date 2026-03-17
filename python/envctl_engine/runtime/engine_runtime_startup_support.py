@@ -3,6 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.startup.run_reuse_support import (
+    build_startup_identity_metadata as build_startup_identity_metadata_impl,
+    evaluate_run_reuse as evaluate_run_reuse_impl,
+    mark_run_reused as mark_run_reused_impl,
+    state_has_resumable_services as state_has_resumable_services_impl,
+)
 from envctl_engine.state.models import PortPlan, RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import discover_tree_projects
@@ -26,15 +32,31 @@ def auto_resume_start_enabled(route: object) -> bool:
     return True
 
 
+def build_startup_identity_metadata(
+    runtime: Any,
+    *,
+    runtime_mode: str,
+    project_contexts: list[object],
+    base_metadata: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    return build_startup_identity_metadata_impl(
+        runtime,
+        runtime_mode=runtime_mode,
+        project_contexts=project_contexts,
+        base_metadata=base_metadata,
+    )
+
+
+def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: object, contexts: list[object]) -> object:
+    return evaluate_run_reuse_impl(runtime, runtime_mode=runtime_mode, route=route, contexts=contexts)
+
+
+def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> dict[str, object]:
+    return mark_run_reused_impl(metadata, reason=reason)
+
+
 def state_has_resumable_services(runtime: Any, state: RunState) -> bool:
-    for service_name, service in state.services.items():
-        project_name = runtime._project_name_from_service(service_name)
-        if not project_name:
-            continue
-        service_type = str(getattr(service, "type", "")).strip().lower()
-        if service_type in {"backend", "frontend"}:
-            return True
-    return False
+    return state_has_resumable_services_impl(runtime, state)
 
 
 def load_auto_resume_state(runtime: Any, runtime_mode: str) -> RunState | None:
@@ -44,8 +66,6 @@ def load_auto_resume_state(runtime: Any, runtime_mode: str) -> RunState | None:
     if state.mode != runtime_mode:
         return None
     if bool(state.metadata.get("failed", False)):
-        return None
-    if not state_has_resumable_services(runtime, state):
         return None
     return state
 

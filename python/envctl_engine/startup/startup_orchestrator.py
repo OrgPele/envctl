@@ -6,8 +6,12 @@ import threading
 import time
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
+from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
+from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
+from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
@@ -31,9 +35,6 @@ from envctl_engine.startup.startup_selection_support import (
     restart_target_projects as restart_target_projects_impl,
     restart_target_projects_for_selected_services as restart_target_projects_for_selected_services_impl,
     select_start_tree_projects as select_start_tree_projects_impl,
-    state_matches_selected_projects as state_matches_selected_projects_impl,
-    state_covers_selected_projects as state_covers_selected_projects_impl,
-    state_project_names as state_project_names_impl,
     trees_start_selection_required as trees_start_selection_required_impl,
 )
 from envctl_engine.startup.startup_execution_support import (
@@ -67,12 +68,14 @@ class StartupOrchestrator:
                 self._validate_route_contract,
                 self._handle_restart_prestop,
                 self._select_contexts,
+                self._resolve_run_reuse,
                 self._resolve_disabled_startup_mode,
-                self._resolve_auto_resume,
             ):
                 code = phase(session)
                 if code is not None:
                     return code
+            self._ensure_run_id(session)
+            self._announce_session_identifiers(session)
             self._prepare_execution(session)
             self._start_selected_contexts(session)
             self._reconcile_strict_truth(session)
@@ -90,14 +93,30 @@ class StartupOrchestrator:
             effective_route=route,
             requested_command=route.command,
             runtime_mode=runtime_mode,
-            run_id=rt._new_run_id(),
+            run_id=None,
             startup_event_index=len(rt.events),
             debug_plan_snapshot=snapshot_enabled(dict(rt.env)),
         )
         rt._reset_project_startup_warnings()
-        print(f"run_id: {session.run_id}")
-        print(f"session_id: {rt._current_session_id() or 'unknown'}")
         return session
+
+    def _ensure_run_id(self, session: StartupSession) -> None:
+        if session.run_id is None:
+            session.run_id = self.runtime._new_run_id()
+
+    @staticmethod
+    def _resolved_run_id(session: StartupSession) -> str:
+        if session.run_id is None:
+            raise RuntimeError("run_id must be resolved before use")
+        return session.run_id
+
+    def _announce_session_identifiers(self, session: StartupSession) -> None:
+        if session.identifiers_announced:
+            return
+        self._ensure_run_id(session)
+        print(f"run_id: {self._resolved_run_id(session)}")
+        print(f"session_id: {self.runtime._current_session_id() or 'unknown'}")
+        session.identifiers_announced = True
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
         rt = self.runtime
@@ -286,6 +305,18 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
+        if route.command == "plan" and not bool(route.flags.get("planning_prs")):
+            planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
+            selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
+            if callable(selection_getter):
+                selection_result = selection_getter()
+                selected_names = {context.name for context in project_contexts}
+                created_worktrees = tuple(
+                    worktree
+                    for worktree in getattr(selection_result, "created_worktrees", ())
+                    if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
+                )
+                launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
@@ -302,13 +333,16 @@ class StartupOrchestrator:
         session.disabled_startup_mode = allow_disabled_dashboard
         if not allow_disabled_dashboard:
             return None
+        self._ensure_run_id(session)
+        self._announce_session_identifiers(session)
         run_state = build_planning_dashboard_state(
             rt,
             route=route,
             runtime_mode=session.runtime_mode,
-            run_id=session.run_id,
+            run_id=self._resolved_run_id(session),
             project_contexts=session.selected_contexts,
             configured_service_types=self._configured_service_types_for_mode(session.runtime_mode),
+            base_metadata=session.base_metadata,
         )
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
@@ -325,7 +359,7 @@ class StartupOrchestrator:
             return rt._run_interactive_dashboard_loop(run_state)
         return 0
 
-    def _resolve_auto_resume(self, session: StartupSession) -> int | None:
+    def _resolve_run_reuse(self, session: StartupSession) -> int | None:
         rt = self.runtime
         route = session.effective_route
         runtime_mode = session.runtime_mode
@@ -337,152 +371,243 @@ class StartupOrchestrator:
             }
         else:
             debug_orch_groups = set()
-        if requested_command != "restart" and rt._auto_resume_start_enabled(route):
-            auto_resume_started = time.monotonic()
-            existing_state = rt._load_auto_resume_state(runtime_mode)
-            if existing_state is not None:
-                selected_project_names = {
-                    str(context.name).strip()
-                    for context in session.selected_contexts
-                    if str(getattr(context, "name", "")).strip()
-                }
-                prior_project_names = state_project_names_impl(runtime=rt, state=existing_state)
-                exact_match = state_matches_selected_projects_impl(
-                    self,
-                    runtime=rt,
-                    state=existing_state,
-                    contexts=session.selected_contexts,
+        if requested_command != "restart":
+            reuse_started = time.monotonic()
+            decision = evaluate_run_reuse(
+                rt,
+                runtime_mode=runtime_mode,
+                route=route,
+                contexts=session.selected_contexts,
+            )
+            candidate_state = decision.candidate_state
+            candidate_run_id = candidate_state.run_id if candidate_state is not None else None
+            rt._emit(
+                "state.run_reuse.evaluate",
+                run_id=candidate_run_id,
+                mode=runtime_mode,
+                command=route.command,
+                decision_kind=decision.decision_kind,
+                reason=decision.reason,
+                selected_projects=decision.selected_projects,
+                state_projects=decision.state_projects,
+                weak_identity=decision.weak_identity,
+                mismatch_details=decision.mismatch_details,
+            )
+            if decision.decision_kind in {"resume_exact", "resume_subset"} and candidate_state is not None:
+                previous_run_id = session.run_id
+                previous_identifiers_announced = session.identifiers_announced
+                session.run_id = candidate_state.run_id
+                self._announce_session_identifiers(session)
+                self._emit_phase(
+                    session,
+                    "auto_resume_evaluate",
+                    reuse_started,
+                    status="resume",
+                    match_mode="exact" if decision.decision_kind == "resume_exact" else "subset",
+                    state_project_count=len(decision.state_projects),
+                    selected_project_count=len(session.selected_contexts),
                 )
-                subset_match = (
-                    not exact_match
-                    and runtime_mode == "trees"
-                    and state_covers_selected_projects_impl(
-                        self,
-                        runtime=rt,
-                        state=existing_state,
-                        contexts=session.selected_contexts,
-                    )
+                rt._emit(
+                    "state.auto_resume",
+                    run_id=candidate_state.run_id,
+                    mode=runtime_mode,
+                    command=route.command,
+                    match_mode="exact" if decision.decision_kind == "resume_exact" else "subset",
+                    selected_projects=[project["name"] for project in decision.selected_projects],
                 )
-                expand_match = (
-                    not exact_match
-                    and not subset_match
-                    and runtime_mode == "trees"
-                    and route.command == "plan"
-                    and bool(prior_project_names)
-                    and prior_project_names.issubset(selected_project_names)
+                rt._emit(
+                    "state.run_reuse.applied",
+                    run_id=candidate_state.run_id,
+                    mode=runtime_mode,
+                    command=route.command,
+                    decision_kind=decision.decision_kind,
+                    reason=decision.reason,
                 )
-                if exact_match or subset_match:
+                resume_route = Route(
+                    command="resume",
+                    mode=runtime_mode,
+                    raw_args=route.raw_args,
+                    passthrough_args=route.passthrough_args,
+                    projects=route.projects,
+                    flags={
+                        **route.flags,
+                        "_resume_source_command": route.command,
+                        "_run_reuse_reason": decision.decision_kind,
+                    },
+                )
+                resume_code = rt._resume(resume_route)
+                if int(resume_code) == 0:
+                    return 0
+                session.run_id = previous_run_id
+                session.identifiers_announced = previous_identifiers_announced
+                rt._emit(
+                    "state.auto_resume.skipped",
+                    reason="resume_failed",
+                    resume_code=int(resume_code),
+                    state_projects=[project["name"] for project in decision.state_projects],
+                    selected_projects=[project["name"] for project in decision.selected_projects],
+                    mode=runtime_mode,
+                    command=route.command,
+                )
+                rt._emit(
+                    "state.run_reuse.skipped",
+                    run_id=candidate_state.run_id,
+                    reason="resume_failed",
+                    resume_code=int(resume_code),
+                    mode=runtime_mode,
+                    command=route.command,
+                )
+            elif decision.decision_kind == "reuse_expand" and candidate_state is not None:
+                missing_services = rt._reconcile_state_truth(candidate_state)
+                if not missing_services:
+                    session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
+                    session.resumed_context_names = [project["name"] for project in decision.state_projects]
+                    session.preserved_services = dict(candidate_state.services)
+                    session.preserved_requirements = dict(candidate_state.requirements)
+                    resumed_names = {name.lower() for name in session.resumed_context_names}
+                    session.contexts_to_start = [
+                        context
+                        for context in session.selected_contexts
+                        if str(context.name).strip().lower() not in resumed_names
+                    ]
                     self._emit_phase(
                         session,
                         "auto_resume_evaluate",
-                        auto_resume_started,
-                        status="resume",
-                        match_mode="exact" if exact_match else "subset",
-                        state_project_count=len(prior_project_names),
+                        reuse_started,
+                        status="reuse_existing",
+                        match_mode="superset",
+                        state_project_count=len(decision.state_projects),
                         selected_project_count=len(session.selected_contexts),
+                        new_project_count=len(session.contexts_to_start),
                     )
                     rt._emit(
                         "state.auto_resume",
-                        run_id=existing_state.run_id,
+                        run_id=candidate_state.run_id,
                         mode=runtime_mode,
                         command=route.command,
-                        match_mode="exact" if exact_match else "subset",
-                        selected_projects=sorted(selected_project_names),
+                        match_mode="superset",
+                        selected_projects=[project["name"] for project in decision.selected_projects],
+                        restored_projects=session.resumed_context_names,
+                        new_projects=[context.name for context in session.contexts_to_start],
                     )
-                    resume_route = Route(
-                        command="resume",
-                        mode=runtime_mode,
-                        raw_args=route.raw_args,
-                        passthrough_args=route.passthrough_args,
-                        projects=route.projects,
-                        flags={**route.flags, "_resume_source_command": route.command},
-                    )
-                    resume_code = rt._resume(resume_route)
-                    if int(resume_code) == 0:
-                        return 0
                     rt._emit(
-                        "state.auto_resume.skipped",
-                        reason="resume_failed",
-                        resume_code=int(resume_code),
-                        state_projects=sorted(prior_project_names),
-                        selected_projects=sorted(selected_project_names),
+                        "state.run_reuse.applied",
+                        run_id=candidate_state.run_id,
                         mode=runtime_mode,
                         command=route.command,
+                        decision_kind=decision.decision_kind,
+                        reason=decision.reason,
+                        restored_projects=session.resumed_context_names,
+                        new_projects=[context.name for context in session.contexts_to_start],
                     )
-                    existing_state = None
-                if expand_match:
-                    missing_services = rt._reconcile_state_truth(existing_state)
-                    if not missing_services:
-                        session.resumed_context_names = sorted(prior_project_names)
-                        session.preserved_services = dict(existing_state.services)
-                        session.preserved_requirements = dict(existing_state.requirements)
-                        session.contexts_to_start = [
-                            context
-                            for context in session.selected_contexts
-                            if str(context.name).strip() not in prior_project_names
-                        ]
-                        self._emit_phase(
-                            session,
-                            "auto_resume_evaluate",
-                            auto_resume_started,
-                            status="reuse_existing",
-                            match_mode="superset",
-                            state_project_count=len(prior_project_names),
-                            selected_project_count=len(session.selected_contexts),
-                            new_project_count=len(session.contexts_to_start),
-                        )
-                        rt._emit(
-                            "state.auto_resume",
-                            run_id=existing_state.run_id,
-                            mode=runtime_mode,
-                            command=route.command,
-                            match_mode="superset",
-                            selected_projects=sorted(selected_project_names),
-                            restored_projects=session.resumed_context_names,
-                            new_projects=[context.name for context in session.contexts_to_start],
-                        )
-                        existing_state = None
-                    else:
-                        self._emit_phase(
-                            session,
-                            "auto_resume_evaluate",
-                            auto_resume_started,
-                            status="skipped",
-                            reason="stale_existing_state",
-                            state_project_count=len(prior_project_names),
-                            selected_project_count=len(session.selected_contexts),
-                            missing_service_count=len(missing_services),
-                        )
-                        rt._emit(
-                            "state.auto_resume.skipped",
-                            reason="stale_existing_state",
-                            missing_services=missing_services,
-                            state_projects=sorted(prior_project_names),
-                            selected_projects=sorted(selected_project_names),
-                            mode=runtime_mode,
-                            command=route.command,
-                        )
-                        existing_state = None
-                if existing_state is not None:
+                else:
                     self._emit_phase(
                         session,
                         "auto_resume_evaluate",
-                        auto_resume_started,
+                        reuse_started,
                         status="skipped",
-                        reason="project_selection_mismatch",
-                        state_project_count=len(prior_project_names),
+                        reason="stale_existing_state",
+                        state_project_count=len(decision.state_projects),
                         selected_project_count=len(session.selected_contexts),
+                        missing_service_count=len(missing_services),
                     )
                     rt._emit(
                         "state.auto_resume.skipped",
-                        reason="project_selection_mismatch",
-                        state_projects=sorted(prior_project_names),
-                        selected_projects=sorted(selected_project_names),
+                        reason="stale_existing_state",
+                        missing_services=missing_services,
+                        state_projects=[project["name"] for project in decision.state_projects],
+                        selected_projects=[project["name"] for project in decision.selected_projects],
                         mode=runtime_mode,
                         command=route.command,
                     )
+                    rt._emit(
+                        "state.run_reuse.skipped",
+                        run_id=candidate_state.run_id,
+                        reason="stale_existing_state",
+                        missing_services=missing_services,
+                        mode=runtime_mode,
+                        command=route.command,
+                    )
+            elif decision.decision_kind == "resume_dashboard_exact" and candidate_state is not None:
+                session.run_id = candidate_state.run_id
+                self._announce_session_identifiers(session)
+                candidate_state.metadata = build_planning_dashboard_state(
+                    rt,
+                    route=route,
+                    runtime_mode=session.runtime_mode,
+                    run_id=candidate_state.run_id,
+                    project_contexts=session.selected_contexts,
+                    configured_service_types=self._configured_service_types_for_mode(session.runtime_mode),
+                    base_metadata=mark_run_reused(candidate_state.metadata, reason="resume_dashboard_exact"),
+                ).metadata
+                resolve_state_repository(rt).save_resume_state(
+                    state=candidate_state,
+                    emit=rt._emit,
+                    runtime_map_builder=build_runtime_map,
+                )
+                self._emit_phase(
+                    session,
+                    "auto_resume_evaluate",
+                    reuse_started,
+                    status="dashboard_resume",
+                    match_mode="exact",
+                    state_project_count=len(decision.state_projects),
+                    selected_project_count=len(session.selected_contexts),
+                )
+                rt._emit(
+                    "state.run_reuse.applied",
+                    run_id=candidate_state.run_id,
+                    mode=runtime_mode,
+                    command=route.command,
+                    decision_kind=decision.decision_kind,
+                    reason=decision.reason,
+                )
+                rt._emit(
+                    "state.dashboard_resume",
+                    run_id=candidate_state.run_id,
+                    mode=runtime_mode,
+                    command=route.command,
+                )
+                enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
+                if route.command == "plan":
+                    print(
+                        "Planning mode complete; skipping service startup because "
+                        f"envctl runs are disabled for {session.runtime_mode}."
+                    )
+                elif not enter_interactive_dashboard:
+                    print(
+                        f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
+                    )
+                if enter_interactive_dashboard:
+                    return rt._run_interactive_dashboard_loop(candidate_state)
+                return 0
             else:
-                self._emit_phase(session, "auto_resume_evaluate", auto_resume_started, status="none")
+                self._emit_phase(
+                    session,
+                    "auto_resume_evaluate",
+                    reuse_started,
+                    status="skipped" if candidate_state is not None else "none",
+                    reason=decision.reason if candidate_state is not None else None,
+                    state_project_count=len(decision.state_projects),
+                    selected_project_count=len(session.selected_contexts),
+                )
+                if candidate_state is not None:
+                    rt._emit(
+                        "state.auto_resume.skipped",
+                        reason=decision.reason,
+                        state_projects=[project["name"] for project in decision.state_projects],
+                        selected_projects=[project["name"] for project in decision.selected_projects],
+                        mode=runtime_mode,
+                        command=route.command,
+                    )
+                    rt._emit(
+                        "state.run_reuse.skipped",
+                        run_id=candidate_state.run_id,
+                        reason=decision.reason,
+                        mode=runtime_mode,
+                        command=route.command,
+                        mismatch_details=decision.mismatch_details,
+                    )
 
         if route.command == "plan" and bool(route.flags.get("planning_prs")):
             rt._emit("planning.projects.start", projects=[context.name for context in session.selected_contexts])
@@ -597,7 +722,7 @@ class StartupOrchestrator:
                                     context=context,
                                     mode=session.runtime_mode,
                                     route=route_for_execution,
-                                    run_id=session.run_id,
+                                    run_id=self._resolved_run_id(session),
                                 ): context
                                 for context in session.contexts_to_start
                             }
@@ -650,7 +775,7 @@ class StartupOrchestrator:
                                 context=context,
                                 mode=session.runtime_mode,
                                 route=route_for_execution,
-                                run_id=session.run_id,
+                                run_id=self._resolved_run_id(session),
                             )
                             self._record_project_startup(session, context, result)
                             self._render_project_startup_warnings(
@@ -720,6 +845,7 @@ class StartupOrchestrator:
 
     def _finalize_success(self, session: StartupSession) -> int:
         rt = self.runtime
+        self._ensure_run_id(session)
         run_state = build_success_run_state(rt, session)
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
@@ -789,6 +915,7 @@ class StartupOrchestrator:
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
         rt = self.runtime
+        self._ensure_run_id(session)
         port_allocator = port_allocator_impl(rt)
         if "no free port found" in error.lower():
             final_error = f"Port reservation failed: {error}"

@@ -444,6 +444,61 @@ class ActionsParityTests(unittest.TestCase):
             self.assertNotIn("failure: ", rendered)
             self.assertIn("failure summary:", rendered)
             self.assertIn("ft_", rendered)
+            self.assertNotIn("Test command failed:", rendered)
+            self.assertNotIn("ImportError: cannot import name 'x' from 'y'", rendered)
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertFalse(
+                any(message.startswith("Test command failed:") for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertFalse(
+                any("ImportError: cannot import name 'x' from 'y'" in message for message in status_messages),
+                msg=status_messages,
+            )
+
+    def test_interactive_test_action_keeps_inline_failure_status_when_no_summary_artifact_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(
+                returncode=1,
+                stdout="E\nFAILED (errors=1)\n",
+                stderr="ImportError: cannot import name 'x' from 'y'\n",
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch(
+                "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                return_value=(False, "forced_unavailable"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            self.assertNotIn("failure summary:", out.getvalue())
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertTrue(
+                any(message.startswith("Test command failed:") for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertTrue(
+                any("ImportError: cannot import name 'x' from 'y'" in message for message in status_messages),
+                msg=status_messages,
+            )
 
     def test_action_commands_require_explicit_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

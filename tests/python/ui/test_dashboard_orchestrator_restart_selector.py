@@ -1693,7 +1693,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.selection_calls[0]["multi"], True)
         self.assertIsNone(runtime.selection_calls[0]["exclusive_project_name"])
 
-    def test_interactive_test_service_selection_keeps_failed_rerun_when_saved_failure_state_exists_even_if_latest_status_passed(
+    def test_interactive_test_service_selection_hides_failed_rerun_when_latest_status_passed(
         self,
     ) -> None:
         runtime = _RuntimeStub()
@@ -1739,9 +1739,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         should_continue, _next_state = orchestrator._run_interactive_command("t", state, runtime)
 
         self.assertTrue(should_continue)
-        self.assertEqual(runtime.selection_calls[0]["projects"], ["Backend", "Frontend", "Failed tests"])
+        self.assertEqual(runtime.selection_calls[0]["projects"], ["Backend", "Frontend"])
         self.assertEqual(runtime.selection_calls[0]["multi"], True)
-        self.assertEqual(runtime.selection_calls[0]["exclusive_project_name"], "Failed tests")
+        self.assertIsNone(runtime.selection_calls[0]["exclusive_project_name"])
 
     def test_interactive_test_service_selection_falls_back_to_service_name_parsing(self) -> None:
         runtime = _RuntimeStubMissingProjectResolver()
