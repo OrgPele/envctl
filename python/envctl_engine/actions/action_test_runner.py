@@ -62,6 +62,24 @@ def _summarize_failure_output(*, stdout: object, stderr: object, returncode: int
     return snippet
 
 
+def _failed_summary_artifact_available(
+    *,
+    summary_metadata: dict[str, dict[str, object]] | None,
+    project_name: str,
+) -> bool:
+    if not isinstance(summary_metadata, dict):
+        return False
+    entry = summary_metadata.get(project_name)
+    if not isinstance(entry, dict):
+        return False
+    status = str(entry.get("status", "")).strip().lower()
+    if status and status != "failed":
+        return False
+    return bool(
+        str(entry.get("short_summary_path", "") or "").strip() or str(entry.get("summary_path", "") or "").strip()
+    )
+
+
 def _format_live_progress_status(label: str, current: int, total: int) -> str:
     return f"Running {label}... {current}/{total} tests complete"
 
@@ -614,9 +632,24 @@ def run_test_action(
     )
 
     if failures:
-        message = "; ".join(failures)
+        fallback_failures: list[str] = []
+        for item in sorted(suite_outcomes, key=lambda value: int(value.get("index", 0))):
+            if int(item.get("returncode", 0) or 0) == 0:
+                continue
+            project_name = str(item.get("project_name", "")).strip()
+            if project_name and _failed_summary_artifact_available(
+                summary_metadata=summary_metadata,
+                project_name=project_name,
+            ):
+                continue
+            suite = str(item.get("suite", "suite"))
+            index = int(item.get("index", 0) or 0)
+            detail = str(item.get("failure_summary", "") or "").strip() or "unknown test failure"
+            fallback_failures.append(f"{project_name}:{suite} [{index}/{len(execution_specs)}]: {detail}")
+        message = "; ".join(fallback_failures or failures)
         if interactive_command:
-            orchestrator._emit_status(f"Test command failed: {message}")
+            if fallback_failures:
+                orchestrator._emit_status(f"Test command failed: {message}")
         else:
             print(f"test action failed: {message}")
         orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)
