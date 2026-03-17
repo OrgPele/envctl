@@ -1125,9 +1125,9 @@ class DashboardOrchestrator:
         return DashboardOrchestrator._prompt_text_dialog(
             runtime,
             title="Commit Message",
-            help_text="Commit message (leave blank to use changelog).",
+            help_text="Commit message (leave blank to use the envctl commit log).",
             placeholder="Type a commit message",
-            default_button_label="Use changelog",
+            default_button_label="Use envctl commit log",
         )
 
     @staticmethod

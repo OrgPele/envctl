@@ -687,7 +687,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.read_prompts, [])
         self.assertEqual(len(runtime.text_input_prompts), 1)
         self.assertEqual(runtime.text_input_prompts[0]["title"], "Commit Message")
-        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use changelog")
+        self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use envctl commit log")
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.command, "commit")
