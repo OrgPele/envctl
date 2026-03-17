@@ -176,6 +176,41 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertIn("cmux", str(reason))
             self.assertIn("opencode", str(reason))
 
+    def test_plan_workspace_override_implies_plan_agent_prereqs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"cmux", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("cmux", str(reason))
+            self.assertIn("codex", str(reason))
+
 
 if __name__ == "__main__":
     unittest.main()

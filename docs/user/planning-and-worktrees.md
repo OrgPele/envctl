@@ -56,6 +56,7 @@ ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_plan
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
+ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123
 ```
 
 Behavior:
@@ -64,6 +65,7 @@ Behavior:
 - only launches for worktrees created during the current reconciliation
 - skips `--planning-prs`
 - skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
+- if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
 
 Each launched surface stays interactive. Envctl creates the tab, renames it to the worktree name, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the slash preset command.
 

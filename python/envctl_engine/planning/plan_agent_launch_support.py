@@ -53,6 +53,7 @@ class PlanAgentLaunchConfig:
     preset: str
     shell: str
     require_cmux_context: bool
+    cmux_workspace: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,12 +94,18 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
         or config.raw.get("ENVCTL_PLAN_AGENT_SHELL")
         or _DEFAULT_SHELL
     ).strip() or _DEFAULT_SHELL
+    cmux_workspace = str(
+        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or ""
+    ).strip()
+    enabled = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
+        False,
+    ) or bool(cmux_workspace)
     return PlanAgentLaunchConfig(
-        enabled=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
-            or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
-            False,
-        ),
+        enabled=enabled,
         cli=cli,
         cli_command=cli_command,
         preset=preset,
@@ -108,6 +115,7 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
             or config.raw.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"),
             True,
         ),
+        cmux_workspace=cmux_workspace,
     )
 
 
@@ -132,7 +140,8 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "preset": launch_config.preset,
         "shell": launch_config.shell,
         "require_cmux_context": launch_config.require_cmux_context,
-        "workspace_id": str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip() or None,
+        "workspace_id": _resolve_workspace_id(runtime, launch_config),
+        "configured_workspace": launch_config.cmux_workspace or None,
         "reason": "disabled",
     }
     if str(getattr(route, "command", "")).strip() != "plan":
@@ -329,6 +338,8 @@ def _surface_id_from_output(raw: str) -> str | None:
 
 
 def _resolve_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
+    if launch_config.cmux_workspace:
+        return launch_config.cmux_workspace
     env_workspace = str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip()
     if env_workspace:
         return env_workspace

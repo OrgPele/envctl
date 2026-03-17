@@ -147,6 +147,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             "shell": runtime.config.plan_agent_shell,
             "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
             "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
+            "cmux_workspace": runtime.config.plan_agent_cmux_workspace or None,
         },
     }
     if json_output:

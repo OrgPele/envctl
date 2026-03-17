@@ -74,3 +74,36 @@ Config / env / migrations:
 
 Risks / notes:
 - This follow-up addresses a concrete source of test nondeterminism caused by inherited parent env. It does not eliminate every possible PTY timing issue, but the previously identified selector-backend leak is now covered by a regression test.
+
+## 2026-03-17 - Explicit cmux workspace override
+
+Scope:
+- Added a plan-agent workspace override so operators can target a specific cmux workspace instead of relying only on caller context.
+
+Key behavior changes:
+- New `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` config/env key explicitly selects the workspace used for `cmux new-surface`, `rename-tab`, `respawn-pane`, and typed command injection.
+- Setting `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` now implicitly enables plan-agent terminal launch, even when `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset.
+- Inspection/explain-startup surfaces now report the effective workspace selection when the override is configured.
+
+Files / modules touched:
+- `python/envctl_engine/config/__init__.py`
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/runtime/inspection_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_engine_runtime_command_parity.py`
+- `tests/python/runtime/test_prereq_policy.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_explicit_workspace_override_implies_enablement_and_is_used` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity.EngineRuntimeCommandParityTests.test_explain_startup_json_reports_plan_agent_workspace_override` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy.PrereqPolicyTests.test_plan_workspace_override_implies_plan_agent_prereqs` -> passed
+
+Config / env / migrations:
+- Added `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`.
+- No migrations.
+
+Risks / notes:
+- The override expects a valid cmux workspace id string. Envctl passes it through directly rather than attempting to resolve/fix invalid ids.
