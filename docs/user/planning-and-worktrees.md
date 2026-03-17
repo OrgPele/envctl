@@ -53,10 +53,17 @@ envctl explain-startup --json
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
-ENVCTL_PLAN_AGENT_PRESET=implement_plan
+ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
-ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123
+ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl
+```
+
+Shorthand aliases also work:
+
+```dotenv
+CMUX=true
+CMUX_WORKSPACE=envctl
 ```
 
 Behavior:
@@ -66,8 +73,12 @@ Behavior:
 - skips `--planning-prs`
 - skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
 - if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
+- the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
+- when a named target workspace does not exist yet, envctl creates it and then launches the new plan-agent surfaces there
+- `CMUX=true` is shorthand for enabling the feature against the current cmux workspace context
+- `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 
-Each launched surface stays interactive. Envctl creates the tab, renames it to the worktree name, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the slash preset command.
+Each launched surface stays interactive. Envctl creates the tab, renames it to the worktree name, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. For Codex that is `/prompts:<preset>`; for OpenCode it remains `/<preset>`.
 
 ## Selection Input
 When passing plan selections, you can use any of these forms:

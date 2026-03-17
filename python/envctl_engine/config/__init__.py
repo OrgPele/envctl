@@ -73,7 +73,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
         "ENVCTL_PLAN_AGENT_CLI": "codex",
-        "ENVCTL_PLAN_AGENT_PRESET": "implement_plan",
+        "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
@@ -403,6 +403,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()
     if default_mode not in {"main", "trees"}:
@@ -506,8 +507,8 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_strict_selection=parse_bool(resolved.get("ENVCTL_PLAN_STRICT_SELECTION"), False),
         plan_agent_terminals_enable=plan_agent_terminals_enable,
         plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "codex") or "codex").strip().lower() or "codex",
-        plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_plan") or "implement_plan").strip()
-        or "implement_plan",
+        plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_task") or "implement_task").strip()
+        or "implement_task",
         plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
         plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
@@ -536,6 +537,13 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_dependency_env_section_present=local_state.frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=local_state.frontend_dependency_env_template_errors,
     )
+
+
+def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
+    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "CMUX" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
+    if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
 
 
 def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:

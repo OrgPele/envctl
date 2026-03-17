@@ -107,3 +107,150 @@ Config / env / migrations:
 
 Risks / notes:
 - The override expects a valid cmux workspace id string. Envctl passes it through directly rather than attempting to resolve/fix invalid ids.
+
+## 2026-03-17 - Workspace title resolution
+
+Scope:
+- Extended explicit plan-agent workspace overrides so operators can use human workspace titles instead of only raw cmux refs.
+
+Key behavior changes:
+- `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` now accepts cmux workspace titles such as `envctl`.
+- When the override does not already look like a workspace ref, UUID, or index, envctl resolves it through `cmux list-workspaces` and uses the matching `workspace:<n>` ref for subsequent commands.
+- Raw refs, UUIDs, and indexes continue to work unchanged.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_explicit_workspace_override_resolves_workspace_name` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_explicit_workspace_override_implies_enablement_and_is_used` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- Existing `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` now accepts workspace titles.
+
+Risks / notes:
+- Title resolution depends on `cmux list-workspaces` returning titles in the current CLI format. If cmux changes that output shape, title lookup may need adjustment.
+
+## 2026-03-17 - CMUX alias env support
+
+Scope:
+- Added shorthand env aliases for common plan-agent cmux launch workflows.
+
+Key behavior changes:
+- `CMUX=true` now enables plan-agent launch against the current cmux workspace context.
+- `CMUX_WORKSPACE=<value>` now aliases `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>` and therefore also enables the feature.
+- Canonical `ENVCTL_PLAN_AGENT_*` keys continue to take precedence when both canonical and alias forms are present.
+
+Files / modules touched:
+- `python/envctl_engine/config/__init__.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `tests/python/runtime/test_prereq_policy.py`
+- `tests/python/runtime/test_engine_runtime_command_parity.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_cmux_alias_enables_current_workspace_launch` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_cmux_workspace_alias_resolves_workspace_name` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy.PrereqPolicyTests.test_cmux_alias_implies_plan_agent_prereqs` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity.EngineRuntimeCommandParityTests.test_explain_startup_json_reports_cmux_alias_enablement` -> passed
+
+Config / env / migrations:
+- Added shorthand env alias support for `CMUX` and `CMUX_WORKSPACE`.
+- No migrations.
+
+Risks / notes:
+- Alias handling is intentionally one-way into the canonical config keys. Existing `CMUX_WORKSPACE_ID` from cmux itself remains separate and continues to represent the caller workspace context.
+
+## 2026-03-17 - Default preset switched to implement_task
+
+Scope:
+- Changed the plan-agent launch default slash command from `implement_plan` to `implement_task`.
+
+Key behavior changes:
+- Newly launched Codex/OpenCode plan-agent sessions now type `/implement_task` by default.
+- `implement_plan` remains installed and available as an explicit alias preset when users choose it via `ENVCTL_PLAN_AGENT_PRESET`.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `python/envctl_engine/config/__init__.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support`
+
+Config / env / migrations:
+- Default `ENVCTL_PLAN_AGENT_PRESET` changed from `implement_plan` to `implement_task`.
+- No migrations.
+
+Risks / notes:
+- Users who explicitly configured `ENVCTL_PLAN_AGENT_PRESET=implement_plan` keep the old behavior. Only the default changed.
+
+## 2026-03-17 - Create missing named workspaces
+
+Scope:
+- Extended explicit workspace targeting so named cmux workspaces are created automatically when missing.
+
+Key behavior changes:
+- When `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` or `CMUX_WORKSPACE` specifies a workspace title that is not present in `cmux list-workspaces`, envctl now creates a new workspace, renames it to the requested title, and launches the plan-agent surfaces there.
+- Existing named workspaces still resolve to their current `workspace:<n>` refs without creation.
+- Raw workspace refs / UUIDs / indexes continue to pass through unchanged.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/planning-and-worktrees.md`
+- `docs/user/ai-playbooks.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- Existing explicit workspace overrides now create missing named workspaces automatically.
+
+Risks / notes:
+- Workspace creation uses `cmux new-workspace --cwd <repo-root>` followed by `cmux rename-workspace`. If cmux changes those command semantics, the creation flow may need adjustment.
+
+## 2026-03-17 - Codex launches use /prompts preset routing
+
+Scope:
+- Adjusted the Codex plan-agent launch command so envctl sends Codex prompt presets through the `/prompts:` namespace.
+
+Key behavior changes:
+- Codex plan-agent launches now type `/prompts:implement_task` by default instead of `/implement_task`.
+- OpenCode launch behavior stays unchanged and continues to send `/<preset>`.
+- Stored preset values remain plain preset names such as `implement_task`; only the typed launch command changed.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/reference/configuration.md`
+- `docs/reference/commands.md`
+- `docs/user/ai-playbooks.md`
+- `docs/user/planning-and-worktrees.md`
+
+Tests run + results:
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_prereq_policy` -> passed
+- `PYTHONPATH=python ./.venv/bin/python -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No new config keys.
+- No migrations.
+
+Risks / notes:
+- This assumes current Codex prompt invocation is routed through `/prompts:<preset>`. If the Codex CLI changes that command namespace again, only the launch formatter should need adjustment.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import time
@@ -11,7 +12,7 @@ from envctl_engine.config import EngineConfig
 from envctl_engine.shared.parsing import parse_bool
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
-_DEFAULT_PRESET = "implement_plan"
+_DEFAULT_PRESET = "implement_task"
 _DEFAULT_SHELL = "zsh"
 _SURFACE_READY_DELAY_SECONDS = 0.15
 _CLI_READY_DELAY_SECONDS = 0.35
@@ -134,13 +135,14 @@ def plan_agent_launch_prereq_commands(
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    workspace_id = _resolve_workspace_id(runtime, launch_config)
     payload = {
         "enabled": launch_config.enabled,
         "cli": launch_config.cli,
         "preset": launch_config.preset,
         "shell": launch_config.shell,
         "require_cmux_context": launch_config.require_cmux_context,
-        "workspace_id": _resolve_workspace_id(runtime, launch_config),
+        "workspace_id": workspace_id,
         "configured_workspace": launch_config.cmux_workspace or None,
         "reason": "disabled",
     }
@@ -152,7 +154,10 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         return payload
     if not launch_config.enabled:
         return payload
-    if launch_config.require_cmux_context and not payload["workspace_id"]:
+    if launch_config.cmux_workspace:
+        payload["reason"] = "awaiting_new_worktrees"
+        return payload
+    if launch_config.require_cmux_context and not workspace_id:
         payload["reason"] = "missing_cmux_context"
         return payload
     payload["reason"] = "awaiting_new_worktrees"
@@ -192,7 +197,10 @@ def launch_plan_agent_terminals(
             **base_payload,
         )
         return PlanAgentLaunchResult(status="failed", reason="missing_executables")
-    workspace_id = _resolve_workspace_id(runtime, launch_config)
+    workspace_id = _ensure_workspace_id(runtime, launch_config)
+    if not workspace_id and launch_config.cmux_workspace:
+        _print_launch_summary("Plan agent launch failed: unable to resolve or create the configured cmux workspace.")
+        return PlanAgentLaunchResult(status="failed", reason="workspace_unavailable")
     if not workspace_id:
         _print_launch_summary("Plan agent launch skipped: current cmux workspace context is unavailable.")
         runtime._emit("planning.agent_launch.skipped", reason="missing_cmux_context", **base_payload)
@@ -271,7 +279,7 @@ def _launch_single_worktree(
     typed_steps = [
         shlex.quote(str(worktree.root)),
         launch_config.cli_command,
-        _slash_command(launch_config.preset),
+        _slash_command(launch_config.cli, launch_config.preset),
     ]
     send_errors = [
         _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=f"cd {typed_steps[0]}"),
@@ -339,7 +347,7 @@ def _surface_id_from_output(raw: str) -> str | None:
 
 def _resolve_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
     if launch_config.cmux_workspace:
-        return launch_config.cmux_workspace
+        return _resolve_configured_workspace_id(runtime, launch_config.cmux_workspace)
     env_workspace = str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip()
     if env_workspace:
         return env_workspace
@@ -354,6 +362,124 @@ def _resolve_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) ->
     if getattr(result, "returncode", 1) != 0:
         return None
     return str(getattr(result, "stdout", "")).strip() or None
+
+
+def _ensure_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
+    if launch_config.cmux_workspace:
+        return _ensure_configured_workspace_id(runtime, launch_config.cmux_workspace)
+    return _resolve_workspace_id(runtime, launch_config)
+
+
+def _resolve_configured_workspace_id(runtime: Any, configured: str) -> str | None:
+    normalized = str(configured).strip()
+    if not normalized:
+        return None
+    if _looks_like_workspace_handle(normalized):
+        return normalized
+    resolved = _resolve_workspace_ref_by_title(runtime, normalized)
+    return resolved
+
+
+def _ensure_configured_workspace_id(runtime: Any, configured: str) -> str | None:
+    normalized = str(configured).strip()
+    if not normalized:
+        return None
+    if _looks_like_workspace_handle(normalized):
+        return normalized
+    resolved = _resolve_workspace_ref_by_title(runtime, normalized)
+    if resolved:
+        return resolved
+    created_ref, error = _create_named_workspace(runtime, title=normalized)
+    if error is not None:
+        runtime._emit("planning.agent_launch.failed", reason="workspace_create_failed", workspace=normalized, error=error)
+        return None
+    return created_ref
+
+
+def _looks_like_workspace_handle(value: str) -> bool:
+    normalized = str(value).strip()
+    if not normalized:
+        return False
+    if normalized.startswith("workspace:"):
+        return True
+    if normalized.isdigit():
+        return True
+    return bool(
+        re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            normalized,
+        )
+    )
+
+
+def _resolve_workspace_ref_by_title(runtime: Any, title: str) -> str | None:
+    result = runtime.process_runner.run(
+        ["cmux", "list-workspaces"],
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return _workspace_ref_from_list_output(str(getattr(result, "stdout", "")), title=title)
+
+
+def _workspace_ref_from_list_output(raw: str, *, title: str) -> str | None:
+    target = str(title).strip()
+    if not target:
+        return None
+    pattern = re.compile(r"^\s*(?:\*\s+)?(workspace:\S+)\s+(.*?)(?:\s+\[[^\]]+\])?\s*$")
+    for line in raw.splitlines():
+        match = pattern.match(line)
+        if match is None:
+            continue
+        workspace_ref = str(match.group(1) or "").strip()
+        workspace_title = str(match.group(2) or "").strip()
+        if workspace_title == target and workspace_ref:
+            return workspace_ref
+    return None
+
+
+def _create_named_workspace(runtime: Any, *, title: str) -> tuple[str | None, str | None]:
+    create_result = runtime.process_runner.run(
+        ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(create_result, "returncode", 1) != 0:
+        return None, _completed_process_error_text(create_result)
+    workspace_ref = _workspace_ref_from_command_output(str(getattr(create_result, "stdout", "")))
+    if workspace_ref is None:
+        current_result = runtime.process_runner.run(
+            ["cmux", "current-workspace"],
+            cwd=runtime.config.base_dir,
+            env=getattr(runtime, "env", {}),
+            timeout=10.0,
+        )
+        if getattr(current_result, "returncode", 1) != 0:
+            return None, _completed_process_error_text(current_result)
+        workspace_ref = str(getattr(current_result, "stdout", "")).strip() or None
+    if workspace_ref is None:
+        return None, "workspace_create_failed"
+    rename_result = runtime.process_runner.run(
+        ["cmux", "rename-workspace", "--workspace", workspace_ref, title],
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(rename_result, "returncode", 1) != 0:
+        return None, _completed_process_error_text(rename_result)
+    runtime._emit("planning.agent_launch.workspace_created", workspace_id=workspace_ref, title=title)
+    return workspace_ref, None
+
+
+def _workspace_ref_from_command_output(raw: str) -> str | None:
+    for token in raw.replace("\n", " ").split():
+        normalized = token.strip()
+        if normalized.startswith("workspace:"):
+            return normalized
+    return None
 
 
 def _send_surface_text(runtime: Any, *, workspace_id: str, surface_id: str, text: str) -> str | None:
@@ -424,8 +550,15 @@ def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig)
     return missing
 
 
-def _slash_command(preset: str) -> str:
+def _slash_command(cli: str, preset: str) -> str:
     normalized = str(preset).strip()
+    if not normalized:
+        normalized = _DEFAULT_PRESET
+    trimmed = normalized[1:] if normalized.startswith("/") else normalized
+    if str(cli).strip().lower() == "codex":
+        if trimmed.startswith("prompts:"):
+            return f"/{trimmed}"
+        return f"/prompts:{trimmed}"
     return normalized if normalized.startswith("/") else f"/{normalized}"
 
 

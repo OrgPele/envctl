@@ -36,7 +36,7 @@ Current built-in presets:
 - `merge_trees_into_dev`
 - `create_plan`
 
-`implement_plan` is the default preset used by the optional post-`--plan` cmux launch flow. `implement_task` remains installed for backward compatibility.
+`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as an alias preset.
 
 ## Parallel Implementation Loop
 
@@ -54,8 +54,17 @@ To auto-open one AI terminal per newly created planning worktree in your current
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
-ENVCTL_PLAN_AGENT_PRESET=implement_plan
+ENVCTL_PLAN_AGENT_PRESET=implement_task
 ```
+
+Shorthand aliases:
+
+```dotenv
+CMUX=true
+CMUX_WORKSPACE=envctl
+```
+
+If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 
 Then run:
 
