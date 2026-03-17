@@ -19,7 +19,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Use git CLI and code evidence to identify what was implemented vs what remains.
 - Read as much relevant code, tests, and docs as needed.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- After changes, append (not overwrite) a detailed summary to docs/changelog/{tree_name}_changelog.md (tree_name from worktree like trees/<feature>/<iter> => <feature>-<iter>, else main). Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- After changes, append (not overwrite) a detailed summary to `.envctl-commit-message.md`, keeping exactly one `### Envctl pointer ###` marker in the file and appending the new summary immediately before that marker. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Do NOT ask questions unless truly blocked by ambiguity that cannot be resolved from code, tests, git history, or docs.
 - Optimize for completeness over speed: assume unlimited time, and specify everything required for full implementation.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected the new MAIN_TASK.
