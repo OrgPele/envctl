@@ -16,6 +16,35 @@ actions_cli = importlib.import_module("envctl_engine.actions.actions_cli")
 
 
 class ActionsCliTests(unittest.TestCase):
+    def test_probe_dirty_worktree_classifies_porcelain_status(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            project_root = repo_root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+
+            cases = {
+                "clean": ("", (False, False, False)),
+                "staged": ("M  app.py\n", (True, False, False)),
+                "unstaged": (" M app.py\n", (False, True, False)),
+                "untracked": ("?? new.py\n", (False, False, True)),
+                "mixed": ("MM app.py\n?? new.py\n", (True, True, True)),
+            }
+
+            for label, (status_output, expected) in cases.items():
+                with self.subTest(label=label):
+                    with patch(
+                        "envctl_engine.actions.project_action_domain._git_output",
+                        return_value=status_output,
+                    ) as git_output:
+                        report = domain.probe_dirty_worktree(project_root, repo_root, project_name="feature-a-1")
+                    git_output.assert_called_once_with(
+                        project_root,
+                        ["status", "--porcelain", "--untracked-files=all"],
+                    )
+                    self.assertEqual((report.staged, report.unstaged, report.untracked), expected)
+                    self.assertEqual(report.project_name, "feature-a-1")
+
     def test_existing_pr_url_ignores_closed_prs(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:

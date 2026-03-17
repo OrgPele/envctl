@@ -7,7 +7,7 @@ import subprocess
 from typing import Any, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
-from envctl_engine.actions.project_action_domain import detect_default_branch, resolve_git_root
+from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from envctl_engine.state.models import RunState
@@ -139,6 +139,12 @@ class DashboardOrchestrator:
         if route is None:
             return True, state
 
+        if route.command == "pr":
+            route = self._dedupe_route_projects_by_git_root(route, state, rt)
+            route, state = self._maybe_prepare_pr_commit(route, state, rt)
+            if route is None:
+                return True, state
+
         if route.command == "restart":
             route = self._apply_restart_selection(route, state, rt)
             if route is None:
@@ -197,7 +203,8 @@ class DashboardOrchestrator:
         if not isinstance(metadata, dict):
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        for project_name in project_names:
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
             entry = metadata.get(project_name)
             if not isinstance(entry, dict):
                 continue
@@ -216,7 +223,8 @@ class DashboardOrchestrator:
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
         printed = False
-        for project_name in project_names:
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
             entry = metadata.get(project_name)
             if not isinstance(entry, dict):
                 continue
@@ -276,7 +284,8 @@ class DashboardOrchestrator:
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
         printed = False
-        for project_name in project_names:
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
             if not isinstance(project_entry, dict):
                 continue
@@ -373,9 +382,10 @@ class DashboardOrchestrator:
 
     def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
-        route = self._apply_project_target_selection(route, state, rt)
-        if route is None:
+        selected_route = self._apply_project_target_selection(route, state, rt)
+        if selected_route is None:
             return None
+        route = selected_route
         if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
             return route
         if (
@@ -504,15 +514,16 @@ class DashboardOrchestrator:
                 project_count=1,
                 projects=[single_project],
             )
-        selection = self._run_pr_selection_flow(
+        selection_raw = self._run_pr_selection_flow(
             projects=projects,
             initial_project_names=[single_project] if single_project else (),
             default_branch=default_branch,
             runtime=runtime_any,
         )
-        if selection is None:
+        if selection_raw is None:
             print(self._no_target_selected_message(route.command))
             return None
+        selection = cast(Any, selection_raw)
         if selection.cancelled:
             if str(getattr(selection, "cancelled_step", "")).strip().lower() == "branch":
                 print("No PR base branch selected.")
@@ -549,6 +560,186 @@ class DashboardOrchestrator:
                 length=len(message),
             )
         return route
+
+    def _maybe_prepare_pr_commit(self, route: Route, state: RunState, rt: object) -> tuple[Route | None, RunState]:
+        runtime_any = cast(Any, rt)
+        dirty_reports = self._dirty_pr_reports(route, state, runtime_any)
+        dirty_targets = [report for report in dirty_reports if report.dirty]
+        runtime_any._emit(
+            "dashboard.pr_dirty_state",
+            command="pr",
+            selected_project_count=len(dirty_reports),
+            dirty_project_count=len(dirty_targets),
+            staged=any(report.staged for report in dirty_targets),
+            unstaged=any(report.unstaged for report in dirty_targets),
+            untracked=any(report.untracked for report in dirty_targets),
+        )
+        if not dirty_targets:
+            return route, state
+
+        prompt = self._dirty_pr_prompt(dirty_targets)
+        runtime_any._emit(
+            "dashboard.pr_dirty_commit.prompt",
+            command="pr",
+            dirty_project_count=len(dirty_targets),
+            staged=any(report.staged for report in dirty_targets),
+            unstaged=any(report.unstaged for report in dirty_targets),
+            untracked=any(report.untracked for report in dirty_targets),
+        )
+        decision = self._prompt_yes_no_dialog(
+            runtime_any,
+            title="Commit dirty changes before PR?",
+            prompt=prompt,
+        )
+        if decision is None:
+            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            print("Cancelled PR creation.")
+            return None, state
+        if decision is False:
+            runtime_any._emit("dashboard.pr_dirty_commit.declined", command="pr", dirty_project_count=len(dirty_targets))
+            return route, state
+
+        runtime_any._emit("dashboard.pr_dirty_commit.accepted", command="pr", dirty_project_count=len(dirty_targets))
+        commit_route = Route(
+            command="commit",
+            mode=route.mode,
+            raw_args=["commit"],
+            passthrough_args=[],
+            projects=[report.project_name for report in dirty_targets],
+            flags={"batch": True, "interactive_command": True},
+        )
+        commit_route = self._apply_commit_selection(commit_route, state, runtime_any)
+        if commit_route is None:
+            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            return None, state
+        code = runtime_any.dispatch(commit_route)
+        refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
+        next_state = refreshed if refreshed is not None else state
+        if code != 0:
+            runtime_any._emit("dashboard.pr_dirty_commit.failed", command="pr", dirty_project_count=len(dirty_targets))
+            self._print_interactive_failure_details(commit_route, next_state, code=code)
+            return None, next_state
+        runtime_any._emit("dashboard.pr_dirty_commit.completed", command="pr", dirty_project_count=len(dirty_targets))
+        return route, next_state
+
+    def _dirty_pr_reports(self, route: Route, state: RunState, runtime: Any) -> list[DirtyWorktreeReport]:
+        repo_root = self._repo_root(runtime)
+        project_roots = self._project_roots_for_route(route, state, runtime)
+        reports_by_git_root: dict[str, DirtyWorktreeReport] = {}
+        for project_name in route.projects or []:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                continue
+            report = probe_dirty_worktree(project_root, repo_root, project_name=project_name)
+            git_root_key = str(report.git_root.resolve())
+            existing = reports_by_git_root.get(git_root_key)
+            if existing is None:
+                reports_by_git_root[git_root_key] = report
+        return list(reports_by_git_root.values())
+
+    def _dedupe_route_projects_by_git_root(self, route: Route, state: RunState, rt: object) -> Route:
+        runtime_any = cast(Any, rt)
+        if len(route.projects) <= 1:
+            return route
+        repo_root = self._repo_root(runtime_any)
+        project_roots = self._project_roots_for_route(route, state, runtime_any)
+        unique_projects: list[str] = []
+        seen_git_roots: set[str] = set()
+        collapsed = False
+        for project_name in route.projects:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                unique_projects.append(project_name)
+                continue
+            git_root = resolve_git_root(project_root, repo_root)
+            git_root_key = str(git_root.resolve())
+            if git_root_key in seen_git_roots:
+                collapsed = True
+                continue
+            seen_git_roots.add(git_root_key)
+            unique_projects.append(project_name)
+        if collapsed:
+            route.projects = unique_projects
+            runtime_any._emit(
+                "dashboard.pr_target_scope.deduped_git_roots",
+                command="pr",
+                original_project_count=len(project_roots) if project_roots else len(route.projects),
+                deduped_project_count=len(unique_projects),
+                projects=list(unique_projects),
+            )
+        return route
+
+    @staticmethod
+    def _repo_root(runtime: Any) -> Path:
+        base_dir = getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())
+        return Path(str(base_dir)).resolve()
+
+    def _project_roots_for_route(self, route: Route, state: RunState, runtime: Any) -> dict[str, Path]:
+        repo_root = self._repo_root(runtime)
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        raw_project_roots = metadata.get("project_roots")
+        project_roots: dict[str, Path] = {}
+        if isinstance(raw_project_roots, dict):
+            for name, root in raw_project_roots.items():
+                project_name = str(name).strip()
+                root_raw = str(root or "").strip()
+                if not project_name or not root_raw:
+                    continue
+                resolved = Path(root_raw)
+                if not resolved.is_absolute():
+                    resolved = repo_root / resolved
+                project_roots[project_name] = resolved.resolve()
+        for project_name in route.projects or []:
+            if project_name in project_roots:
+                continue
+            if str(project_name).strip().casefold() == "main":
+                project_roots[project_name] = repo_root
+        return project_roots
+
+    @staticmethod
+    def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
+        if len(dirty_targets) == 1:
+            target = dirty_targets[0]
+            categories = DashboardOrchestrator._dirty_categories(target)
+            joined = ", ".join(categories) if categories else "changes"
+            return (
+                f"{target.project_name} has {joined}. "
+                "Commit these changes with the normal commit action before creating the PR? "
+                "[y]es / [n]o / [c]ancel: "
+            )
+        return (
+            f"{len(dirty_targets)} selected targets have dirty worktrees. "
+            "Commit dirty targets with the normal commit action before creating PRs? "
+            "[y]es / [n]o / [c]ancel: "
+        )
+
+    @staticmethod
+    def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:
+        categories: list[str] = []
+        if bool(getattr(report, "staged", False)):
+            categories.append("staged changes")
+        if bool(getattr(report, "unstaged", False)):
+            categories.append("unstaged changes")
+        if bool(getattr(report, "untracked", False)):
+            categories.append("untracked files")
+        return categories
+
+    @staticmethod
+    def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> bool | None:
+        confirm = getattr(runtime, "_prompt_yes_no", None)
+        if callable(confirm):
+            result = confirm(title=title, prompt=prompt)
+            if result is None:
+                return None
+            return bool(result)
+        response = DashboardOrchestrator._read_interactive_line(runtime, prompt).strip().lower()
+        if response in {"", "y", "yes"}:
+            return True
+        if response in {"n", "no"}:
+            return False
+        if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
+            return None
+        return False
 
     def _default_pr_base_branch(self, runtime: Any) -> str:
         git_root = self._pr_git_root(runtime)
@@ -797,7 +988,7 @@ class DashboardOrchestrator:
                 _tree_preselected_projects_from_state_impl(
                     startup,
                     runtime=runtime,
-                    project_contexts=projects,
+                    project_contexts=cast(Any, projects),
                 )
             )
         except Exception:
@@ -1092,13 +1283,16 @@ class DashboardOrchestrator:
     ) -> str | None:
         dialog = getattr(runtime, "_prompt_text_input", None)
         if callable(dialog):
-            return dialog(
+            result = dialog(
                 title=title,
                 help_text=help_text,
                 placeholder=placeholder,
                 initial_value="",
                 default_button_label=default_button_label,
             )
+            if result is None:
+                return None
+            return str(result)
         result = run_text_input_dialog_textual(
             title=title,
             help_text=help_text,
