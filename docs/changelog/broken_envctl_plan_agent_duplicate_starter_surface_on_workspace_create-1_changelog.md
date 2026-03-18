@@ -123,3 +123,32 @@ Config / env / migrations:
 Risks / notes:
 - Batch-mode runs in this repo were sufficient to confirm surface-count behavior, but interactive verification provided the reliable proof that the real launched tab completed bootstrap before the process exited.
 - The live verification created additional worktrees under `trees/` for the exercised plans; that is expected for this task because the verification had to run the real `--plan` workflow end to end.
+
+## 2026-03-19 - Harden starter-surface parsing against duplicate and invalid refs
+
+Scope:
+- Tightened the cmux starter-surface parser used by the newly created workspace probe.
+- Added focused regression tests for duplicate surface refs and malformed `surface:` tokens so the launcher keeps reusing the starter surface when cmux output repeats the same handle.
+
+Key behavior changes:
+- `_surface_ids_from_list_output(...)` now accepts only numeric cmux surface handles that match `surface:<digits>`.
+- The parser now de-duplicates repeated surface refs while preserving encounter order, preventing a false `ambiguous` probe result when `cmux list-pane-surfaces` echoes the same surface more than once.
+- Starter-surface reuse remains conservative: only one unique valid surface ref results in reuse; anything else still falls back safely to `cmux new-surface`.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_surface_ids_parser_dedupes_repeated_surface_refs tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_surface_ids_parser_ignores_non_numeric_surface_tokens` -> passed (`Ran 2 tests`, `OK`)
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed (`Ran 41 tests`, `OK`)
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed (`Ran 58 tests`, `OK`)
+
+Config / env / migrations:
+- No config or env contract changes.
+- No migrations.
+
+Risks / notes:
+- This hardening assumes valid cmux surface refs continue to use the existing numeric `surface:<n>` format described by current repo evidence and tests.
+- The parser intentionally preserves first-seen order after de-duplication so downstream behavior stays stable if later code reuses the first detected starter surface.

@@ -896,6 +896,29 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ("surface:20", "surface:21"),
         )
 
+    def test_surface_ids_parser_dedupes_repeated_surface_refs(self) -> None:
+        payload = """
+        pane:1
+          surface:20 [terminal] "~/repo"
+        pane:2
+          surface:20 [terminal] "~/repo" [selected]
+        """
+        self.assertEqual(
+            launch_support._surface_ids_from_list_output(payload),
+            ("surface:20",),
+        )
+
+    def test_surface_ids_parser_ignores_non_numeric_surface_tokens(self) -> None:
+        payload = """
+        pane:1
+          surface:notes [terminal] "~/repo"
+          surface:21 [terminal] "feature-a-1" [selected]
+        """
+        self.assertEqual(
+            launch_support._surface_ids_from_list_output(payload),
+            ("surface:21",),
+        )
+
     def test_workspace_ref_is_parsed_from_identify_output(self) -> None:
         payload = """
         {
