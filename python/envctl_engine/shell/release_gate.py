@@ -349,5 +349,5 @@ def _unsupported_documented_flags(repo_root: Path) -> list[str]:
     text = docs_path.read_text(encoding="utf-8")
     tokens = sorted({match.group(0) for match in re.finditer(r"--[a-z0-9][a-z0-9-]*", text)})
     supported = set(list_supported_flag_tokens())
-    ignored = {"--help", "--repo"}
+    ignored = {"--help", "--repo", "--version"}
     return [token for token in tokens if token not in supported and token not in ignored]
