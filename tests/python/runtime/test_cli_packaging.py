@@ -609,6 +609,12 @@ class CliPackagingTests(unittest.TestCase):
             venv_dir = Path(tmpdir) / "venv"
             subprocess.run([packaging_python, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
             python_bin = venv_dir / "bin" / "python"
+            subprocess.run(
+                [str(python_bin), "-m", "pip", "install", "setuptools"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             env = dict(os.environ)
             install_cmd = [
                 str(python_bin),
