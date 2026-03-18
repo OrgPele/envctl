@@ -33,6 +33,7 @@ class CliRouterParityTests(unittest.TestCase):
             "--delete-worktree": "delete-worktree",
             "--blast-worktree": "blast-worktree",
             "--install-prompts": "install-prompts",
+            "--codex-tmux": "codex-tmux",
             "--debug-ui-pack": "debug-pack",
         }
         for token, command in expected.items():
@@ -106,6 +107,10 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.flags.get("cli"), "codex,claude")
         self.assertEqual(route.flags.get("preset"), "implement_task")
         self.assertTrue(route.flags.get("dry_run"))
+
+        route = parse_route(["codex-tmux", "workspace"], env={})
+        self.assertEqual(route.command, "codex-tmux")
+        self.assertEqual(route.passthrough_args, ["workspace"])
 
         route = parse_route(["health"], env={})
         self.assertEqual(route.command, "health")

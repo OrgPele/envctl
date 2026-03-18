@@ -14002,6 +14002,34 @@ Added a supported launcher-level `--version` flag so the package-installed `envc
   - `./.venv/bin/python -m pytest /Users/kfiramar/projects/envctl/tests/python/test_actions_parity.py /Users/kfiramar/projects/envctl/tests/python/test_debug_bundle_generation.py /Users/kfiramar/projects/envctl/tests/python/test_debug_bundle_analyzer.py /Users/kfiramar/projects/envctl/tests/python/test_command_router_contract.py /Users/kfiramar/projects/envctl/tests/python/test_cli_router_parity.py /Users/kfiramar/projects/envctl/tests/python/test_process_runner_spinner_integration.py -q`
     - Result: pass (`67 passed`).
 
+## 2026-03-17 - Planning: dirty-worktree commit confirmation before dashboard PR creation
+
+- Scope:
+  - Added a planning artifact for the requested dashboard PR behavior where envctl detects dirty selected targets and asks whether to commit before creating a PR.
+
+- Planning artifact:
+  - `todo/plans/features/envctl-pr-dirty-worktree-commit-confirmation.md`
+
+- Notes:
+  - This changelog entry records planning only.
+  - No implementation or test execution was performed as part of this change.
+
 - Config/env/migrations:
   - No new config/env keys.
+  - No data/state migrations.
+
+## 2026-03-17 - Planning: move envctl local artifacts to Git global excludes
+
+- Scope:
+  - Added a planning artifact for changing envctl’s ignore workflow from repo-local `.gitignore` mutation to per-user Git global excludes for envctl-owned local artifacts.
+
+- Planning artifact:
+  - `todo/plans/implementations/envctl-global-ignore-for-local-artifacts.md`
+
+- Notes:
+  - This changelog entry records planning only.
+  - No implementation or test execution was performed as part of this change.
+
+- Config/env/migrations:
+  - Planned scope includes global Git excludes behavior, but no runtime config/env keys were added in this planning-only change.
   - No data/state migrations.

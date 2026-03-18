@@ -1,3 +1,123 @@
+## 2026-03-18 - Verification closeout rerun in active worktree
+
+Scope:
+- Revalidated the prompt overwrite and origin-review preset behavior in the active checked-out worktree using the repo-local Python 3.12 environment.
+- Confirmed the focused pytest lane and repo-local installed-CLI smoke path still pass without requiring any runtime, test, or doc fixes.
+
+Key behavior changes:
+- No production behavior changed in this rerun.
+- Verified again that the CLI-visible `install-prompts` path reports `written` on first install, `overwritten` on approved repeat install, and leaves no `.bak-*` artifacts behind.
+- Verified again that the installed `review_worktree_imp` prompt keeps the baseline-repo, `$ARGUMENTS` override, read-only, and findings-first review contract.
+
+Files / modules touched:
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- Repo-local `.venv` validation environment:
+  - `./.venv/bin/python --version`
+    - result: `Python 3.12.12`
+  - `./.venv/bin/python -m pip install -e '.[dev]'`
+    - result: passed
+- Focused pytest lane:
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`
+    - result: `47 passed, 4 subtests passed in 0.17s`
+- Repo-local smoke validation:
+  - `mkdir -p tmp && mktemp -d "$PWD/tmp/prompt-smoke-home-seq.XXXXXX"`
+    - result: created `tmp/prompt-smoke-home-seq.CdbTGZ`
+  - `HOME="$PWD/tmp/prompt-smoke-home-seq.CdbTGZ" ./.venv/bin/envctl install-prompts --cli codex`
+    - result: passed; all seven codex presets reported `written`
+  - `HOME="$PWD/tmp/prompt-smoke-home-seq.CdbTGZ" ./.venv/bin/envctl install-prompts --cli codex --yes`
+    - result: passed; all seven codex presets reported `overwritten`
+  - `HOME="$PWD/tmp/prompt-smoke-home-seq.CdbTGZ" ./.venv/bin/envctl install-prompts --cli codex --preset review_worktree_imp --yes`
+    - result: passed; `review_worktree_imp.md` was overwritten in place through the normal command path
+  - `find "$PWD/tmp/prompt-smoke-home-seq.CdbTGZ" -name '*.bak-*' -print`
+    - result: no output
+  - `sed -n '1,80p' "$PWD/tmp/prompt-smoke-home-seq.CdbTGZ/.codex/prompts/review_worktree_imp.md"`
+    - result: verified the written prompt states the current repo is the unedited baseline, the target worktree can come from `$ARGUMENTS`, the review is read-only by default, and the final response is findings-first
+
+Config / env / migrations:
+- Reused the existing repo-local `.venv` because it was already present in this worktree and already bound to Python `3.12.12`.
+- Smoke validation kept `HOME` under `tmp/prompt-smoke-home-seq.CdbTGZ` inside the current repo root.
+- No config changes or migrations.
+
+Risks / notes:
+- No additional defects were exposed by this rerun, so no production or test changes were necessary in this iteration.
+
+## 2026-03-18 - Verification rerun in current worktree
+
+Scope:
+- Re-ran the prompt overwrite verification closeout in the current checked-out worktree using the repo-local `.venv`.
+- Confirmed the focused pytest lane and repo-local CLI smoke path still pass without requiring additional runtime or test changes.
+
+Key behavior changes:
+- No production behavior changed in this rerun.
+- Verified the existing CLI-path coverage still proves `install-prompts` reports `written` on first install, `overwritten` on approved repeat install, and leaves no `.bak-*` files behind.
+- Verified the installed `review_worktree_imp` preset still preserves the origin-review contract in the written prompt body.
+
+Files / modules touched:
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- `./.venv/bin/python -m pip install -e '.[dev]'` -> passed (refreshed the existing repo-local editable/dev install)
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q` -> passed (`47 passed, 4 subtests passed in 0.16s`)
+- `HOME="$PWD/tmp/prompt-smoke-home.eWUt53" ./.venv/bin/envctl install-prompts --cli codex` -> passed
+- `HOME="$PWD/tmp/prompt-smoke-home.eWUt53" ./.venv/bin/envctl install-prompts --cli codex --yes` -> passed
+- `HOME="$PWD/tmp/prompt-smoke-home.eWUt53" ./.venv/bin/envctl install-prompts --cli codex --preset review_worktree_imp --yes` -> passed
+- `find "$PWD/tmp/prompt-smoke-home.eWUt53" -name '*.bak-*' -print` -> passed (no output)
+
+Config / env / migrations:
+- Reused the existing repo-local `.venv` in this worktree; no `.venv` recreation was needed because `./.venv/bin/python` was already present.
+- Smoke validation kept `HOME` under `tmp/prompt-smoke-home.eWUt53` inside the current repo root.
+- No config changes or migrations.
+
+Risks / notes:
+- No additional defects were exposed by this verification rerun, so no runtime/test/doc fixes beyond this evidence update were necessary.
+- The worktree already contained unrelated staged changes before this task started; this entry records only the prompt-overwrite verification slice.
+
+## 2026-03-18 - Verification evidence refresh for prompt overwrite flow
+
+Scope:
+- Rebuilt the repo-local validation environment with the documented Python 3.12 bootstrap path.
+- Re-ran the authoritative focused pytest lane for the prompt installer command path.
+- Re-ran repo-local installed-CLI smoke validation for first-write, approved overwrite, and no-backup behavior.
+
+Key behavior changes:
+- No production runtime behavior changed in this verification refresh.
+- Verified again that `install-prompts` writes on first install, overwrites in place on the approved second install, and does not create `.bak-*` prompt siblings.
+- Verified the installed `review_worktree_imp` prompt body still preserves the origin-review contract in the written file.
+
+Files / modules touched:
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- `.venv` bootstrap / repair:
+  - `python3.12 -m venv .venv`
+    - result: preserved the pre-existing Python `3.14.3` interpreter in `.venv`, so the env was rebuilt again with `--clear`
+  - `python3.12 -m venv --clear .venv`
+    - result: `.venv/bin/python --version` -> `Python 3.12.12`
+  - `./.venv/bin/python -m pip install -e '.[dev]'`
+    - result: passed
+- Focused pytest lane:
+  - `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`
+    - result: `47 passed, 4 subtests passed in 0.16s`
+- Repo-local smoke validation:
+  - `HOME="$PWD/tmp/prompt-smoke-home-seq-20260318-1" ./.venv/bin/envctl install-prompts --cli codex`
+    - result: passed; all seven codex presets reported `written`
+  - `HOME="$PWD/tmp/prompt-smoke-home-seq-20260318-1" ./.venv/bin/envctl install-prompts --cli codex --yes`
+    - result: passed; all seven codex presets reported `overwritten`
+  - `find tmp/prompt-smoke-home-seq-20260318-1 -name '*.bak-*' -print`
+    - result: no output
+  - `sed -n '1,120p' tmp/prompt-smoke-home-seq-20260318-1/.codex/prompts/review_worktree_imp.md`
+    - result: verified the written prompt still states baseline repo, `$ARGUMENTS` override target, read-only default, and findings-first output
+
+Config / env / migrations:
+- Rebuilt the repo-local `.venv` with Python `3.12.12`.
+- No runtime config changes or migrations.
+
+Risks / notes:
+- No new product defects surfaced during this refresh run.
+- Smoke validation stayed within repo-local `tmp/` paths to respect the worktree boundary.
+
 ## 2026-03-18 - Prompt overwrite confirmation and origin-side review preset
 
 Scope:

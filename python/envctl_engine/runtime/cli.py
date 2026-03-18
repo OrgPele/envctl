@@ -156,6 +156,7 @@ def run(
         if route.command in {
             "help",
             "install-prompts",
+            "codex-tmux",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -214,6 +215,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "delete-worktree",
         "help",
         "install-prompts",
+        "codex-tmux",
         "doctor",
         "errors",
         "health",

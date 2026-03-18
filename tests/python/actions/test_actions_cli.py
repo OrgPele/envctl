@@ -107,6 +107,127 @@ class ActionsCliTests(unittest.TestCase):
             self.assertIn("PR already exists: https://github.com/acme/supportopia/pull/42", output)
             self.assertEqual(calls, [])
 
+    def test_pr_action_commits_and_pushes_dirty_worktree_before_creating_pr(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/dirty-pr\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "feature/dirty-pr", "origin/main"]:
+                    return "mbase123\n"
+                if args == ["log", "-1", "--pretty=%s"]:
+                    return "feat: dirty branch\n"
+                if args == [
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%h%x1f%s%x1f%b%x1e",
+                    "mbase123..feature/dirty-pr",
+                ]:
+                    return "abc123\x1ffeat: dirty branch\x1f\x1e"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                if command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"]:
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="https://github.com/acme/supportopia/pull/104\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
+                patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                dirty_probe.return_value = domain.DirtyWorktreeReport(
+                    project_name="Main",
+                    project_root=repo_root,
+                    git_root=repo_root,
+                    staged=False,
+                    unstaged=True,
+                    untracked=False,
+                )
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("Dirty worktree detected for Main; committing and pushing before PR creation.", output)
+            commit_action.assert_called_once()
+            self.assertTrue(
+                any(command[0] == "/usr/bin/gh" and command[1:3] == ["pr", "create"] for command in calls), msg=calls
+            )
+
+    def test_pr_action_aborts_when_dirty_worktree_commit_fails(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/dirty-pr\n"
+                return ""
+
+            def fake_which(name: str) -> str | None:
+                if name in {"git", "gh"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                calls.append(command)
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
+                patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=1) as commit_action,
+                patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                dirty_probe.return_value = domain.DirtyWorktreeReport(
+                    project_name="Main",
+                    project_root=repo_root,
+                    git_root=repo_root,
+                    staged=True,
+                    unstaged=True,
+                    untracked=True,
+                )
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_pr_action(repo_root, repo_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("Dirty worktree detected for Main; committing and pushing before PR creation.", output)
+            commit_action.assert_called_once()
+            self.assertEqual(calls, [])
+
     def test_pr_action_create_path_runs_gh_by_default_when_no_existing_pr(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
         with tempfile.TemporaryDirectory() as tmpdir:

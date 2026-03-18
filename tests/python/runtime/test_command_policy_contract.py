@@ -81,6 +81,7 @@ class CommandPolicyContractTests(unittest.TestCase):
         expected = {
             "list-commands": "direct_inspection",
             "install-prompts": "utility",
+            "codex-tmux": "utility",
             "debug-pack": "debug",
             "stop": "lifecycle_cleanup",
             "resume": "resume",

@@ -784,6 +784,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "migrate",
             "migrate-hooks",
             "install-prompts",
+            "codex-tmux",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -796,7 +797,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 33, "Should have exactly 33 commands")
+        self.assertEqual(len(lines), 34, "Should have exactly 34 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -810,6 +811,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "doctor",
                 "migrate-hooks",
                 "install-prompts",
+                "codex-tmux",
                 "debug-pack",
                 "debug-report",
                 "debug-last",

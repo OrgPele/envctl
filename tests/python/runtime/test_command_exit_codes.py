@@ -248,6 +248,25 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
 
+    def test_codex_tmux_skips_bootstrap_when_envctl_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["codex-tmux", "--dry-run"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=lambda _route, _config: 0,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+
     def test_install_prompts_overwrite_without_approval_returns_failure_and_skips_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

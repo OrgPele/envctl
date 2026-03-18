@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -47,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 33 commands
-        self.assertEqual(len(commands), 33, f"Expected 33 commands, got {len(commands)}")
+        # Verify we have exactly 34 commands
+        self.assertEqual(len(commands), 34, f"Expected 34 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -74,6 +75,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "review",
             "migrate",
             "install-prompts",
+            "codex-tmux",
             "list-commands",
             "list-targets",
             "list-trees",
@@ -89,12 +91,13 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         self.assertEqual(set(commands), expected_commands)
 
         # Verify each command can be dispatched without error
-        for command in commands:
-            with self.subTest(command=command):
-                route = parse_route([f"--{command}"] if command not in {"plan", "start"} else [command], env={})
-                # Dispatch should return 0 or 1, not raise an exception
-                code = runtime.dispatch(route)
-                self.assertIn(code, {0, 1}, f"Command {command} returned unexpected code {code}")
+        with patch("envctl_engine.runtime.engine_runtime_dispatch.dispatch_utility_command", return_value=0):
+            for command in commands:
+                with self.subTest(command=command):
+                    route = parse_route([f"--{command}"] if command not in {"plan", "start"} else [command], env={})
+                    # Dispatch should return 0 or 1, not raise an exception
+                    code = runtime.dispatch(route)
+                    self.assertIn(code, {0, 1}, f"Command {command} returned unexpected code {code}")
 
     def test_command_to_orchestrator_mapping(self) -> None:
         """Verify command -> orchestrator/handler mapping is correct."""
@@ -130,6 +133,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
             "install-prompts": "utility_dispatch",
+            "codex-tmux": "utility_dispatch",
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",

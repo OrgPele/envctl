@@ -141,6 +141,13 @@ def run_pr_action(context: ActionProjectContext) -> int:
         print(f"PR already exists: {existing_url}")
         return 0
 
+    dirty_report = probe_dirty_worktree(context.project_root, context.repo_root, project_name=context.project_name)
+    if dirty_report.dirty:
+        print(f"Dirty worktree detected for {context.project_name}; committing and pushing before PR creation.")
+        commit_code = run_commit_action(context)
+        if commit_code != 0:
+            return commit_code
+
     helper = context.repo_root / "utils" / "create-pr.sh"
     if helper.is_file() and os.access(helper, os.X_OK):
         command = [str(helper)]
