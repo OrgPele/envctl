@@ -114,6 +114,37 @@ def persist_events_snapshot(runtime: Any) -> None:
     (runtime.runtime_root / "events.jsonl").write_text(events_text, encoding="utf-8")
     runtime.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
     (runtime.runtime_legacy_root / "events.jsonl").write_text(events_text, encoding="utf-8")
+    run_dir = _current_run_dir(runtime)
+    if run_dir is not None and run_dir.is_dir():
+        (run_dir / "events.jsonl").write_text(events_text, encoding="utf-8")
+
+
+def _current_run_dir(runtime: Any) -> Path | None:
+    env = getattr(runtime, "env", None)
+    if not isinstance(env, dict):
+        return None
+    raw_run_id = env.get("ENVCTL_DEBUG_UI_RUN_ID")
+    if not isinstance(raw_run_id, str):
+        return None
+    run_id = raw_run_id.strip()
+    if not run_id:
+        return None
+    run_dir_resolver = getattr(runtime, "_run_dir_path", None)
+    if callable(run_dir_resolver):
+        try:
+            candidate = run_dir_resolver(run_id)
+        except Exception:
+            return None
+        return candidate if isinstance(candidate, Path) else Path(candidate)
+    state_repository = getattr(runtime, "state_repository", None)
+    run_dir_resolver = getattr(state_repository, "run_dir_path", None)
+    if not callable(run_dir_resolver):
+        return None
+    try:
+        candidate = run_dir_resolver(run_id)
+    except Exception:
+        return None
+    return candidate if isinstance(candidate, Path) else Path(candidate)
 
 
 def current_session_id(runtime: Any) -> str | None:

@@ -19,6 +19,7 @@ from envctl_engine.runtime.engine_runtime_artifacts import (  # noqa: E402
     write_artifacts,
     write_runtime_readiness_report,
 )
+from envctl_engine.runtime.engine_runtime_event_support import persist_events_snapshot  # noqa: E402
 from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult  # noqa: E402
 from envctl_engine.state.models import PortPlan, RunState  # noqa: E402
 
@@ -82,6 +83,29 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertEqual(captured["events"], [{"event": "x"}])
         self.assertTrue(callable(captured["runtime_map_builder"]))
         self.assertTrue(callable(captured["write_runtime_readiness_report"]))
+
+    def test_persist_events_snapshot_updates_bound_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime"
+            legacy_root = Path(tmpdir) / "legacy"
+            run_id = "run-1"
+            run_dir = runtime_root / "runs" / run_id
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            runtime = SimpleNamespace(
+                events=[{"event": "planning.agent_launch.workflow_queued", "schema_version": 2}],
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                env={"ENVCTL_DEBUG_UI_RUN_ID": run_id},
+                _run_dir_path=lambda candidate_run_id: runtime_root / "runs" / str(candidate_run_id),
+            )
+
+            persist_events_snapshot(runtime)
+
+            expected = json.dumps(runtime.events[0], sort_keys=True) + "\n"
+            self.assertEqual((runtime_root / "events.jsonl").read_text(encoding="utf-8"), expected)
+            self.assertEqual((legacy_root / "events.jsonl").read_text(encoding="utf-8"), expected)
+            self.assertEqual((run_dir / "events.jsonl").read_text(encoding="utf-8"), expected)
 
     def test_write_artifacts_writes_runtime_readiness_report_synchronously_without_explicit_async_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
