@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 import json
 import subprocess
@@ -29,6 +30,30 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def _isolated_git_env(self, tmpdir: str, *, excludes_path: Path | None = None) -> dict[str, str]:
+        home = Path(tmpdir) / "home"
+        xdg = Path(tmpdir) / "xdg"
+        home.mkdir(parents=True, exist_ok=True)
+        xdg.mkdir(parents=True, exist_ok=True)
+        global_config = Path(tmpdir) / "gitconfig"
+        global_config.write_text("", encoding="utf-8")
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg),
+            "GIT_CONFIG_GLOBAL": str(global_config),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        if excludes_path is not None:
+            subprocess.run(
+                ["git", "config", "--global", "core.excludesFile", str(excludes_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        return env
 
     def _prepare_repo(self, repo: Path, *, blocking_gaps: int = 0) -> None:
         (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
@@ -217,6 +242,41 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertIn("validation.command: .venv/bin/python -m pytest -q", result.stdout)
         self.assertIn("error: validation_lane_failed: .venv/bin/python -m pytest -q (exit 2)", result.stdout)
+
+    def test_release_shipability_script_honors_global_excludes_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (repo / "MAIN_TASK.md").write_text("task\n", encoding="utf-8")
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            excludes_path.write_text(".envctl*\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n", encoding="utf-8")
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--skip-tests",
+                    "--skip-build",
+                    "--skip-parity-sync",
+                    "--repo",
+                    str(repo),
+                    "--required-scope",
+                    ".",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout)
+        self.assertIn("shipability.passed: true", result.stdout)
 
 
 if __name__ == "__main__":

@@ -1,222 +1,239 @@
-# Envctl Smart Commit Message Pointer File
+# Envctl Global Ignore For Local Artifacts Plan
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Replace changelog-backed default commit-message sourcing with a repo-local proprietary file that is never committed.
-  - Make built-in AI prompt presets append structured change summaries into that file after implementation work.
-  - Make `envctl commit` derive its default commit message from the section starting at `### Envctl pointer ###` through end-of-file, then advance that pointer to the end of the file after a successful commit.
-  - Preserve explicit manual overrides (`--commit-message`, `--commit-message-file`) so operators can still bypass the default flow intentionally.
+  - Stop mutating repo-local ignore files for envctl-owned local workflow artifacts during config save/bootstrap.
+  - Move envctl’s ignore contract to a per-user Git global excludes workflow so local files such as `.envctl` and `MAIN_TASK.md` stop appearing as repo changes without being committed into project `.gitignore`.
+  - Make the config wizard, headless `config` command output, and release/shipability checks reflect the new global-ignore source of truth.
+  - Centralize the envctl artifact ignore inventory so new local-only workflow files are added in one place instead of drifting across docs, prompts, and tests.
 - Non-goals:
-  - Reworking PR-body generation, which still has its own `MAIN_TASK.md` / commit-history logic in `python/envctl_engine/actions/project_action_domain.py:_pr_body(...)`.
-  - Changing git push behavior, branch resolution, or commit staging semantics in `run_commit_action(...)` beyond commit-message sourcing and post-commit pointer advancement.
-  - Migrating historical changelog content into the new file automatically unless implementation evidence later proves that is necessary.
+  - Changing `.envctl` from a repo-local file to a user-global config file. The config file remains repo-local; only ignore management changes.
+  - Reworking commit/PR behavior that consumes `MAIN_TASK.md` (`python/envctl_engine/actions/project_action_domain.py`).
+  - Changing tracked planning files under `todo/plans/`.
+  - Automatically deleting legacy `.gitignore` entries from arbitrary downstream repos; existing local repo ignores can remain until users clean them up manually.
 - Assumptions:
-  - “Every change the AI will make will be appended” refers to envctl-installed AI prompt presets (`install-prompts`) and the documented built-in agent workflows, not arbitrary third-party prompts outside envctl control.
-  - The proprietary file should live at repo root with a hidden `.envctl*`-prefixed name (recommended: `.envctl-commit-message.md`) so existing ignore logic in `python/envctl_engine/config/persistence.py:ensure_local_config_ignored(...)` already covers it without inventing a second ignore strategy.
-  - The default commit flow should remove the changelog fallback entirely; if no explicit override is provided and the proprietary file has no text after the pointer, `envctl commit` should fail with a clear actionable message rather than silently falling back to changelog content.
+  - The current minimum envctl local-only artifact set is grounded in repo evidence and should initially include:
+    - `.envctl*` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+    - `MAIN_TASK.md` from `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan` and `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source` / `_pr_body` / `_main_task_title`
+    - `OLD_TASK_*.md` because `python/envctl_engine/runtime/prompt_templates/continue_task.md` instructs rotating `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`
+    - nested worktree roots under `trees/` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+    - flat worktree roots `trees-*` because `python/envctl_engine/planning/worktree_domain.py:_preferred_tree_root_for_feature` and `tests/python/planning/test_discovery_topology.py:test_discovers_flat_trees_dash_feature_roots` already support them
+  - Global Git configuration is more sensitive than repo-local `.gitignore`, so envctl should not silently replace a user’s existing global excludes file.
 
 ## Goal (user experience)
-After an AI-assisted implementation, the repo contains a hidden local commit-message ledger file that accumulates structured summaries of recent work. When the operator runs `envctl commit` without an explicit `--commit-message` or `--commit-message-file`, envctl should commit exactly the text from `### Envctl pointer ###` to the end of that file, then move the pointer marker to the end so the next commit only sees newly appended summaries. Users should no longer depend on `docs/changelog/...` for commit-message generation, and dashboard/prompt copy should describe the new default clearly instead of referring to changelog fallback.
+When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl-managed worktree roots out of normal `git status` by relying on the user’s global Git excludes setup instead of editing the repository’s `.gitignore` or `.git/info/exclude`. The wizard and CLI output should explain the global-ignore contract clearly, and release/readiness tooling should behave consistently when these files are ignored globally.
 
 ## Business logic and data model mapping
-- Command routing and flag ownership:
-  - `python/envctl_engine/runtime/command_router.py:_store_value_flag(...)` maps `--commit-message` and `--commit-message-file` into route flags.
-  - `python/envctl_engine/actions/action_command_support.py:build_action_extra_env(...)` forwards those flags as `ENVCTL_COMMIT_MESSAGE` and `ENVCTL_COMMIT_MESSAGE_FILE`.
-- Commit action execution:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_commit_action(...)` delegates the command to the Python action entrypoint returned by `python/envctl_engine/actions/actions_git.py:default_commit_command(...)`.
-  - `python/envctl_engine/actions/actions_cli.py:main(...)` and `_run_commit_action(...)` construct `ActionProjectContext` and delegate to `python/envctl_engine/actions/project_action_domain.py:run_commit_action(...)`.
-  - `run_commit_action(...)` stages via `_run_git(..., ["add", "-A"])`, checks `status --porcelain`, resolves commit message data via `_resolve_commit_message(...)`, commits with either `git commit -F <file>` or `git commit -m <message>`, then pushes with `git push -u <remote> <branch>`.
-- Current commit-message model:
-  - `_resolve_commit_message(...)` currently prefers, in order: `ENVCTL_COMMIT_MESSAGE`, `ENVCTL_COMMIT_MESSAGE_FILE`, tree changelog content via `_tree_changelog_path(...)` + `_latest_changelog_commit_message(...)`, then `MAIN_TASK.md`.
-  - `_write_commit_message_file(...)` currently materializes changelog-derived text into an OS temp file with suffix `.envctl-commit-message.txt` only for the `git commit -F` call.
-- Dashboard/UI surface:
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_commit_selection(...)` only prompts when neither explicit message flag is present.
-  - `_prompt_commit_message(...)` currently uses `help_text="Commit message (leave blank to use changelog)."` and `default_button_label="Use changelog"`.
-- Installer/template ownership:
-  - `python/envctl_engine/runtime/prompt_install_support.py:run_install_prompts_command(...)` installs built-in prompt presets into user-local AI CLI directories.
-  - `python/envctl_engine/runtime/prompt_templates/implement_task.md`, `continue_task.md`, `review_task_imp.md`, and `merge_trees_into_dev.md` currently instruct agents to append detailed summaries to `docs/changelog/{tree_name}_changelog.md`.
-  - `python/envctl_engine/runtime/prompt_templates/create_plan.md` still has a self-check line `Changelog entry appended.`, which no longer matches a plan-only workflow and becomes more obviously wrong if changelog is retired from commit-message generation.
-- Repo-local ignore/bootstrap contract:
-  - `python/envctl_engine/config/persistence.py:ensure_local_config_ignored(...)` updates repo `.gitignore` with `.envctl*`, `trees/`, and `MAIN_TASK.md`, and `.git/info/exclude` with `.envctl*`.
-  - Docs such as `docs/user/first-run-wizard.md` already describe `.envctl*` ignore behavior as part of the repo-local contract.
+- Config persistence and save result contract:
+  - `python/envctl_engine/config/persistence.py:save_local_config`
+  - `python/envctl_engine/config/persistence.py:ConfigSaveResult`
+  - `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
+  - `python/envctl_engine/config/persistence.py:_ensure_ignore_patterns`
+  - `python/envctl_engine/config/persistence.py:config_review_text`
+- Interactive/bootstrap and headless command surfaces:
+  - `python/envctl_engine/config/wizard_domain.py:ensure_local_config`
+  - `python/envctl_engine/config/wizard_domain.py:edit_local_config`
+  - `python/envctl_engine/config/wizard_domain.py:_save_message`
+  - `python/envctl_engine/config/command_support.py:run_config_command`
+  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
+  - `python/envctl_engine/ui/textual/screens/config_wizard.py` review-step summary text
+- Downstream consumers of envctl local workflow artifacts:
+  - `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan`
+  - `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source`
+  - `python/envctl_engine/actions/project_action_domain.py:_pr_body`
+  - `python/envctl_engine/actions/project_action_domain.py:_main_task_title`
+- Release/readiness behavior that already depends on Git ignore semantics:
+  - `python/envctl_engine/shell/release_gate.py:evaluate_shipability`
+  - `scripts/release_shipability_gate.py:main`
+- Documentation surfaces that currently describe repo-local ignore mutation:
+  - `docs/user/first-run-wizard.md`
+  - `README.md`
+  - `docs/reference/configuration.md`
+  - `docs/developer/config-and-bootstrap.md`
+  - `docs/user/getting-started.md`
+  - `docs/user/python-engine-guide.md`
 
 ## Current behavior (verified in code)
-- `envctl commit` already stages all changes, fails cleanly on a clean worktree, and prefers explicit overrides before using fallback content:
-  - `python/envctl_engine/actions/project_action_domain.py:run_commit_action(...)`
-  - `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message(...)`
-- The current fallback is changelog-centric:
-  - `_resolve_commit_message(...)` reads the tree changelog via `_tree_changelog_path(...)` and derives a bounded message from `_latest_changelog_commit_message(...)`.
-  - When changelog content is used, `_write_commit_message_file(...)` writes a temp file and `run_commit_action(...)` invokes `git commit -F <tempfile>`.
-- `MAIN_TASK.md` is still used as a final commit-message-file fallback if changelog resolution does not produce content.
-- Dashboard commit UX still teaches the old contract:
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_prompt_commit_message(...)` explicitly says blank input means “use changelog”.
-  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py:test_commit_prompts_for_message_and_uses_explicit_value_when_provided` and `tests/python/ui/test_text_input_dialog.py` lock that copy today.
-- The installer still teaches the old workflow:
-  - `python/envctl_engine/runtime/prompt_templates/implement_task.md:22`
-  - `python/envctl_engine/runtime/prompt_templates/continue_task.md:22`
-  - `python/envctl_engine/runtime/prompt_templates/review_task_imp.md:31`
-  - `python/envctl_engine/runtime/prompt_templates/merge_trees_into_dev.md:34`
-- Existing tests prove changelog-backed commit sourcing is part of the current contract:
-  - `tests/python/actions/test_actions_cli.py:test_commit_action_uses_latest_changelog_h2_section_only`
-  - `tests/python/actions/test_actions_cli.py:test_commit_action_truncates_large_latest_changelog_section`
-  - `tests/python/actions/test_actions_cli.py:test_commit_action_skips_markdown_subheadings_in_latest_changelog_subject`
-- The repo already has a pattern for hidden repo-local managed files that should not be committed:
-  - `.envctl*` ignore management in `config/persistence.py`
-  - repo-local operational documents like `MAIN_TASK.md`
-  - runtime-scoped artifacts under `RuntimeStateRepository.runtime_root`, which are not appropriate here because commit-message history must be repo-local and survive across runtime sessions.
+- Saving config always writes the repo-local `.envctl`, then mutates repo-local ignore files:
+  - `save_local_config(...)` calls `ensure_local_config_ignored(local_state.base_dir)` immediately after writing `.envctl`.
+  - `ensure_local_config_ignored(...)` appends `.envctl*`, `trees/`, and `MAIN_TASK.md` to `<repo>/.gitignore`.
+  - The same helper appends only `.envctl*` to `<repo>/.git/info/exclude`.
+- The save-result contract is too coarse to describe where ignore changes happened:
+  - `ConfigSaveResult` only exposes `ignore_updated: bool` and `ignore_warning: str | None`.
+  - `config_review_text(...)`, `wizard_domain._save_message(...)`, and `_run_headless_config_command(...)` can only display generic ignore text, not “global ignore configured”, “global ignore missing”, or “global ignore requires consent”.
+- Wizard/docs currently promise repo `.gitignore` edits:
+  - `python/envctl_engine/ui/textual/screens/config_wizard.py` hard-codes review copy saying “`.envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible.`”
+  - `docs/user/first-run-wizard.md` says save “tries to add `.envctl*` and `trees/` to the repo `.gitignore`.”
+- The artifact inventory is incomplete and split across unrelated modules:
+  - `ensure_local_config_ignored(...)` does not cover `OLD_TASK_*.md`, even though prompt templates explicitly rotate `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`.
+  - `ensure_local_config_ignored(...)` does not cover `trees-*`, even though worktree discovery/creation supports flat roots through `_preferred_tree_root_for_feature(...)` and `_trees_root_for_worktree(...)`.
+  - Worktree-local `.envctl-state/worktree-provenance.json` exists, but because it lives inside worktree roots it is effectively covered when the worktree root itself is ignored.
+- Shipability already honors Git’s standard ignore stack:
+  - `evaluate_shipability(...)` calls `git ls-files --others --exclude-standard -- <required scopes>`.
+  - That means moving envctl artifacts from repo `.gitignore` to a global excludes file changes release-gate results even if no repo files change.
+- Repo evidence shows envctl relies on these local files in daily workflows:
+  - new worktrees receive `MAIN_TASK.md` copied from the selected plan via `_seed_main_task_from_plan(...)`
+  - PR title/body and commit-message fallback logic read `MAIN_TASK.md` via `project_action_domain.py`
+  - current envctl repo `.gitignore` still contains `.envctl*`, indicating the project itself is relying on repo-local ignores today
 
 ## Root cause(s) / gaps
-- Commit-message sourcing is split between explicit overrides and legacy fallbacks, but the default path is still anchored to changelog parsing logic in `_latest_changelog_commit_message(...)` rather than a purpose-built commit ledger.
-- The repo has no durable repo-local file dedicated to AI-authored commit-message accumulation, so envctl currently creates only ephemeral temp files right before `git commit -F`.
-- Prompt installer templates, dashboard copy, and tests all reinforce the changelog contract, so changing only `_resolve_commit_message(...)` would leave the surrounding tooling inconsistent.
-- Pointer-based incremental consumption does not exist anywhere in the current commit flow, so implementation must define:
-  - file format
-  - bootstrap/creation behavior
-  - empty-segment behavior
-  - post-commit pointer advancement rules
-  - failure handling when commit succeeds or fails
-- Current ignore behavior is broad enough to cover `.envctl*`, but no plan yet maps the new file path to that existing ignore contract explicitly.
+- The ignore contract is implemented as repo mutation inside config persistence, which conflicts with the requested per-user/global workflow and leaks envctl-specific local files into tracked repo hygiene.
+- There is no single authoritative helper for “envctl-owned local artifacts”, so new workflow files can appear in prompts or planning code without ever being added to ignore management.
+- The current save-result/output contract cannot represent global-ignore bootstrap states such as “existing global excludes updated”, “global excludes missing”, or “user declined global config mutation”.
+- Release-gate tests cover tracked/untracked required-scope behavior, but there is no regression proving envctl artifacts ignored through global excludes remain invisible to `--exclude-standard`.
+- Global Git config mutation is a user-scope side effect and therefore needs an explicit bootstrap/consent policy; the current code has no such policy because repo `.gitignore` edits were comparatively low-risk.
 
 ## Plan
-### 1) Introduce a repo-local proprietary commit-message ledger contract
-- Add a small Python-owned helper in `python/envctl_engine/actions/project_action_domain.py` (or a nearby focused helper module if extraction keeps the domain file readable) to own the new ledger file contract.
-- Recommended default path: `<repo-root>/.envctl-commit-message.md`.
-  - This is repo-local, hidden, human-inspectable, and already compatible with `.envctl*` ignore rules in `config/persistence.py:ensure_local_config_ignored(...)`.
-  - Do not place it under runtime-scoped directories from `python/envctl_engine/state/repository.py`; those are run/session artifacts under runtime roots, while the requested commit-message history must survive across runtime sessions and be visible to AI prompts operating in the repo.
-- Define the on-disk format explicitly in code and docs:
-  - freeform appended summaries above and below the marker are allowed
-  - one canonical marker line exists: `### Envctl pointer ###`
-  - the commit payload is the normalized text strictly after the marker through EOF
-  - implementation must guarantee the marker remains present exactly once after any write/advance operation
-- Bootstrap behavior:
-  - if the file does not exist, create it with a small header and the marker at EOF
-  - if the file exists but lacks the marker, fail with a clear repair message rather than guessing where to commit from
-  - if the file has multiple markers, fail with a clear integrity error and do not commit
+### 1) Define an authoritative envctl local-artifact ignore inventory
+- Add a single source of truth under `python/envctl_engine/config/` for envctl local-only artifact patterns instead of embedding them inline inside `ensure_local_config_ignored(...)`.
+- Seed the initial pattern list from verified repo evidence:
+  - `.envctl*`
+  - `MAIN_TASK.md`
+  - `OLD_TASK_*.md`
+  - `trees/`
+  - `trees-*`
+- Keep tracked planning assets out of this list:
+  - `todo/plans/**` stays tracked by design (`docs/user/planning-and-worktrees.md`)
+  - `docs/changelog/**` stays tracked
+- Document why `.envctl-state/**` is not separately listed:
+  - it is already nested under ignored worktree roots
+  - adding a root-level `.envctl-state/` ignore would be speculative because repo-root `.envctl-state` is not a documented current contract
 
-### 2) Replace changelog fallback in commit resolution with pointer-file resolution
-- Update `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message(...)` so the precedence becomes:
-  1. explicit `ENVCTL_COMMIT_MESSAGE`
-  2. explicit `ENVCTL_COMMIT_MESSAGE_FILE`
-  3. proprietary repo-local commit-message ledger segment from pointer to EOF
-- Remove changelog-derived commit-message generation from the default commit path:
-  - retire `_tree_changelog_path(...)` and `_latest_changelog_commit_message(...)` from commit resolution usage
-  - keep any changelog logic still needed by other flows only if those flows remain real consumers
-- Replace `MAIN_TASK.md` as the implicit commit-message fallback with a hard failure when the ledger segment is empty or missing.
-  - Rationale: the requested new contract is pointer-file based; using `MAIN_TASK.md` would silently produce messages unrelated to the accumulated AI change summaries.
-- Preserve existing `git commit -F <file>` behavior by materializing the resolved pointer segment into a temp file using the existing `_write_commit_message_file(...)` pattern.
-  - This keeps the git invocation stable while changing only how the message body is sourced.
+### 2) Replace repo-local ignore mutation with a global-excludes manager
+- Replace `ensure_local_config_ignored(...)` with a helper dedicated to Git global excludes management, ideally in a focused module such as `python/envctl_engine/config/git_ignore.py` to keep subprocess/home-path logic out of general persistence code.
+- The helper should:
+  - resolve the current global excludes target from Git config rather than assuming repo-local files
+  - preserve any existing user-managed content in that file
+  - add/remove only an envctl-managed block so repeated saves stay idempotent
+  - stop writing `<repo>/.gitignore`
+  - stop writing `<repo>/.git/info/exclude`
+- Bootstrap policy should be explicit:
+  - if a global excludes file is already configured, update it in place
+  - if no global excludes file is configured, do not silently overwrite unrelated global Git state
+  - instead, either:
+    - add an explicit one-time consent path during interactive config save, or
+    - return a structured warning telling the user how to enable envctl’s global ignore setup
+- Keep the helper narrow:
+  - only manage envctl’s artifact block
+  - never reformat the whole user file
+  - never delete non-envctl ignore rules
 
-### 3) Advance the pointer atomically only after successful commit creation
-- Extend `python/envctl_engine/actions/project_action_domain.py:run_commit_action(...)` so pointer advancement happens only after `git commit` returns success and before push failure handling is surfaced.
-- Use an atomic write strategy similar to `python/envctl_engine/config/persistence.py:_atomic_write(...)` for rewriting the ledger file.
-  - Reconstruct the file so everything that was just consumed remains in the historical section above the marker and the marker is rewritten at EOF.
-  - Do not mutate the ledger before a successful `git commit`; otherwise failed commits would lose queued summaries.
-- Edge cases to handle explicitly:
-  - `git commit` fails: leave the file untouched and keep the pointer where it was
-  - `git commit` succeeds but `git push` fails: pointer should already be advanced because the local commit consumed those summaries; the operator can retry push without reusing the same ledger segment
-  - empty text after pointer: fail before invoking git commit with an actionable message telling the operator to add an explicit commit message or append to the envctl ledger file
-  - whitespace-only content after pointer: treat as empty
-  - file missing between resolution and advance: fail with a clear integrity error and do not attempt destructive repair
+### 3) Expand the save-result contract so UX can report global-ignore state precisely
+- Extend `ConfigSaveResult` beyond the current boolean `ignore_updated` so downstream callers can distinguish:
+  - `updated_existing_global_excludes`
+  - `already_present`
+  - `missing_global_excludes_configuration`
+  - `permission_or_write_failure`
+  - `user_declined_global_git_config_change` if interactive consent is added
+- Keep compatibility for existing JSON callers where possible:
+  - retain `ignore_updated` as a coarse boolean if needed
+  - add structured fields such as `ignore_scope`, `ignore_target_path`, and/or `ignore_status`
+- Update:
+  - `python/envctl_engine/config/wizard_domain.py:_save_message`
+  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
+  - `python/envctl_engine/config/persistence.py:config_review_text`
+  so output explains the new global-ignore contract instead of referencing repo `.gitignore`
 
-### 4) Update dashboard commit UX and route semantics to describe the new default correctly
-- Change `python/envctl_engine/ui/dashboard/orchestrator.py:_prompt_commit_message(...)` copy from changelog language to the new ledger language.
-  - Example shape: `Commit message (leave blank to use envctl commit log).`
-  - Default button label should reference the envctl ledger instead of changelog.
-- Keep `DashboardOrchestrator._apply_commit_selection(...)` behavior the same structurally:
-  - blank input means “use default resolution”
-  - non-blank input still sets `commit_message`
-  - explicit `commit_message_file` route flags remain respected
-- Update text-input dialog tests and dashboard route tests to lock the new copy and the unchanged blank-input semantics.
+### 4) Rework interactive and headless config UX around the new contract
+- Update the config wizard review step in `python/envctl_engine/ui/textual/screens/config_wizard.py` so it no longer promises repo `.gitignore` edits.
+- If interactive consent is part of the chosen bootstrap policy, keep it in the config/bootstrap flow rather than hidden deep in persistence code so the user understands a global Git setting may change.
+- Update `docs/user/first-run-wizard.md`, `README.md`, `docs/user/getting-started.md`, `docs/user/python-engine-guide.md`, `docs/reference/configuration.md`, and `docs/developer/config-and-bootstrap.md` to say:
+  - `.envctl` remains repo-local
+  - envctl local workflow artifacts are expected to be ignored through the user’s global Git excludes setup
+  - repo `.gitignore` is no longer auto-mutated by envctl
+- Add a short developer note in `docs/developer/config-and-bootstrap.md` covering the new ownership boundary:
+  - repo-local persistence writes `.envctl`
+  - user-global persistence manages envctl’s ignore block
 
-### 5) Update installed AI prompt presets and installer-owned workflow guidance
-- Edit the built-in prompt template files under `python/envctl_engine/runtime/prompt_templates/` so implementation-oriented presets append a structured entry to the new ledger file instead of `docs/changelog/{tree_name}_changelog.md`.
-- Required template updates:
-  - `implement_task.md`
-  - `continue_task.md`
-  - `review_task_imp.md`
-  - `merge_trees_into_dev.md`
-- Also update `create_plan.md` so it no longer requires or self-checks a changelog append for a planning-only workflow.
-- Keep the append instructions specific and deterministic so installed prompts write to the same repo-local file name and preserve the marker contract.
-  - The prompt guidance should instruct agents to append new content above or below the marker in the agreed format without deleting older entries.
-  - The implementation should decide one canonical append location; the safer contract is “append to EOF, then rewrite marker to EOF during commit consumption,” because it matches the user’s pointer-to-EOF request and keeps new summaries in the to-be-consumed segment.
+### 5) Align release/readiness behavior and repository cleanup expectations
+- Add coverage proving `python/envctl_engine/shell/release_gate.py:evaluate_shipability` behaves correctly when envctl artifacts are hidden by global excludes rather than repo `.gitignore`.
+- Update this repository’s own ignore policy after the feature lands:
+  - remove envctl-owned local-artifact entries from this repo’s tracked `.gitignore`
+  - do not build code that auto-rewrites downstream repos’ tracked `.gitignore` files to remove historical entries
+- Keep release-gate semantics unchanged for genuinely untracked required-scope files; only envctl local artifacts should disappear via standard Git ignore rules.
 
-### 6) Align docs, tests, and migration messaging with the new source of truth
-- Update user/reference docs that mention prompt installation or commit flow so they describe the new ledger-based default:
-  - `docs/reference/commands.md`
-  - `docs/user/ai-playbooks.md`
-  - any relevant developer guide that documents action-command ownership or commit behavior if implementation touches those expectations
-- Add a short developer-facing note describing the proprietary file path, why it is ignored, and how pointer advancement works.
-- Decide whether changelog files remain for release notes only:
-  - if yes, document that changelog is no longer part of commit-message generation
-  - if no longer needed in installed prompts, remove prompt references but do not delete historical changelog docs as part of this feature unless separately requested
-- Keep feature inventory notes honest if behavior changes materially enough to affect `python/envctl_engine/runtime_feature_inventory.py`’s commit contract description.
+### 6) Add transition-safe diagnostics and migration guidance
+- Emit bounded config events when ignore setup is attempted/completed/fails so bootstrap behavior remains diagnosable:
+  - suggested event family: `config.ignore.global.updated`, `config.ignore.global.skipped`, `config.ignore.global.warning`
+- Avoid emitting the full contents of the global ignores file; only emit status and the resolved path when useful.
+- Add migration notes for operators:
+  - existing repo `.gitignore` lines may remain temporarily and are harmless
+  - new envctl versions will no longer add them
+  - root-level `MAIN_TASK.md`/`OLD_TASK_*.md` visibility now depends on global excludes being configured
 
 ## Tests (add these)
 ### Backend tests
-- Extend `tests/python/actions/test_actions_cli.py` with focused commit-flow coverage:
-  - default commit action reads only the text after `### Envctl pointer ###` from the proprietary file and uses it as the `git commit -F` payload
-  - after successful commit, the pointer is moved to EOF and previously consumed text is no longer part of the next commit payload
-  - explicit `--commit-message` still overrides the proprietary file entirely
-  - explicit `--commit-message-file` still overrides the proprietary file entirely
-  - empty post-pointer segment fails with a clear message and never invokes `git commit`
-  - missing marker / duplicate marker fails with a clear integrity error
-  - push failure after successful commit does not roll the pointer back
-- Remove or replace changelog-specific commit tests that currently codify `_latest_changelog_commit_message(...)` as the default source of truth.
-- If helper extraction occurs, add narrow unit tests for pointer parsing / advancement helpers rather than only end-to-end action tests.
+- Extend `tests/python/config/test_config_persistence.py`:
+  - verify the new helper updates only the global excludes target and leaves repo `.gitignore` / `.git/info/exclude` untouched
+  - verify idempotent envctl-managed block updates
+  - verify the expanded artifact set includes `OLD_TASK_*.md` and flat `trees-*`
+  - verify missing/unwritable global excludes configuration returns a structured warning instead of mutating repo files
+- Extend `tests/python/config/test_config_command_support.py`:
+  - verify JSON output includes the new ignore status fields
+  - verify non-JSON output surfaces actionable global-ignore warnings when setup is incomplete
+- Extend `tests/python/runtime/test_release_shipability_gate.py`:
+  - add a repo fixture where `MAIN_TASK.md` or `.envctl` exists under required scopes but is ignored through a temporary global excludes configuration, and assert `evaluate_shipability(...)` stays green
+  - keep a regression proving unrelated untracked files in required scopes still fail the gate
+- Extend `tests/python/runtime/test_release_shipability_gate_cli.py`:
+  - add one CLI-level regression that runs `scripts/release_shipability_gate.py` with a temporary global Git config / excludes file and verifies the output remains clean
 
 ### Frontend tests
-- Extend `tests/python/ui/test_dashboard_orchestrator_restart_selector.py`:
-  - update assertions for the new default button label and help text
-  - preserve the existing blank-input route contract (no `commit_message` flag set)
-- Extend `tests/python/ui/test_text_input_dialog.py` only as needed if the helper text/default label snapshots need updating.
+- Extend `tests/python/config/test_config_wizard_textual.py`:
+  - verify the review-step copy no longer promises repo `.gitignore` mutation
+  - if interactive consent is added, cover the review/confirm state that introduces global Git configuration
+- Extend `tests/python/config/test_config_wizard_domain.py`:
+  - verify save messages reflect global-ignore outcomes correctly
+  - verify interactive bootstrap/edit flows surface warnings instead of silently claiming local `.gitignore` updates
 
 ### Integration/E2E tests
-- Extend `tests/python/runtime/test_prompt_install_support.py` to prove installed prompt templates now contain ledger-file instructions instead of changelog instructions.
-- Extend `tests/python/runtime/test_cli_router_parity.py` only if any new flag or parsing contract is introduced; avoid parser churn if the file path stays implicit and repo-owned.
-- Prefer the existing Python action parity/integration surface over introducing new BATS coverage unless implementation touches shell-wrapper compatibility.
+- Prefer focused Python integration coverage over broad BATS for this change:
+  - `tests/python/config/test_config_command_support.py` should exercise a real `config --set` / `config --stdin-json` save path against a temporary git repo plus temporary global Git config
+  - `tests/python/runtime/test_release_shipability_gate_cli.py` should exercise the shipped CLI script against the same style of isolated global-config fixture
+- No frontend/browser or runtime-startup E2E lane is required because startup behavior and service orchestration are unchanged.
 
 ## Observability / logging (if relevant)
-- Emit clear operator-facing messages when commit resolution fails because the ledger file is missing, malformed, or empty after the pointer.
-- If the repo already emits structured action events for commit lifecycle, add bounded metadata only if useful, for example:
-  - commit message source = explicit string / explicit file / envctl ledger
-  - ledger bytes consumed
-  - pointer advance performed = yes/no
-- Do not log the full commit message body into runtime events; commit text may contain sensitive or verbose implementation notes.
+- Keep new diagnostics at the config/bootstrap layer only.
+- Emit status-oriented events, not full file contents:
+  - whether envctl updated an existing global excludes file
+  - whether no global excludes file was configured
+  - whether a write failed or the user declined consent
+- Avoid logging raw ignore-file bodies or unrelated user ignore patterns.
 
 ## Rollout / verification
-- Implement in this order:
-  1. define ledger file helpers and pointer validation/advancement in the commit domain
-  2. switch `_resolve_commit_message(...)` to the new precedence and remove changelog fallback from commit flow
-  3. update dashboard commit copy
-  4. update prompt templates + installer-facing tests
-  5. update docs and any feature-inventory wording that now overstates changelog ownership
-- Verification commands for implementation phase:
-  - `./.venv/bin/python -m pytest tests/python/actions/test_actions_cli.py -q`
-  - `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_orchestrator_restart_selector.py tests/python/ui/test_text_input_dialog.py -q`
-  - `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_cli_router_parity.py -q`
-- Manual verification targets:
-  - create `.envctl-commit-message.md` with two historical entries and the pointer before the newest one, run `envctl commit`, and confirm only the newest segment is used
-  - rerun `envctl commit` without adding new ledger text and confirm it fails with a clear empty-segment message
-  - use dashboard `commit`, leave the text blank, and confirm the prompt copy references the envctl ledger rather than changelog
-  - run `envctl install-prompts --cli codex --dry-run` and confirm generated prompt content references the proprietary file rather than `docs/changelog/...`
+- Implementation order:
+  1. centralize the artifact inventory
+  2. introduce the global-excludes helper and expanded `ConfigSaveResult`
+  3. rewire config persistence/wizard/headless messaging
+  4. add release-gate/global-excludes tests
+  5. update docs
+  6. clean this repo’s tracked `.gitignore` entries once the new contract is live
+- Verification commands:
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence`
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_command_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_wizard_domain tests.python.config.test_config_wizard_textual`
+  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli`
+- Manual verification:
+  - in a temporary git repo with no `.gitignore`, run `envctl config` and confirm `.envctl` is saved while repo `.gitignore` remains unchanged
+  - create `MAIN_TASK.md` and verify `git status --short` stays clean when the configured global excludes file contains the envctl block
+  - verify a repo with an existing user global excludes file keeps pre-existing lines unchanged
+  - verify missing global-ignore bootstrap produces a clear actionable warning instead of a silent failure
 
 ## Definition of done
-- `envctl commit` no longer derives its default commit message from changelog or `MAIN_TASK.md`.
-- Default commit-message sourcing uses the proprietary repo-local ledger file and consumes only the post-pointer segment.
-- Pointer advancement occurs exactly once after successful local commit creation and is not triggered on failed commits.
-- Dashboard commit copy and installed prompt presets describe the new default consistently.
-- Existing changelog-specific commit tests are replaced with pointer-file contract tests, and all relevant Python action/UI/prompt-installer tests pass.
-- Repo docs no longer describe changelog as the default source for commit-message generation.
+- Config save/bootstrap no longer edits repo `.gitignore` or `.git/info/exclude`.
+- Envctl local-only artifacts are managed through a single authoritative global-ignore inventory.
+- Wizard, CLI output, and docs consistently describe the global-ignore contract.
+- Release-gate tests prove envctl artifacts ignored through global excludes do not create false shipability failures.
+- This repo’s tracked ignore policy no longer carries envctl-only local artifact patterns once the new behavior is in place.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: choosing the wrong ledger file location could create cross-run or cross-worktree surprises.
-  - Mitigation: keep it repo-local and hidden with a `.envctl*` prefix so it follows existing ignore semantics and remains visible to prompts operating inside the repo.
-- Risk: pointer rewrite bugs could duplicate or drop queued commit summaries.
-  - Mitigation: isolate parsing/advance helpers, enforce single-marker validation, use atomic rewrite semantics, and cover success/failure cases explicitly in tests.
-- Risk: removing `MAIN_TASK.md` fallback may break operators who relied on implicit commit messages without using changelog or prompt-installed flows.
-  - Mitigation: provide a clear failure message that points to the new ledger file and preserves explicit `--commit-message` / `--commit-message-file` overrides.
-- Risk: prompt templates may append in an inconsistent format across CLIs if the file contract is underspecified.
-  - Mitigation: document one canonical file path and one canonical append format inside the templates and installer tests.
+- Risk: mutating user-global Git config is a broader side effect than mutating repo `.gitignore`.
+  - Mitigation: require explicit consent when envctl would need to create/configure a global excludes target, and preserve existing user content with an envctl-managed block.
+- Risk: removing repo-local ignore mutation before a user has global excludes configured will make `.envctl` / `MAIN_TASK.md` appear as untracked files again.
+  - Mitigation: return actionable warnings and keep docs/wizard copy explicit about the prerequisite.
+- Risk: flat worktree roots (`trees-*`) are supported by discovery but were never part of the old ignore contract, so broadening the inventory could hide files users intentionally wanted visible.
+  - Mitigation: scope the new patterns only to envctl-managed worktree root conventions and document the behavior change in migration notes.
+- Risk: existing downstream repos may retain historical `.gitignore` entries, producing mixed local-vs-global ignore states during transition.
+  - Mitigation: do not auto-delete downstream repo entries; limit automatic cleanup to this repository and document the transition as additive/safe.
 
 ## Open questions (only if unavoidable)
-- None. The repo evidence is sufficient to produce an implementation plan. The remaining design choice is the exact proprietary filename; this plan recommends `.envctl-commit-message.md` because it fits the existing ignore contract, but implementation can choose a different `.envctl*` name if it keeps the same semantics.
+- None.

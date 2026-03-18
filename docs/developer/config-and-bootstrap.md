@@ -55,8 +55,15 @@ Persistence concerns:
 - render a stable managed block into `.envctl`
 - preserve non-managed user content around that block
 - validate structured config payloads from the wizard or headless input
+- report Git global-ignore status for envctl-owned local artifacts
 
 Keep those responsibilities separate when making changes.
+
+There is also an ownership boundary to preserve:
+
+- repo-local persistence writes and updates `.envctl`
+- user-global Git persistence manages envctl's block inside the configured global excludes file
+- envctl should not mutate downstream repo `.gitignore` or `.git/info/exclude` as part of config save/bootstrap
 
 ## `EngineConfig` Is the Runtime Contract
 

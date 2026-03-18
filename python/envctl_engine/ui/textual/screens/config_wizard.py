@@ -16,7 +16,7 @@ from ....config.persistence import (
     ManagedConfigValues,
     config_review_text,
     managed_values_from_local_state,
-    save_local_config,
+    save_local_config_with_ignore_policy,
     validate_managed_values,
 )
 from ....requirements.core import dependency_definitions
@@ -764,7 +764,8 @@ def run_config_wizard_textual(
                         values=self.values,
                         source_label=source_label,
                         ignore_warning=(
-                            ".envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible."
+                            "envctl local artifacts are managed through Git global excludes instead of repo .gitignore. "
+                            "Configure core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
                         ),
                     )
                 )
@@ -1353,7 +1354,11 @@ def run_config_wizard_textual(
                     self._refresh_status(validation.errors[0])
                     return
             if step == self._steps[-1]:
-                save_result = save_local_config(local_state=local_state, values=self.values)
+                save_result = save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=self.values,
+                    update_global_ignores=True,
+                )
                 self._save_result = save_result
                 self.exit(ConfigWizardResult(values=self.values, save_result=save_result))
                 return

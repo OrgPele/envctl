@@ -141,7 +141,10 @@ The wizard:
 - validates directories and ports before save
 - configures services and dependencies for `main` and `trees`
 - seeds user-owned backend/frontend launch env sections into `.envctl`
+- checks whether Git global excludes is configured for envctl-owned local artifacts
 - does not change already running services until a later start or restart
+
+Important: `envctl` no longer auto-edits the repository `.gitignore` for local workflow artifacts. Keep `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots out of `git status` by configuring Git `core.excludesFile` for your user account.
 
 See [First-Run Wizard](first-run-wizard.md) for the full step-by-step guide.
 

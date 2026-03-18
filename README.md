@@ -136,4 +136,5 @@ Project docs:
 
 - On first interactive use, the setup wizard creates it for you.
 - Later, run `envctl config` to reopen the wizard and edit it safely.
+- Envctl-managed local workflow artifacts are expected to be ignored through your Git global excludes file, not by auto-editing the repository `.gitignore`.
 - [`docs/reference/.envctl.example`](docs/reference/.envctl.example) is the reference file for managed keys and defaults, not the primary onboarding flow.
