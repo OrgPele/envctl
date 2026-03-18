@@ -428,15 +428,16 @@ def _preferred_tree_root_for_feature(self, feature: str) -> Path:
 def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
     normalized = str(self.config.trees_dir_name).strip().rstrip("/")
     nested_root = self.config.base_dir / (normalized or "trees")
+    flat_parent = nested_root.parent
+    flat_prefix = f"{Path(normalized).name}-" if normalized else "trees-"
     resolved_target = worktree_root.resolve()
     resolved_nested = nested_root.resolve()
     if resolved_nested == resolved_target or resolved_nested in resolved_target.parents:
         return nested_root
 
-    flat_prefix = f"{normalized}-" if normalized else "trees-"
     current = resolved_target
-    while current != self.config.base_dir and self.config.base_dir in current.parents:
-        if current.parent == self.config.base_dir and current.name.startswith(flat_prefix):
+    while current != flat_parent and flat_parent in current.parents:
+        if current.parent == flat_parent and current.name.startswith(flat_prefix):
             return current
         current = current.parent
     return nested_root

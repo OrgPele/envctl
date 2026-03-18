@@ -2662,6 +2662,77 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 (repo / "trees-feature-a" / "2").resolve(),
             )
 
+    def test_setup_worktree_uses_nested_flat_trees_feature_root_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime, {"TREES_DIR_NAME": "work/trees"}),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(
+                [
+                    "--setup-worktree",
+                    "feature-a",
+                    "1",
+                    "--setup-worktree-existing",
+                    "--batch",
+                ],
+                env={},
+            )
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            roots = state.metadata.get("project_roots", {})
+            self.assertIsInstance(roots, dict)
+            self.assertEqual(
+                Path(str(roots.get("feature-a-1", ""))).resolve(),
+                (repo / "work" / "trees-feature-a" / "1").resolve(),
+            )
+
+    def test_setup_worktrees_prefers_existing_nested_flat_feature_root_for_new_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime, {"TREES_DIR_NAME": "work/trees"}),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeSetupWorktreeRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--setup-worktrees", "feature-a", "1", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            roots = state.metadata.get("project_roots", {})
+            self.assertIsInstance(roots, dict)
+            self.assertEqual(
+                Path(str(roots.get("feature-a-2", ""))).resolve(),
+                (repo / "work" / "trees-feature-a" / "2").resolve(),
+            )
+
     def test_setup_worktrees_parallel_flags_apply_in_effective_trees_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
