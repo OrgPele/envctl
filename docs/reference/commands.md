@@ -56,16 +56,19 @@ Compatibility note:
 envctl install-prompts --cli codex
 envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
+envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
 ```
 
 Behavior:
 
 - installs built-in prompt files into user-local AI CLI directories
+- omitting `--preset` installs all built-in presets
 - built-in presets:
   - `implement_plan`
   - `implement_task`
   - `review_task_imp`
+  - `review_worktree_imp`
   - `continue_task`
   - `merge_trees_into_dev`
   - `create_plan`
@@ -73,8 +76,11 @@ Behavior:
   - Codex: `~/.codex/prompts`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
-- existing files are backed up in-place before overwrite
+- existing files are overwritten in place after one confirmation prompt for the command
+- use `--yes` or `--force` to approve overwrites without prompting
+- `--json` and non-interactive TTY-less runs fail cleanly when overwrite approval is required but not pre-approved
 - this command is available from the normal CLI, but not from dashboard interactive mode
+- `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 
 ## Main Runtime Commands
 

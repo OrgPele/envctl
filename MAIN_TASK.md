@@ -1,120 +1,111 @@
-# Envctl Plan-Agent Starter Surface Verification And Observability Closure
+# Envctl Prompt Overwrite Verification And Closeout
 
 ## Context and objective
-- The previous iteration implemented the core launcher change for newly created cmux workspaces:
-  - `python/envctl_engine/planning/plan_agent_launch_support.py` now carries workspace-creation metadata, probes `cmux list-pane-surfaces`, reuses an unambiguous starter surface, and falls back to `cmux new-surface` when probing is empty, ambiguous, or fails.
-  - `tests/python/planning/test_plan_agent_launch_support.py` now covers reuse, fallback, parser behavior, and the existing-workspace path.
-  - `docs/reference/configuration.md`, `docs/reference/commands.md`, and `docs/user/planning-and-worktrees.md` describe the corrected user-facing behavior.
-- The remaining work is to close the evidence gaps that still prevent the original task from being fully proven complete:
-  - there is no focused automated coverage for the new observability payloads emitted by the launcher
-  - there is no repo-recorded live cmux verification that the real workspace no longer ends up with a redundant starter tab on first-run workspace creation
-- Fully implement the remaining scope end to end. Do not stop at analysis. Add tests, run the required real-cmux verification, fix anything uncovered, and update the changelog with exact evidence.
+The prior iteration implemented the core feature work for prompt overwrite confirmation and the new origin-side review preset:
+
+- `python/envctl_engine/runtime/prompt_install_support.py` now plans installs before writing, removes backup-file creation, and gates overwrites behind one approval decision.
+- `python/envctl_engine/runtime/prompt_templates/review_worktree_imp.md` was added.
+- `tests/python/runtime/test_prompt_install_support.py` and `tests/python/runtime/test_command_exit_codes.py` were expanded to cover the new behavior.
+- `docs/user/ai-playbooks.md`, `docs/reference/commands.md`, and `docs/user/python-engine-guide.md` were updated.
+
+What remains is verification closeout. The previous delivery did not complete the repo-standard pytest lane or a CLI-visible smoke/integration validation pass. This iteration must finish that work end-to-end and fix any issues uncovered during that verification.
 
 ## Remaining requirements (complete and exhaustive)
-1. Add focused regression coverage for the new launcher observability behavior.
-   - Extend `tests/python/planning/test_plan_agent_launch_support.py` so the tests assert the emitted runtime events for:
-     - starter surface reuse on a newly created workspace
-     - fallback to `new-surface` when the starter-surface probe is ambiguous
-     - normal `new-surface` creation for an already existing workspace
-   - Lock the payload contract for:
-     - `planning.agent_launch.workspace_surface_probe`
-     - `planning.agent_launch.surface_fallback`
-     - `planning.agent_launch.surface_created`
-   - Assert the relevant bounded payload fields:
-     - `workspace_id`
-     - `result`
-     - `surface_count` when available
-     - `surface_id` when available
-     - `source` on `planning.agent_launch.surface_created` with `starter_reused` vs `new_surface`
-   - Keep the tests narrow and deterministic. Reuse the existing `_RuntimeHarness` event capture.
-2. Perform live cmux verification against the actual local binary and current launcher flow.
-   - Validate the default first-run workspace creation path:
-     - ensure the default implementation workspace does not already exist
-     - run `CMUX=true ./bin/envctl --plan` in a real cmux session
-     - verify the created implementation workspace contains only the real launched plan-agent surface and no redundant extra starter tab remains
-   - Validate the explicit missing named-workspace path:
-     - use `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<new-title> ./bin/envctl --plan`
-     - verify the newly created named workspace also ends with only the intended launched surface
-   - Validate the existing-workspace rerun path:
-     - rerun `--plan` against the now-existing workspace
-     - verify envctl opens exactly one new real launch surface there and does not regress existing behavior
-   - If live verification exposes any mismatch between the code/tests/docs and real cmux behavior, fix the code, tests, docs, and changelog in the same iteration before declaring completion.
-3. Record the verification evidence in the worktree changelog.
-   - Append a new dated entry to `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md`.
-   - Include the exact verification commands used, what each scenario produced, whether starter reuse or fallback occurred, and any follow-up code/doc changes made as a result.
-   - If a scenario can only be validated via fallback on the current machine, state that explicitly and document why.
+1. Establish the repo-standard Python validation environment inside this worktree.
+   - Follow the repository’s documented validation flow from `docs/developer/testing-and-validation.md`.
+   - Create a repo-local `.venv` in this worktree if it is missing.
+   - Install the project with dev dependencies into that `.venv`.
+   - Do not treat `python3 -m unittest ...` alone as the final verification signal for this CLI-visible change.
+2. Add CLI-visible integration coverage for the prompt overwrite contract.
+   - Cover the actual command path, not only helper-level unit behavior.
+   - Exercise prompt installation through the runtime CLI entrypoint (`envctl_engine.runtime.cli.run(...)` or an equivalent existing repo test pattern).
+   - Verify a first install writes the prompt file and a second install overwrites in place without creating any `.bak-*` sibling files.
+   - Keep all temporary writable paths inside the current worktree or inside test-managed temporary directories; do not depend on sibling worktrees or user-home state.
+   - Reuse existing runtime test patterns instead of inventing a new harness.
+3. Add CLI-visible installation verification for the new `review_worktree_imp` preset.
+   - Verify the preset can be installed through the normal command path, not only loaded as a raw template.
+   - Assert the written prompt file retains the key origin-review contract:
+     - current repo is the unedited baseline
+     - target worktree comes from `$ARGUMENTS`
+     - review is read-only by default
+     - output is findings-first
+4. Run the authoritative focused pytest lane that the prior task required.
+   - Use the exact focused scope from the previous task unless additional tests are needed because of new integration coverage.
+   - If the new integration test lands in another existing runtime test module, include that module in the same focused pytest invocation.
+5. Perform a repo-local smoke validation for the overwrite flow.
+   - Use a HOME directory located under the current repo root so the worktree boundary is respected.
+   - Validate that repeated installs do not create `.bak-*` files.
+   - If interactive prompt-on-second-run validation is hard to automate cleanly, encode that behavior in test coverage and use smoke validation for the non-interactive approved overwrite path.
+6. Fix any production code, tests, or docs required to make the full verification set pass.
+   - Do not assume the current code is final.
+   - If verification exposes defects in `prompt_install_support.py`, the prompt template, CLI routing, or docs, resolve them in this iteration.
+7. Append the completed verification/fix summary to `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`.
+   - Record the exact `.venv` bootstrap command(s), pytest command(s), smoke command(s), results, and any follow-up fixes made during this iteration.
 
 ## Gaps from prior iteration (mapped to evidence)
-- Core reuse/fallback implementation is present:
-  - `python/envctl_engine/planning/plan_agent_launch_support.py` contains `_WorkspaceLaunchTarget`, `_list_workspace_surfaces(...)`, `_starter_surface_for_new_workspace(...)`, starter-surface reuse in `_launch_single_worktree(...)`, and emitted probe/fallback events.
-- Core launcher path coverage is present:
-  - `tests/python/planning/test_plan_agent_launch_support.py` covers:
-    - created default workspace reuse
-    - created named workspace reuse
-    - ambiguous starter probe fallback
-    - existing workspace explicit `new-surface`
-    - parser coverage for `list-pane-surfaces`
-- Docs are updated:
-  - `docs/reference/configuration.md`
-  - `docs/reference/commands.md`
-  - `docs/user/planning-and-worktrees.md`
-- Remaining evidence gaps:
-  - no focused test currently asserts the payload contract for `planning.agent_launch.workspace_surface_probe`, `planning.agent_launch.surface_fallback`, or `planning.agent_launch.surface_created.source`
-  - no live cmux verification output is recorded in the repo/changelog showing the real first-run workspace ends with only one launch surface
-- Git/code evidence used to derive this gap assessment:
-  - `git status --short`
-  - `git diff --name-status`
-  - `git diff --cached --name-status`
-  - `git log --oneline --decorate -n 30`
-  - `git log --oneline --decorate -- python/envctl_engine/planning/plan_agent_launch_support.py tests/python/planning/test_plan_agent_launch_support.py docs/reference/configuration.md docs/reference/commands.md docs/user/planning-and-worktrees.md`
-  - direct inspection of the changed launcher, tests, docs, and worktree changelog
+- The previous task required `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`, but this worktree currently has no repo-local virtualenv.
+  - Evidence: `./.venv/bin/python` was absent during audit.
+- The system interpreter in this worktree does not currently have pytest installed.
+  - Evidence: `python3 -m pytest --version` failed with `No module named pytest`.
+- The existing tree-specific changelog entry only records `python3 -m unittest ...` runs, not the required pytest lane or a CLI-visible smoke/integration verification pass.
+  - Evidence: `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+- Current coverage is strong at the unit/command level, but there is still no dedicated CLI-visible integration regression proving the full repeated-install path end-to-end.
+  - Evidence: the changed tests are in `tests/python/runtime/test_prompt_install_support.py` and `tests/python/runtime/test_command_exit_codes.py`; neither currently performs a true command-path double-install smoke/assertion beyond direct `cli.run(...)` exit-code behavior.
 
 ## Acceptance criteria (requirement-by-requirement)
-1. Observability coverage is complete when:
-   - reuse-path tests assert `planning.agent_launch.workspace_surface_probe` with `result="single"` and the reused `surface_id`
-   - reuse-path tests assert `planning.agent_launch.surface_created` includes `source="starter_reused"`
-   - fallback-path tests assert `planning.agent_launch.workspace_surface_probe` with the correct fallback reason and `surface_count` when applicable
-   - fallback-path tests assert `planning.agent_launch.surface_fallback` is emitted with the same bounded reason
-   - existing-workspace tests assert `planning.agent_launch.surface_created` includes `source="new_surface"` and that no workspace probe/fallback event is emitted for a workspace that already existed
-2. Live cmux verification is complete when:
-   - the default missing-workspace scenario is run against real cmux and verified to leave only the intended launched surface
-   - the explicit missing named-workspace scenario is run against real cmux and verified to leave only the intended launched surface
-   - the existing-workspace rerun scenario is run against real cmux and verified to keep the one-new-surface behavior
-3. Changelog evidence is complete when:
-   - the worktree changelog entry includes exact commands, scenario-by-scenario outcomes, tests run, and any fixes or notes discovered during live verification
+1. Repo-local validation environment exists and is usable.
+   - `.venv/bin/python` exists inside this worktree.
+   - Dev dependencies are installed successfully enough to run pytest.
+2. CLI-visible overwrite integration coverage exists and passes.
+   - Repeated install coverage proves there is no `.bak-*` creation on overwrite.
+   - Coverage proves the command path still distinguishes `written` vs `overwritten`.
+3. CLI-visible `review_worktree_imp` installation coverage exists and passes.
+   - The installed file lands in the expected target directory.
+   - The installed body contains the required baseline/worktree/read-only/findings-first guidance.
+4. The focused pytest lane passes under `.venv`.
+   - At minimum:
+     - `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`
+   - If new integration coverage lands elsewhere, the final command must include that test module too.
+5. Repo-local smoke validation passes.
+   - Repeated prompt installs using a repo-local HOME do not leave any `.bak-*` files behind.
+6. Changelog is updated with this iteration’s actual verification evidence.
+   - The entry names commands and results precisely, not generically.
 
 ## Required implementation scope (frontend/backend/data/integration)
+- Backend/runtime:
+  - Extend runtime test coverage around `install-prompts` CLI-visible behavior.
+  - Fix runtime code only if the stronger verification surface reveals defects.
+- Docs:
+  - Update user/reference docs only if verification uncovers incorrect instructions or examples.
+  - Append the verification summary to the tree-specific changelog.
 - Frontend:
-  - none
-- Backend:
-  - `python/envctl_engine/planning/plan_agent_launch_support.py` only if live verification or new observability assertions expose a defect or missing event payload
-- Data/config:
-  - no new config keys or data-model changes are expected
-- Integration:
-  - `tests/python/planning/test_plan_agent_launch_support.py` observability assertions
-  - live cmux verification in the real local environment
-  - changelog update with verification evidence
+  - None unless verification unexpectedly reveals a frontend-facing dependency.
+- Data/config/migrations:
+  - No database or persisted data migrations are expected.
+  - Repo-local `.venv` bootstrap is allowed and expected inside this worktree.
 
 ## Required tests and quality gates
-- Required automated tests:
-  - `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity`
-- Required live verification:
-  - real cmux run for default missing-workspace creation
-  - real cmux run for explicit missing named-workspace creation
-  - real cmux rerun for existing workspace behavior
-- Quality gate:
-  - do not mark this task complete without both the automated tests and the live cmux verification evidence recorded in the changelog
+- Read `docs/developer/testing-and-validation.md` before changing the verification approach.
+- Add or extend existing runtime tests instead of creating an ad hoc script-only check.
+- Run the focused pytest command under `.venv`.
+- Run any new integration/smoke command(s) needed to prove the command path.
+- If verification changes test placement or adds a new runtime test module, keep the final validation command list explicit in the changelog.
 
 ## Edge cases and failure handling
-- If `cmux list-pane-surfaces` behaves differently in live verification than the unit tests assumed, update the parser/tests/code together so the behavior is both correct and documented.
-- If live verification shows the fallback path still leaves a duplicate starter surface on this cmux build, document the exact trigger and either:
-  - implement a safe non-destructive fix in the same iteration, or
-  - update the docs/changelog to reflect the proven limitation only if repo evidence shows the limitation cannot be corrected safely in-scope.
-- If the local machine cannot run the real cmux verification because cmux or the required AI CLI is unavailable, resolve that prerequisite first; do not close the task with simulated evidence only.
+- Repeated install into an already-populated prompt directory must not create `.bak-*` files.
+- Verification must respect the worktree boundary:
+  - use repo-local HOME paths for smoke checks
+  - do not write to user-home prompt directories during validation
+  - do not depend on writes to sibling worktrees
+- If `.venv` bootstrap fails, fix the bootstrap issue or record the exact blocker with evidence before stopping.
+- If stronger CLI-visible coverage reveals mismatches between docs and behavior, update both in the same iteration.
+- If the installed `review_worktree_imp` prompt text differs from the intended review contract, fix the template and extend the assertion set so the regression cannot recur.
 
 ## Definition of done
-- Automated tests cover both behavior and observability for starter reuse, fallback, and existing-workspace launches.
-- Real cmux verification is executed and recorded for the default created-workspace path, explicit missing named-workspace path, and existing-workspace rerun path.
-- Any defects uncovered by live verification are fixed end to end in code, tests, docs, and changelog before completion.
-- `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md` contains the final scenario-by-scenario verification evidence.
+- All remaining verification work is complete, not partially attempted.
+- Repo-local `.venv` exists and the focused pytest lane passes inside it.
+- CLI-visible overwrite integration coverage exists and is green.
+- CLI-visible `review_worktree_imp` installation coverage exists and is green.
+- Repo-local smoke validation confirms repeated installs leave no `.bak-*` files.
+- Any defects found during verification are fixed in the same iteration.
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md` is appended with exact commands, results, and any follow-up fixes.
