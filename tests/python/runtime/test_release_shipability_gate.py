@@ -304,6 +304,30 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self.assertTrue(result.passed, msg=result.errors)
             self.assertEqual(result.errors, [])
 
+    def test_gate_treats_launcher_version_flag_as_supported_documented_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+            docs_path = repo / "docs" / "reference" / "important-flags.md"
+            docs_path.parent.mkdir(parents=True, exist_ok=True)
+            docs_path.write_text(
+                "| `--version` | Print the current envctl package version and exit. |\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_shipability(
+                repo_root=repo,
+                check_tests=False,
+                enforce_parity_sync=False,
+                enforce_runtime_readiness_contract=True,
+                enforce_documented_flag_parity=True,
+            )
+
+            self.assertTrue(result.passed, msg=result.errors)
+            self.assertEqual(result.errors, [])
+
     def test_gate_check_tests_uses_canonical_pytest_validation_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
