@@ -340,9 +340,12 @@ class CommandExitCodeTests(unittest.TestCase):
             bootstrap.assert_not_called()
             first_payload = json.loads(first_stdout.getvalue())
             second_payload = json.loads(second_stdout.getvalue())
-            self.assertEqual(first_payload["results"][0]["status"], "written")
-            self.assertEqual(second_payload["results"][0]["status"], "overwritten")
+            self.assertEqual(first_payload["preset"], "all")
+            self.assertEqual(second_payload["preset"], "all")
+            self.assertTrue(all(item["status"] == "written" for item in first_payload["results"]))
+            self.assertTrue(all(item["status"] == "overwritten" for item in second_payload["results"]))
             self.assertTrue(target.exists())
+            self.assertTrue((target.parent / "review_worktree_imp.md").exists())
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
     def test_install_prompts_cli_run_installs_review_worktree_prompt_with_origin_review_contract(self) -> None:

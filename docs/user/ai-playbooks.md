@@ -10,6 +10,7 @@ Use it when you want a task recipe more than a conceptual explanation.
 envctl install-prompts --cli codex
 envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
+envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
 ```
 
@@ -23,6 +24,7 @@ Current targets:
 
 Notes:
 
+- omitting `--preset` installs all built-in presets for the selected CLI targets
 - existing files are overwritten in place after one confirmation prompt for the whole command
 - use `--yes` or `--force` to approve overwrites non-interactively
 - `--dry-run` shows what would be written without mutating anything

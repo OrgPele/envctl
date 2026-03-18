@@ -56,12 +56,14 @@ Compatibility note:
 envctl install-prompts --cli codex
 envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
+envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
 ```
 
 Behavior:
 
 - installs built-in prompt files into user-local AI CLI directories
+- omitting `--preset` installs all built-in presets
 - built-in presets:
   - `implement_plan`
   - `implement_task`

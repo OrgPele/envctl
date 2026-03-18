@@ -100,6 +100,7 @@ What they are for:
 - `show-state --json`: print the latest saved runtime state
 - `explain-startup --json`: show what startup would do before anything runs
 - `install-prompts --cli ...`: install built-in AI prompt presets without requiring a startup run
+  - omitting `--preset` installs all built-in presets for the selected CLI targets
   - overwrites prompt files in place after one confirmation prompt
   - use `--yes` or `--force` for non-interactive approval when existing files must be replaced
 

@@ -39,13 +39,52 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["command"], "install-prompts")
-            self.assertEqual(payload["preset"], "implement_task")
+            self.assertEqual(payload["preset"], "all")
             self.assertTrue(payload["dry_run"])
-            self.assertEqual([item["cli"] for item in payload["results"]], ["codex", "claude", "opencode"])
+            expected_presets = sorted(_available_presets())
+            expected_paths = [
+                str(Path(tmpdir) / ".codex" / "prompts" / f"{preset}.md") for preset in expected_presets
+            ] + [
+                str(Path(tmpdir) / ".claude" / "commands" / f"{preset}.md") for preset in expected_presets
+            ] + [
+                str(Path(tmpdir) / ".config" / "opencode" / "commands" / f"{preset}.md") for preset in expected_presets
+            ]
+            self.assertEqual([item["path"] for item in payload["results"]], expected_paths)
+            self.assertEqual(
+                [item["cli"] for item in payload["results"]],
+                ["codex"] * len(expected_presets)
+                + ["claude"] * len(expected_presets)
+                + ["opencode"] * len(expected_presets),
+            )
             self.assertTrue(all(item["status"] == "planned" for item in payload["results"]))
             self.assertFalse((Path(tmpdir) / ".codex" / "prompts" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
+
+    def test_install_prompts_omitted_preset_defaults_to_all_for_selected_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--dry-run", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            expected_presets = sorted(_available_presets())
+            self.assertEqual(payload["preset"], "all")
+            self.assertEqual(
+                [item["path"] for item in payload["results"]],
+                [str(Path(tmpdir) / ".codex" / "prompts" / f"{preset}.md") for preset in expected_presets],
+            )
+            self.assertEqual(
+                [item["message"] for item in payload["results"]],
+                [f"Would install {preset} for codex" for preset in expected_presets],
+            )
 
     def test_install_prompts_positional_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -176,8 +215,10 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["results"][0]["status"], "overwritten")
-            self.assertIsNone(payload["results"][0]["backup_path"])
+            by_path = {item["path"]: item for item in payload["results"]}
+            self.assertEqual(by_path[str(target)]["status"], "overwritten")
+            self.assertIsNone(by_path[str(target)]["backup_path"])
+            self.assertTrue((target.parent / "review_task_imp.md").exists())
             self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
 
     def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
@@ -197,8 +238,10 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["results"][0]["status"], "overwritten")
-            self.assertIsNone(payload["results"][0]["backup_path"])
+            by_path = {item["path"]: item for item in payload["results"]}
+            self.assertEqual(by_path[str(target)]["status"], "overwritten")
+            self.assertIsNone(by_path[str(target)]["backup_path"])
+            self.assertTrue((target.parent / "review_worktree_imp.md").exists())
 
     def test_install_prompts_json_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -262,8 +305,9 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["results"][0]["status"], "planned")
-            self.assertIsNone(payload["results"][0]["backup_path"])
+            by_path = {item["path"]: item for item in payload["results"]}
+            self.assertEqual(by_path[str(target)]["status"], "planned")
+            self.assertIsNone(by_path[str(target)]["backup_path"])
             self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
 
     def test_install_prompts_reports_partial_failure_for_invalid_cli_target(self) -> None:

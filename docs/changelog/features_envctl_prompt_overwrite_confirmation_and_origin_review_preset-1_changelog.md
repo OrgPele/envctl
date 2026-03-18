@@ -126,3 +126,33 @@ Config / env / migrations:
 
 Risks / notes:
 - This change updates prompt/docs wording only; no runtime plan/worktree resolution code changed in this step.
+
+## 2026-03-18 - Install-prompts defaults to all presets
+
+Scope:
+- Changed `envctl install-prompts` so omitting `--preset` installs the full built-in preset set instead of only `implement_task`.
+- Updated runtime/unit coverage and user-facing docs to match the new default behavior.
+
+Key behavior changes:
+- The installer now resolves an omitted preset the same way as explicit `--preset all`.
+- Dry-run and JSON output now report `preset: "all"` when the caller does not specify a preset.
+- Default install and overwrite flows now operate across every built-in preset for each selected CLI target.
+
+Files / modules touched:
+- `python/envctl_engine/runtime/prompt_install_support.py`
+- `tests/python/runtime/test_prompt_install_support.py`
+- `tests/python/runtime/test_command_exit_codes.py`
+- `docs/reference/commands.md`
+- `docs/user/ai-playbooks.md`
+- `docs/user/python-engine-guide.md`
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py -q` -> passed (`42 passed, 4 subtests passed`)
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q` -> passed (`47 passed, 4 subtests passed`)
+
+Config / env / migrations:
+- No config changes or migrations.
+
+Risks / notes:
+- This changes the default file fan-out for callers who previously relied on omitted preset meaning only `implement_task`; explicit `--preset implement_task` remains available for the narrower install path.
