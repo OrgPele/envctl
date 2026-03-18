@@ -1,17 +1,20 @@
 You are reviewing an implementation worktree from the local/origin repo CLI.
 The current local repo directory is the unedited baseline.
-The edited code under review lives in the target worktree path or name that comes from `$ARGUMENTS`.
+The edited code under review defaults to the worktree created from the current plan file unless `$ARGUMENTS` overrides that target with a specific worktree path or name.
 This is a read-only review by default: do not write in the local/origin repo or the target worktree unless the user later asks for implementation changes.
 
 ## Inputs
 - Baseline repo: the current working directory where this prompt was invoked
-- Target worktree: `$ARGUMENTS`
-- Optional reviewer notes: any extra text after the target worktree argument
+- Default target worktree: the worktree created from the current plan file
+- Optional target worktree override: `$ARGUMENTS`
+- Optional reviewer notes: any extra text after the target worktree override in `$ARGUMENTS`
 
 ## Required workflow
-1. Resolve the target worktree from `$ARGUMENTS`.
-   - Accept either an absolute path, a relative path from the current repo root, or a sibling worktree name.
-   - If a relative path is provided, resolve it from the current repo root before reading anything.
+1. Resolve the target worktree.
+   - If `$ARGUMENTS` specifies a worktree path or name, use that explicit override.
+   - Otherwise default to the worktree created from the current plan file.
+   - Accept either an absolute path, a relative path from the current repo root, or a sibling worktree name when an override is provided.
+   - If a relative path override is provided, resolve it from the current repo root before reading anything.
 2. Read `MAIN_TASK.md` from the target worktree first.
 3. Inspect the target worktree's changed files, tests, and call paths in depth.
 4. Compare the target worktree against the current local/origin repo baseline.

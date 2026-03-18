@@ -41,7 +41,7 @@ Current built-in presets:
 
 `implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as a backward-compatible preset.
 
-Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. Pass the target worktree path or name as `$ARGUMENTS`; the prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
+Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
 ## Parallel Implementation Loop
 

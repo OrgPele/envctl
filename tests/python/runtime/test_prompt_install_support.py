@@ -374,7 +374,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
         self.assertIn("current local repo directory is the unedited baseline", review_worktree_prompt.body)
-        self.assertIn("target worktree path or name that comes from `$ARGUMENTS`", review_worktree_prompt.body)
+        self.assertIn("defaults to the worktree created from the current plan file", review_worktree_prompt.body)
+        self.assertIn("unless `$ARGUMENTS` overrides that target", review_worktree_prompt.body)
         self.assertIn("read-only", review_worktree_prompt.body)
         self.assertIn("findings-first", review_worktree_prompt.body)
 

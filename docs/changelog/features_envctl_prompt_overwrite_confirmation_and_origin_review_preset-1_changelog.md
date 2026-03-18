@@ -100,3 +100,29 @@ Config / env / migrations:
 
 Risks / notes:
 - Smoke validation used a repo-local HOME under the current worktree and validated the non-interactive approved overwrite path; the interactive second-run prompt behavior remains covered by automated tests rather than manual smoke interaction.
+
+## 2026-03-18 - Review prompt default target wording
+
+Scope:
+- Adjusted the `review_worktree_imp` prompt contract so it defaults to the worktree created from the current plan file and only uses `$ARGUMENTS` when the caller wants to override that target explicitly.
+
+Key behavior changes:
+- The prompt now describes the default review target as the worktree created from the current plan file.
+- `$ARGUMENTS` is now documented as an optional worktree override plus optional reviewer notes, instead of the only target source.
+
+Files / modules touched:
+- `python/envctl_engine/runtime/prompt_templates/review_worktree_imp.md`
+- `tests/python/runtime/test_prompt_install_support.py`
+- `tests/python/runtime/test_command_exit_codes.py`
+- `docs/user/ai-playbooks.md`
+- `docs/reference/commands.md`
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py -q` -> passed
+
+Config / env / migrations:
+- No config changes or migrations.
+
+Risks / notes:
+- This change updates prompt/docs wording only; no runtime plan/worktree resolution code changed in this step.

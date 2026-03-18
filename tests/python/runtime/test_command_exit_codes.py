@@ -367,7 +367,8 @@ class CommandExitCodeTests(unittest.TestCase):
             bootstrap.assert_not_called()
             written = target.read_text(encoding="utf-8")
             self.assertIn("current local repo directory is the unedited baseline", written)
-            self.assertIn("target worktree path or name that comes from `$ARGUMENTS`", written)
+            self.assertIn("defaults to the worktree created from the current plan file", written)
+            self.assertIn("unless `$ARGUMENTS` overrides that target", written)
             self.assertIn("read-only", written)
             self.assertIn("findings-first", written)
 

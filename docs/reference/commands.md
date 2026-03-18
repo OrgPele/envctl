@@ -78,7 +78,7 @@ Behavior:
 - use `--yes` or `--force` to approve overwrites without prompting
 - `--json` and non-interactive TTY-less runs fail cleanly when overwrite approval is required but not pre-approved
 - this command is available from the normal CLI, but not from dashboard interactive mode
-- `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; pass the target worktree path or name as `$ARGUMENTS`
+- `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 
 ## Main Runtime Commands
 
