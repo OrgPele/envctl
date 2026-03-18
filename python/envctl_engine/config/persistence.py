@@ -15,6 +15,13 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
+from envctl_engine.config.git_global_ignore import (
+    GlobalIgnoreStatus,
+    _configured_global_excludes_path,
+    configure_envctl_global_ignores,
+    ensure_envctl_global_ignores,
+)
+from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.actions.actions_test import (
@@ -51,6 +58,7 @@ class ConfigSaveResult:
     path: Path
     ignore_updated: bool
     ignore_warning: str | None
+    ignore_status: GlobalIgnoreStatus | None = None
 
 
 @dataclass(slots=True)
@@ -520,6 +528,15 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
+    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=False)
+
+
+def save_local_config_with_ignore_policy(
+    *,
+    local_state: LocalConfigState,
+    values: ManagedConfigValues,
+    update_global_ignores: bool,
+) -> ConfigSaveResult:
     canonical_values = ManagedConfigValues(
         default_mode=values.default_mode,
         main_profile=values.main_profile,
@@ -557,34 +574,35 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     merged = merge_managed_block(existing_text, render_managed_block(canonical_values))
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
-    ignore_updated, ignore_warning = ensure_local_config_ignored(local_state.base_dir)
+    ignore_status = ensure_global_ignore_status(local_state.base_dir, update_config=update_global_ignores)
     return ConfigSaveResult(
         path=local_state.config_file_path,
-        ignore_updated=ignore_updated,
-        ignore_warning=ignore_warning,
+        ignore_updated=ignore_status.updated,
+        ignore_warning=ignore_status.warning,
+        ignore_status=ignore_status,
     )
 
 
-def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
-    warnings: list[str] = []
-    gitignore_updated = False
-    exclude_updated = False
-    try:
-        gitignore_updated = _ensure_ignore_patterns(
-            Path(base_dir) / ".gitignore",
-            (".envctl*", "trees/", "MAIN_TASK.md"),
-        )
-    except OSError as exc:
-        warnings.append(f"Could not update .gitignore: {exc}")
+def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) -> GlobalIgnoreStatus:
+    if update_config:
+        current_path, lookup_warning = _configured_global_excludes_path(base_dir)
+        if lookup_warning is not None:
+            return GlobalIgnoreStatus(
+                code="global_excludes_lookup_failed",
+                updated=False,
+                scope="git_global_excludes",
+                target_path=None,
+                managed_patterns=envctl_local_artifact_patterns(),
+                warning=lookup_warning,
+            )
+        if current_path is None:
+            return configure_envctl_global_ignores(base_dir)
+    return ensure_envctl_global_ignores(base_dir)
 
-    exclude_path = Path(base_dir) / ".git" / "info" / "exclude"
-    try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        exclude_updated = _ensure_ignore_patterns(exclude_path, (".envctl*",))
-    except OSError as exc:
-        warnings.append(f"Could not update .git/info/exclude: {exc}")
-    warning_text = "; ".join(warnings) if warnings else None
-    return gitignore_updated or exclude_updated, warning_text
+
+def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
+    status = ensure_global_ignore_status(base_dir)
+    return status.updated, status.warning
 
 
 def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:

@@ -641,7 +641,11 @@ class ActionsCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
             project_root.mkdir(parents=True, exist_ok=True)
-            (project_root / "MAIN_TASK.md").write_text("Ship the feature\n", encoding="utf-8")
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nShip the feature\n",
+                encoding="utf-8",
+            )
             seen_git_args: list[list[str]] = []
 
             def fake_run_git(_git_root: Path, args: list[str]):
@@ -671,14 +675,19 @@ class ActionsCliTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn("Committed and pushed changes for Main (feature/demo).", output)
-            self.assertIn(["commit", "-F", str((project_root / "MAIN_TASK.md").resolve())], seen_git_args)
+            commit_args = next(args for args in seen_git_args if args[:2] == ["commit", "-F"])
+            self.assertTrue(commit_args[2].endswith(".envctl-commit-message.txt"))
             self.assertIn(["push", "-u", "origin", "feature/demo"], seen_git_args)
+            self.assertEqual(ledger.read_text(encoding="utf-8"), "# Envctl Commit Log\n\nShip the feature\n\n### Envctl pointer ###\n")
 
     def test_commit_action_respects_pr_remote_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
             project_root.mkdir(parents=True, exist_ok=True)
-            (project_root / "MAIN_TASK.md").write_text("Ship the feature\n", encoding="utf-8")
+            (project_root / ".envctl-commit-message.md").write_text(
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nShip the feature\n",
+                encoding="utf-8",
+            )
             seen_git_args: list[list[str]] = []
 
             def fake_run_git(_git_root: Path, args: list[str]):
@@ -707,20 +716,18 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn(["push", "-u", "fork", "feature/demo"], seen_git_args)
 
-    def test_commit_action_uses_latest_changelog_h2_section_only(self) -> None:
+    def test_commit_action_uses_envctl_pointer_segment_and_advances_pointer_after_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
             project_root.mkdir(parents=True, exist_ok=True)
-            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
-            changelog.parent.mkdir(parents=True, exist_ok=True)
-            changelog.write_text(
-                "# Changelog\n\n"
-                "## Latest\n"
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n"
+                "Historical summary that should stay archived.\n\n"
+                "### Envctl pointer ###\n"
                 "Ship the feature\n\n"
                 "- bullet one\n"
-                "- bullet two\n\n"
-                "## Older\n"
-                "Do not use this section\n",
+                "- bullet two\n",
                 encoding="utf-8",
             )
             seen_git_args: list[list[str]] = []
@@ -752,18 +759,205 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(captured_commit_message), 1)
             self.assertEqual(captured_commit_message[0], "Ship the feature\n\n- bullet one\n- bullet two")
-            self.assertNotIn("Do not use this section", captured_commit_message[0])
             self.assertTrue(any(args[:2] == ["commit", "-F"] for args in seen_git_args))
+            self.assertEqual(
+                ledger.read_text(encoding="utf-8"),
+                "# Envctl Commit Log\n\n"
+                "Historical summary that should stay archived.\n\n"
+                "Ship the feature\n\n"
+                "- bullet one\n"
+                "- bullet two\n\n"
+                "### Envctl pointer ###\n",
+            )
 
-    def test_commit_action_truncates_large_latest_changelog_section(self) -> None:
-        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+    def test_commit_action_bootstraps_missing_envctl_commit_ledger_and_fails_when_segment_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
             project_root.mkdir(parents=True, exist_ok=True)
-            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
-            changelog.parent.mkdir(parents=True, exist_ok=True)
-            changelog.write_text(
-                "# Changelog\n\n## Latest\n" + ("line\n" * 10000) + "final line\n\n## Older\nold section\n",
+            ledger = project_root / ".envctl-commit-message.md"
+            seen_git_args: list[list[str]] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("Envctl commit log is empty after the pointer", output)
+            self.assertFalse(any(args[:2] == ["commit", "-F"] for args in seen_git_args))
+            self.assertEqual(ledger.read_text(encoding="utf-8"), "# Envctl Commit Log\n\n### Envctl pointer ###\n")
+
+    def test_commit_action_explicit_message_overrides_envctl_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nQueued default summary\n",
+                encoding="utf-8",
+            )
+            seen_git_args: list[list[str]] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                if args[:2] == ["commit", "-m"]:
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] explicit\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_COMMIT_MESSAGE": "Explicit summary"}, clear=False),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertIn(["commit", "-m", "Explicit summary"], seen_git_args)
+            self.assertEqual(
+                ledger.read_text(encoding="utf-8"),
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nQueued default summary\n",
+            )
+
+    def test_commit_action_explicit_message_file_overrides_envctl_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nQueued default summary\n",
+                encoding="utf-8",
+            )
+            message_file = project_root / "custom-message.txt"
+            message_file.write_text("Explicit file summary\n", encoding="utf-8")
+            seen_git_args: list[list[str]] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] explicit file\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_COMMIT_MESSAGE_FILE": str(message_file)}, clear=False),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                code = actions_cli._run_commit_action(project_root, "Main")
+
+            self.assertEqual(code, 0)
+            self.assertIn(["commit", "-F", str(message_file)], seen_git_args)
+            self.assertEqual(
+                ledger.read_text(encoding="utf-8"),
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nQueued default summary\n",
+            )
+
+    def test_commit_action_fails_when_envctl_ledger_marker_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text("# Envctl Commit Log\n\nNo pointer marker here.\n", encoding="utf-8")
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("missing the required pointer marker", output)
+
+    def test_commit_action_fails_when_envctl_ledger_has_duplicate_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n"
+                "### Envctl pointer ###\n"
+                "First queued summary\n\n"
+                "### Envctl pointer ###\n"
+                "Second queued summary\n",
+                encoding="utf-8",
+            )
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("contains multiple pointer markers", output)
+
+    def test_commit_action_push_failure_keeps_pointer_advanced_after_successful_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n"
+                "Already committed summary\n\n"
+                "### Envctl pointer ###\n"
+                "Newest queued summary\n",
                 encoding="utf-8",
             )
             captured_commit_message: list[str] = []
@@ -778,63 +972,31 @@ class ActionsCliTests(unittest.TestCase):
                 if args[:2] == ["commit", "-F"]:
                     captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
                     return subprocess.CompletedProcess(
-                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                        args=args, returncode=0, stdout="[feature/demo abc123] queued\n", stderr=""
                     )
                 if args[:3] == ["push", "-u", "origin"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="push failed")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
                 patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
             ):
-                code = actions_cli._run_commit_action(project_root, "Main")
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
 
-            self.assertEqual(code, 0)
-            self.assertEqual(len(captured_commit_message), 1)
-            self.assertLessEqual(len(captured_commit_message[0]), domain.COMMIT_MESSAGE_MAX_CHARS)
-            self.assertTrue(captured_commit_message[0].endswith("[truncated]"))
-
-    def test_commit_action_skips_markdown_subheadings_in_latest_changelog_subject(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project_root = Path(tmpdir) / "repo"
-            project_root.mkdir(parents=True, exist_ok=True)
-            changelog = project_root / "docs" / "changelog" / "main_changelog.md"
-            changelog.parent.mkdir(parents=True, exist_ok=True)
-            changelog.write_text(
-                "## 2026-03-17 - Example\n\n"
-                "### Scope\n"
-                "Use the real summary line\n\n"
-                "### Details\n"
-                "- item one\n",
-                encoding="utf-8",
+            self.assertEqual(code, 1)
+            self.assertEqual(captured_commit_message, ["Newest queued summary"])
+            self.assertIn("git push failed", output)
+            self.assertEqual(
+                ledger.read_text(encoding="utf-8"),
+                "# Envctl Commit Log\n\n"
+                "Already committed summary\n\n"
+                "Newest queued summary\n\n"
+                "### Envctl pointer ###\n",
             )
-            captured_commit_message: list[str] = []
-
-            def fake_run_git(_git_root: Path, args: list[str]):
-                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
-                if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
-                if args[:2] == ["commit", "-F"]:
-                    captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
-                    return subprocess.CompletedProcess(
-                        args=args, returncode=0, stdout="[feature/demo abc123] ok\n", stderr=""
-                    )
-                if args[:3] == ["push", "-u", "origin"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
-                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
-
-            with (
-                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
-                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
-            ):
-                code = actions_cli._run_commit_action(project_root, "Main")
-
-            self.assertEqual(code, 0)
-            self.assertEqual(captured_commit_message[0], "Use the real summary line\n\n### Details\n- item one")
 
     def test_analyze_action_branch_relative_review_uses_explicit_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1329,7 +1491,7 @@ class ActionsCliTests(unittest.TestCase):
                     code = actions_cli._run_commit_action(project_root, "Main")
 
             self.assertEqual(code, 1)
-            self.assertIn("MAIN_TASK.md is missing or empty", buffer.getvalue())
+            self.assertIn("Envctl commit log is empty after the pointer", buffer.getvalue())
 
     def test_analyze_action_falls_back_when_helper_is_not_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
