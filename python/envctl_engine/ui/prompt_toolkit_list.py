@@ -145,9 +145,9 @@ def run_prompt_toolkit_list_selector(
     def _row_text(item: SelectorItem) -> str:
         if callable(config.row_text):
             return config.row_text(item)
-        badge = str(getattr(item, "kind", "target") or "target").replace("_", " ")
+        badge = str(getattr(item, "kind", "") or "").replace("_", " ").strip()
         label = str(getattr(item, "label", "") or "").strip() or str(getattr(item, "token", "target"))
-        return f"{label} ({badge})"
+        return label if not badge else f"{label} ({badge})"
 
     def _frame() -> ANSI:
         nonlocal status_error, status_error_deadline

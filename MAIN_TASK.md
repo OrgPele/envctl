@@ -1,239 +1,248 @@
-# Envctl Global Ignore For Local Artifacts Plan
+# Envctl PR Dirty-Worktree Commit Confirmation Plan
 
 ## Goals / non-goals / assumptions (if relevant)
 - Goals:
-  - Stop mutating repo-local ignore files for envctl-owned local workflow artifacts during config save/bootstrap.
-  - Move envctl’s ignore contract to a per-user Git global excludes workflow so local files such as `.envctl` and `MAIN_TASK.md` stop appearing as repo changes without being committed into project `.gitignore`.
-  - Make the config wizard, headless `config` command output, and release/shipability checks reflect the new global-ignore source of truth.
-  - Centralize the envctl artifact ignore inventory so new local-only workflow files are added in one place instead of drifting across docs, prompts, and tests.
+  - Before interactive dashboard PR creation, detect staged/unstaged dirty worktrees for the selected target scope and ask whether the operator wants to commit first.
+  - Reuse the existing commit action when the operator accepts, rather than duplicating git mutation logic inside the PR flow.
+  - Preserve current PR creation behavior when the operator declines or when the selected target scope is already clean.
+  - Keep batch/headless PR execution deterministic and non-interactive.
 - Non-goals:
-  - Changing `.envctl` from a repo-local file to a user-global config file. The config file remains repo-local; only ignore management changes.
-  - Reworking commit/PR behavior that consumes `MAIN_TASK.md` (`python/envctl_engine/actions/project_action_domain.py`).
-  - Changing tracked planning files under `todo/plans/`.
-  - Automatically deleting legacy `.gitignore` entries from arbitrary downstream repos; existing local repo ignores can remain until users clean them up manually.
+  - Changing direct non-dashboard `envctl pr` or `python -m envctl_engine.actions.actions_cli pr` to auto-prompt or auto-commit in this first change.
+  - Redesigning PR title/body generation, review-base logic, or the underlying `utils/create-pr.sh` / `gh pr create` behavior.
+  - Changing commit semantics away from the current `git add -A` + `git commit` + `git push` flow.
 - Assumptions:
-  - The current minimum envctl local-only artifact set is grounded in repo evidence and should initially include:
-    - `.envctl*` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
-    - `MAIN_TASK.md` from `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan` and `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source` / `_pr_body` / `_main_task_title`
-    - `OLD_TASK_*.md` because `python/envctl_engine/runtime/prompt_templates/continue_task.md` instructs rotating `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`
-    - nested worktree roots under `trees/` from `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
-    - flat worktree roots `trees-*` because `python/envctl_engine/planning/worktree_domain.py:_preferred_tree_root_for_feature` and `tests/python/planning/test_discovery_topology.py:test_discovers_flat_trees_dash_feature_roots` already support them
-  - Global Git configuration is more sensitive than repo-local `.gitignore`, so envctl should not silently replace a user’s existing global excludes file.
+  - Dirty detection should be evaluated per selected target git root using the same repository resolution contract as existing actions (`python/envctl_engine/actions/project_action_domain.py:resolve_git_root`).
+  - Untracked files should count as dirty for this prompt because the current commit action stages them via `git add -A`.
+  - If the operator declines the prompt, envctl should continue with normal PR creation from the current committed branch state to preserve current behavior.
+  - If the commit step fails for any selected dirty target, envctl should stop before PR creation rather than creating a partial subset of PRs.
 
 ## Goal (user experience)
-When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl-managed worktree roots out of normal `git status` by relying on the user’s global Git excludes setup instead of editing the repository’s `.gitignore` or `.git/info/exclude`. The wizard and CLI output should explain the global-ignore contract clearly, and release/readiness tooling should behave consistently when these files are ignored globally.
+When the operator triggers `pr` from the interactive dashboard and the selected target worktree has staged, unstaged, or untracked changes, envctl should pause before PR creation and ask whether to commit those changes first. Choosing Yes should reuse the existing commit flow, including the current commit-message prompt/default behavior, then continue into PR creation. Choosing No should continue with the current PR flow without committing. Clean targets and non-interactive PR commands should behave exactly as they do today.
 
 ## Business logic and data model mapping
-- Config persistence and save result contract:
-  - `python/envctl_engine/config/persistence.py:save_local_config`
-  - `python/envctl_engine/config/persistence.py:ConfigSaveResult`
-  - `python/envctl_engine/config/persistence.py:ensure_local_config_ignored`
-  - `python/envctl_engine/config/persistence.py:_ensure_ignore_patterns`
-  - `python/envctl_engine/config/persistence.py:config_review_text`
-- Interactive/bootstrap and headless command surfaces:
-  - `python/envctl_engine/config/wizard_domain.py:ensure_local_config`
-  - `python/envctl_engine/config/wizard_domain.py:edit_local_config`
-  - `python/envctl_engine/config/wizard_domain.py:_save_message`
-  - `python/envctl_engine/config/command_support.py:run_config_command`
-  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
-  - `python/envctl_engine/ui/textual/screens/config_wizard.py` review-step summary text
-- Downstream consumers of envctl local workflow artifacts:
-  - `python/envctl_engine/planning/worktree_domain.py:_seed_main_task_from_plan`
-  - `python/envctl_engine/actions/project_action_domain.py:_resolve_commit_message_source`
-  - `python/envctl_engine/actions/project_action_domain.py:_pr_body`
-  - `python/envctl_engine/actions/project_action_domain.py:_main_task_title`
-- Release/readiness behavior that already depends on Git ignore semantics:
-  - `python/envctl_engine/shell/release_gate.py:evaluate_shipability`
-  - `scripts/release_shipability_gate.py:main`
-- Documentation surfaces that currently describe repo-local ignore mutation:
-  - `docs/user/first-run-wizard.md`
-  - `README.md`
-  - `docs/reference/configuration.md`
-  - `docs/developer/config-and-bootstrap.md`
-  - `docs/user/getting-started.md`
-  - `docs/user/python-engine-guide.md`
+- Dashboard interactive command routing and prompt ownership:
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_run_interactive_command`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_interactive_target_selection`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_pr_selection`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_commit_selection`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_prompt_commit_message`
+  - `python/envctl_engine/ui/dashboard/orchestrator.py:_read_interactive_line`
+- PR/commit action dispatch and env bridging:
+  - `python/envctl_engine/actions/action_command_orchestrator.py:run_pr_action`
+  - `python/envctl_engine/actions/action_command_orchestrator.py:run_commit_action`
+  - `python/envctl_engine/actions/action_command_orchestrator.py:run_project_action`
+  - `python/envctl_engine/actions/action_command_support.py:build_action_extra_env`
+  - `python/envctl_engine/actions/action_command_support.py:build_action_env`
+- Git domain behavior:
+  - `python/envctl_engine/actions/project_action_domain.py:run_pr_action`
+  - `python/envctl_engine/actions/project_action_domain.py:run_commit_action`
+  - `python/envctl_engine/actions/project_action_domain.py:resolve_git_root`
+  - `python/envctl_engine/actions/project_action_domain.py:_run_git`
+  - `python/envctl_engine/actions/project_action_domain.py:_git_output`
+- Existing prompt surfaces and fallback primitives:
+  - `python/envctl_engine/ui/textual/screens/text_input_dialog.py:run_text_input_dialog_textual`
+  - `python/envctl_engine/runtime/engine_runtime.py:_prompt_yes_no`
+  - `python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py:prompt_yes_no`
+- Existing persisted action results that must remain aligned:
+  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_project_action_result`
+  - `python/envctl_engine/state/models.py:RunState.metadata["project_action_reports"]`
 
 ## Current behavior (verified in code)
-- Saving config always writes the repo-local `.envctl`, then mutates repo-local ignore files:
-  - `save_local_config(...)` calls `ensure_local_config_ignored(local_state.base_dir)` immediately after writing `.envctl`.
-  - `ensure_local_config_ignored(...)` appends `.envctl*`, `trees/`, and `MAIN_TASK.md` to `<repo>/.gitignore`.
-  - The same helper appends only `.envctl*` to `<repo>/.git/info/exclude`.
-- The save-result contract is too coarse to describe where ignore changes happened:
-  - `ConfigSaveResult` only exposes `ignore_updated: bool` and `ignore_warning: str | None`.
-  - `config_review_text(...)`, `wizard_domain._save_message(...)`, and `_run_headless_config_command(...)` can only display generic ignore text, not “global ignore configured”, “global ignore missing”, or “global ignore requires consent”.
-- Wizard/docs currently promise repo `.gitignore` edits:
-  - `python/envctl_engine/ui/textual/screens/config_wizard.py` hard-codes review copy saying “`.envctl*, trees/, and MAIN_TASK.md will be added to .gitignore on save when possible.`”
-  - `docs/user/first-run-wizard.md` says save “tries to add `.envctl*` and `trees/` to the repo `.gitignore`.”
-- The artifact inventory is incomplete and split across unrelated modules:
-  - `ensure_local_config_ignored(...)` does not cover `OLD_TASK_*.md`, even though prompt templates explicitly rotate `MAIN_TASK.md` into archived `OLD_TASK_<iteration>.md`.
-  - `ensure_local_config_ignored(...)` does not cover `trees-*`, even though worktree discovery/creation supports flat roots through `_preferred_tree_root_for_feature(...)` and `_trees_root_for_worktree(...)`.
-  - Worktree-local `.envctl-state/worktree-provenance.json` exists, but because it lives inside worktree roots it is effectively covered when the worktree root itself is ignored.
-- Shipability already honors Git’s standard ignore stack:
-  - `evaluate_shipability(...)` calls `git ls-files --others --exclude-standard -- <required scopes>`.
-  - That means moving envctl artifacts from repo `.gitignore` to a global excludes file changes release-gate results even if no repo files change.
-- Repo evidence shows envctl relies on these local files in daily workflows:
-  - new worktrees receive `MAIN_TASK.md` copied from the selected plan via `_seed_main_task_from_plan(...)`
-  - PR title/body and commit-message fallback logic read `MAIN_TASK.md` via `project_action_domain.py`
-  - current envctl repo `.gitignore` still contains `.envctl*`, indicating the project itself is relying on repo-local ignores today
+- Dashboard `p` goes through dashboard-owned PR selection and then dispatches a normal `pr` route:
+  - `DashboardOrchestrator._run_interactive_command(...)` parses the command, forces `batch=True` plus `interactive_command=True`, applies interactive target selection, and finally calls `runtime.dispatch(route)`.
+  - `DashboardOrchestrator._apply_pr_selection(...)` selects project scope, base branch, and optional PR body, but does not inspect worktree dirtiness or branch into commit behavior.
+- Dashboard `c` already has pre-dispatch message prompting, but `pr` does not:
+  - `_apply_commit_selection(...)` prompts for `commit_message` when the route does not already carry one.
+  - `_apply_pr_selection(...)` prompts for `pr_body`, but there is no adjacent commit decision.
+- PR and commit are separate action routes all the way down:
+  - `ActionCommandOrchestrator.run_pr_action(...)` and `run_commit_action(...)` both delegate to `run_project_action(...)` with different `command_name` / env keys.
+  - `build_action_extra_env(...)` forwards `pr_base`, `pr_body`, `commit_message`, and `commit_message_file`, but nothing about a pre-PR commit consent flow.
+- The domain PR action does not look at working tree status:
+  - `project_action_domain.run_pr_action(...)` checks git availability, detached HEAD, base branch, and existing PR, then runs `utils/create-pr.sh` or `gh pr create`.
+  - There is no `git status` preflight in `run_pr_action(...)`.
+- The domain commit action stages everything and pushes:
+  - `project_action_domain.run_commit_action(...)` runs `git add -A`, `git status --porcelain`, resolves the commit message, commits, and pushes with `git push -u`.
+- There is no reusable dashboard confirmation dialog today:
+  - Dashboard text entry uses `run_text_input_dialog_textual(...)`.
+  - Generic yes/no prompting exists only as a simple `input()` helper in cleanup orchestration (`LifecycleCleanupOrchestrator.prompt_yes_no(...)`), and dashboard PR/commit tests do not cover a confirmation modal.
+- Existing test evidence locks in the current split:
+  - `tests/python/actions/test_actions_cli.py` verifies PR creation, detached-HEAD skip, existing-PR skip, and commit staging/push behavior.
+  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py` verifies PR target/base/message prompting and separate commit-message prompting, but has no dirty-worktree preflight coverage.
+  - `tests/python/actions/test_actions_cli.py:test_pr_action_interactive_mode_does_not_prompt_for_base_branch` also confirms the domain action path avoids direct `input()` prompting even when `ENVCTL_ACTION_INTERACTIVE=1`.
 
 ## Root cause(s) / gaps
-- The ignore contract is implemented as repo mutation inside config persistence, which conflicts with the requested per-user/global workflow and leaks envctl-specific local files into tracked repo hygiene.
-- There is no single authoritative helper for “envctl-owned local artifacts”, so new workflow files can appear in prompts or planning code without ever being added to ignore management.
-- The current save-result/output contract cannot represent global-ignore bootstrap states such as “existing global excludes updated”, “global excludes missing”, or “user declined global config mutation”.
-- Release-gate tests cover tracked/untracked required-scope behavior, but there is no regression proving envctl artifacts ignored through global excludes remain invisible to `--exclude-standard`.
-- Global Git config mutation is a user-scope side effect and therefore needs an explicit bootstrap/consent policy; the current code has no such policy because repo `.gitignore` edits were comparatively low-risk.
+- There is no read-only dirty-worktree classification helper that the dashboard PR flow can call before dispatching the real PR action.
+- The dashboard PR flow already owns interactive prompts, but it stops at project/base/body selection and never decides whether to branch into a commit-first step.
+- The only existing yes/no prompt primitive is a basic stdin helper outside the dashboard UI stack, so there is no first-class confirmation surface for this decision.
+- Commit and PR are intentionally independent actions; without an orchestrated preflight, the PR flow cannot reuse commit behavior before dispatch.
+- The current tests validate PR and commit as separate flows, so there is no regression coverage for the requested behavior: dirty selected target(s) plus interactive dashboard PR creation.
 
 ## Plan
-### 1) Define an authoritative envctl local-artifact ignore inventory
-- Add a single source of truth under `python/envctl_engine/config/` for envctl local-only artifact patterns instead of embedding them inline inside `ensure_local_config_ignored(...)`.
-- Seed the initial pattern list from verified repo evidence:
-  - `.envctl*`
-  - `MAIN_TASK.md`
-  - `OLD_TASK_*.md`
-  - `trees/`
-  - `trees-*`
-- Keep tracked planning assets out of this list:
-  - `todo/plans/**` stays tracked by design (`docs/user/planning-and-worktrees.md`)
-  - `docs/changelog/**` stays tracked
-- Document why `.envctl-state/**` is not separately listed:
-  - it is already nested under ignored worktree roots
-  - adding a root-level `.envctl-state/` ignore would be speculative because repo-root `.envctl-state` is not a documented current contract
+### 1) Define the contract narrowly around interactive dashboard PR creation
+- Limit the first implementation to dashboard-owned interactive PR creation triggered through `DashboardOrchestrator`.
+- Preserve current behavior for:
+  - clean targets
+  - operator declining the prompt
+  - operator running non-interactive / batch / headless PR commands
+  - direct CLI/domain PR execution outside the dashboard
+- Document explicitly that the prompt is about committing the currently dirty selected target scope before PR creation, not about changing the eventual PR payload generation rules.
 
-### 2) Replace repo-local ignore mutation with a global-excludes manager
-- Replace `ensure_local_config_ignored(...)` with a helper dedicated to Git global excludes management, ideally in a focused module such as `python/envctl_engine/config/git_ignore.py` to keep subprocess/home-path logic out of general persistence code.
-- The helper should:
-  - resolve the current global excludes target from Git config rather than assuming repo-local files
-  - preserve any existing user-managed content in that file
-  - add/remove only an envctl-managed block so repeated saves stay idempotent
-  - stop writing `<repo>/.gitignore`
-  - stop writing `<repo>/.git/info/exclude`
-- Bootstrap policy should be explicit:
-  - if a global excludes file is already configured, update it in place
-  - if no global excludes file is configured, do not silently overwrite unrelated global Git state
-  - instead, either:
-    - add an explicit one-time consent path during interactive config save, or
-    - return a structured warning telling the user how to enable envctl’s global ignore setup
-- Keep the helper narrow:
-  - only manage envctl’s artifact block
-  - never reformat the whole user file
-  - never delete non-envctl ignore rules
+### 2) Add a reusable, read-only dirty-worktree probe
+- Add a helper under `python/envctl_engine/actions/` or `python/envctl_engine/ui/dashboard/` that:
+  - resolves the target git root with `resolve_git_root(project_root, repo_root)`
+  - runs `git status --porcelain --untracked-files=all`
+  - classifies staged, unstaged, and untracked dirtiness
+  - returns a structured summary per selected target or deduplicated git root
+- Keep the helper read-only and bounded:
+  - no staging
+  - no commit attempts
+  - no raw porcelain output printed to the user
+- Deduplicate repeated git roots so the same worktree is not probed or prompted more than once.
 
-### 3) Expand the save-result contract so UX can report global-ignore state precisely
-- Extend `ConfigSaveResult` beyond the current boolean `ignore_updated` so downstream callers can distinguish:
-  - `updated_existing_global_excludes`
-  - `already_present`
-  - `missing_global_excludes_configuration`
-  - `permission_or_write_failure`
-  - `user_declined_global_git_config_change` if interactive consent is added
-- Keep compatibility for existing JSON callers where possible:
-  - retain `ignore_updated` as a coarse boolean if needed
-  - add structured fields such as `ignore_scope`, `ignore_target_path`, and/or `ignore_status`
-- Update:
-  - `python/envctl_engine/config/wizard_domain.py:_save_message`
-  - `python/envctl_engine/config/command_support.py:_run_headless_config_command`
-  - `python/envctl_engine/config/persistence.py:config_review_text`
-  so output explains the new global-ignore contract instead of referencing repo `.gitignore`
+### 3) Insert a PR preflight hook after route scoping but before dispatch
+- Add a dedicated helper in `DashboardOrchestrator`, for example `_maybe_prepare_pr_commit(...)`, and call it from `_run_interactive_command(...)` after `_apply_interactive_target_selection(...)` has finalized the PR route.
+- This placement ensures the preflight sees the actual selected PR scope for both:
+  - the `p` alias flow
+  - typed dashboard commands like `pr --project foo --pr-base main`
+- The preflight helper should:
+  - resolve the selected project targets from the finalized route
+  - run dirty-state detection for those targets
+  - skip immediately if all are clean
+  - prompt once when any selected target is dirty
 
-### 4) Rework interactive and headless config UX around the new contract
-- Update the config wizard review step in `python/envctl_engine/ui/textual/screens/config_wizard.py` so it no longer promises repo `.gitignore` edits.
-- If interactive consent is part of the chosen bootstrap policy, keep it in the config/bootstrap flow rather than hidden deep in persistence code so the user understands a global Git setting may change.
-- Update `docs/user/first-run-wizard.md`, `README.md`, `docs/user/getting-started.md`, `docs/user/python-engine-guide.md`, `docs/reference/configuration.md`, and `docs/developer/config-and-bootstrap.md` to say:
-  - `.envctl` remains repo-local
-  - envctl local workflow artifacts are expected to be ignored through the user’s global Git excludes setup
-  - repo `.gitignore` is no longer auto-mutated by envctl
-- Add a short developer note in `docs/developer/config-and-bootstrap.md` covering the new ownership boundary:
-  - repo-local persistence writes `.envctl`
-  - user-global persistence manages envctl’s ignore block
+### 4) Add a dashboard confirmation surface with clear fallback behavior
+- Prefer a reusable dashboard confirmation helper rather than embedding raw `input()` directly into PR routing code.
+- Recommended shape:
+  - `DashboardOrchestrator._prompt_yes_no_dialog(...)`
+  - optional new shared UI helper such as `python/envctl_engine/ui/textual/screens/confirm_dialog.py`
+- Fallback order should be explicit:
+  1. a runtime-provided confirm hook if one is added
+  2. a Textual confirm dialog when available
+  3. runtime `_prompt_yes_no(...)` or `_read_interactive_line(...)` fallback for basic TTY operation
+- Treat the result as tri-state:
+  - accept: run commit first
+  - decline: continue PR without commit
+  - cancel/escape: abort the PR command and return to the dashboard without dispatching either action
 
-### 5) Align release/readiness behavior and repository cleanup expectations
-- Add coverage proving `python/envctl_engine/shell/release_gate.py:evaluate_shipability` behaves correctly when envctl artifacts are hidden by global excludes rather than repo `.gitignore`.
-- Update this repository’s own ignore policy after the feature lands:
-  - remove envctl-owned local-artifact entries from this repo’s tracked `.gitignore`
-  - do not build code that auto-rewrites downstream repos’ tracked `.gitignore` files to remove historical entries
-- Keep release-gate semantics unchanged for genuinely untracked required-scope files; only envctl local artifacts should disappear via standard Git ignore rules.
+### 5) Reuse the existing commit route instead of duplicating git mutation logic
+- When the operator accepts, synthesize and dispatch a `commit` route rather than calling `git add` / `git commit` directly from the PR preflight.
+- Reuse existing commit semantics:
+  - current target scoping
+  - existing commit message prompt/default logic via `_apply_commit_selection(...)`
+  - existing action env propagation and domain execution
+- Recommended execution sequence:
+  1. finalize the PR route
+  2. detect dirty selected targets
+  3. prompt accept / decline / cancel
+  4. if accept, build a commit route scoped to the dirty subset
+  5. dispatch commit and reload latest state
+  6. only if commit succeeded, dispatch the original PR route
+- Do not add a second git mutation implementation in the dashboard layer.
 
-### 6) Add transition-safe diagnostics and migration guidance
-- Emit bounded config events when ignore setup is attempted/completed/fails so bootstrap behavior remains diagnosable:
-  - suggested event family: `config.ignore.global.updated`, `config.ignore.global.skipped`, `config.ignore.global.warning`
-- Avoid emitting the full contents of the global ignores file; only emit status and the resolved path when useful.
-- Add migration notes for operators:
-  - existing repo `.gitignore` lines may remain temporarily and are harmless
-  - new envctl versions will no longer add them
-  - root-level `MAIN_TASK.md`/`OLD_TASK_*.md` visibility now depends on global excludes being configured
+### 6) Keep multi-target behavior safe and deterministic
+- Dirty detection should be per selected target or git root so the prompt can report whether one or many selected targets are dirty.
+- For multi-target PR flows:
+  - commit only the dirty subset
+  - stop the PR phase if any commit target fails
+  - do not proceed with PR creation for a clean subset while another selected target had a commit failure
+- Preserve current `project_action_reports` semantics for commit and PR actions; the preflight itself should not invent a new persisted action result type unless implementation evidence proves it is needed.
+
+### 7) Keep non-interactive and direct CLI behavior unchanged in the first iteration
+- Do not add implicit commit-before-PR behavior to:
+  - `envctl pr --headless`
+  - `envctl pr --batch`
+  - `python -m envctl_engine.actions.actions_cli pr`
+- Keep `project_action_domain.run_pr_action(...)` prompt-free so existing direct-action tests that guard against unexpected prompting remain valid.
+- If the product later wants a generic CLI prompt or an auto-accept flag, treat that as follow-on work rather than widening this first change.
+
+### 8) Add bounded diagnostics and documentation updates
+- Emit dashboard-level events for:
+  - dirty state detected / not detected
+  - prompt shown
+  - operator accepted / declined / cancelled
+  - commit-before-PR started / failed / completed
+- Suggested event names:
+  - `dashboard.pr_dirty_state`
+  - `dashboard.pr_dirty_commit.prompt`
+  - `dashboard.pr_dirty_commit.accepted`
+  - `dashboard.pr_dirty_commit.declined`
+  - `dashboard.pr_dirty_commit.cancelled`
+  - `dashboard.pr_dirty_commit.failed`
+- Keep event payloads bounded to counts and coarse dirtiness categories, not raw `git status` output.
+- Update docs/changelog to clarify that dashboard `pr` may now offer a commit-first prompt when selected targets are dirty, and that declining preserves previous PR behavior.
 
 ## Tests (add these)
 ### Backend tests
-- Extend `tests/python/config/test_config_persistence.py`:
-  - verify the new helper updates only the global excludes target and leaves repo `.gitignore` / `.git/info/exclude` untouched
-  - verify idempotent envctl-managed block updates
-  - verify the expanded artifact set includes `OLD_TASK_*.md` and flat `trees-*`
-  - verify missing/unwritable global excludes configuration returns a structured warning instead of mutating repo files
-- Extend `tests/python/config/test_config_command_support.py`:
-  - verify JSON output includes the new ignore status fields
-  - verify non-JSON output surfaces actionable global-ignore warnings when setup is incomplete
-- Extend `tests/python/runtime/test_release_shipability_gate.py`:
-  - add a repo fixture where `MAIN_TASK.md` or `.envctl` exists under required scopes but is ignored through a temporary global excludes configuration, and assert `evaluate_shipability(...)` stays green
-  - keep a regression proving unrelated untracked files in required scopes still fail the gate
-- Extend `tests/python/runtime/test_release_shipability_gate_cli.py`:
-  - add one CLI-level regression that runs `scripts/release_shipability_gate.py` with a temporary global Git config / excludes file and verifies the output remains clean
+- Extend [tests/python/actions/test_actions_cli.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_cli.py):
+  - add coverage for the dirty-state classification helper: clean, staged-only, unstaged-only, untracked-only, mixed
+  - keep a regression proving `run_pr_action(...)` itself still does not prompt or auto-commit in the domain/CLI path
+- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
+  - add a parity regression proving batch/headless PR behavior remains prompt-free
+  - add a regression that the commit-before-PR dashboard flow still preserves existing `ENVCTL_ACTION_INTERACTIVE` semantics for the commit step when routed through the action executor
 
 ### Frontend tests
-- Extend `tests/python/config/test_config_wizard_textual.py`:
-  - verify the review-step copy no longer promises repo `.gitignore` mutation
-  - if interactive consent is added, cover the review/confirm state that introduces global Git configuration
-- Extend `tests/python/config/test_config_wizard_domain.py`:
-  - verify save messages reflect global-ignore outcomes correctly
-  - verify interactive bootstrap/edit flows surface warnings instead of silently claiming local `.gitignore` updates
+- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
+  - dirty selected target plus Yes dispatches commit first, then PR
+  - dirty selected target plus No skips commit and dispatches PR only
+  - dirty selected target plus cancel aborts without dispatching commit or PR
+  - clean selected target does not prompt
+  - explicit typed dashboard PR routes still go through the dirty preflight
+  - commit failure aborts PR dispatch
+  - multi-target selection commits only dirty targets and stops PR if any commit fails
+- If a new confirm dialog is added, add `tests/python/ui/test_confirm_dialog.py` or extend [tests/python/ui/test_text_input_dialog.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_text_input_dialog.py) with button/key-path coverage for accept / decline / cancel behavior.
 
 ### Integration/E2E tests
-- Prefer focused Python integration coverage over broad BATS for this change:
-  - `tests/python/config/test_config_command_support.py` should exercise a real `config --set` / `config --stdin-json` save path against a temporary git repo plus temporary global Git config
-  - `tests/python/runtime/test_release_shipability_gate_cli.py` should exercise the shipped CLI script against the same style of isolated global-config fixture
-- No frontend/browser or runtime-startup E2E lane is required because startup behavior and service orchestration are unchanged.
+- Prefer one focused integration extension in [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) only if unit-level dashboard tests are not sufficient to prove the full sequence:
+  - dirty working tree detected
+  - operator accepts commit
+  - commit route runs before PR route
+  - PR route still emits the existing success/status behavior afterward
+- No broader end-to-end suite is required unless the new confirmation UI introduces backend- or TTY-specific regressions that targeted dashboard tests cannot reproduce.
 
 ## Observability / logging (if relevant)
-- Keep new diagnostics at the config/bootstrap layer only.
-- Emit status-oriented events, not full file contents:
-  - whether envctl updated an existing global excludes file
-  - whether no global excludes file was configured
-  - whether a write failed or the user declined consent
-- Avoid logging raw ignore-file bodies or unrelated user ignore patterns.
+- Keep new diagnostics at the dashboard/orchestration layer, not inside the domain PR action.
+- Record only bounded summary data:
+  - selected project count
+  - dirty project count
+  - dirtiness category presence (`staged`, `unstaged`, `untracked`)
+  - operator choice
+  - follow-on commit outcome
+- Do not emit raw `git status --porcelain` output into standard runtime events.
+- If a new confirmation dialog is added, emit fallback-reason diagnostics in the same style used elsewhere when Textual is unavailable.
 
 ## Rollout / verification
-- Implementation order:
-  1. centralize the artifact inventory
-  2. introduce the global-excludes helper and expanded `ConfigSaveResult`
-  3. rewire config persistence/wizard/headless messaging
-  4. add release-gate/global-excludes tests
-  5. update docs
-  6. clean this repo’s tracked `.gitignore` entries once the new contract is live
+- Implement in this order:
+  1. read-only dirty-state probe and backend tests
+  2. dashboard confirmation helper and fallback behavior
+  3. PR preflight orchestration with commit-route reuse
+  4. docs/changelog updates
 - Verification commands:
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence`
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_command_support`
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_wizard_domain tests.python.config.test_config_wizard_textual`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli`
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_cli`
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_orchestrator_restart_selector`
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_parity`
+  - if a new dialog helper is added: `PYTHONPATH=python python3 -m unittest tests.python.ui.test_text_input_dialog tests.python.ui.test_confirm_dialog`
 - Manual verification:
-  - in a temporary git repo with no `.gitignore`, run `envctl config` and confirm `.envctl` is saved while repo `.gitignore` remains unchanged
-  - create `MAIN_TASK.md` and verify `git status --short` stays clean when the configured global excludes file contains the envctl block
-  - verify a repo with an existing user global excludes file keeps pre-existing lines unchanged
-  - verify missing global-ignore bootstrap produces a clear actionable warning instead of a silent failure
+  - from the interactive dashboard, trigger `pr` on a target with only unstaged changes and confirm the prompt appears
+  - choose Yes and verify commit runs before PR creation
+  - choose No and verify PR creation proceeds without a new commit
+  - choose Cancel and verify no commit or PR is run
+  - repeat on a clean target and confirm no extra prompt appears
+  - verify headless/batch `pr` behavior remains unchanged
 
 ## Definition of done
-- Config save/bootstrap no longer edits repo `.gitignore` or `.git/info/exclude`.
-- Envctl local-only artifacts are managed through a single authoritative global-ignore inventory.
-- Wizard, CLI output, and docs consistently describe the global-ignore contract.
-- Release-gate tests prove envctl artifacts ignored through global excludes do not create false shipability failures.
-- This repo’s tracked ignore policy no longer carries envctl-only local artifact patterns once the new behavior is in place.
+- Interactive dashboard PR creation detects dirty selected targets and offers a commit-first prompt before PR dispatch.
+- Accepting the prompt reuses the existing commit route and only proceeds to PR creation if commit succeeds.
+- Declining preserves current PR behavior, and cancelling aborts the dashboard PR command cleanly.
+- Direct CLI/domain PR execution and headless/batch PR behavior remain unchanged.
+- Targeted dashboard, action, and prompt-surface tests cover the new flow and its clean/dirty/cancel/failure edge cases.
 
 ## Risk register (trade-offs or missing tests)
-- Risk: mutating user-global Git config is a broader side effect than mutating repo `.gitignore`.
-  - Mitigation: require explicit consent when envctl would need to create/configure a global excludes target, and preserve existing user content with an envctl-managed block.
-- Risk: removing repo-local ignore mutation before a user has global excludes configured will make `.envctl` / `MAIN_TASK.md` appear as untracked files again.
-  - Mitigation: return actionable warnings and keep docs/wizard copy explicit about the prerequisite.
-- Risk: flat worktree roots (`trees-*`) are supported by discovery but were never part of the old ignore contract, so broadening the inventory could hide files users intentionally wanted visible.
-  - Mitigation: scope the new patterns only to envctl-managed worktree root conventions and document the behavior change in migration notes.
-- Risk: existing downstream repos may retain historical `.gitignore` entries, producing mixed local-vs-global ignore states during transition.
-  - Mitigation: do not auto-delete downstream repo entries; limit automatic cleanup to this repository and document the transition as additive/safe.
+- Risk: the existing commit action stages all files with `git add -A`, so operators may commit untracked files when they expected only already-staged changes.
+  - Mitigation: make the prompt copy explicit that accepting uses the normal commit action for the selected target scope, including unstaged/untracked changes.
+- Risk: adding a new dashboard confirmation surface could reintroduce interactive input regressions in legacy/Textual fallback paths.
+  - Mitigation: prefer a small shared dialog helper with explicit fallback coverage and targeted UI tests.
+- Risk: multi-target flows can still end in a partially advanced local state if one target commits successfully and a later target fails before PR creation.
+  - Mitigation: abort the PR phase on the first commit failure, surface existing commit failure details, and keep the plan/documentation explicit about this safe-stop behavior.
 
 ## Open questions (only if unavoidable)
 - None.

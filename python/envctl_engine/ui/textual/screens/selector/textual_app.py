@@ -134,13 +134,18 @@ def create_selector_app(
         @staticmethod
         def _row_text(row: _RowRef) -> str:
             marker = "●" if row.selected else "○"
-            badge = row.item.kind.replace("_", " ")
+            badge = str(row.item.kind or "").replace("_", " ").strip()
+            if not badge:
+                return f"{marker} {row.item.label}"
             return f"{marker} {row.item.label}  ({badge})"
 
         @staticmethod
         def _row_classes(row: _RowRef) -> str:
             base_classes = selectable_list_row_classes("selector-row", selected=row.selected)
-            return f"{base_classes} kind-{row.item.kind.replace('_', '-')}"
+            kind = str(row.item.kind or "").replace("_", "-").strip("-")
+            if not kind:
+                return base_classes
+            return f"{base_classes} kind-{kind}"
 
         def _focused_model_index(self) -> int | None:
             return self._controller.focused_model_index(self._list().index)

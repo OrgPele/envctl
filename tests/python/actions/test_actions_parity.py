@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+from typing import Any
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -695,6 +696,33 @@ class ActionsParityTests(unittest.TestCase):
                 extra=None,
             )
             self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
+
+    def test_action_env_keeps_interactive_pr_routes_interactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(
+                ["pr", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            route.flags = {**route.flags, "interactive_command": True, "batch": True, "pr_base": "main"}
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "pr",
+                [target],
+                route=route,
+                target=target,
+                extra=engine.action_command_orchestrator.action_extra_env(route),
+            )
+
+            self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "1")
+            self.assertEqual(env.get("ENVCTL_PR_BASE"), "main")
 
     def test_action_env_exposes_runtime_scoped_tree_diffs_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3752,7 +3780,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3821,7 +3849,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3899,7 +3927,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -4518,7 +4546,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive

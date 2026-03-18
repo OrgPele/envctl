@@ -49,6 +49,20 @@ class ReviewBaseResolutionError(RuntimeError):
     """Raised when envctl cannot determine a usable review base."""
 
 
+@dataclass(frozen=True, slots=True)
+class DirtyWorktreeReport:
+    project_name: str
+    project_root: Path
+    git_root: Path
+    staged: bool
+    unstaged: bool
+    untracked: bool
+
+    @property
+    def dirty(self) -> bool:
+        return self.staged or self.unstaged or self.untracked
+
+
 def run_commit_action(context: ActionProjectContext) -> int:
     git_root = resolve_git_root(context.project_root, context.repo_root)
     if shutil.which("git") is None:
@@ -295,6 +309,43 @@ def resolve_git_root(project_root: Path, repo_root: Path) -> Path:
         if (candidate / ".git").exists():
             return candidate
     return project_root
+
+
+def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
+    git_root = resolve_git_root(project_root, repo_root)
+    status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
+    staged, unstaged, untracked = _classify_dirty_porcelain(status_output)
+    resolved_name = project_name.strip() or project_root.name or git_root.name or "project"
+    return DirtyWorktreeReport(
+        project_name=resolved_name,
+        project_root=project_root,
+        git_root=git_root,
+        staged=staged,
+        unstaged=unstaged,
+        untracked=untracked,
+    )
+
+
+def _classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
+    staged = False
+    unstaged = False
+    untracked = False
+    for raw_line in str(status_output or "").splitlines():
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        if line.startswith("??"):
+            untracked = True
+            continue
+        if len(line) < 2:
+            continue
+        index_status = line[0]
+        worktree_status = line[1]
+        if index_status not in {" ", "?"}:
+            staged = True
+        if worktree_status not in {" ", "?"}:
+            unstaged = True
+    return staged, unstaged, untracked
 
 
 def detect_default_branch(git_root: Path) -> str:

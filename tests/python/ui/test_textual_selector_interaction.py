@@ -165,6 +165,29 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertIn("escape", actions_by_key)
         self.assertEqual(actions_by_key["escape"], "cancel")
 
+    def test_selector_bindings_keep_a_for_select_all(self) -> None:
+        options = [
+            selector.SelectorItem(  # type: ignore[attr-defined]
+                id="service:alpha",
+                label="Alpha",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        if app is None:
+            self.skipTest("textual is not installed")
+        actions_by_key = {binding.key: binding.action for binding in app.BINDINGS}
+        self.assertIn("a", actions_by_key)
+        self.assertEqual(actions_by_key["a"], "toggle_visible")
+
     def test_prompt_toolkit_selector_disabled_for_build_only(self) -> None:
         with (
             patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True),

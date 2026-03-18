@@ -36,11 +36,11 @@ def _run_prompt_toolkit_selector(
 
     def _row_text(item: SelectorItem) -> str:
         section = str(getattr(item, "section", "") or "").strip()
-        kind = str(getattr(item, "kind", "target") or "target").replace("_", " ")
+        kind = str(getattr(item, "kind", "") or "").replace("_", " ").strip()
         label = str(getattr(item, "label", "") or "").strip() or str(getattr(item, "token", "target"))
         if section:
-            return f"{section} | {label} ({kind})"
-        return f"{label} ({kind})"
+            return f"{section} | {label}" if not kind else f"{section} | {label} ({kind})"
+        return label if not kind else f"{label} ({kind})"
 
     result = run_prompt_toolkit_list_selector(
         PromptToolkitListConfig(

@@ -62,7 +62,6 @@ Screen {
 """
     + SELECTOR_ROW_STYLES_CSS
     + """
-.kind-synthetic-all Label,
 .kind-synthetic-untested Label {
     color: $warning;
 }
