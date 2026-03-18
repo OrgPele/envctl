@@ -19,7 +19,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Before any implementation work, run `git add .` to stage the current baseline.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- After changes, append (not overwrite) a detailed summary to `.envctl-commit-message.md`, keeping exactly one `### Envctl pointer ###` marker in the file and appending the new summary immediately before that marker. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. `### Envctl pointer ###` marks the boundary after the last successful commit, and everything after it is the next default commit message. If more changes happen before the next commit, refine that same message so it reflects all changes since the last commit. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected implementation.

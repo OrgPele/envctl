@@ -31,7 +31,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Read both branches' `MAIN_TASK.md` files and relevant code to understand intent before merging.
 - Read enough code and tests on both branches to understand what each implementation is trying to accomplish.
 - Use best-practice engineering and coding standards for this repo (correctness, safety, maintainability).
-- After changes, append (not overwrite) a detailed summary to `.envctl-commit-message.md`, keeping exactly one `### Envctl pointer ###` marker in the file and appending the new summary immediately before that marker. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. `### Envctl pointer ###` marks the boundary after the last successful commit, and everything after it is the next default commit message. If more changes happen before the next commit, refine that same message so it reflects all changes since the last commit. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Always propose conflict resolutions after deep analysis.
 - Never resolve conflicts by blindly taking “ours” or “theirs.” If both sides add value, merge them.
 - Preserve behavior: branch A and branch B must both still serve their intended purpose after integration, with no breaking regressions.
@@ -87,4 +87,4 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Conflicts were analyzed and resolved with clear reasoning.
 - The final integrated behavior still serves both branches' purposes.
 - Tests executed and any failures addressed.
-- `.envctl-commit-message.md` entry appended while preserving one `### Envctl pointer ###` marker.
+- `.envctl-commit-message.md` updated with one complete next commit message that respects the pointer boundary semantics.

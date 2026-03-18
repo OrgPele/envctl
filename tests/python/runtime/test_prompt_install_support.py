@@ -211,6 +211,9 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("write that content into `MAIN_TASK.md` first", codex)
         self.assertIn(".envctl-commit-message.md", codex)
         self.assertIn("### Envctl pointer ###", codex)
+        self.assertIn("marks the boundary after the last successful commit", codex)
+        self.assertIn("one complete next commit message", codex)
+        self.assertIn("reflects all changes since the last commit", codex)
         self.assertEqual(claude, codex)
         self.assertEqual(opencode, codex)
 
@@ -240,7 +243,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         for prompt in (implement_prompt, continue_prompt, review_prompt, merge_prompt):
             with self.subTest(prompt=prompt.name):
                 self.assertNotIn("docs/changelog/{tree_name}_changelog.md", prompt.body)
-                self.assertIn("append (not overwrite) a detailed summary to `.envctl-commit-message.md`", prompt.body)
+                self.assertIn("keep `.envctl-commit-message.md` focused on one complete next commit message", prompt.body)
+                self.assertIn("reflects all changes since the last commit", prompt.body)
 
 
 if __name__ == "__main__":

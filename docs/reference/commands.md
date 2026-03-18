@@ -204,8 +204,8 @@ envctl --sequential-plan
 Commit defaults:
 
 - `envctl commit` now reads its default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `--commit-message` or `--commit-message-file`
-- keep exactly one `### Envctl pointer ###` marker in that file
-- append new implementation summaries immediately before the pointer marker so the next default commit consumes the queued segment after the marker
+- treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
+- write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
@@ -221,6 +221,10 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it before opening the new surfaces
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
+=======
+- treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
+- write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries
+>>>>>>> 4c1f35c (Replaced the default `envctl commit` message source with a repo-local `.envctl-commit-message.md` ledger that uses a single `### Envctl pointer ###` marker, then aligned the dashboard copy, installed AI prompt presets, and user docs to the new contract.)
 
 Debug and diagnostics:
 
