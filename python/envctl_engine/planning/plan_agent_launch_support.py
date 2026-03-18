@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from envctl_engine.config import EngineConfig
+from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
@@ -27,7 +27,7 @@ _PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
 _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
-_CODEX_QUEUE_READY_TIMEOUT_SECONDS = 1.0
+_CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
@@ -47,6 +47,7 @@ _CODEX_READY_MARKERS = (
     "model:",
     "directory:",
 )
+_CODEX_QUEUE_READY_HINT = "tab to queue message"
 _OPENCODE_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›❯»][ \t]*.*$")
 _OPENCODE_LOADING_MARKERS = (
     "loading",
@@ -188,6 +189,7 @@ def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _
 
 def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] | None = None) -> PlanAgentLaunchConfig:
     env_map = dict(env or {})
+    _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     cli = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
@@ -482,7 +484,7 @@ def _start_background_surface_bootstrap(
             "worktree": worktree,
         },
         name=f"envctl-plan-agent-{worktree.name}",
-        daemon=True,
+        daemon=False,
     )
     thread.start()
 
@@ -500,32 +502,35 @@ def _complete_surface_bootstrap(
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
     )
-    error = _run_surface_bootstrap(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        launch_config=launch_config,
-        worktree=worktree,
-    )
-    if error is None:
+    try:
+        error = _run_surface_bootstrap(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            launch_config=launch_config,
+            worktree=worktree,
+        )
+        if error is None:
+            runtime._emit(
+                "planning.agent_launch.command_sent",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                worktree=worktree.name,
+                preset=launch_config.preset,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+            )
+            return
         runtime._emit(
-            "planning.agent_launch.command_sent",
+            "planning.agent_launch.failed",
+            reason="bootstrap_failed",
             workspace_id=workspace_id,
             surface_id=surface_id,
             worktree=worktree.name,
-            preset=launch_config.preset,
-            workflow_mode=workflow.mode,
-            codex_cycles=workflow.codex_cycles,
+            error=error,
         )
-        return
-    runtime._emit(
-        "planning.agent_launch.failed",
-        reason="bootstrap_failed",
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        worktree=worktree.name,
-        error=error,
-    )
+    finally:
+        _persist_runtime_events_snapshot(runtime)
 
 
 def _run_surface_bootstrap(
@@ -666,8 +671,6 @@ def _queue_codex_workflow_steps(
     cli: str,
 ) -> str | None:
     for step in queued_steps:
-        if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
-            return "queue_not_ready"
         send_error = _send_surface_text(
             runtime,
             workspace_id=workspace_id,
@@ -677,15 +680,8 @@ def _queue_codex_workflow_steps(
         )
         if send_error is not None:
             return "queue_send_failed"
-        tab_error = _send_surface_key(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            key="tab",
-            emit_failure_event=False,
-        )
-        if tab_error is not None:
-            return "queue_send_failed"
+        if not _queue_codex_message(runtime, workspace_id=workspace_id, surface_id=surface_id, text=step.text):
+            return "queue_not_ready"
     runtime._emit(
         "planning.agent_launch.workflow_queued",
         workspace_id=workspace_id,
@@ -714,6 +710,57 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     if not cleaned.strip():
         return True
     return _screen_looks_ready("codex", cleaned)
+
+
+def _queue_codex_message(runtime: Any, *, workspace_id: str, surface_id: str, text: str) -> bool:
+    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+    normalized_text = str(text).strip()
+    picker_submitted = False
+    tab_sent = False
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if (
+            normalized_text.startswith("/")
+            and not picker_submitted
+            and _prompt_picker_screen_looks_ready("codex", screen, normalized_text)
+        ):
+            submit_error = _send_surface_key(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                key="enter",
+                emit_failure_event=False,
+            )
+            if submit_error is not None:
+                return False
+            picker_submitted = True
+            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+            continue
+        if _codex_queue_message_needs_tab(screen, text):
+            tab_error = _send_surface_key(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                key="tab",
+                emit_failure_event=False,
+            )
+            if tab_error is not None:
+                return False
+            tab_sent = True
+            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+            continue
+        if tab_sent:
+            return True
+        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+    return False
+
+
+def _codex_queue_message_needs_tab(screen: str, text: str) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    normalized_text = _normalized_screen_text(text)
+    if not normalized_screen or not normalized_text:
+        return False
+    return normalized_text in normalized_screen and _CODEX_QUEUE_READY_HINT in normalized_screen
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
@@ -1315,6 +1362,11 @@ def _strip_ansi_sequences(raw: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", str(raw or "")).replace("\r", "")
 
 
+def _normalized_screen_text(raw: str) -> str:
+    cleaned = _strip_ansi_sequences(raw).lower()
+    return " ".join(cleaned.split())
+
+
 def _slash_command(cli: str, preset: str) -> str:
     normalized = str(preset).strip()
     if not normalized:
@@ -1329,3 +1381,13 @@ def _slash_command(cli: str, preset: str) -> str:
 
 def _print_launch_summary(message: str) -> None:
     print(message)
+
+
+def _persist_runtime_events_snapshot(runtime: Any) -> None:
+    persist = getattr(runtime, "_persist_events_snapshot", None)
+    if not callable(persist):
+        return
+    try:
+        persist()
+    except Exception:
+        return

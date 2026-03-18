@@ -71,6 +71,7 @@ Shorthand aliases:
 
 ```dotenv
 CMUX=true
+CYCLES=3
 ```
 
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
@@ -80,10 +81,13 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 Codex-only cycle mode:
 
 - default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus one finalization message
+- `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus one finalization message
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` or more keeps queueing `continue_task`, `implement_task`, and the finalization message in the same Codex tab
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
+- canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
+- `CYCLES` does not enable plan-agent launch by itself
 - envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
 
 Then run:

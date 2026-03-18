@@ -18,6 +18,8 @@ _prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_scre
 _tab_title_for_worktree = getattr(launch_support, "_tab_title_for_worktree")
 _build_plan_agent_workflow = getattr(launch_support, "_build_plan_agent_workflow", None)
 _finalization_instruction_text = getattr(launch_support, "_finalization_instruction_text", None)
+_wait_for_codex_queue_ready = getattr(launch_support, "_wait_for_codex_queue_ready", None)
+_WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
 
 
 class _RecordingRunner:
@@ -50,12 +52,16 @@ class _RuntimeHarness:
         self.env = env
         self.process_runner = process_runner
         self._plan_agent_events: list[dict[str, object]] = []
+        self._persist_events_snapshot_calls = 0
 
     def _command_exists(self, command: str) -> bool:
         return command in {"cmux", "codex", "opencode", "zsh"}
 
     def _emit(self, event: str, **payload: object) -> None:
         self._plan_agent_events.append({"event": event, **payload})
+
+    def _persist_events_snapshot(self) -> None:
+        self._persist_events_snapshot_calls += 1
 
 
 class _ImmediateThread:
@@ -292,7 +298,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"], rt.process_runner.calls)
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
-            self.assertEqual(_ImmediateThread.created[0].daemon, True)
+            self.assertEqual(_ImmediateThread.created[0].daemon, False)
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]), 2)
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 1)
             self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
@@ -315,6 +321,83 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(launch_config.codex_cycles, 2)
         self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_applies_cycles_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CYCLES": "3",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 3)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_prefers_canonical_cycles_over_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                    "CYCLES": "2",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 4)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_reports_invalid_cycles_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CYCLES": "many",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 0)
+        self.assertEqual(launch_config.codex_cycles_warning, "invalid_codex_cycles")
+
+    def test_resolve_plan_agent_launch_config_bounds_large_cycles_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CYCLES": "999",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 10)
+        self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -498,6 +581,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent_launch_support._queue_codex_message", return_value=True),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -512,12 +596,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:continue_task"],
                 rt.process_runner.calls,
             )
-            tab_calls = [
-                call
-                for call in rt.process_runner.calls
-                if call == ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "tab"]
-            ]
-            self.assertEqual(len(tab_calls), 4)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -533,6 +611,179 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     }
                 ],
             )
+            self.assertEqual(rt._persist_events_snapshot_calls, 1)
+
+    def test_wait_for_codex_queue_ready_tolerates_delayed_prompt_return(self) -> None:
+        self.assertIsNotNone(_wait_for_codex_queue_ready)
+        ready_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "› /prompts:implement_task\n"
+        )
+        screens = iter(["Booting MCP server...\n"] * 12 + [ready_screen])
+        runtime = object()
+
+        with (
+            patch(
+                "envctl_engine.planning.plan_agent_launch_support._read_surface_screen",
+                side_effect=lambda *_args, **_kwargs: next(screens, ready_screen),
+            ),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            ready = _wait_for_codex_queue_ready(runtime, workspace_id="workspace:7", surface_id="surface:9")
+
+        self.assertTrue(ready)
+
+    def test_codex_cycle_queue_types_message_before_waiting_for_tab_ready(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+        queued_steps = workflow.steps[1:]
+        self.assertEqual(len(queued_steps), 1)
+        sent_texts: list[str] = []
+        sent_keys: list[str] = []
+
+        busy_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "• Working (32s • esc to interrupt)\n"
+        )
+        typed_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            f"› {queued_steps[0].text}\n"
+            "  tab to queue message\n"
+        )
+        state = {"typed": False}
+
+        def fake_send_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
+            sent_texts.append(text)
+            state["typed"] = True
+            return None
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            state["typed"] = False
+            return None
+
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_text", side_effect=fake_send_text),
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch(
+                "envctl_engine.planning.plan_agent_launch_support._read_surface_screen",
+                side_effect=lambda *_args, **_kwargs: typed_screen if state["typed"] else busy_screen,
+            ),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            reason = launch_support._queue_codex_workflow_steps(
+                runtime,
+                workspace_id="workspace:7",
+                surface_id="surface:9",
+                worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/tmp/repo"), plan_file="a.md"),
+                workflow=workflow,
+                queued_steps=queued_steps,
+                cli="codex",
+            )
+
+        self.assertIsNone(reason)
+        self.assertEqual(sent_texts, [queued_steps[0].text])
+        self.assertEqual(sent_keys, ["tab"])
+
+    def test_codex_cycle_queue_resolves_saved_prompt_before_tabbing(self) -> None:
+        sent_texts: list[str] = []
+        sent_keys: list[str] = []
+        queued_text = "/prompts:continue_task"
+        state = {"stage": "typed"}
+
+        picker_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            f"› {queued_text}\n"
+            f"  {queued_text}                      send saved prompt\n"
+        )
+        queue_hint_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            f"› {queued_text}\n"
+            "  tab to queue message\n"
+        )
+        committed_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "• Queued follow-up messages\n"
+        )
+
+        def fake_send_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
+            sent_texts.append(text)
+            return None
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            if key == "enter":
+                state["stage"] = "hint"
+            elif key == "tab":
+                state["stage"] = "committed"
+            return None
+
+        def fake_read_screen(*_args, **_kwargs):  # noqa: ANN202, ANN001
+            if state["stage"] == "typed":
+                return picker_screen
+            if state["stage"] == "hint":
+                return queue_hint_screen
+            return committed_screen
+
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_text", side_effect=fake_send_text),
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", side_effect=fake_read_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_codex_message(
+                runtime,
+                workspace_id="workspace:7",
+                surface_id="surface:9",
+                text=queued_text,
+            )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_texts, [])
+        self.assertEqual(sent_keys, ["enter", "tab"])
 
     def test_codex_cycle_queue_failure_falls_back_to_initial_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -632,6 +883,67 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     }
                 ],
             )
+
+    def test_codex_cycle_launch_uses_cycles_alias_in_summary_and_workflow_selection(self) -> None:
+        self.assertIsNotNone(_WorkspaceLaunchTarget)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "CYCLES": "3",
+                },
+            )
+
+            def _fake_launch_single_worktree(*args, **kwargs):  # noqa: ANN202, ANN001
+                worktree = kwargs["worktree"]
+                return launch_support.PlanAgentLaunchOutcome(
+                    worktree_name=worktree.name,
+                    worktree_root=worktree.root,
+                    surface_id="surface:9",
+                    status="launched",
+                )
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._ensure_workspace_id",
+                    return_value=_WorkspaceLaunchTarget(workspace_id="workspace:7", created=False),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._launch_single_worktree",
+                    side_effect=_fake_launch_single_worktree,
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=3)", buffer.getvalue())
+        self.assertEqual(
+            self._events(rt, "planning.agent_launch.workflow_selected"),
+            [
+                {
+                    "event": "planning.agent_launch.workflow_selected",
+                    "workspace_id": "workspace:7",
+                    "warning": None,
+                    "enabled": True,
+                    "cli": "codex",
+                    "created_worktree_count": 1,
+                    "workflow_mode": "codex_cycles",
+                    "codex_cycles": 3,
+                }
+            ],
+        )
 
     def test_tab_title_for_worktree_uses_first_and_last_three_words(self) -> None:
         self.assertEqual(
@@ -742,7 +1054,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "/implement_task"], rt.process_runner.calls)
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
-            self.assertEqual(_ImmediateThread.created[0].daemon, True)
+            self.assertEqual(_ImmediateThread.created[0].daemon, False)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 3)
             self.assertGreaterEqual(

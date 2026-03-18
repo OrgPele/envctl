@@ -229,6 +229,9 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
+- `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
+- `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
+- canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
 - by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues one finalization message in the same Codex tab
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>1`, envctl additionally queues `continue_task`, `implement_task`, and another finalization message for each later round

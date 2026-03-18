@@ -63,6 +63,7 @@ Shorthand aliases also work:
 
 ```dotenv
 CMUX=true
+CYCLES=3
 ```
 
 Behavior:
@@ -77,15 +78,19 @@ Behavior:
 - when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
 - `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+- `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
+- canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
 - default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus one plain follow-up message telling Codex to commit, push, and open or update the PR when that pass finishes
+- `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` keeps the current one-shot launch behavior
 - values greater than `1` queue repeated rounds of `continue_task`, `implement_task`, and the same finalization message in that same Codex session
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
+- `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
