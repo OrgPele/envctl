@@ -106,6 +106,62 @@ class _RunStreamingWithStdinRunner:
         )
 
 
+class _RunStreamingProcessStartedRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        process_started_callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cwd, env, timeout, callback, show_spinner, echo_output, stdin
+        self.calls.append(
+            {
+                "cmd": tuple(str(part) for part in cmd),
+                "process_started_callback": process_started_callback,
+            }
+        )
+        if callable(process_started_callback):
+            process_started_callback(2468)
+        return subprocess.CompletedProcess(
+            args=list(cmd),
+            returncode=0,
+            stdout="1 passed in 0.01s\n",
+            stderr="",
+        )
+
+
+class _RunOnlyProcessStartedRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run(self, cmd, *, cwd=None, env=None, timeout=None, stdin=None, process_started_callback=None):  # noqa: ANN001
+        _ = cwd, env, timeout, stdin
+        self.calls.append(
+            {
+                "cmd": tuple(str(part) for part in cmd),
+                "process_started_callback": process_started_callback,
+            }
+        )
+        if callable(process_started_callback):
+            process_started_callback(1357)
+        return subprocess.CompletedProcess(
+            args=list(cmd),
+            returncode=0,
+            stdout="1 passed in 0.01s\n",
+            stderr="",
+        )
+
+
 class _RunStreamingVitestRunner:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -264,6 +320,36 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             ("python", "-m", "pytest", "-p", "envctl_engine.test_output.pytest_progress_plugin"),
             runtime.process_runner.calls,
         )
+
+    def test_run_tests_forwards_process_started_callback_to_run_streaming(self) -> None:
+        process_runner = _RunStreamingProcessStartedRunner()
+        runtime = _RuntimeStreamingStub(process_runner)
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+        started_pids: list[int] = []
+
+        completed = runner.run_tests(
+            ["python", "-m", "pytest"],
+            process_started_callback=lambda pid: started_pids.append(pid),
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(started_pids, [2468])
+        self.assertTrue(callable(process_runner.calls[0]["process_started_callback"]))
+
+    def test_run_tests_forwards_process_started_callback_to_run_fallback(self) -> None:
+        process_runner = _RunOnlyProcessStartedRunner()
+        runtime = _RuntimeStreamingStub(process_runner)
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+        started_pids: list[int] = []
+
+        completed = runner.run_tests(
+            ["python", "-m", "pytest"],
+            process_started_callback=lambda pid: started_pids.append(pid),
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(started_pids, [1357])
+        self.assertTrue(callable(process_runner.calls[0]["process_started_callback"]))
 
     def test_run_tests_fallback_parses_stderr_only_pytest_failures(self) -> None:
         class _PytestStderrOnlyRunner:

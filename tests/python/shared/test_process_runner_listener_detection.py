@@ -265,6 +265,67 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(kill_calls, [(5678, signal.SIGTERM), (5678, signal.SIGKILL)])
 
+    def test_terminate_process_group_sends_sigterm_to_killpg(self) -> None:
+        runner = ProcessRunner()
+        killpg_calls: list[tuple[int, int]] = []
+
+        def _fake_killpg(pid: int, sig: int) -> None:
+            killpg_calls.append((pid, sig))
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
+            patch.object(runner, "is_pid_running", return_value=False),
+            patch.object(runner, "_pid_identity", return_value="orig", create=True),
+        ):
+            result = runner.terminate_process_group(4321, term_timeout=0.1, kill_timeout=0.1)
+
+        self.assertTrue(result)
+        self.assertEqual(killpg_calls, [(4321, signal.SIGTERM)])
+
+    def test_terminate_process_group_escalates_to_sigkill_after_timeout(self) -> None:
+        runner = ProcessRunner()
+        killpg_calls: list[tuple[int, int]] = []
+
+        def _fake_killpg(pid: int, sig: int) -> None:
+            killpg_calls.append((pid, sig))
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
+            patch.object(runner, "is_pid_running", side_effect=[True, True, False]),
+            patch.object(runner, "_pid_identity", side_effect=["orig"] * 8, create=True),
+            patch(
+                "envctl_engine.shared.process_runner.time.monotonic",
+                side_effect=[0.0, 0.0, 0.2, 0.2, 0.2, 0.4],
+            ),
+            patch("envctl_engine.shared.process_runner.time.sleep", return_value=None),
+        ):
+            result = runner.terminate_process_group(5678, term_timeout=0.1, kill_timeout=0.1)
+
+        self.assertTrue(result)
+        self.assertEqual(killpg_calls, [(5678, signal.SIGTERM), (5678, signal.SIGKILL)])
+
+    def test_terminate_process_group_avoids_sigkill_when_pid_identity_changes(self) -> None:
+        runner = ProcessRunner()
+        killpg_calls: list[tuple[int, int]] = []
+
+        def _fake_killpg(pid: int, sig: int) -> None:
+            killpg_calls.append((pid, sig))
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
+            patch.object(runner, "is_pid_running", return_value=True),
+            patch.object(runner, "_pid_identity", side_effect=["orig", "reused"], create=True),
+            patch(
+                "envctl_engine.shared.process_runner.time.monotonic",
+                side_effect=[0.0, 0.0, 0.2, 0.2, 0.2, 0.4],
+            ),
+            patch("envctl_engine.shared.process_runner.time.sleep", return_value=None),
+        ):
+            result = runner.terminate_process_group(8765, term_timeout=0.1, kill_timeout=0.1)
+
+        self.assertTrue(result)
+        self.assertEqual(killpg_calls, [(8765, signal.SIGTERM)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,6 +83,7 @@ class ProcessRunner:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         stdin: int | None = None,
+        process_started_callback: Callable[[int], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = list(cmd)
         process: subprocess.Popen[str] | None = None
@@ -97,6 +98,11 @@ class ProcessRunner:
                 stdin=stdin,
                 start_new_session=True,
             )
+            if callable(process_started_callback) and int(getattr(process, "pid", 0) or 0) > 0:
+                try:
+                    process_started_callback(int(process.pid))
+                except Exception:
+                    pass
             stdout, stderr = process.communicate(timeout=timeout)
             return subprocess.CompletedProcess(
                 args=command,
@@ -148,6 +154,7 @@ class ProcessRunner:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         callback: Callable[[str], None] | None = None,
+        process_started_callback: Callable[[int], None] | None = None,
         show_spinner: bool = True,
         echo_output: bool = True,
         stdin: int | None = None,
@@ -188,6 +195,11 @@ class ProcessRunner:
                     stdin=stdin,
                     start_new_session=True,
                 )
+                if callable(process_started_callback) and int(getattr(process, "pid", 0) or 0) > 0:
+                    try:
+                        process_started_callback(int(process.pid))
+                    except Exception:
+                        pass
 
                 if process.stdout is None:
                     if enabled:
@@ -788,12 +800,19 @@ class ProcessRunner:
             stack.extend(sorted(children_by_parent.get(current, ())))
         return discovered
 
-    def terminate(self, pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
+    def _terminate_with_signal_sender(
+        self,
+        pid: int,
+        *,
+        term_timeout: float,
+        kill_timeout: float,
+        signal_sender: Callable[[int, signal.Signals], None],
+    ) -> bool:
         if pid <= 0:
             return True
         initial_identity = self._pid_identity(pid)
         try:
-            os.kill(pid, signal.SIGTERM)
+            signal_sender(pid, signal.SIGTERM)
         except OSError:
             return True
 
@@ -812,7 +831,7 @@ class ProcessRunner:
                 current_identity = self._pid_identity(pid)
                 if current_identity is None or current_identity != initial_identity:
                     return True
-            os.kill(pid, signal.SIGKILL)
+            signal_sender(pid, signal.SIGKILL)
         except OSError:
             return True
 
@@ -830,6 +849,22 @@ class ProcessRunner:
             if current_identity is None or current_identity != initial_identity:
                 return True
         return not self.is_pid_running(pid)
+
+    def terminate(self, pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
+        return self._terminate_with_signal_sender(
+            pid,
+            term_timeout=term_timeout,
+            kill_timeout=kill_timeout,
+            signal_sender=os.kill,
+        )
+
+    def terminate_process_group(self, pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
+        return self._terminate_with_signal_sender(
+            pid,
+            term_timeout=term_timeout,
+            kill_timeout=kill_timeout,
+            signal_sender=os.killpg,
+        )
 
     def _pid_identity(self, pid: int) -> str | None:
         if pid <= 0:

@@ -169,7 +169,10 @@ class DashboardOrchestrator:
             )
             return True, state
 
-        code = runtime_any.dispatch(route)
+        try:
+            code = runtime_any.dispatch(route)
+        except KeyboardInterrupt:
+            code = 2
         runtime_any._emit(
             "ui.command.dispatch.result",
             component="dashboard_orchestrator",
@@ -177,7 +180,9 @@ class DashboardOrchestrator:
             code=code,
         )
         refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
-        if code != 0:
+        if code in {2, 130} and refreshed is None:
+            refreshed = state
+        if code not in {0, 2, 130}:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
         if route.command == "test":
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):

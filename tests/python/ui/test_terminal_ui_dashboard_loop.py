@@ -343,6 +343,67 @@ class DashboardLoopTests(unittest.TestCase):
             events.index("prompt:Press Enter to return to dashboard:"),
         )
 
+    def test_dashboard_loop_returns_control_after_interrupted_test_cleanup(self) -> None:
+        state = RunState(run_id="run-4c", mode="trees")
+        runtime = _RuntimeStub(state)
+
+        events: list[str] = []
+
+        class _SpinnerStub:
+            def start(self) -> None:
+                events.append("spinner-start")
+
+            def update(self, message: str) -> None:
+                events.append(f"spinner-update:{message}")
+
+            def succeed(self, message: str) -> None:
+                events.append(f"spinner-succeed:{message}")
+
+            def fail(self, message: str) -> None:
+                events.append(f"spinner-fail:{message}")
+
+        @contextmanager
+        def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+            _ = start_immediately
+            events.append(f"spinner-created:{message}:{enabled}")
+            yield _SpinnerStub()
+
+        responses = iter(["t", "", "q"])
+
+        def read_command_line(prompt: str) -> str:
+            events.append(f"prompt:{prompt}")
+            return next(responses)
+
+        def handle_command(raw: str, current: RunState, rt: object):  # noqa: ANN001
+            if raw == "q":
+                return False, current
+            runtime_any = cast(Any, rt)
+            runtime_any._emit("action.command.start", command="test")
+            runtime_any._emit("action.command.finish", command="test", code=2)
+            setattr(runtime_any, "_dashboard_return_prompt", "Press Enter to return to dashboard:")
+            return True, current
+
+        with (
+            patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            patch("envctl_engine.ui.command_loop.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.ui.command_loop.spinner_enabled", return_value=True),
+        ):
+            code = run_dashboard_command_loop(
+                state=state,
+                runtime=runtime,
+                handle_command=handle_command,
+                sanitize=lambda value: value,
+                read_command_line=read_command_line,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("spinner-fail:test failed (exit 2)", events)
+        self.assertIn("prompt:Press Enter to return to dashboard:", events)
+        self.assertLess(
+            events.index("spinner-fail:test failed (exit 2)"),
+            events.index("prompt:Press Enter to return to dashboard:"),
+        )
+
     def test_dashboard_loop_does_not_start_spinner_for_route_selection_only(self) -> None:
         state = RunState(run_id="run-5", mode="trees")
         runtime = _RuntimeStub(state)

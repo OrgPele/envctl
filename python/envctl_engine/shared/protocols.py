@@ -22,6 +22,7 @@ class ProcessRuntime(Protocol):
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        process_started_callback: Callable[[int], None] | None = None,
     ) -> CommandResult: ...
 
     def start(
@@ -45,6 +46,8 @@ class ProcessRuntime(Protocol):
     ) -> ProcessHandle: ...
 
     def terminate(self, pid: int, *, term_timeout: float, kill_timeout: float) -> bool: ...
+
+    def terminate_process_group(self, pid: int, *, term_timeout: float, kill_timeout: float) -> bool: ...
 
     def is_pid_running(self, pid: int) -> bool: ...
 

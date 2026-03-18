@@ -264,7 +264,29 @@ class ActionCommandOrchestrator:
                     state="start",
                     message=start_status,
                 )
-            code = handler(route, targets)
+            try:
+                code = handler(route, targets)
+            except KeyboardInterrupt:
+                if action_spinner_enabled:
+                    interrupted = f"{route.command} interrupted"
+                    active_spinner.fail(interrupted)
+                    rt.emit(
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="fail",
+                        message=interrupted,
+                    )
+                    rt.emit(
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="stop",
+                    )
+                rt.emit("action.command.finish", command=route.command, code=2)
+                raise
             if action_spinner_enabled:
                 if code == 0:
                     completion = f"{route.command} completed"
