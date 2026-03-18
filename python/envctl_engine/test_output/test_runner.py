@@ -57,6 +57,7 @@ class TestRunner:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        process_started_callback: Callable[[int], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run tests with streaming output and real-time parsing.
 
@@ -92,6 +93,7 @@ class TestRunner:
             timeout=timeout,
             parser=parser,
             progress_callback=progress_callback,
+            process_started_callback=process_started_callback,
         )
 
         # Print summary
@@ -156,6 +158,7 @@ class TestRunner:
         timeout: float | None = None,
         parser: TestOutputParser,
         progress_callback: Callable[[int, int], None] | None = None,
+        process_started_callback: Callable[[int], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run command with streaming output and real-time parsing.
 
@@ -202,6 +205,8 @@ class TestRunner:
                 kwargs["echo_output"] = self.verbose
             if "stdin" in parameters:
                 kwargs["stdin"] = subprocess.DEVNULL
+            if "process_started_callback" in parameters:
+                kwargs["process_started_callback"] = process_started_callback
             completed = run_streaming(command, **kwargs)
         else:
             run_parameters = inspect.signature(self.runtime.process_runner.run).parameters
@@ -212,6 +217,8 @@ class TestRunner:
             }
             if "stdin" in run_parameters:
                 run_kwargs["stdin"] = subprocess.DEVNULL
+            if "process_started_callback" in run_parameters:
+                run_kwargs["process_started_callback"] = process_started_callback
             completed = self.runtime.process_runner.run(command, **run_kwargs)
             stdout_text = str(getattr(completed, "stdout", "") or "")
             stderr_text = str(getattr(completed, "stderr", "") or "")

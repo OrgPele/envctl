@@ -2108,6 +2108,43 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(next_state.run_id, "run-1")
         self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
 
+    def test_interactive_test_interrupt_returns_to_dashboard_without_failure_summary_block(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+
+        def interrupted_dispatch(route: Route) -> int:
+            runtime.last_dispatched_route = route
+            raise KeyboardInterrupt
+
+        runtime.dispatch = interrupted_dispatch  # type: ignore[assignment]
+
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("t", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        rendered = out.getvalue()
+        self.assertNotIn("Command failed (exit 1).", rendered)
+        self.assertNotIn("Test failure summary for Main:", rendered)
+        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+
     def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
         runtime = _RuntimeStub()
         runtime.dispatch_code = 1
