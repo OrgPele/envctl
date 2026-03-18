@@ -152,3 +152,35 @@ Config / env / migrations:
 Risks / notes:
 - This hardening assumes valid cmux surface refs continue to use the existing numeric `surface:<n>` format described by current repo evidence and tests.
 - The parser intentionally preserves first-seen order after de-duplication so downstream behavior stays stable if later code reuses the first detected starter surface.
+
+## 2026-03-19 - Archive completed task and close remaining scope
+
+Scope:
+- Audited the current `MAIN_TASK.md` against the implemented launcher code, targeted tests, updated docs, changelog evidence, and recent git history.
+- Archived the previous task into `OLD_TASK_2.md` and replaced `MAIN_TASK.md` with a closure-only follow-up task because no implementation scope remains for this bug on the current branch.
+
+Key behavior changes:
+- No runtime or user-facing behavior changed in this audit/closure step.
+- The new `MAIN_TASK.md` now records that the starter-surface reuse fix is complete and that any future work should start from fresh contradictory evidence rather than re-opening completed scope.
+
+Files / modules touched:
+- `OLD_TASK_2.md`
+- `MAIN_TASK.md`
+- `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No config changes.
+- No env contract changes.
+- No migrations.
+
+Risks / notes:
+- This closure step relies on existing repo evidence that the task is fully implemented:
+  - launcher behavior in `python/envctl_engine/planning/plan_agent_launch_support.py`
+  - regression coverage in `tests/python/planning/test_plan_agent_launch_support.py`
+  - user-facing docs in `docs/reference/configuration.md`, `docs/reference/commands.md`, and `docs/user/planning-and-worktrees.md`
+  - recorded live cmux verification already present earlier in this changelog
+- If future cmux behavior changes invalidate the current assumptions, a new task should be created from fresh failing evidence rather than broadening this closure task.
