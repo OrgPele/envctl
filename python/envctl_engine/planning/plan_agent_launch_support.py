@@ -111,6 +111,14 @@ class PlanAgentLaunchResult:
     outcomes: tuple[PlanAgentLaunchOutcome, ...] = ()
 
 
+@dataclass(slots=True, frozen=True)
+class _WorkspaceLaunchTarget:
+    workspace_id: str
+    created: bool
+    starter_surface_id: str | None = None
+    starter_surface_probe_result: str = "not_attempted"
+
+
 def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] | None = None) -> PlanAgentLaunchConfig:
     env_map = dict(env or {})
     cli = str(
@@ -237,18 +245,19 @@ def launch_plan_agent_terminals(
             **base_payload,
         )
         return PlanAgentLaunchResult(status="failed", reason="missing_executables")
-    workspace_id = _ensure_workspace_id(runtime, launch_config)
+    workspace_target = _ensure_workspace_id(runtime, launch_config)
     target_workspace = launch_config.cmux_workspace
-    if not workspace_id and not target_workspace:
+    if workspace_target is None and not target_workspace:
         target_workspace = _default_target_workspace_title(runtime, launch_config)
-    if not workspace_id and target_workspace:
+    if workspace_target is None and target_workspace:
         _print_launch_summary("Plan agent launch failed: unable to resolve or create the configured cmux workspace.")
         return PlanAgentLaunchResult(status="failed", reason="workspace_unavailable")
-    if not workspace_id:
+    if workspace_target is None:
         _print_launch_summary("Plan agent launch skipped: current cmux workspace context is unavailable.")
         runtime._emit("planning.agent_launch.skipped", reason="missing_cmux_context", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="missing_cmux_context")
 
+    workspace_id = workspace_target.workspace_id
     runtime._emit(
         "planning.agent_launch.evaluate",
         reason="ready",
@@ -256,10 +265,28 @@ def launch_plan_agent_terminals(
         preset=launch_config.preset,
         **base_payload,
     )
+    if (
+        workspace_target.created
+        and workspace_target.starter_surface_id is None
+        and workspace_target.starter_surface_probe_result in {"none", "ambiguous", "probe_failed"}
+    ):
+        runtime._emit(
+            "planning.agent_launch.surface_fallback",
+            workspace_id=workspace_id,
+            reason=workspace_target.starter_surface_probe_result,
+        )
     outcomes: list[PlanAgentLaunchOutcome] = []
+    starter_surface_id = workspace_target.starter_surface_id
     for worktree in created_worktrees:
-        outcome = _launch_single_worktree(runtime, workspace_id=workspace_id, launch_config=launch_config, worktree=worktree)
+        outcome = _launch_single_worktree(
+            runtime,
+            workspace_id=workspace_id,
+            launch_config=launch_config,
+            worktree=worktree,
+            starter_surface_id=starter_surface_id,
+        )
         outcomes.append(outcome)
+        starter_surface_id = None
 
     launched = [item for item in outcomes if item.status == "launched"]
     failed = [item for item in outcomes if item.status == "failed"]
@@ -281,8 +308,14 @@ def _launch_single_worktree(
     workspace_id: str,
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
+    starter_surface_id: str | None = None,
 ) -> PlanAgentLaunchOutcome:
-    surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
+    surface_source = "starter_reused" if starter_surface_id else "new_surface"
+    if starter_surface_id:
+        surface_id = starter_surface_id
+        create_error = None
+    else:
+        surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
     if create_error or surface_id is None:
         runtime._emit(
             "planning.agent_launch.failed",
@@ -303,6 +336,7 @@ def _launch_single_worktree(
         workspace_id=workspace_id,
         surface_id=surface_id,
         worktree=worktree.name,
+        source=surface_source,
     )
     _start_background_surface_bootstrap(
         runtime,
@@ -520,19 +554,19 @@ def _resolve_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) ->
     return target_ref
 
 
-def _ensure_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
+def _ensure_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> _WorkspaceLaunchTarget | None:
     if launch_config.cmux_workspace:
         return _ensure_configured_workspace_id(runtime, launch_config.cmux_workspace)
     target_title, resolved = _default_workspace_target(runtime, launch_config)
     if not target_title:
         return None
     if resolved:
-        return resolved
-    created_ref, error = _create_named_workspace(runtime, title=target_title)
+        return _WorkspaceLaunchTarget(workspace_id=resolved, created=False)
+    created_target, error = _create_named_workspace(runtime, title=target_title)
     if error is not None:
         runtime._emit("planning.agent_launch.failed", reason="workspace_create_failed", workspace=target_title, error=error)
         return None
-    return created_ref
+    return created_target
 
 
 def _default_target_workspace_title(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
@@ -662,20 +696,20 @@ def _resolve_configured_workspace_id(runtime: Any, configured: str) -> str | Non
     return resolved
 
 
-def _ensure_configured_workspace_id(runtime: Any, configured: str) -> str | None:
+def _ensure_configured_workspace_id(runtime: Any, configured: str) -> _WorkspaceLaunchTarget | None:
     normalized = str(configured).strip()
     if not normalized:
         return None
     if _looks_like_workspace_handle(normalized):
-        return normalized
+        return _WorkspaceLaunchTarget(workspace_id=normalized, created=False)
     resolved = _resolve_workspace_ref_by_title(runtime, normalized)
     if resolved:
-        return resolved
-    created_ref, error = _create_named_workspace(runtime, title=normalized)
+        return _WorkspaceLaunchTarget(workspace_id=resolved, created=False)
+    created_target, error = _create_named_workspace(runtime, title=normalized)
     if error is not None:
         runtime._emit("planning.agent_launch.failed", reason="workspace_create_failed", workspace=normalized, error=error)
         return None
-    return created_ref
+    return created_target
 
 
 def _looks_like_workspace_handle(value: str) -> bool:
@@ -730,7 +764,42 @@ def _workspace_entries_from_list_output(raw: str) -> tuple[tuple[str, str], ...]
     return tuple(entries)
 
 
-def _create_named_workspace(runtime: Any, *, title: str) -> tuple[str | None, str | None]:
+def _surface_ids_from_list_output(raw: str) -> tuple[str, ...]:
+    surface_ids: list[str] = []
+    for token in raw.replace("\n", " ").split():
+        normalized = token.strip()
+        if normalized.startswith("surface:"):
+            surface_ids.append(normalized)
+    return tuple(surface_ids)
+
+
+def _list_workspace_surfaces(runtime: Any, *, workspace_id: str) -> tuple[str, ...] | None:
+    try:
+        result = runtime.process_runner.run(
+            ["cmux", "list-pane-surfaces", "--workspace", workspace_id],
+            cwd=runtime.config.base_dir,
+            env=getattr(runtime, "env", {}),
+            timeout=10.0,
+        )
+    except OSError:
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return _surface_ids_from_list_output(str(getattr(result, "stdout", "")))
+
+
+def _starter_surface_for_new_workspace(runtime: Any, *, workspace_id: str) -> tuple[str | None, str, int | None]:
+    surface_ids = _list_workspace_surfaces(runtime, workspace_id=workspace_id)
+    if surface_ids is None:
+        return None, "probe_failed", None
+    if len(surface_ids) == 1:
+        return surface_ids[0], "single", 1
+    if not surface_ids:
+        return None, "none", 0
+    return None, "ambiguous", len(surface_ids)
+
+
+def _create_named_workspace(runtime: Any, *, title: str) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
     create_result = runtime.process_runner.run(
         ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
         cwd=runtime.config.base_dir,
@@ -761,7 +830,25 @@ def _create_named_workspace(runtime: Any, *, title: str) -> tuple[str | None, st
     if getattr(rename_result, "returncode", 1) != 0:
         return None, _completed_process_error_text(rename_result)
     runtime._emit("planning.agent_launch.workspace_created", workspace_id=workspace_ref, title=title)
-    return workspace_ref, None
+    starter_surface_id, probe_result, surface_count = _starter_surface_for_new_workspace(runtime, workspace_id=workspace_ref)
+    probe_payload: dict[str, object] = {
+        "workspace_id": workspace_ref,
+        "result": probe_result,
+    }
+    if surface_count is not None:
+        probe_payload["surface_count"] = surface_count
+    if starter_surface_id is not None:
+        probe_payload["surface_id"] = starter_surface_id
+    runtime._emit("planning.agent_launch.workspace_surface_probe", **probe_payload)
+    return (
+        _WorkspaceLaunchTarget(
+            workspace_id=workspace_ref,
+            created=True,
+            starter_surface_id=starter_surface_id,
+            starter_surface_probe_result=probe_result,
+        ),
+        None,
+    )
 
 
 def _workspace_ref_from_command_output(raw: str) -> str | None:
