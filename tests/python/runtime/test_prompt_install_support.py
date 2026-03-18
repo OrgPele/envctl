@@ -410,6 +410,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         continue_prompt = _load_template("continue_task")
         self.assertIn(".envctl-commit-message.md", continue_prompt.body)
         self.assertIn("### Envctl pointer ###", continue_prompt.body)
+        self.assertIn(".envctl-state/worktree-provenance.json", continue_prompt.body)
+        self.assertIn("git merge-base HEAD <originating-base>", continue_prompt.body)
 
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)
