@@ -17,6 +17,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Preserve history first: rename current MAIN_TASK.md to `OLD_TASK_<iteration>.md` before creating a new MAIN_TASK.md.
 - Determine `<iteration>` as the next available integer in repo root (do not overwrite any existing `OLD_TASK_*.md`).
 - Use git CLI and code evidence to identify what was implemented vs what remains.
+- Audit both working-tree changes and committed divergence from the worktree's originating branch/ref.
 - Read as much relevant code, tests, and docs as needed.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
@@ -30,11 +31,14 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 1. Validate preconditions:
    - Ensure `MAIN_TASK.md` exists.
    - Enumerate existing `OLD_TASK_*.md` files.
+   - If present, read `.envctl-state/worktree-provenance.json` to identify the originating `source_ref` / `source_branch`.
 2. Audit implementation evidence:
    - Run `git status --short`
    - Run `git diff --name-status`
    - Run `git diff --cached --name-status`
    - Run `git log --oneline --decorate -n 30`
+   - If worktree provenance exists, resolve the originating base (`source_ref` first, then `source_branch`), run `git merge-base HEAD <originating-base>`, then audit both `git diff --name-status <merge-base>..HEAD` and `git log --oneline --decorate <merge-base>..HEAD`
+   - If no worktree provenance exists, explicitly note that committed-divergence evidence could not be anchored to an originating branch/ref and fall back to the best available git evidence
    - Inspect relevant changed files and tests
 3. Build a requirement status matrix from current MAIN_TASK.md:
    - Fully implemented
@@ -80,3 +84,4 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - New MAIN_TASK.md contains all remaining work and excludes completed work.
 - New MAIN_TASK.md emphasizes full implementation to completion.
 - Requirements are specific, exhaustive, and testable.
+- Final audit considered untracked/staged/unstaged changes plus committed divergence from the originating branch/ref when provenance was available.
