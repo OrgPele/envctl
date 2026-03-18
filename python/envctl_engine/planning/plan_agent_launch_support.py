@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import re
 import shlex
 import subprocess
@@ -27,6 +28,7 @@ _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
+_LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
 _CODEX_LOADING_MARKERS = (
@@ -470,10 +472,19 @@ def _tab_title_for_worktree(name: str) -> str:
     parts = [part.strip() for part in normalized.split("_") if str(part).strip()]
     if len(parts) < 4:
         return normalized
-    candidate = "_".join((parts[0], parts[-3], parts[-2], parts[-1]))
+    tail_parts: list[str] = []
+    for part in reversed(parts[1:]):
+        if len(tail_parts) >= 3:
+            break
+        if part in _LOW_SIGNAL_TAB_TITLE_WORDS:
+            continue
+        tail_parts.append(part)
+    tail_parts.reverse()
+    candidate = "_".join([parts[0], *tail_parts]) if tail_parts else normalized
     if len(candidate) <= _PLAN_AGENT_TAB_TITLE_MAX_LEN:
         return candidate
-    fallback = "_".join((parts[0], parts[-2], parts[-1]))
+    fallback_tail = tail_parts[-2:] if tail_parts else parts[-2:]
+    fallback = "_".join([parts[0], *fallback_tail])
     return fallback or candidate or normalized
 
 
@@ -571,6 +582,11 @@ def _current_workspace_title(
         for workspace_ref, workspace_title in entries:
             if workspace_ref == env_workspace:
                 return workspace_title
+        identified_ref = _identify_workspace_ref(runtime)
+        if identified_ref:
+            for workspace_ref, workspace_title in entries:
+                if workspace_ref == identified_ref:
+                    return workspace_title
         return None
     if not require_cmux_context:
         if entries:
@@ -602,6 +618,38 @@ def _current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str |
     if getattr(result, "returncode", 1) != 0:
         return None
     return str(getattr(result, "stdout", "")).strip() or None
+
+
+def _identify_workspace_ref(runtime: Any) -> str | None:
+    try:
+        result = runtime.process_runner.run(
+            ["cmux", "identify"],
+            cwd=runtime.config.base_dir,
+            env=getattr(runtime, "env", {}),
+            timeout=10.0,
+        )
+    except OSError:
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return _workspace_ref_from_identify_output(str(getattr(result, "stdout", "")))
+
+
+def _workspace_ref_from_identify_output(raw: str) -> str | None:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("caller", "focused"):
+        entry = payload.get(key)
+        if not isinstance(entry, dict):
+            continue
+        workspace_ref = str(entry.get("workspace_ref", "")).strip()
+        if workspace_ref:
+            return workspace_ref
+    return None
 
 
 def _resolve_configured_workspace_id(runtime: Any, configured: str) -> str | None:
