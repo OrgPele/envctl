@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import hashlib
@@ -42,6 +43,12 @@ from envctl_engine.actions.action_test_runner import run_test_action as run_test
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.startup.service_bootstrap_domain import (
+    _read_env_file_safe,
+    _resolve_backend_env_file,
+    _skip_local_db_env,
+)
+from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
 from envctl_engine.test_output.test_runner import TestRunner
@@ -66,6 +73,13 @@ def _stdout_is_live_terminal() -> bool:
         except Exception:
             continue
     return False
+
+
+@dataclass(frozen=True)
+class _MigrateProjectContext:
+    name: str
+    root: Path
+    ports: dict[str, PortPlan]
 
 
 class ActionRuntimeFacade:
@@ -460,9 +474,8 @@ class ActionCommandOrchestrator:
             command_name="migrate",
             interactive_command=interactive_command,
             resolve_command=resolve_command,
-            build_env=lambda context: self.action_env(
-                "migrate",
-                targets,
+            build_env=lambda context: self.migrate_action_env(
+                targets=targets,
                 route=route,
                 target=getattr(context, "target_obj"),
                 extra=extra_env,
@@ -825,6 +838,75 @@ class ActionCommandOrchestrator:
     def action_extra_env(route: Route) -> dict[str, str]:
         return build_action_extra_env(route)
 
+    def migrate_action_env(
+        self,
+        *,
+        targets: list[object],
+        route: Route | None,
+        target: object | None,
+        extra: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        env = self.action_env(
+            "migrate",
+            targets,
+            route=route,
+            target=target,
+            extra=extra,
+        )
+        if target is None:
+            return env
+
+        project_name = str(getattr(target, "name", "")).strip()
+        target_root = Path(str(getattr(target, "root")))
+        backend_cwd = self._migrate_backend_cwd(target_root)
+        backend_shaped = backend_cwd != target_root
+
+        runtime_raw = self.runtime.raw_runtime
+        context = _MigrateProjectContext(name=project_name, root=target_root, ports={})
+        backend_env_file, backend_env_is_default = _resolve_backend_env_file(
+            runtime_raw,
+            context=context,
+            backend_cwd=backend_cwd,
+        )
+        if not backend_shaped and backend_env_file is None:
+            return env
+
+        projected_env: dict[str, str] = {}
+        requirements = self._migrate_requirements_for_target(route=route, project_name=project_name)
+        if requirements is not None:
+            project_context = self._migrate_project_context(
+                project_name=project_name,
+                project_root=target_root,
+                requirements=requirements,
+            )
+            projector = getattr(runtime_raw, "_project_service_env_internal", None)
+            if callable(projector):
+                projected_candidate = projector(project_context, requirements=requirements, route=route)
+                if isinstance(projected_candidate, dict):
+                    projected_env = {
+                        str(key): str(value)
+                        for key, value in projected_candidate.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+
+        merged = dict(env)
+        merged.update(projected_env)
+        if backend_env_file is not None and backend_env_file.is_file():
+            merged.update(_read_env_file_safe(backend_env_file))
+            merged["APP_ENV_FILE"] = str(backend_env_file)
+
+        skip_local_db_env = _skip_local_db_env(
+            runtime_raw,
+            backend_env_file=backend_env_file,
+            backend_env_is_default=backend_env_is_default,
+        )
+        if not skip_local_db_env:
+            for key in ("DATABASE_URL", "REDIS_URL"):
+                value = projected_env.get(key)
+                if isinstance(value, str) and value.strip():
+                    merged[key] = value
+        return merged
+
     def run_delete_worktree_action(self, route: Route) -> int:
         return run_delete_worktree_action_impl(self, route)
 
@@ -898,7 +980,10 @@ class ActionCommandOrchestrator:
         }
         if status == "failed":
             clean_output = strip_ansi(str(error_output or "")).strip()
-            summary_lines = self._format_summary_error_lines(clean_output)
+            summary_lines = self._project_action_failure_summary_lines(
+                command_name=command_name,
+                error_output=clean_output,
+            )
             summary_text = "\n".join(summary_lines).strip() or "Command failed."
             report_path = self._write_project_action_failure_report(
                 run_id=state.run_id,
@@ -1492,6 +1577,119 @@ class ActionCommandOrchestrator:
         if source == "configured":
             return "Test command (failed only)" if failed_only else "Test command"
         return source.replace("_", " ")
+
+    def _project_action_failure_summary_lines(
+        self,
+        *,
+        command_name: str,
+        error_output: str,
+    ) -> list[str]:
+        lines = self._format_summary_error_lines(error_output)
+        if command_name != "migrate":
+            return lines
+        hint_lines = self._migrate_failure_hint_lines(error_output)
+        merged = list(lines)
+        seen = set(merged)
+        for hint in hint_lines:
+            if hint in seen:
+                continue
+            merged.append(hint)
+            seen.add(hint)
+        return merged
+
+    @staticmethod
+    def _migrate_failure_hint_lines(error_output: str) -> list[str]:
+        cleaned = strip_ansi(error_output)
+        normalized = cleaned.replace("\\", "/").lower()
+        if "alembic/env.py" not in normalized:
+            return []
+        if "validationerror" not in normalized and "field required" not in normalized and "type=missing" not in normalized:
+            return []
+
+        missing_vars = [
+            name
+            for name in ("DATABASE_URL", "REDIS_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
+            if re.search(rf"(?m)^{re.escape(name)}\s*$", cleaned)
+        ]
+        if not missing_vars:
+            return []
+        joined_vars = ", ".join(missing_vars)
+        return [
+            f"hint: migrate failed before Alembic reached revisions because required env vars were missing ({joined_vars}).",
+            "hint: envctl migrate loads backend env from backend/.env by default.",
+            "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
+            "hint: APP_ENV_FILE is exported when an env file is found, and running projects reuse current dependency URLs when available.",
+        ]
+
+    def _migrate_requirements_for_target(
+        self,
+        *,
+        route: Route | None,
+        project_name: str,
+    ) -> RequirementsResult | None:
+        route_mode = getattr(route, "mode", None)
+        state = self.runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
+        if state is None:
+            return None
+        requirements_map = getattr(state, "requirements", None)
+        if not isinstance(requirements_map, dict):
+            return None
+        candidate = requirements_map.get(project_name)
+        if isinstance(candidate, RequirementsResult):
+            return candidate
+        normalized_name = project_name.strip().lower()
+        for key, value in requirements_map.items():
+            if str(key).strip().lower() == normalized_name and isinstance(value, RequirementsResult):
+                return value
+        return None
+
+    @staticmethod
+    def _migrate_backend_cwd(target_root: Path) -> Path:
+        backend_dir = target_root / "backend"
+        if backend_dir.is_dir():
+            return backend_dir
+        return target_root
+
+    @staticmethod
+    def _migrate_project_context(
+        *,
+        project_name: str,
+        project_root: Path,
+        requirements: RequirementsResult,
+    ) -> _MigrateProjectContext:
+        ports: dict[str, PortPlan] = {}
+        for component_name, port_key in (
+            ("postgres", "db"),
+            ("redis", "redis"),
+            ("n8n", "n8n"),
+            ("supabase", "db"),
+        ):
+            if port_key in ports:
+                continue
+            component = requirements.component(component_name)
+            port = ActionCommandOrchestrator._migrate_component_port(component)
+            if port <= 0:
+                continue
+            ports[port_key] = PortPlan(
+                project=project_name,
+                requested=port,
+                assigned=port,
+                final=port,
+                source="requirements_state",
+            )
+        return _MigrateProjectContext(name=project_name, root=project_root, ports=ports)
+
+    @staticmethod
+    def _migrate_component_port(component: Mapping[str, object]) -> int:
+        for key in ("final", "requested", "assigned"):
+            raw = component.get(key)
+            try:
+                value = int(raw)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 0
 
     @staticmethod
     def _format_summary_error_lines(error_text: str) -> list[str]:

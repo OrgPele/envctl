@@ -83,6 +83,31 @@ Supported template inputs include:
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
 
+## Migrate Env Resolution
+
+Native `envctl migrate` uses the same backend env-file discovery contract as backend startup/bootstrap:
+
+1. `BACKEND_ENV_FILE_OVERRIDE`
+2. `MAIN_ENV_FILE_PATH` when the target project is `Main`
+3. default `backend/.env`
+
+When an env file is found, envctl exports `APP_ENV_FILE` into the migrate subprocess so backends that explicitly look up their env file can resolve it during Alembic imports.
+
+Runtime dependency projection also applies to migrate:
+
+- if the selected project already has saved requirements state, envctl reuses its canonical dependency URLs such as `DATABASE_URL` and `REDIS_URL`
+- the default backend `.env` is not authoritative for those projected dependency URLs during migrate
+- an explicit non-default backend env override file remains authoritative for its `DATABASE_URL` value, matching the existing `SKIP_LOCAL_DB_ENV` semantics
+
+Relevant keys:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for worktree/tree targets and other non-Main projects. |
+| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main mode. |
+| `APP_ENV_FILE` | set by envctl when a backend env file is resolved | Exported into backend startup/migrate subprocesses for apps that discover env files from process env. |
+| `SKIP_LOCAL_DB_ENV` | `false` | Compatibility toggle for preserving explicit backend env-file database URLs instead of replacing them with envctl-projected local DB URLs. |
+
 ## Managed vs Compatibility Keys
 
 The Python config layer now has canonical managed keys such as:
@@ -247,6 +272,8 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `BACKEND_PORT_BASE` | `8000` | Backend base port for allocation. |
 | `FRONTEND_DIR` | `frontend` | Preferred frontend directory name. |
 | `FRONTEND_PORT_BASE` | `9000` | Frontend base port for allocation. |
+| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. |
+| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. |
 
 ## Optional Hooks (`.envctl.sh`)
 
