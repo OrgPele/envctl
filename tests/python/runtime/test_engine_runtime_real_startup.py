@@ -2135,6 +2135,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     extra={
                         "TREES_STARTUP_ENABLE": "false",
                         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
                         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
                     },
                 ),
@@ -2167,7 +2168,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 self._config(
                     repo,
                     runtime,
-                    extra={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"},
+                    extra={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                    },
                 ),
                 env={"ENVCTL_ACTION_PR_CMD": "sh -lc 'exit 0'", "CMUX_WORKSPACE_ID": "workspace:4"},
             )
@@ -2181,6 +2185,44 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             launch_mock.assert_not_called()
+
+    def test_plan_feature_with_opencode_and_codex_cycles_still_launches_only_new_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            launches: list[list[str]] = []
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                side_effect=lambda _runtime, *, route, created_worktrees: (
+                    launches.append([item.name for item in created_worktrees]),
+                    PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                )[1],
+            ):
+                first_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+                second_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            self.assertEqual(launches, [["feature_task-1"], []])
 
     def test_plan_launch_failure_preserves_created_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -16,6 +16,8 @@ from envctl_engine.runtime.command_router import parse_route
 _screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
 _prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_screen_looks_ready")
 _tab_title_for_worktree = getattr(launch_support, "_tab_title_for_worktree")
+_build_plan_agent_workflow = getattr(launch_support, "_build_plan_agent_workflow", None)
+_finalization_instruction_text = getattr(launch_support, "_finalization_instruction_text", None)
 
 
 class _RecordingRunner:
@@ -295,6 +297,342 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 1)
             self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
 
+    def test_resolve_plan_agent_launch_config_parses_codex_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 2)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "many",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 0)
+        self.assertEqual(launch_config.codex_cycles_warning, "invalid_codex_cycles")
+
+    def test_build_plan_agent_workflow_uses_single_prompt_by_default(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [("submit_prompt", "/prompts:implement_task")],
+        )
+
+    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_message(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_finalization_instruction_text)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+
+        self.assertEqual(workflow.mode, "codex_cycles")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", _finalization_instruction_text()),
+            ],
+        )
+
+    def test_build_plan_agent_workflow_for_multiple_cycles_queues_continue_and_implement_rounds(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_finalization_instruction_text)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=2)
+
+        self.assertEqual(workflow.mode, "codex_cycles")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", _finalization_instruction_text()),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
+                ("queue_message", _finalization_instruction_text()),
+            ],
+        )
+
+    def test_build_plan_agent_workflow_keeps_opencode_on_single_prompt_even_when_cycles_set(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="opencode", preset="implement_task", codex_cycles=2)
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [("submit_prompt", "/implement_task")],
+        )
+
+    def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
+
+        self.assertEqual(workflow.mode, "codex_cycles")
+        self.assertEqual(workflow.codex_cycles, 10)
+        self.assertEqual(len(workflow.steps), 1 + (1 + 3 * (workflow.codex_cycles - 1)))
+
+    def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:9\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› Explain this codebase\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› /prompts:implement_task\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› /prompts:implement_task\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› /prompts:continue_task\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› /prompts:implement_task\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"], rt.process_runner.calls)
+            self.assertIn(
+                ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:continue_task"],
+                rt.process_runner.calls,
+            )
+            tab_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call == ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "tab"]
+            ]
+            self.assertEqual(len(tab_calls), 4)
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.workflow_queued"),
+                [
+                    {
+                        "event": "planning.agent_launch.workflow_queued",
+                        "workspace_id": "workspace:7",
+                        "surface_id": "surface:9",
+                        "worktree": "feature-a-1",
+                        "cli": "codex",
+                        "workflow_mode": "codex_cycles",
+                        "codex_cycles": 2,
+                        "queued_steps": 4,
+                    }
+                ],
+            )
+
+    def test_codex_cycle_queue_failure_falls_back_to_initial_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:9\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› Explain this codebase\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
+                        stderr="",
+                    ),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_codex_queue_ready", return_value=True),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._send_surface_text",
+                    side_effect=lambda runtime, *, workspace_id, surface_id, text, emit_failure_event=True: (
+                        "queue failed" if text.startswith("When the current implementation pass finishes") else None
+                    ),
+                ),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertEqual(self._events(rt, "planning.agent_launch.failed"), [])
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.workflow_fallback"),
+                [
+                    {
+                        "event": "planning.agent_launch.workflow_fallback",
+                        "workspace_id": "workspace:7",
+                        "surface_id": "surface:9",
+                        "worktree": "feature-a-1",
+                        "cli": "codex",
+                        "workflow_mode": "codex_cycles",
+                        "codex_cycles": 1,
+                        "reason": "queue_send_failed",
+                    }
+                ],
+            )
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.workflow_queue_failed"),
+                [
+                    {
+                        "event": "planning.agent_launch.workflow_queue_failed",
+                        "workspace_id": "workspace:7",
+                        "surface_id": "surface:9",
+                        "worktree": "feature-a-1",
+                        "cli": "codex",
+                        "workflow_mode": "codex_cycles",
+                        "codex_cycles": 1,
+                        "reason": "queue_send_failed",
+                    }
+                ],
+            )
+
     def test_tab_title_for_worktree_uses_first_and_last_three_words(self) -> None:
         self.assertEqual(
             _tab_title_for_worktree("refactoring_envctl_ai_pr_fix-1"),
@@ -412,6 +750,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
                 ),
                 2,
+            )
+            self.assertNotIn(
+                ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "tab"],
+                rt.process_runner.calls,
             )
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 2)
             self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)

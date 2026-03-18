@@ -74,6 +74,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
         "ENVCTL_PLAN_AGENT_CLI": "codex",
         "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
+        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
@@ -322,6 +323,7 @@ class EngineConfig:
     plan_agent_terminals_enable: bool
     plan_agent_cli: str
     plan_agent_preset: str
+    plan_agent_codex_cycles: int
     plan_agent_shell: str
     plan_agent_require_cmux_context: bool
     plan_agent_cli_cmd: str
@@ -509,6 +511,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "codex") or "codex").strip().lower() or "codex",
         plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_task") or "implement_task").strip()
         or "implement_task",
+        plan_agent_codex_cycles=max(parse_int(resolved.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES"), 0), 0),
         plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
         plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),

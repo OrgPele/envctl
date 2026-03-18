@@ -54,6 +54,7 @@ envctl explain-startup --json
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
+ENVCTL_PLAN_AGENT_CODEX_CYCLES=1
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
 ```
@@ -78,6 +79,15 @@ Behavior:
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
+
+`ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
+
+- default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus one plain follow-up message telling Codex to commit, push, and open or update the PR when that pass finishes
+- `0` keeps the current one-shot launch behavior
+- values greater than `1` queue repeated rounds of `continue_task`, `implement_task`, and the same finalization message in that same Codex session
+- OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
+- envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
+- queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
 ## Selection Input
 When passing plan selections, you can use any of these forms:
