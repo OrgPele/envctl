@@ -13,9 +13,9 @@ class TextInputDialogTests(unittest.IsolatedAsyncioTestCase):
 
         app = run_text_input_dialog_textual(
             title="Commit Message",
-            help_text="Commit message (leave blank to use changelog).",
+            help_text="Commit message (leave blank to use the envctl commit log).",
             placeholder="Type a commit message",
-            default_button_label="Use changelog",
+            default_button_label="Use envctl commit log",
             build_only=True,
         )
 
@@ -33,9 +33,9 @@ class TextInputDialogTests(unittest.IsolatedAsyncioTestCase):
 
         app = run_text_input_dialog_textual(
             title="Commit Message",
-            help_text="Commit message (leave blank to use changelog).",
+            help_text="Commit message (leave blank to use the envctl commit log).",
             placeholder="Type a commit message",
-            default_button_label="Use changelog",
+            default_button_label="Use envctl commit log",
             build_only=True,
         )
 

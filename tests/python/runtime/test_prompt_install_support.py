@@ -209,13 +209,42 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertTrue(codex.startswith("You are implementing real code, end-to-end."))
         self.assertIn("Authoritative spec file: MAIN_TASK.md.", codex)
         self.assertIn("write that content into `MAIN_TASK.md` first", codex)
+        self.assertIn(".envctl-commit-message.md", codex)
+        self.assertIn("### Envctl pointer ###", codex)
+        self.assertIn("boundary after the last successful commit", codex)
+        self.assertIn("one complete next commit message", codex)
+        self.assertIn("full cumulative set of changes between commits", codex)
         self.assertEqual(claude, codex)
         self.assertEqual(opencode, codex)
+
+        continue_prompt = _load_template("continue_task")
+        self.assertIn(".envctl-commit-message.md", continue_prompt.body)
+        self.assertIn("### Envctl pointer ###", continue_prompt.body)
+
+        review_prompt = _load_template("review_task_imp")
+        self.assertIn(".envctl-commit-message.md", review_prompt.body)
+        self.assertIn("### Envctl pointer ###", review_prompt.body)
 
         merge_prompt = _load_template("merge_trees_into_dev")
         self.assertEqual(merge_prompt.name, "merge_trees_into_dev")
         self.assertIn("Read `MAIN_TASK.md` from branch A and branch B separately.", merge_prompt.body)
         self.assertIn("first merge branch A into `dev`", merge_prompt.body)
+        self.assertIn(".envctl-commit-message.md", merge_prompt.body)
+
+        plan_prompt = _load_template("create_plan")
+        self.assertNotIn("Changelog entry appended.", plan_prompt.body)
+
+    def test_prompt_templates_no_longer_reference_changelog_backed_commit_defaults(self) -> None:
+        implement_prompt = _load_template("implement_task")
+        continue_prompt = _load_template("continue_task")
+        review_prompt = _load_template("review_task_imp")
+        merge_prompt = _load_template("merge_trees_into_dev")
+
+        for prompt in (implement_prompt, continue_prompt, review_prompt, merge_prompt):
+            with self.subTest(prompt=prompt.name):
+                self.assertNotIn("docs/changelog/{tree_name}_changelog.md", prompt.body)
+                self.assertIn("keep `.envctl-commit-message.md` focused on one complete next commit message", prompt.body)
+                self.assertIn("full cumulative set of changes between commits", prompt.body)
 
 
 if __name__ == "__main__":

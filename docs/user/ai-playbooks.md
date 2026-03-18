@@ -26,6 +26,7 @@ Notes:
 - existing files are backed up in-place before overwrite
 - `--dry-run` shows what would be written without mutating anything
 - this command is intentionally unavailable inside dashboard interactive mode
+- the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
 
 Current built-in presets:
 
