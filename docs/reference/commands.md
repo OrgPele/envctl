@@ -191,6 +191,24 @@ envctl logs --project api --logs-follow
 envctl restart --project api
 ```
 
+Run backend migrations:
+
+```bash
+envctl migrate --project feature-a-1
+envctl migrate --main
+```
+
+`migrate` behavior:
+
+- runs from `<project>/backend` when that directory exists; otherwise it falls back to the project root
+- default command remains `<repo-python> -m alembic upgrade head`
+- still honors `ENVCTL_ACTION_MIGRATE_CMD` when you need a custom wrapper command
+- loads backend env from `backend/.env` by default
+- honors `BACKEND_ENV_FILE_OVERRIDE` for worktrees and `MAIN_ENV_FILE_PATH` for Main mode
+- exports `APP_ENV_FILE` when an env file is resolved for the migrate process
+- when a saved run state already exists for the target, reuses envctl's current dependency URLs for `DATABASE_URL` and `REDIS_URL` unless an explicit backend env override file is in control
+- on failure, envctl persists the raw migrate report under the run artifacts and surfaces an actionable summary in the dashboard/action metadata
+
 Config management:
 
 ```bash

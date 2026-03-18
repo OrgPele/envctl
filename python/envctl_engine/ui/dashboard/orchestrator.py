@@ -303,11 +303,14 @@ class DashboardOrchestrator:
             if summary:
                 summary_lines = [line.strip() for line in summary.splitlines() if line.strip()]
                 first_line = summary_lines[0] if summary_lines else ""
+                hint_lines = [line for line in summary_lines[1:] if line.lower().startswith("hint:")]
                 if len(summary_lines) == 1 and len(first_line) <= 220:
                     print(f"{route.command} failed for {project_name}: {first_line}")
                 else:
                     if first_line:
                         print(f"{route.command} failed for {project_name}: {first_line}")
+                    for hint in hint_lines:
+                        print(hint)
                     if report_path:
                         print(f"{route.command} failure log for {project_name}:")
                         print(report_path)

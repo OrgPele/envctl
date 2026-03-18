@@ -2140,7 +2140,11 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                         "Main": {
                             "migrate": {
                                 "status": "failed",
-                                "summary": "alembic.util.exc.CommandError: migration failed\nsecond line",
+                                "summary": (
+                                    "alembic.util.exc.CommandError: migration failed\n"
+                                    "hint: envctl migrate loads backend env from backend/.env by default.\n"
+                                    "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.\n"
+                                ),
                                 "report_path": "/tmp/runtime/Main_migrate.txt",
                             }
                         }
@@ -2159,6 +2163,14 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertIn("migrate failed for Main: alembic.util.exc.CommandError: migration failed", rendered)
+        self.assertEqual(
+            rendered.count("hint: envctl migrate loads backend env from backend/.env by default."),
+            1,
+        )
+        self.assertIn(
+            "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
+            rendered,
+        )
         self.assertIn(
             "migrate failure log for Main:\n/tmp/runtime/Main_migrate.txt",
             rendered,

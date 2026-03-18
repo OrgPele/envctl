@@ -30,6 +30,7 @@ load_config = config_module.load_config
 PythonEngineRuntime = engine_runtime_module.PythonEngineRuntime
 RunState = engine_runtime_module.RunState
 ServiceRecord = engine_runtime_module.ServiceRecord
+RequirementsResult = engine_runtime_module.RequirementsResult
 
 
 class _FakeRunner:
@@ -66,6 +67,13 @@ class ActionsParityTests(unittest.TestCase):
                 "RUN_SH_RUNTIME_DIR": str(runtime),
                 "ENVCTL_DEFAULT_MODE": "trees",
             }
+        )
+
+    def _save_state(self, engine: PythonEngineRuntime, state: RunState) -> None:
+        engine.state_repository.save_resume_state(
+            state=state,
+            emit=engine._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
         )
 
     def test_action_commands_execute_with_configured_commands(self) -> None:
@@ -1054,6 +1062,287 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
             self.assertEqual(fake_runner.run_calls[0][0][:3], ("/usr/bin/python3", "-m", "alembic"))
+
+    def test_migrate_action_loads_backend_env_file_and_exports_app_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "CUSTOM_BACKEND_FLAG=enabled\nREDIS_URL=redis://legacy:6379/0\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(fake_runner.run_calls)
+            self.assertEqual(Path(fake_runner.run_calls[0][1]).resolve(), backend_dir.resolve())
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "enabled")
+            self.assertEqual(env.get("REDIS_URL"), "redis://legacy:6379/0")
+
+    def test_migrate_action_honors_backend_env_file_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=default\n", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text("CUSTOM_BACKEND_FLAG=override-enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "override-enabled")
+
+    def test_migrate_action_honors_main_env_file_path_in_main_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            main_env_file = repo / "config" / "main.backend.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            main_env_file.parent.mkdir(parents=True, exist_ok=True)
+            main_env_file.write_text("CUSTOM_BACKEND_FLAG=main-enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_DEFAULT_MODE": "main",
+                    }
+                ),
+                env={"MAIN_ENV_FILE_PATH": str(main_env_file)},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--main"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), main_env_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "main-enabled")
+
+    def test_migrate_action_uses_current_requirements_projection_when_state_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "REDIS_URL=redis://legacy:6379/0\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-env",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+            )
+            self.assertEqual(env.get("REDIS_URL"), "redis://localhost:6399/0")
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+
+    def test_migrate_action_preserves_override_env_file_database_url_when_skip_local_db_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            override_database_url = "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text(
+                f"DATABASE_URL={override_database_url}\nCUSTOM_BACKEND_FLAG=override\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-override",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "override")
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+
+    def test_migrate_action_failure_summary_includes_env_hint_for_missing_settings_vars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-failure",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(
+                returncode=1,
+                stderr=(
+                    "Traceback (most recent call last):\n"
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>\n'
+                    "    from app.core.config import settings\n"
+                    "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings\n"
+                    "DATABASE_URL\n"
+                    "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                    "REDIS_URL\n"
+                    "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                ),
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            saved_state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(saved_state)
+            assert saved_state is not None
+            reports = saved_state.metadata.get("project_action_reports")
+            self.assertIsInstance(reports, dict)
+            assert isinstance(reports, dict)
+            project_reports = reports.get("feature-a-1")
+            self.assertIsInstance(project_reports, dict)
+            assert isinstance(project_reports, dict)
+            migrate_entry = project_reports.get("migrate")
+            self.assertIsInstance(migrate_entry, dict)
+            assert isinstance(migrate_entry, dict)
+            summary = str(migrate_entry.get("summary", ""))
+            self.assertIn("ValidationError", summary)
+            self.assertIn("hint: envctl migrate loads backend env from backend/.env by default.", summary)
+            self.assertIn("BACKEND_ENV_FILE_OVERRIDE", summary)
+            report_path = Path(str(migrate_entry.get("report_path", "")))
+            self.assertTrue(report_path.is_file())
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertIn("DATABASE_URL", report_text)
+            self.assertNotIn("hint: envctl migrate loads backend env", report_text)
 
     def test_action_env_includes_pythonpath_for_native_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
