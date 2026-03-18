@@ -1043,6 +1043,10 @@ def build_python_runtime_gap_report(
 def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) -> str:
     gaps = [gap for gap in report_payload.get("gaps", []) if isinstance(gap, dict)]
     summary = report_payload.get("summary", {})
+    blockers = report_payload.get("shell_retirement_blockers", {})
+    gap_count = int(summary.get("gap_count", 0))
+    blocking_gap_count = int(summary.get("high_or_medium_gap_count", 0))
+    ready_for_shell_retirement = isinstance(blockers, dict) and bool(blockers.get("ready_for_shell_retirement"))
     wave_order = ["Wave A", "Wave B", "Wave C", "Wave D", "Wave E"]
     wave_titles = {
         "Wave A": "Launcher, Help, and Install Parity",
@@ -1054,8 +1058,8 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
     wave_scope = {
         "Wave A": "Close the remaining launcher-owned and help/install gaps without changing current user-visible behavior.",
         "Wave B": "Prove that lifecycle, planning, and worktree operations preserve the current behavior across startup, scale-down, and cleanup paths.",
-        "Wave C": "Finish the risky dependency and cleanup parity areas that still make shell a compatibility oracle.",
-        "Wave D": "Lock down action command contracts so test/review/pr/commit/migrate no longer depend on shell-era expectations.",
+        "Wave C": "Finish the risky dependency and cleanup parity areas without regressing the Python-owned runtime contract.",
+        "Wave D": "Lock down action command contracts so test/review/pr/commit/migrate are fully defined by Python behavior and acceptance tests.",
         "Wave E": "Retain only the diagnostics, dashboard, and artifact behavior that is truly part of the supported product contract.",
     }
     grouped: dict[str, list[dict[str, Any]]] = {wave: [] for wave in wave_order}
@@ -1063,22 +1067,40 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
         wave = str(gap.get("wave", "")).strip() or _wave_for_area(str(gap.get("area", "")))
         grouped.setdefault(wave, []).append(gap)
 
+    if gap_count == 0:
+        if ready_for_shell_retirement:
+            summary_text = (
+                "Python runtime gap closure is complete. All inventoried features are marked "
+                "`verified_python`, the repository is ready for shell retirement, and the next phase "
+                "is the mechanical cleanup plan in `todo/plans/refactoring/shell-runtime-retirement.md`."
+            )
+        else:
+            summary_text = (
+                "Python runtime gap closure is complete, but shell-retirement follow-up remains blocked "
+                "until every blocker check in `contracts/python_runtime_gap_report.json` passes."
+            )
+    else:
+        summary_text = (
+            "This plan tracks the remaining Python runtime parity work that must be completed before "
+            "`todo/plans/refactoring/shell-runtime-retirement.md` can begin."
+        )
+
     lines = [
         "# Python Runtime Gap Closure Plan",
         "",
         "## Summary",
         "- Generated from `contracts/python_runtime_gap_report.json`.",
         f"- Total inventoried features: {summary.get('feature_count', 0)}",
-        f"- Open gaps: {summary.get('gap_count', 0)}",
-        f"- High or medium gaps: {summary.get('high_or_medium_gap_count', 0)}",
+        f"- Open gaps: {gap_count}",
+        f"- High or medium gaps: {blocking_gap_count}",
         "",
-        "This plan keeps the current shell runtime available as a compatibility oracle while Python closes the remaining retained-behavior gaps. No shell deletion work should begin until all high and medium gaps below are closed or explicitly accepted.",
+        summary_text,
         "",
         "## Shared Rules",
         "- Preserve current user-visible behavior while implementing each wave.",
-        "- Keep shell-backed verification where it is still the behavior oracle.",
+        "- Keep `contracts/runtime_feature_matrix.json`, `contracts/python_runtime_gap_report.json`, and this plan in sync.",
         "- Mark a feature `verified_python` only after the behavior exists and the acceptance tests are in place.",
-        "- Run full Python unittest discovery and the full BATS suite after each completed wave.",
+        "- Validate with Python test discovery or `.venv/bin/python -m pytest -q`, plus `.venv/bin/python scripts/release_shipability_gate.py --repo .` before closing the plan.",
         "",
         "## Wave Breakdown",
     ]
@@ -1130,11 +1152,21 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
             "- All high and medium gaps are closed or explicitly accepted.",
             "- `contracts/runtime_feature_matrix.json` is updated so closed items are marked `verified_python`.",
             "- `contracts/python_runtime_gap_report.json` shows no remaining high or medium gaps.",
-            "- Full Python unittest discovery passes.",
-            "- Full BATS suite passes.",
+            "- Python validation passes: `python3 -m unittest discover -s tests/python -p 'test_*.py'` or `.venv/bin/python -m pytest -q`.",
+            "- `.venv/bin/python scripts/release_shipability_gate.py --repo .` passes.",
             "",
             "## Follow-Up Boundary",
-            "Only after this plan is complete should a separate shell-retirement plan be executed.",
+            (
+                "The closure gate is satisfied. Continue with "
+                "`todo/plans/refactoring/shell-runtime-retirement.md` for the mechanical shell cleanup phase."
+                if gap_count == 0 and ready_for_shell_retirement
+                else (
+                    "Closure work is complete, but shell retirement remains blocked until every blocker check in "
+                    "`contracts/python_runtime_gap_report.json` passes."
+                    if gap_count == 0
+                    else "Do not begin `todo/plans/refactoring/shell-runtime-retirement.md` until this closure plan is complete."
+                )
+            ),
             "",
         ]
     )

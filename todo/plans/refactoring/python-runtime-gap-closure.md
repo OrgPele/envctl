@@ -6,13 +6,13 @@
 - Open gaps: 0
 - High or medium gaps: 0
 
-This plan keeps the current shell runtime available as a compatibility oracle while Python closes the remaining retained-behavior gaps. No shell deletion work should begin until all high and medium gaps below are closed or explicitly accepted.
+Python runtime gap closure is complete. All inventoried features are marked `verified_python`, the repository is ready for shell retirement, and the next phase is the mechanical cleanup plan in `todo/plans/refactoring/shell-runtime-retirement.md`.
 
 ## Shared Rules
 - Preserve current user-visible behavior while implementing each wave.
-- Keep shell-backed verification where it is still the behavior oracle.
+- Keep `contracts/runtime_feature_matrix.json`, `contracts/python_runtime_gap_report.json`, and this plan in sync.
 - Mark a feature `verified_python` only after the behavior exists and the acceptance tests are in place.
-- Run full Python unittest discovery and the full BATS suite after each completed wave.
+- Validate with Python test discovery or `.venv/bin/python -m pytest -q`, plus `.venv/bin/python scripts/release_shipability_gate.py --repo .` before closing the plan.
 
 ## Wave Breakdown
 
@@ -27,12 +27,12 @@ Prove that lifecycle, planning, and worktree operations preserve the current beh
 No currently reported gaps in this wave.
 
 ### Wave C: Requirements and Dependency Lifecycle Parity
-Finish the risky dependency and cleanup parity areas that still make shell a compatibility oracle.
+Finish the risky dependency and cleanup parity areas without regressing the Python-owned runtime contract.
 
 No currently reported gaps in this wave.
 
 ### Wave D: Action Command Parity
-Lock down action command contracts so test/review/pr/commit/migrate no longer depend on shell-era expectations.
+Lock down action command contracts so test/review/pr/commit/migrate are fully defined by Python behavior and acceptance tests.
 
 No currently reported gaps in this wave.
 
@@ -45,8 +45,8 @@ No currently reported gaps in this wave.
 - All high and medium gaps are closed or explicitly accepted.
 - `contracts/runtime_feature_matrix.json` is updated so closed items are marked `verified_python`.
 - `contracts/python_runtime_gap_report.json` shows no remaining high or medium gaps.
-- Full Python unittest discovery passes.
-- Full BATS suite passes.
+- Python validation passes: `python3 -m unittest discover -s tests/python -p 'test_*.py'` or `.venv/bin/python -m pytest -q`.
+- `.venv/bin/python scripts/release_shipability_gate.py --repo .` passes.
 
 ## Follow-Up Boundary
-Only after this plan is complete should a separate shell-retirement plan be executed.
+The closure gate is satisfied. Continue with `todo/plans/refactoring/shell-runtime-retirement.md` for the mechanical shell cleanup phase.

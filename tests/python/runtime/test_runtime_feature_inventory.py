@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import list_supported_commands
 from envctl_engine.runtime_feature_inventory import (
+    render_python_runtime_gap_closure_plan,
     validate_python_runtime_gap_report_payload,
     validate_runtime_feature_matrix_payload,
 )
@@ -132,6 +133,17 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
         for wave in ("Wave A", "Wave B", "Wave C", "Wave D", "Wave E"):
             self.assertIn(f"### {wave}", rendered)
             self.assertIn("No currently reported gaps in this wave.", rendered)
+
+    def test_gap_plan_zero_gap_state_points_to_shell_retirement_without_bats_language(self) -> None:
+        gap_payload = json.loads(self._GAP_REPORT_PATH.read_text(encoding="utf-8"))
+
+        rendered = render_python_runtime_gap_closure_plan(report_payload=gap_payload)
+
+        self.assertIn("shell-runtime-retirement.md", rendered)
+        self.assertIn("ready for shell retirement", rendered)
+        self.assertNotIn("compatibility oracle while Python closes the remaining retained-behavior gaps", rendered)
+        self.assertNotIn("full BATS suite", rendered)
+        self.assertNotIn("BATS suite passes", rendered)
 
     def test_shell_runtime_retirement_plan_exists_and_is_mechanical(self) -> None:
         rendered = self._RETIREMENT_PLAN_PATH.read_text(encoding="utf-8")
