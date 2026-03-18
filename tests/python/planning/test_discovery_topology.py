@@ -62,6 +62,25 @@ class DiscoveryTopologyTests(unittest.TestCase):
             self.assertIn("feature-c-2", names)
             self.assertIn("feature-d-5", names)
 
+    def test_discovers_flat_feature_roots_for_nested_trees_dir_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / "work" / "trees-feature-c" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-c" / "2").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-d" / "5").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            projects = discover_tree_projects(repo, "work/trees")
+            names = [name for name, _root in projects]
+
+            self.assertIn("feature-a-1", names)
+            self.assertIn("feature-c-1", names)
+            self.assertIn("feature-c-2", names)
+            self.assertIn("feature-d-5", names)
+            self.assertNotIn("1", names)
+            self.assertNotIn("2", names)
+            self.assertNotIn("5", names)
+
 
 if __name__ == "__main__":
     unittest.main()
