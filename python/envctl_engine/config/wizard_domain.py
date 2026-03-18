@@ -108,6 +108,10 @@ def _textual_stack_available() -> bool:
 
 def _save_message(result: ConfigWizardResult) -> str:
     message = f"Saved startup config: {result.save_result.path}"
+    status = result.save_result.ignore_status
+    if status is not None and status.code == "configured_global_excludes":
+        target = f" at {status.target_path}" if status.target_path is not None else ""
+        message += f" (Configured Git global excludes{target}.)"
     if result.save_result.ignore_warning:
         return message + f" ({result.save_result.ignore_warning})"
     return message
@@ -140,7 +144,7 @@ def _emit_ignore_status_event(
     status = result.save_result.ignore_status
     if not callable(emit) or status is None:
         return
-    if status.code in {"updated_existing_global_excludes", "already_present"}:
+    if status.code in {"updated_existing_global_excludes", "configured_global_excludes", "already_present"}:
         event = "config.ignore.global.updated"
     elif status.code == "missing_global_excludes_configuration":
         event = "config.ignore.global.skipped"

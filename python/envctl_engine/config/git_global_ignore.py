@@ -67,6 +67,41 @@ def ensure_envctl_global_ignores(base_dir: Path) -> GlobalIgnoreStatus:
     )
 
 
+def configure_envctl_global_ignores(base_dir: Path, *, excludes_path: Path | None = None) -> GlobalIgnoreStatus:
+    patterns = envctl_local_artifact_patterns()
+    resolved_path = excludes_path.expanduser() if excludes_path is not None else Path("~/.gitignore_global").expanduser()
+    try:
+        _set_configured_global_excludes_path(base_dir, resolved_path)
+        updated = _update_envctl_managed_block(resolved_path, patterns)
+    except OSError as exc:
+        warning = f"Could not update global git excludes at {resolved_path}: {exc}"
+        return GlobalIgnoreStatus(
+            code="global_excludes_write_failed",
+            updated=False,
+            scope="git_global_excludes",
+            target_path=resolved_path,
+            managed_patterns=patterns,
+            warning=warning,
+        )
+    except RuntimeError as exc:
+        return GlobalIgnoreStatus(
+            code="global_excludes_lookup_failed",
+            updated=False,
+            scope="git_global_excludes",
+            target_path=resolved_path,
+            managed_patterns=patterns,
+            warning=str(exc),
+        )
+    return GlobalIgnoreStatus(
+        code="configured_global_excludes" if updated else "already_present",
+        updated=updated,
+        scope="git_global_excludes",
+        target_path=resolved_path,
+        managed_patterns=patterns,
+        warning=None,
+    )
+
+
 def _configured_global_excludes_path(base_dir: Path) -> tuple[Path | None, str | None]:
     result = subprocess.run(
         ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
@@ -84,6 +119,19 @@ def _configured_global_excludes_path(base_dir: Path) -> tuple[Path | None, str |
     if not value:
         return None, None
     return Path(value).expanduser(), None
+
+
+def _set_configured_global_excludes_path(base_dir: Path, excludes_path: Path) -> None:
+    result = subprocess.run(
+        ["git", "config", "--global", "core.excludesFile", str(excludes_path)],
+        cwd=str(base_dir),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = str(result.stderr or "").strip()
+        raise RuntimeError(stderr or "Could not configure Git global excludes target.")
 
 
 def _update_envctl_managed_block(path: Path, patterns: tuple[str, ...]) -> bool:

@@ -144,6 +144,26 @@ class ConfigCommandSupportTests(unittest.TestCase):
                 [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
             )
 
+    def test_headless_config_does_not_bootstrap_missing_global_excludes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            env = self._isolated_git_env(tmpdir)
+            runtime = self._runtime(repo, runtime_root)
+            runtime.env.update(env)
+
+            buffer = io.StringIO()
+            with patch.dict(os.environ, env, clear=True):
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(parse_route(["config", "--set", "ENVCTL_DEFAULT_MODE=trees", "--json"], env={}))
+
+            self.assertEqual(code, 0)
+            response = json.loads(buffer.getvalue())
+            self.assertFalse(response["ignore_updated"])
+            self.assertEqual(response["ignore_status"]["code"], "missing_global_excludes_configuration")
+            self.assertIsNone(response["ignore_status"]["target_path"])
+
     def test_config_plain_output_warns_when_global_ignore_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

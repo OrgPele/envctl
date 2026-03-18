@@ -558,6 +558,38 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertFalse((repo / ".gitignore").exists())
             self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
 
+    def test_save_local_config_is_warning_only_when_global_excludes_are_not_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            env = self._isolated_git_env(tmpdir)
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+
+            with patch.dict(os.environ, env, clear=True):
+                save_result = save_local_config(local_state=local_state, values=values)
+
+            self.assertTrue((repo / ".envctl").is_file())
+            self.assertFalse(save_result.ignore_updated)
+            self.assertIsNotNone(save_result.ignore_warning)
+            assert save_result.ignore_status is not None
+            self.assertEqual(save_result.ignore_status.code, "missing_global_excludes_configuration")
+
     def test_global_ignore_status_distinguishes_lookup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

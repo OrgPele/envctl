@@ -15,7 +15,13 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
-from envctl_engine.config.git_global_ignore import GlobalIgnoreStatus, ensure_envctl_global_ignores
+from envctl_engine.config.git_global_ignore import (
+    GlobalIgnoreStatus,
+    _configured_global_excludes_path,
+    configure_envctl_global_ignores,
+    ensure_envctl_global_ignores,
+)
+from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.actions.actions_test import (
@@ -522,6 +528,15 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
+    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=False)
+
+
+def save_local_config_with_ignore_policy(
+    *,
+    local_state: LocalConfigState,
+    values: ManagedConfigValues,
+    update_global_ignores: bool,
+) -> ConfigSaveResult:
     canonical_values = ManagedConfigValues(
         default_mode=values.default_mode,
         main_profile=values.main_profile,
@@ -559,7 +574,7 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     merged = merge_managed_block(existing_text, render_managed_block(canonical_values))
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
-    ignore_status = ensure_global_ignore_status(local_state.base_dir)
+    ignore_status = ensure_global_ignore_status(local_state.base_dir, update_config=update_global_ignores)
     return ConfigSaveResult(
         path=local_state.config_file_path,
         ignore_updated=ignore_status.updated,
@@ -568,7 +583,20 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     )
 
 
-def ensure_global_ignore_status(base_dir: Path) -> GlobalIgnoreStatus:
+def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) -> GlobalIgnoreStatus:
+    if update_config:
+        current_path, lookup_warning = _configured_global_excludes_path(base_dir)
+        if lookup_warning is not None:
+            return GlobalIgnoreStatus(
+                code="global_excludes_lookup_failed",
+                updated=False,
+                scope="git_global_excludes",
+                target_path=None,
+                managed_patterns=envctl_local_artifact_patterns(),
+                warning=lookup_warning,
+            )
+        if current_path is None:
+            return configure_envctl_global_ignores(base_dir)
     return ensure_envctl_global_ignores(base_dir)
 
 

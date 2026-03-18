@@ -142,6 +142,73 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
             self.assertTrue(any(event == "config.ignore.global.skipped" for event, _payload in events))
 
+    def test_save_message_reports_global_ignore_bootstrap(self) -> None:
+        result = ConfigWizardResult(
+            values=ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            ),
+            save_result=ConfigSaveResult(
+                path=Path("/tmp/repo/.envctl"),
+                ignore_updated=True,
+                ignore_warning=None,
+                ignore_status=GlobalIgnoreStatus(
+                    code="configured_global_excludes",
+                    updated=True,
+                    scope="git_global_excludes",
+                    target_path=Path("/tmp/home/.gitignore_global"),
+                    managed_patterns=(".envctl*",),
+                    warning=None,
+                ),
+            ),
+        )
+
+        message = _save_message(result)
+
+        self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
+        self.assertIn("Configured Git global excludes", message)
+
+    def test_ensure_local_config_emits_updated_event_for_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            events: list[tuple[str, dict[str, object]]] = []
+
+            def emit(event: str, **payload: object) -> None:
+                events.append((event, payload))
+
+            result = ConfigWizardResult(
+                values=ManagedConfigValues(
+                    default_mode="main",
+                    main_profile=StartupProfile(True, True, True, False, False, False, False),
+                    trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                    port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                ),
+                save_result=ConfigSaveResult(
+                    path=repo / ".envctl",
+                    ignore_updated=True,
+                    ignore_warning=None,
+                    ignore_status=GlobalIgnoreStatus(
+                        code="configured_global_excludes",
+                        updated=True,
+                        scope="git_global_excludes",
+                        target_path=Path(tmpdir) / "home" / ".gitignore_global",
+                        managed_patterns=(".envctl*",),
+                        warning=None,
+                    ),
+                ),
+            )
+
+            with (
+                patch("envctl_engine.config.wizard_domain._has_tty", return_value=True),
+                patch("envctl_engine.config.wizard_domain._textual_stack_available", return_value=True),
+                patch("envctl_engine.config.wizard_domain._run_wizard", return_value=result),
+            ):
+                ensure_local_config(base_dir=repo, env={}, emit=emit)
+
+            self.assertTrue(any(event == "config.ignore.global.updated" for event, _payload in events))
+
 
 if __name__ == "__main__":
     unittest.main()
