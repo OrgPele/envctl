@@ -353,7 +353,17 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
         )  # type: ignore[method-assign]
 
-        should_continue, _next_state = orchestrator._run_interactive_command("p", state, runtime)
+        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+            dirty_probe.return_value = SimpleNamespace(
+                project_name="Main",
+                project_root=Path(runtime.config.base_dir),
+                git_root=Path(runtime.config.base_dir),
+                staged=False,
+                unstaged=False,
+                untracked=False,
+                dirty=False,
+            )
+            should_continue, _next_state = orchestrator._run_interactive_command("p", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertEqual(len(runtime.pr_flow_calls), 1)
@@ -622,7 +632,19 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     orchestrator._run_pr_selection_flow = lambda **kwargs: (
                         runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
                     )  # type: ignore[method-assign]
-                should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
+                    with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+                        dirty_probe.return_value = SimpleNamespace(
+                            project_name="Main",
+                            project_root=Path(runtime.config.base_dir),
+                            git_root=Path(runtime.config.base_dir),
+                            staged=False,
+                            unstaged=False,
+                            untracked=False,
+                            dirty=False,
+                        )
+                        should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
+                else:
+                    should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
                 self.assertIsNotNone(runtime.last_dispatched_route)
@@ -668,7 +690,19 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     orchestrator._run_pr_selection_flow = lambda **kwargs: (
                         runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
                     )  # type: ignore[method-assign]
-                should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
+                    with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+                        dirty_probe.return_value = SimpleNamespace(
+                            project_name="Main",
+                            project_root=Path(runtime.config.base_dir),
+                            git_root=Path(runtime.config.base_dir),
+                            staged=False,
+                            unstaged=False,
+                            untracked=False,
+                            dirty=False,
+                        )
+                        should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
+                else:
+                    should_continue, next_state = orchestrator._run_interactive_command(raw, state, runtime)
                 self.assertTrue(should_continue)
                 self.assertEqual(next_state.run_id, state.run_id)
                 self.assertEqual(len(runtime.selection_calls), 0)
@@ -773,7 +807,17 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+            dirty_probe.return_value = SimpleNamespace(
+                project_name="Main",
+                project_root=Path(runtime.config.base_dir),
+                git_root=Path(runtime.config.base_dir),
+                staged=False,
+                unstaged=False,
+                untracked=False,
+                dirty=False,
+            )
+            should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
@@ -812,7 +856,17 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
+        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+            dirty_probe.return_value = SimpleNamespace(
+                project_name="Main",
+                project_root=Path(runtime.config.base_dir),
+                git_root=Path(runtime.config.base_dir),
+                staged=False,
+                unstaged=False,
+                untracked=False,
+                dirty=False,
+            )
+            should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, state.run_id)
@@ -825,7 +879,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_pr_dirty_target_accepts_commit_then_dispatches_pr(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [True]
         runtime.text_input_responses = ["PR body", "Ship dirty changes"]
         orchestrator = DashboardOrchestrator(runtime)
         orchestrator._run_pr_selection_flow = lambda **kwargs: (
@@ -849,7 +902,11 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl") as selector,
+        ):
+            selector.return_value = ["__DIRTY_PR_COMMIT__"]
             dirty_probe.return_value = SimpleNamespace(
                 project_name="Main",
                 project_root=Path(runtime.config.base_dir),
@@ -867,12 +924,18 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.dispatched_routes[0].projects, ["Main"])
         self.assertEqual(runtime.dispatched_routes[0].flags.get("commit_message"), "Ship dirty changes")
         self.assertEqual(runtime.dispatched_routes[1].flags.get("pr_body"), "PR body")
-        self.assertEqual(len(runtime.confirm_prompts), 1)
-        self.assertIn("Commit dirty changes before PR?", runtime.confirm_prompts[0]["title"])
+        selector.assert_called_once()
+        selector_kwargs = selector.call_args.kwargs
+        self.assertEqual(
+            selector_kwargs["prompt"],
+            "UNSTAGED CODE IN WORKTREE Main - DO YOU WANT TO STAGE IT?",
+        )
+        self.assertEqual([item.label for item in selector_kwargs["options"]], ["Commit", "Do nothing"])
+        self.assertEqual([item.kind for item in selector_kwargs["options"]], ["", ""])
+        self.assertEqual(selector_kwargs["multi"], False)
 
     def test_pr_dirty_target_decline_skips_commit_and_dispatches_pr_only(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [False]
         orchestrator = DashboardOrchestrator(runtime)
         orchestrator._run_pr_selection_flow = lambda **kwargs: (
             runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
@@ -895,7 +958,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["__DIRTY_PR_SKIP__"]),
+        ):
             dirty_probe.return_value = SimpleNamespace(
                 project_name="Main",
                 project_root=Path(runtime.config.base_dir),
@@ -910,11 +976,9 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertIs(next_state, state)
         self.assertEqual([route.command for route in runtime.dispatched_routes], ["pr"])
-        self.assertEqual(len(runtime.confirm_prompts), 1)
 
     def test_pr_dirty_target_cancel_aborts_without_dispatch(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [None]
         orchestrator = DashboardOrchestrator(runtime)
         orchestrator._run_pr_selection_flow = lambda **kwargs: (
             runtime.pr_flow_calls.append(kwargs) or runtime.next_pr_flow_result
@@ -940,6 +1004,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         out = StringIO()
         with (
             patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=None),
             redirect_stdout(out),
         ):
             dirty_probe.return_value = SimpleNamespace(
@@ -970,13 +1035,15 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         result = DashboardOrchestrator._prompt_yes_no_dialog(
             _RuntimeSingleArgConfirm(),
             title="Commit dirty changes before PR?",
-            prompt="Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: ",
+            prompt="Main has unstaged changes. Choose whether to commit first, continue without committing, or cancel PR creation.",
         )
 
-        self.assertTrue(result)
+        self.assertEqual(result, "commit")
         self.assertEqual(
             prompts,
-            ["Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: "],
+            [
+                "Main has unstaged changes. Choose whether to commit first, continue without committing, or cancel PR creation."
+            ],
         )
 
     def test_prompt_yes_no_dialog_blank_fallback_declines_commit(self) -> None:
@@ -996,13 +1063,15 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         result = DashboardOrchestrator._prompt_yes_no_dialog(
             runtime,
             title="Commit dirty changes before PR?",
-            prompt="Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: ",
+            prompt="Main has unstaged changes. Choose whether to commit first, continue without committing, or cancel PR creation.",
         )
 
-        self.assertFalse(result)
+        self.assertEqual(result, "skip")
         self.assertEqual(
             runtime.read_prompts,
-            ["Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: "],
+            [
+                "Main has unstaged changes. Choose whether to commit first, continue without committing, or cancel PR creation."
+            ],
         )
 
     def test_pr_clean_target_skips_commit_prompt(self) -> None:
@@ -1048,7 +1117,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_typed_pr_command_still_runs_dirty_preflight(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [False]
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-pr-typed",
@@ -1068,7 +1136,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe:
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["__DIRTY_PR_SKIP__"]),
+        ):
             dirty_probe.return_value = SimpleNamespace(
                 project_name="Main",
                 project_root=Path(runtime.config.base_dir),
@@ -1093,7 +1164,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_pr_commit_failure_aborts_pr_dispatch(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [True]
         runtime.text_input_responses = ["Ship dirty changes"]
         orchestrator = DashboardOrchestrator(runtime)
         orchestrator._run_pr_selection_flow = lambda **kwargs: (
@@ -1138,6 +1208,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         out = StringIO()
         with (
             patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree") as dirty_probe,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["__DIRTY_PR_COMMIT__"]),
             redirect_stdout(out),
         ):
             dirty_probe.return_value = SimpleNamespace(
@@ -1158,7 +1229,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_pr_multi_target_commits_only_dirty_subset(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [True]
         runtime.text_input_responses = ["Ship dirty subset"]
         runtime.next_pr_flow_result = PrFlowResult(project_names=["feature-a-1", "feature-b-1"], base_branch="main")
         orchestrator = DashboardOrchestrator(runtime)
@@ -1209,7 +1279,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 dirty=is_dirty,
             )
 
-        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree", side_effect=fake_probe):
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree", side_effect=fake_probe),
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["__DIRTY_PR_COMMIT__"]),
+        ):
             should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
 
         self.assertTrue(should_continue)
@@ -1220,7 +1293,6 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_pr_multi_target_dedupes_shared_git_root_before_commit_and_pr(self) -> None:
         runtime = _RuntimeStub()
-        runtime.confirm_responses = [True]
         runtime.text_input_responses = ["PR body", "Ship shared root"]
         runtime.next_pr_flow_result = PrFlowResult(project_names=["feature-a-1", "feature-b-1"], base_branch="main")
         orchestrator = DashboardOrchestrator(runtime)
@@ -1270,7 +1342,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 dirty=True,
             )
 
-        with patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree", side_effect=fake_probe):
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.probe_dirty_worktree", side_effect=fake_probe),
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["__DIRTY_PR_COMMIT__"]),
+        ):
             should_continue, next_state = orchestrator._run_interactive_command("p", state, runtime)
 
         self.assertTrue(should_continue)

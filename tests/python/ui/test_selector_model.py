@@ -11,9 +11,9 @@ from envctl_engine.ui.selector_model import SelectorContext, build_grouped_selec
 
 
 class SelectorModelTests(unittest.TestCase):
-    def test_project_items_hide_all_when_only_one_project(self) -> None:
+    def test_project_items_do_not_add_all_shortcut_rows(self) -> None:
         context = SelectorContext(
-            projects=[SimpleNamespace(name="Main")],
+            projects=[SimpleNamespace(name="Main"), SimpleNamespace(name="Feature-A")],
             allow_all=True,
             allow_untested=False,
             mode="project",
@@ -21,7 +21,7 @@ class SelectorModelTests(unittest.TestCase):
         result = build_project_selector_items(context)
 
         labels = [item.label for item in result.items]
-        self.assertEqual(labels, ["Main"])
+        self.assertEqual(labels, ["Main", "Feature-A"])
         self.assertNotIn("All projects", labels)
 
     def test_project_items_hide_untested_when_no_subset(self) -> None:
@@ -36,12 +36,12 @@ class SelectorModelTests(unittest.TestCase):
 
         labels = [item.label for item in result.items]
         self.assertNotIn("Run untested projects", labels)
-        self.assertIn("All projects", labels)
+        self.assertEqual(labels, ["Main", "Feature-A"])
 
-    def test_grouped_items_suppress_duplicate_all_scope_for_single_project(self) -> None:
+    def test_grouped_items_do_not_add_all_services_shortcut_rows(self) -> None:
         context = SelectorContext(
-            projects=[SimpleNamespace(name="Main")],
-            services=["Main Backend", "Main Frontend"],
+            projects=[SimpleNamespace(name="Main"), SimpleNamespace(name="Admin")],
+            services=["Main Backend", "Main Frontend", "Admin Backend", "Admin Frontend"],
             allow_all=True,
             mode="grouped",
         )
@@ -50,8 +50,10 @@ class SelectorModelTests(unittest.TestCase):
         labels = [item.label for item in result.items]
         self.assertNotIn("All services", labels)
         self.assertIn("Main - ALL", labels)
+        self.assertIn("Admin - ALL", labels)
         self.assertIn("Main - Backend", labels)
         self.assertIn("Main - Frontend", labels)
+        self.assertIn("Admin - Backend", labels)
 
     def test_grouped_items_suppress_project_group_when_it_matches_single_service(self) -> None:
         context = SelectorContext(

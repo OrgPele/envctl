@@ -19,11 +19,18 @@ class _Project:
 
 
 class TextualSelectorFlowTests(unittest.TestCase):
-    def test_project_selector_maps_all_and_untested_tokens(self) -> None:
+    def test_project_selector_maps_untested_token_without_visible_all_shortcut(self) -> None:
         projects = [_Project("alpha"), _Project("beta")]
+        captured = {}
+
+        def fake_selector(*, prompt, options, multi, initial_tokens=None, emit=None):  # noqa: ANN001
+            _ = prompt, multi, initial_tokens, emit
+            captured["labels"] = [option.label for option in options]
+            return ["__UNTESTED__"]
+
         with patch(
             "envctl_engine.ui.textual.screens.selector._run_selector_with_impl",
-            return_value=["__ALL__", "__UNTESTED__"],
+            side_effect=fake_selector,
         ):
             selection = select_project_targets_textual(
                 prompt="Select test target",
@@ -33,7 +40,8 @@ class TextualSelectorFlowTests(unittest.TestCase):
                 multi=True,
             )
 
-        self.assertTrue(selection.all_selected)
+        self.assertEqual(captured["labels"], ["alpha", "beta"])
+        self.assertFalse(selection.all_selected)
         self.assertTrue(selection.untested_selected)
         self.assertFalse(selection.cancelled)
 

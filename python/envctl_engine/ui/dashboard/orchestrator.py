@@ -4,7 +4,7 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import subprocess
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
@@ -35,7 +35,11 @@ from envctl_engine.ui.selection_support import (
 )
 from envctl_engine.ui.selection_support import SimpleProject
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
+
+
+DirtyPrDecision = Literal["commit", "skip", "cancel"]
 
 
 class DashboardOrchestrator:
@@ -586,16 +590,16 @@ class DashboardOrchestrator:
             unstaged=any(report.unstaged for report in dirty_targets),
             untracked=any(report.untracked for report in dirty_targets),
         )
-        decision = self._prompt_yes_no_dialog(
+        decision = self._prompt_dirty_pr_menu(
             runtime_any,
             title="Commit dirty changes before PR?",
             prompt=prompt,
         )
-        if decision is None:
+        if decision == "cancel":
             runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
             print("Cancelled PR creation.")
             return None, state
-        if decision is False:
+        if decision == "skip":
             runtime_any._emit("dashboard.pr_dirty_commit.declined", command="pr", dirty_project_count=len(dirty_targets))
             return route, state
 
@@ -700,18 +704,8 @@ class DashboardOrchestrator:
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
         if len(dirty_targets) == 1:
             target = dirty_targets[0]
-            categories = DashboardOrchestrator._dirty_categories(target)
-            joined = ", ".join(categories) if categories else "changes"
-            return (
-                f"{target.project_name} has {joined}. "
-                "Commit these changes with the normal commit action before creating the PR? "
-                "[y]es / [n]o / [c]ancel: "
-            )
-        return (
-            f"{len(dirty_targets)} selected targets have dirty worktrees. "
-            "Commit dirty targets with the normal commit action before creating PRs? "
-            "[y]es / [n]o / [c]ancel: "
-        )
+            return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
+        return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
 
     @staticmethod
     def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:
@@ -725,7 +719,40 @@ class DashboardOrchestrator:
         return categories
 
     @staticmethod
-    def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> bool | None:
+    def _prompt_dirty_pr_menu(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
+        values = _run_selector_with_impl(
+            prompt=prompt,
+            options=[
+                SelectorItem(
+                    id="dirty-pr:commit",
+                    label="Commit",
+                    kind="",
+                    token="__DIRTY_PR_COMMIT__",
+                    scope_signature=("dirty-pr:commit",),
+                ),
+                SelectorItem(
+                    id="dirty-pr:skip",
+                    label="Do nothing",
+                    kind="",
+                    token="__DIRTY_PR_SKIP__",
+                    scope_signature=("dirty-pr:skip",),
+                ),
+            ],
+            multi=False,
+            initial_tokens=["__DIRTY_PR_COMMIT__"],
+            emit=getattr(runtime, "_emit", None),
+        )
+        if not values:
+            return "cancel"
+        chosen = str(values[0]).strip()
+        if chosen == "__DIRTY_PR_COMMIT__":
+            return "commit"
+        if chosen == "__DIRTY_PR_SKIP__":
+            return "skip"
+        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title=title, prompt=prompt)
+
+    @staticmethod
+    def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
         confirm = getattr(runtime, "_prompt_yes_no", None)
         if callable(confirm):
             try:
@@ -733,16 +760,16 @@ class DashboardOrchestrator:
             except TypeError:
                 result = confirm(prompt)
             if result is None:
-                return None
-            return bool(result)
+                return "cancel"
+            return "commit" if bool(result) else "skip"
         response = DashboardOrchestrator._read_interactive_line(runtime, prompt).strip().lower()
         if response in {"y", "yes"}:
-            return True
+            return "commit"
         if response in {"", "n", "no"}:
-            return False
+            return "skip"
         if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
-            return None
-        return False
+            return "cancel"
+        return "skip"
 
     def _default_pr_base_branch(self, runtime: Any) -> str:
         git_root = self._pr_git_root(runtime)

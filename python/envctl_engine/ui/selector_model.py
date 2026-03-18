@@ -70,18 +70,6 @@ def build_project_selector_items(context: SelectorContext) -> SelectorBuildResul
                     section="Shortcuts",
                 )
             )
-    if context.allow_all and len(project_names) > 1:
-        synthetic.append(
-            SelectorItem(
-                id="synthetic:all",
-                label="All projects",
-                kind="synthetic_all",
-                token="__ALL__",
-                scope_signature=tuple(sorted(f"project:{name}" for name in project_names)),
-                section="Shortcuts",
-            )
-        )
-
     return _dedupe_and_filter([*concrete, *synthetic])
 
 
@@ -120,22 +108,7 @@ def build_grouped_selector_items(context: SelectorContext) -> SelectorBuildResul
             )
         )
 
-    synthetic: list[SelectorItem] = []
-    if context.allow_all:
-        all_scopes = sorted({scope for item in concrete_services for scope in item.scope_signature})
-        if len(all_scopes) > 1:
-            synthetic.append(
-                SelectorItem(
-                    id="synthetic:all",
-                    label="All services",
-                    kind="synthetic_all",
-                    token="__ALL__",
-                    scope_signature=tuple(all_scopes),
-                    section="Shortcuts",
-                )
-            )
-
-    return _dedupe_and_filter([*concrete_services, *project_groups, *synthetic])
+    return _dedupe_and_filter([*concrete_services, *project_groups])
 
 
 def _format_grouped_service_label(service: str) -> str:
