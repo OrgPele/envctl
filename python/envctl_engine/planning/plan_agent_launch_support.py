@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.config import EngineConfig
-from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
 _DEFAULT_PRESET = "implement_task"
@@ -27,8 +27,13 @@ _PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
 _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
+_CODEX_QUEUE_READY_TIMEOUT_SECONDS = 1.0
+_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
+_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
+_PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
+_PLAN_AGENT_CODEX_CYCLE_CAP = 10
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
 _CODEX_LOADING_MARKERS = (
@@ -90,6 +95,8 @@ class PlanAgentLaunchConfig:
     cli: str
     cli_command: str
     preset: str
+    codex_cycles: int
+    codex_cycles_warning: str | None
     shell: str
     require_cmux_context: bool
     cmux_workspace: str
@@ -119,6 +126,66 @@ class _WorkspaceLaunchTarget:
     starter_surface_probe_result: str = "not_attempted"
 
 
+@dataclass(slots=True, frozen=True)
+class _PlanAgentWorkflowStep:
+    kind: str
+    text: str
+
+
+@dataclass(slots=True, frozen=True)
+class _PlanAgentWorkflow:
+    mode: str
+    codex_cycles: int
+    steps: tuple[_PlanAgentWorkflowStep, ...]
+
+
+def _finalization_instruction_text() -> str:
+    return "When the current implementation pass finishes, commit the work, push the branch, and open or update the PR."
+
+
+def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        return 0, None
+    value = parse_int_or_none(normalized)
+    if value is None:
+        return 0, "invalid_codex_cycles"
+    if value < 0:
+        return 0, "invalid_codex_cycles"
+    if value > _PLAN_AGENT_CODEX_CYCLE_CAP:
+        return _PLAN_AGENT_CODEX_CYCLE_CAP, "bounded_codex_cycles"
+    return value, None
+
+
+def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> str:
+    if launch_config.cli == "codex" and launch_config.codex_cycles > 0:
+        return _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
+    return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
+
+
+def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _PlanAgentWorkflow:
+    initial_prompt = _slash_command(cli, preset)
+    normalized_cli = str(cli).strip().lower()
+    bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
+    if normalized_cli != "codex" or bounded_cycles <= 0:
+        return _PlanAgentWorkflow(
+            mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
+            codex_cycles=bounded_cycles,
+            steps=(_PlanAgentWorkflowStep(kind="submit_prompt", text=initial_prompt),),
+        )
+    steps = [_PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command("codex", "implement_task"))]
+    for cycle in range(1, bounded_cycles + 1):
+        steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_finalization_instruction_text()))
+        if cycle < bounded_cycles:
+            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "continue_task")))
+            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "implement_task")))
+    return _PlanAgentWorkflow(
+        mode=_PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
+        codex_cycles=bounded_cycles,
+        steps=tuple(steps),
+    )
+
+
 def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] | None = None) -> PlanAgentLaunchConfig:
     env_map = dict(env or {})
     cli = str(
@@ -146,6 +213,11 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
         or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
         or ""
     ).strip()
+    codex_cycles, codex_cycles_warning = _parse_codex_cycles(
+        env_map.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
+        or ""
+    )
     enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
@@ -156,6 +228,8 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
         cli=cli,
         cli_command=cli_command,
         preset=preset,
+        codex_cycles=codex_cycles,
+        codex_cycles_warning=codex_cycles_warning,
         shell=shell,
         require_cmux_context=parse_bool(
             env_map.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT")
@@ -181,12 +255,20 @@ def plan_agent_launch_prereq_commands(
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    workflow = _build_plan_agent_workflow(
+        cli=launch_config.cli,
+        preset=launch_config.preset,
+        codex_cycles=launch_config.codex_cycles,
+    )
     workspace_id = _resolve_workspace_id(runtime, launch_config)
     target_workspace = launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config)
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
         "cli": launch_config.cli,
         "preset": launch_config.preset,
+        "workflow_mode": workflow.mode,
+        "codex_cycles": launch_config.codex_cycles,
+        "workflow_warning": launch_config.codex_cycles_warning,
         "shell": launch_config.shell,
         "require_cmux_context": launch_config.require_cmux_context,
         "workspace_id": workspace_id,
@@ -215,10 +297,17 @@ def launch_plan_agent_terminals(
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> PlanAgentLaunchResult:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    workflow = _build_plan_agent_workflow(
+        cli=launch_config.cli,
+        preset=launch_config.preset,
+        codex_cycles=launch_config.codex_cycles,
+    )
     base_payload = {
         "enabled": launch_config.enabled,
         "cli": launch_config.cli,
         "created_worktree_count": len(created_worktrees),
+        "workflow_mode": workflow.mode,
+        "codex_cycles": launch_config.codex_cycles,
     }
     if str(getattr(route, "command", "")).strip() != "plan" or bool(getattr(route, "flags", {}).get("planning_prs")):
         runtime._emit("planning.agent_launch.skipped", reason="inapplicable_route", **base_payload)
@@ -265,6 +354,16 @@ def launch_plan_agent_terminals(
         preset=launch_config.preset,
         **base_payload,
     )
+    runtime._emit(
+        "planning.agent_launch.workflow_selected",
+        workspace_id=workspace_id,
+        warning=launch_config.codex_cycles_warning,
+        **base_payload,
+    )
+    if workflow.mode == _PLAN_AGENT_WORKFLOW_CODEX_CYCLES:
+        _print_launch_summary(
+            f"Plan agent launch queued Codex cycle workflow (cycles={workflow.codex_cycles}) for {len(created_worktrees)} surface(s)."
+        )
     if (
         workspace_target.created
         and workspace_target.starter_surface_id is None
@@ -396,6 +495,11 @@ def _complete_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> None:
+    workflow = _build_plan_agent_workflow(
+        cli=launch_config.cli,
+        preset=launch_config.preset,
+        codex_cycles=launch_config.codex_cycles,
+    )
     error = _run_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
@@ -410,6 +514,8 @@ def _complete_surface_bootstrap(
             surface_id=surface_id,
             worktree=worktree.name,
             preset=launch_config.preset,
+            workflow_mode=workflow.mode,
+            codex_cycles=workflow.codex_cycles,
         )
         return
     runtime._emit(
@@ -430,6 +536,11 @@ def _run_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
+    workflow = _build_plan_agent_workflow(
+        cli=launch_config.cli,
+        preset=launch_config.preset,
+        codex_cycles=launch_config.codex_cycles,
+    )
     respawn_command = _surface_respawn_command(launch_config, worktree)
     tab_title = _tab_title_for_worktree(worktree.name)
     commands = [
@@ -441,7 +552,6 @@ def _run_surface_bootstrap(
         if error is not None:
             return error
     time.sleep(_SURFACE_READY_DELAY_SECONDS)
-    prompt_text = _slash_command(launch_config.cli, launch_config.preset)
     send_errors = _launch_cli_bootstrap_commands(
         runtime,
         workspace_id=workspace_id,
@@ -458,12 +568,66 @@ def _run_surface_bootstrap(
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    initial_step = workflow.steps[0]
+    submit_error = _submit_prompt_workflow_step(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+        prompt_text=initial_step.text,
+    )
+    if submit_error is not None:
+        return submit_error
+    queued_steps = workflow.steps[1:]
+    if queued_steps and launch_config.cli == "codex":
+        queue_error_reason = _queue_codex_workflow_steps(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            worktree=worktree,
+            workflow=workflow,
+            queued_steps=queued_steps,
+            cli=launch_config.cli,
+        )
+        if queue_error_reason is not None:
+            runtime._emit(
+                "planning.agent_launch.workflow_queue_failed",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+            )
+            runtime._emit(
+                "planning.agent_launch.workflow_fallback",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+            )
+            return None
+    return None
+
+
+def _submit_prompt_workflow_step(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cli: str,
+    prompt_text: str,
+) -> str | None:
     final_errors = [
         _send_prompt_text(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            cli=launch_config.cli,
+            cli=cli,
             text=prompt_text,
         ),
         _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="ctrl+e"),
@@ -475,7 +639,7 @@ def _run_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        cli=launch_config.cli,
+        cli=cli,
         prompt_text=prompt_text,
     )
     submit_error = _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
@@ -485,13 +649,71 @@ def _run_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        cli=launch_config.cli,
+        cli=cli,
         prompt_text=prompt_text,
     )
-    confirm_error = _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
-    if confirm_error is not None:
-        return confirm_error
+    return _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
+
+
+def _queue_codex_workflow_steps(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    worktree: CreatedPlanWorktree,
+    workflow: _PlanAgentWorkflow,
+    queued_steps: tuple[_PlanAgentWorkflowStep, ...],
+    cli: str,
+) -> str | None:
+    for step in queued_steps:
+        if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
+            return "queue_not_ready"
+        send_error = _send_surface_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=step.text,
+            emit_failure_event=False,
+        )
+        if send_error is not None:
+            return "queue_send_failed"
+        tab_error = _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="tab",
+            emit_failure_event=False,
+        )
+        if tab_error is not None:
+            return "queue_send_failed"
+    runtime._emit(
+        "planning.agent_launch.workflow_queued",
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        worktree=worktree.name,
+        cli=cli,
+        workflow_mode=workflow.mode,
+        codex_cycles=workflow.codex_cycles,
+        queued_steps=len(queued_steps),
+    )
     return None
+
+
+def _wait_for_codex_queue_ready(runtime: Any, *, workspace_id: str, surface_id: str) -> bool:
+    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _codex_queue_screen_looks_ready(screen):
+            return True
+        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+    return False
+
+
+def _codex_queue_screen_looks_ready(screen: str) -> bool:
+    cleaned = _strip_ansi_sequences(screen)
+    if not cleaned.strip():
+        return True
+    return _screen_looks_ready("codex", cleaned)
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
@@ -859,10 +1081,18 @@ def _workspace_ref_from_command_output(raw: str) -> str | None:
     return None
 
 
-def _send_surface_text(runtime: Any, *, workspace_id: str, surface_id: str, text: str) -> str | None:
+def _send_surface_text(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    text: str,
+    emit_failure_event: bool = True,
+) -> str | None:
     return _run_cmux_command(
         runtime,
         ["cmux", "send", "--workspace", workspace_id, "--surface", surface_id, text],
+        emit_failure_event=emit_failure_event,
     )
 
 
@@ -871,14 +1101,22 @@ def _send_prompt_text(runtime: Any, *, workspace_id: str, surface_id: str, cli: 
     return _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=text)
 
 
-def _send_surface_key(runtime: Any, *, workspace_id: str, surface_id: str, key: str) -> str | None:
+def _send_surface_key(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    key: str,
+    emit_failure_event: bool = True,
+) -> str | None:
     return _run_cmux_command(
         runtime,
         ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
+        emit_failure_event=emit_failure_event,
     )
 
 
-def _run_cmux_command(runtime: Any, command: list[str]) -> str | None:
+def _run_cmux_command(runtime: Any, command: list[str], *, emit_failure_event: bool = True) -> str | None:
     result = runtime.process_runner.run(
         command,
         cwd=runtime.config.base_dir,
@@ -888,7 +1126,8 @@ def _run_cmux_command(runtime: Any, command: list[str]) -> str | None:
     if getattr(result, "returncode", 1) == 0:
         return None
     error = _completed_process_error_text(result)
-    runtime._emit("planning.agent_launch.failed", reason="cmux_command_failed", command=command[1], error=error)
+    if emit_failure_event:
+        runtime._emit("planning.agent_launch.failed", reason="cmux_command_failed", command=command[1], error=error)
     return error
 
 

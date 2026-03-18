@@ -151,6 +151,7 @@ There is no simple/advanced split in the current UI.
 | `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name typed after the AI CLI starts. Codex launches send `/prompts:<preset>`; OpenCode launches send `/<preset>`. `implement_plan` remains available as a backward-compatible preset. |
+| `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `1` | Codex-only queued workflow count for the post-`--plan` launcher. The default `1` queues `implement_task` plus one finalization message. `0` keeps the existing one-shot preset launch. Values above `1` queue later `continue_task` and `implement_task` rounds in the same Codex session. OpenCode ignores this setting. Envctl only appends messages in this mode; it does not execute commit/PR shell commands itself. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
@@ -161,6 +162,13 @@ Alias env vars:
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
+
+Cycle mode notes:
+
+- the queued cycle workflow is active only for Codex and only when `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is a positive integer
+- invalid or negative values are ignored and the launcher stays on the one-shot workflow
+- very large values are bounded internally for safety before the workflow is expanded
+- if queue injection fails after the initial `implement_task` submit, envctl falls back to the initial one-shot launch and leaves the Codex surface running
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |

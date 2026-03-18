@@ -144,6 +144,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,
             "preset": runtime.config.plan_agent_preset,
+            "codex_cycles": runtime.config.plan_agent_codex_cycles,
             "shell": runtime.config.plan_agent_shell,
             "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
             "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
@@ -173,6 +174,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     )
     print(f"preferred_port_strategy: {preferred_strategy}")
     print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
+    print(f"plan_agent_codex_cycles: {payload['plan_agent']['codex_cycles']}")
     return 0
 
 

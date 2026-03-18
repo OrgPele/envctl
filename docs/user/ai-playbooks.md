@@ -43,6 +43,8 @@ Current built-in presets:
 
 `implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as a backward-compatible preset.
 
+`continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
+
 Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
 ## Parallel Implementation Loop
@@ -62,6 +64,7 @@ To auto-open one AI terminal per newly created planning worktree in your current
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
+ENVCTL_PLAN_AGENT_CODEX_CYCLES=1
 ```
 
 Shorthand aliases:
@@ -73,6 +76,15 @@ CMUX=true
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
+
+Codex-only cycle mode:
+
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus one finalization message
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus one finalization message
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` or more keeps queueing `continue_task`, `implement_task`, and the finalization message in the same Codex tab
+- OpenCode keeps the existing one-shot flow even when the cycle count is set
+- envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
 
 Then run:
 

@@ -986,6 +986,29 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
 
+    def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent"]["codex_cycles"], 2)
+
     def test_runtime_uses_legacy_spacing_strategy_when_requested(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1183,9 +1206,66 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertTrue(payload["plan_agent_launch"]["enabled"])
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
         self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 1)
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_codex_cycle_workflow_state(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertIsNone(payload["plan_agent_launch"]["workflow_warning"])
+
+    def test_explain_startup_json_keeps_opencode_on_single_prompt_when_cycles_are_set(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["cli"], "opencode")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
 
     def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
