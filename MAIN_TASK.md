@@ -1,248 +1,111 @@
-# Envctl PR Dirty-Worktree Commit Confirmation Plan
+# Envctl Prompt Overwrite Verification And Closeout
 
-## Goals / non-goals / assumptions (if relevant)
-- Goals:
-  - Before interactive dashboard PR creation, detect staged/unstaged dirty worktrees for the selected target scope and ask whether the operator wants to commit first.
-  - Reuse the existing commit action when the operator accepts, rather than duplicating git mutation logic inside the PR flow.
-  - Preserve current PR creation behavior when the operator declines or when the selected target scope is already clean.
-  - Keep batch/headless PR execution deterministic and non-interactive.
-- Non-goals:
-  - Changing direct non-dashboard `envctl pr` or `python -m envctl_engine.actions.actions_cli pr` to auto-prompt or auto-commit in this first change.
-  - Redesigning PR title/body generation, review-base logic, or the underlying `utils/create-pr.sh` / `gh pr create` behavior.
-  - Changing commit semantics away from the current `git add -A` + `git commit` + `git push` flow.
-- Assumptions:
-  - Dirty detection should be evaluated per selected target git root using the same repository resolution contract as existing actions (`python/envctl_engine/actions/project_action_domain.py:resolve_git_root`).
-  - Untracked files should count as dirty for this prompt because the current commit action stages them via `git add -A`.
-  - If the operator declines the prompt, envctl should continue with normal PR creation from the current committed branch state to preserve current behavior.
-  - If the commit step fails for any selected dirty target, envctl should stop before PR creation rather than creating a partial subset of PRs.
+## Context and objective
+The prior iteration implemented the core feature work for prompt overwrite confirmation and the new origin-side review preset:
 
-## Goal (user experience)
-When the operator triggers `pr` from the interactive dashboard and the selected target worktree has staged, unstaged, or untracked changes, envctl should pause before PR creation and ask whether to commit those changes first. Choosing Yes should reuse the existing commit flow, including the current commit-message prompt/default behavior, then continue into PR creation. Choosing No should continue with the current PR flow without committing. Clean targets and non-interactive PR commands should behave exactly as they do today.
+- `python/envctl_engine/runtime/prompt_install_support.py` now plans installs before writing, removes backup-file creation, and gates overwrites behind one approval decision.
+- `python/envctl_engine/runtime/prompt_templates/review_worktree_imp.md` was added.
+- `tests/python/runtime/test_prompt_install_support.py` and `tests/python/runtime/test_command_exit_codes.py` were expanded to cover the new behavior.
+- `docs/user/ai-playbooks.md`, `docs/reference/commands.md`, and `docs/user/python-engine-guide.md` were updated.
 
-## Business logic and data model mapping
-- Dashboard interactive command routing and prompt ownership:
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_run_interactive_command`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_interactive_target_selection`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_pr_selection`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_apply_commit_selection`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_prompt_commit_message`
-  - `python/envctl_engine/ui/dashboard/orchestrator.py:_read_interactive_line`
-- PR/commit action dispatch and env bridging:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_pr_action`
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_commit_action`
-  - `python/envctl_engine/actions/action_command_orchestrator.py:run_project_action`
-  - `python/envctl_engine/actions/action_command_support.py:build_action_extra_env`
-  - `python/envctl_engine/actions/action_command_support.py:build_action_env`
-- Git domain behavior:
-  - `python/envctl_engine/actions/project_action_domain.py:run_pr_action`
-  - `python/envctl_engine/actions/project_action_domain.py:run_commit_action`
-  - `python/envctl_engine/actions/project_action_domain.py:resolve_git_root`
-  - `python/envctl_engine/actions/project_action_domain.py:_run_git`
-  - `python/envctl_engine/actions/project_action_domain.py:_git_output`
-- Existing prompt surfaces and fallback primitives:
-  - `python/envctl_engine/ui/textual/screens/text_input_dialog.py:run_text_input_dialog_textual`
-  - `python/envctl_engine/runtime/engine_runtime.py:_prompt_yes_no`
-  - `python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py:prompt_yes_no`
-- Existing persisted action results that must remain aligned:
-  - `python/envctl_engine/actions/action_command_orchestrator.py:_persist_project_action_result`
-  - `python/envctl_engine/state/models.py:RunState.metadata["project_action_reports"]`
+What remains is verification closeout. The previous delivery did not complete the repo-standard pytest lane or a CLI-visible smoke/integration validation pass. This iteration must finish that work end-to-end and fix any issues uncovered during that verification.
 
-## Current behavior (verified in code)
-- Dashboard `p` goes through dashboard-owned PR selection and then dispatches a normal `pr` route:
-  - `DashboardOrchestrator._run_interactive_command(...)` parses the command, forces `batch=True` plus `interactive_command=True`, applies interactive target selection, and finally calls `runtime.dispatch(route)`.
-  - `DashboardOrchestrator._apply_pr_selection(...)` selects project scope, base branch, and optional PR body, but does not inspect worktree dirtiness or branch into commit behavior.
-- Dashboard `c` already has pre-dispatch message prompting, but `pr` does not:
-  - `_apply_commit_selection(...)` prompts for `commit_message` when the route does not already carry one.
-  - `_apply_pr_selection(...)` prompts for `pr_body`, but there is no adjacent commit decision.
-- PR and commit are separate action routes all the way down:
-  - `ActionCommandOrchestrator.run_pr_action(...)` and `run_commit_action(...)` both delegate to `run_project_action(...)` with different `command_name` / env keys.
-  - `build_action_extra_env(...)` forwards `pr_base`, `pr_body`, `commit_message`, and `commit_message_file`, but nothing about a pre-PR commit consent flow.
-- The domain PR action does not look at working tree status:
-  - `project_action_domain.run_pr_action(...)` checks git availability, detached HEAD, base branch, and existing PR, then runs `utils/create-pr.sh` or `gh pr create`.
-  - There is no `git status` preflight in `run_pr_action(...)`.
-- The domain commit action stages everything and pushes:
-  - `project_action_domain.run_commit_action(...)` runs `git add -A`, `git status --porcelain`, resolves the commit message, commits, and pushes with `git push -u`.
-- There is no reusable dashboard confirmation dialog today:
-  - Dashboard text entry uses `run_text_input_dialog_textual(...)`.
-  - Generic yes/no prompting exists only as a simple `input()` helper in cleanup orchestration (`LifecycleCleanupOrchestrator.prompt_yes_no(...)`), and dashboard PR/commit tests do not cover a confirmation modal.
-- Existing test evidence locks in the current split:
-  - `tests/python/actions/test_actions_cli.py` verifies PR creation, detached-HEAD skip, existing-PR skip, and commit staging/push behavior.
-  - `tests/python/ui/test_dashboard_orchestrator_restart_selector.py` verifies PR target/base/message prompting and separate commit-message prompting, but has no dirty-worktree preflight coverage.
-  - `tests/python/actions/test_actions_cli.py:test_pr_action_interactive_mode_does_not_prompt_for_base_branch` also confirms the domain action path avoids direct `input()` prompting even when `ENVCTL_ACTION_INTERACTIVE=1`.
+## Remaining requirements (complete and exhaustive)
+1. Establish the repo-standard Python validation environment inside this worktree.
+   - Follow the repository’s documented validation flow from `docs/developer/testing-and-validation.md`.
+   - Create a repo-local `.venv` in this worktree if it is missing.
+   - Install the project with dev dependencies into that `.venv`.
+   - Do not treat `python3 -m unittest ...` alone as the final verification signal for this CLI-visible change.
+2. Add CLI-visible integration coverage for the prompt overwrite contract.
+   - Cover the actual command path, not only helper-level unit behavior.
+   - Exercise prompt installation through the runtime CLI entrypoint (`envctl_engine.runtime.cli.run(...)` or an equivalent existing repo test pattern).
+   - Verify a first install writes the prompt file and a second install overwrites in place without creating any `.bak-*` sibling files.
+   - Keep all temporary writable paths inside the current worktree or inside test-managed temporary directories; do not depend on sibling worktrees or user-home state.
+   - Reuse existing runtime test patterns instead of inventing a new harness.
+3. Add CLI-visible installation verification for the new `review_worktree_imp` preset.
+   - Verify the preset can be installed through the normal command path, not only loaded as a raw template.
+   - Assert the written prompt file retains the key origin-review contract:
+     - current repo is the unedited baseline
+     - target worktree comes from `$ARGUMENTS`
+     - review is read-only by default
+     - output is findings-first
+4. Run the authoritative focused pytest lane that the prior task required.
+   - Use the exact focused scope from the previous task unless additional tests are needed because of new integration coverage.
+   - If the new integration test lands in another existing runtime test module, include that module in the same focused pytest invocation.
+5. Perform a repo-local smoke validation for the overwrite flow.
+   - Use a HOME directory located under the current repo root so the worktree boundary is respected.
+   - Validate that repeated installs do not create `.bak-*` files.
+   - If interactive prompt-on-second-run validation is hard to automate cleanly, encode that behavior in test coverage and use smoke validation for the non-interactive approved overwrite path.
+6. Fix any production code, tests, or docs required to make the full verification set pass.
+   - Do not assume the current code is final.
+   - If verification exposes defects in `prompt_install_support.py`, the prompt template, CLI routing, or docs, resolve them in this iteration.
+7. Append the completed verification/fix summary to `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`.
+   - Record the exact `.venv` bootstrap command(s), pytest command(s), smoke command(s), results, and any follow-up fixes made during this iteration.
 
-## Root cause(s) / gaps
-- There is no read-only dirty-worktree classification helper that the dashboard PR flow can call before dispatching the real PR action.
-- The dashboard PR flow already owns interactive prompts, but it stops at project/base/body selection and never decides whether to branch into a commit-first step.
-- The only existing yes/no prompt primitive is a basic stdin helper outside the dashboard UI stack, so there is no first-class confirmation surface for this decision.
-- Commit and PR are intentionally independent actions; without an orchestrated preflight, the PR flow cannot reuse commit behavior before dispatch.
-- The current tests validate PR and commit as separate flows, so there is no regression coverage for the requested behavior: dirty selected target(s) plus interactive dashboard PR creation.
+## Gaps from prior iteration (mapped to evidence)
+- The previous task required `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`, but this worktree currently has no repo-local virtualenv.
+  - Evidence: `./.venv/bin/python` was absent during audit.
+- The system interpreter in this worktree does not currently have pytest installed.
+  - Evidence: `python3 -m pytest --version` failed with `No module named pytest`.
+- The existing tree-specific changelog entry only records `python3 -m unittest ...` runs, not the required pytest lane or a CLI-visible smoke/integration verification pass.
+  - Evidence: `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+- Current coverage is strong at the unit/command level, but there is still no dedicated CLI-visible integration regression proving the full repeated-install path end-to-end.
+  - Evidence: the changed tests are in `tests/python/runtime/test_prompt_install_support.py` and `tests/python/runtime/test_command_exit_codes.py`; neither currently performs a true command-path double-install smoke/assertion beyond direct `cli.run(...)` exit-code behavior.
 
-## Plan
-### 1) Define the contract narrowly around interactive dashboard PR creation
-- Limit the first implementation to dashboard-owned interactive PR creation triggered through `DashboardOrchestrator`.
-- Preserve current behavior for:
-  - clean targets
-  - operator declining the prompt
-  - operator running non-interactive / batch / headless PR commands
-  - direct CLI/domain PR execution outside the dashboard
-- Document explicitly that the prompt is about committing the currently dirty selected target scope before PR creation, not about changing the eventual PR payload generation rules.
+## Acceptance criteria (requirement-by-requirement)
+1. Repo-local validation environment exists and is usable.
+   - `.venv/bin/python` exists inside this worktree.
+   - Dev dependencies are installed successfully enough to run pytest.
+2. CLI-visible overwrite integration coverage exists and passes.
+   - Repeated install coverage proves there is no `.bak-*` creation on overwrite.
+   - Coverage proves the command path still distinguishes `written` vs `overwritten`.
+3. CLI-visible `review_worktree_imp` installation coverage exists and passes.
+   - The installed file lands in the expected target directory.
+   - The installed body contains the required baseline/worktree/read-only/findings-first guidance.
+4. The focused pytest lane passes under `.venv`.
+   - At minimum:
+     - `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q`
+   - If new integration coverage lands elsewhere, the final command must include that test module too.
+5. Repo-local smoke validation passes.
+   - Repeated prompt installs using a repo-local HOME do not leave any `.bak-*` files behind.
+6. Changelog is updated with this iteration’s actual verification evidence.
+   - The entry names commands and results precisely, not generically.
 
-### 2) Add a reusable, read-only dirty-worktree probe
-- Add a helper under `python/envctl_engine/actions/` or `python/envctl_engine/ui/dashboard/` that:
-  - resolves the target git root with `resolve_git_root(project_root, repo_root)`
-  - runs `git status --porcelain --untracked-files=all`
-  - classifies staged, unstaged, and untracked dirtiness
-  - returns a structured summary per selected target or deduplicated git root
-- Keep the helper read-only and bounded:
-  - no staging
-  - no commit attempts
-  - no raw porcelain output printed to the user
-- Deduplicate repeated git roots so the same worktree is not probed or prompted more than once.
+## Required implementation scope (frontend/backend/data/integration)
+- Backend/runtime:
+  - Extend runtime test coverage around `install-prompts` CLI-visible behavior.
+  - Fix runtime code only if the stronger verification surface reveals defects.
+- Docs:
+  - Update user/reference docs only if verification uncovers incorrect instructions or examples.
+  - Append the verification summary to the tree-specific changelog.
+- Frontend:
+  - None unless verification unexpectedly reveals a frontend-facing dependency.
+- Data/config/migrations:
+  - No database or persisted data migrations are expected.
+  - Repo-local `.venv` bootstrap is allowed and expected inside this worktree.
 
-### 3) Insert a PR preflight hook after route scoping but before dispatch
-- Add a dedicated helper in `DashboardOrchestrator`, for example `_maybe_prepare_pr_commit(...)`, and call it from `_run_interactive_command(...)` after `_apply_interactive_target_selection(...)` has finalized the PR route.
-- This placement ensures the preflight sees the actual selected PR scope for both:
-  - the `p` alias flow
-  - typed dashboard commands like `pr --project foo --pr-base main`
-- The preflight helper should:
-  - resolve the selected project targets from the finalized route
-  - run dirty-state detection for those targets
-  - skip immediately if all are clean
-  - prompt once when any selected target is dirty
+## Required tests and quality gates
+- Read `docs/developer/testing-and-validation.md` before changing the verification approach.
+- Add or extend existing runtime tests instead of creating an ad hoc script-only check.
+- Run the focused pytest command under `.venv`.
+- Run any new integration/smoke command(s) needed to prove the command path.
+- If verification changes test placement or adds a new runtime test module, keep the final validation command list explicit in the changelog.
 
-### 4) Add a dashboard confirmation surface with clear fallback behavior
-- Prefer a reusable dashboard confirmation helper rather than embedding raw `input()` directly into PR routing code.
-- Recommended shape:
-  - `DashboardOrchestrator._prompt_yes_no_dialog(...)`
-  - optional new shared UI helper such as `python/envctl_engine/ui/textual/screens/confirm_dialog.py`
-- Fallback order should be explicit:
-  1. a runtime-provided confirm hook if one is added
-  2. a Textual confirm dialog when available
-  3. runtime `_prompt_yes_no(...)` or `_read_interactive_line(...)` fallback for basic TTY operation
-- Treat the result as tri-state:
-  - accept: run commit first
-  - decline: continue PR without commit
-  - cancel/escape: abort the PR command and return to the dashboard without dispatching either action
-
-### 5) Reuse the existing commit route instead of duplicating git mutation logic
-- When the operator accepts, synthesize and dispatch a `commit` route rather than calling `git add` / `git commit` directly from the PR preflight.
-- Reuse existing commit semantics:
-  - current target scoping
-  - existing commit message prompt/default logic via `_apply_commit_selection(...)`
-  - existing action env propagation and domain execution
-- Recommended execution sequence:
-  1. finalize the PR route
-  2. detect dirty selected targets
-  3. prompt accept / decline / cancel
-  4. if accept, build a commit route scoped to the dirty subset
-  5. dispatch commit and reload latest state
-  6. only if commit succeeded, dispatch the original PR route
-- Do not add a second git mutation implementation in the dashboard layer.
-
-### 6) Keep multi-target behavior safe and deterministic
-- Dirty detection should be per selected target or git root so the prompt can report whether one or many selected targets are dirty.
-- For multi-target PR flows:
-  - commit only the dirty subset
-  - stop the PR phase if any commit target fails
-  - do not proceed with PR creation for a clean subset while another selected target had a commit failure
-- Preserve current `project_action_reports` semantics for commit and PR actions; the preflight itself should not invent a new persisted action result type unless implementation evidence proves it is needed.
-
-### 7) Keep non-interactive and direct CLI behavior unchanged in the first iteration
-- Do not add implicit commit-before-PR behavior to:
-  - `envctl pr --headless`
-  - `envctl pr --batch`
-  - `python -m envctl_engine.actions.actions_cli pr`
-- Keep `project_action_domain.run_pr_action(...)` prompt-free so existing direct-action tests that guard against unexpected prompting remain valid.
-- If the product later wants a generic CLI prompt or an auto-accept flag, treat that as follow-on work rather than widening this first change.
-
-### 8) Add bounded diagnostics and documentation updates
-- Emit dashboard-level events for:
-  - dirty state detected / not detected
-  - prompt shown
-  - operator accepted / declined / cancelled
-  - commit-before-PR started / failed / completed
-- Suggested event names:
-  - `dashboard.pr_dirty_state`
-  - `dashboard.pr_dirty_commit.prompt`
-  - `dashboard.pr_dirty_commit.accepted`
-  - `dashboard.pr_dirty_commit.declined`
-  - `dashboard.pr_dirty_commit.cancelled`
-  - `dashboard.pr_dirty_commit.failed`
-- Keep event payloads bounded to counts and coarse dirtiness categories, not raw `git status` output.
-- Update docs/changelog to clarify that dashboard `pr` may now offer a commit-first prompt when selected targets are dirty, and that declining preserves previous PR behavior.
-
-## Tests (add these)
-### Backend tests
-- Extend [tests/python/actions/test_actions_cli.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_cli.py):
-  - add coverage for the dirty-state classification helper: clean, staged-only, unstaged-only, untracked-only, mixed
-  - keep a regression proving `run_pr_action(...)` itself still does not prompt or auto-commit in the domain/CLI path
-- Extend [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py):
-  - add a parity regression proving batch/headless PR behavior remains prompt-free
-  - add a regression that the commit-before-PR dashboard flow still preserves existing `ENVCTL_ACTION_INTERACTIVE` semantics for the commit step when routed through the action executor
-
-### Frontend tests
-- Extend [tests/python/ui/test_dashboard_orchestrator_restart_selector.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_dashboard_orchestrator_restart_selector.py):
-  - dirty selected target plus Yes dispatches commit first, then PR
-  - dirty selected target plus No skips commit and dispatches PR only
-  - dirty selected target plus cancel aborts without dispatching commit or PR
-  - clean selected target does not prompt
-  - explicit typed dashboard PR routes still go through the dirty preflight
-  - commit failure aborts PR dispatch
-  - multi-target selection commits only dirty targets and stops PR if any commit fails
-- If a new confirm dialog is added, add `tests/python/ui/test_confirm_dialog.py` or extend [tests/python/ui/test_text_input_dialog.py](/Users/kfiramar/projects/current/envctl/tests/python/ui/test_text_input_dialog.py) with button/key-path coverage for accept / decline / cancel behavior.
-
-### Integration/E2E tests
-- Prefer one focused integration extension in [tests/python/actions/test_actions_parity.py](/Users/kfiramar/projects/current/envctl/tests/python/actions/test_actions_parity.py) only if unit-level dashboard tests are not sufficient to prove the full sequence:
-  - dirty working tree detected
-  - operator accepts commit
-  - commit route runs before PR route
-  - PR route still emits the existing success/status behavior afterward
-- No broader end-to-end suite is required unless the new confirmation UI introduces backend- or TTY-specific regressions that targeted dashboard tests cannot reproduce.
-
-## Observability / logging (if relevant)
-- Keep new diagnostics at the dashboard/orchestration layer, not inside the domain PR action.
-- Record only bounded summary data:
-  - selected project count
-  - dirty project count
-  - dirtiness category presence (`staged`, `unstaged`, `untracked`)
-  - operator choice
-  - follow-on commit outcome
-- Do not emit raw `git status --porcelain` output into standard runtime events.
-- If a new confirmation dialog is added, emit fallback-reason diagnostics in the same style used elsewhere when Textual is unavailable.
-
-## Rollout / verification
-- Implement in this order:
-  1. read-only dirty-state probe and backend tests
-  2. dashboard confirmation helper and fallback behavior
-  3. PR preflight orchestration with commit-route reuse
-  4. docs/changelog updates
-- Verification commands:
-  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_cli`
-  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_orchestrator_restart_selector`
-  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_parity`
-  - if a new dialog helper is added: `PYTHONPATH=python python3 -m unittest tests.python.ui.test_text_input_dialog tests.python.ui.test_confirm_dialog`
-- Manual verification:
-  - from the interactive dashboard, trigger `pr` on a target with only unstaged changes and confirm the prompt appears
-  - choose Yes and verify commit runs before PR creation
-  - choose No and verify PR creation proceeds without a new commit
-  - choose Cancel and verify no commit or PR is run
-  - repeat on a clean target and confirm no extra prompt appears
-  - verify headless/batch `pr` behavior remains unchanged
+## Edge cases and failure handling
+- Repeated install into an already-populated prompt directory must not create `.bak-*` files.
+- Verification must respect the worktree boundary:
+  - use repo-local HOME paths for smoke checks
+  - do not write to user-home prompt directories during validation
+  - do not depend on writes to sibling worktrees
+- If `.venv` bootstrap fails, fix the bootstrap issue or record the exact blocker with evidence before stopping.
+- If stronger CLI-visible coverage reveals mismatches between docs and behavior, update both in the same iteration.
+- If the installed `review_worktree_imp` prompt text differs from the intended review contract, fix the template and extend the assertion set so the regression cannot recur.
 
 ## Definition of done
-- Interactive dashboard PR creation detects dirty selected targets and offers a commit-first prompt before PR dispatch.
-- Accepting the prompt reuses the existing commit route and only proceeds to PR creation if commit succeeds.
-- Declining preserves current PR behavior, and cancelling aborts the dashboard PR command cleanly.
-- Direct CLI/domain PR execution and headless/batch PR behavior remain unchanged.
-- Targeted dashboard, action, and prompt-surface tests cover the new flow and its clean/dirty/cancel/failure edge cases.
-
-## Risk register (trade-offs or missing tests)
-- Risk: the existing commit action stages all files with `git add -A`, so operators may commit untracked files when they expected only already-staged changes.
-  - Mitigation: make the prompt copy explicit that accepting uses the normal commit action for the selected target scope, including unstaged/untracked changes.
-- Risk: adding a new dashboard confirmation surface could reintroduce interactive input regressions in legacy/Textual fallback paths.
-  - Mitigation: prefer a small shared dialog helper with explicit fallback coverage and targeted UI tests.
-- Risk: multi-target flows can still end in a partially advanced local state if one target commits successfully and a later target fails before PR creation.
-  - Mitigation: abort the PR phase on the first commit failure, surface existing commit failure details, and keep the plan/documentation explicit about this safe-stop behavior.
-
-## Open questions (only if unavoidable)
-- None.
+- All remaining verification work is complete, not partially attempted.
+- Repo-local `.venv` exists and the focused pytest lane passes inside it.
+- CLI-visible overwrite integration coverage exists and is green.
+- CLI-visible `review_worktree_imp` installation coverage exists and is green.
+- Repo-local smoke validation confirms repeated installs leave no `.bak-*` files.
+- Any defects found during verification are fixed in the same iteration.
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md` is appended with exact commands, results, and any follow-up fixes.

@@ -23,7 +23,8 @@ Current targets:
 
 Notes:
 
-- existing files are backed up in-place before overwrite
+- existing files are overwritten in place after one confirmation prompt for the whole command
+- use `--yes` or `--force` to approve overwrites non-interactively
 - `--dry-run` shows what would be written without mutating anything
 - this command is intentionally unavailable inside dashboard interactive mode
 - the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
@@ -33,11 +34,14 @@ Current built-in presets:
 - `implement_plan`
 - `implement_task`
 - `review_task_imp`
+- `review_worktree_imp`
 - `continue_task`
 - `merge_trees_into_dev`
 - `create_plan`
 
 `implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as a backward-compatible preset.
+
+Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. Pass the target worktree path or name as `$ARGUMENTS`; the prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
 ## Parallel Implementation Loop
 

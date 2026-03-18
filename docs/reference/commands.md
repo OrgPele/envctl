@@ -66,6 +66,7 @@ Behavior:
   - `implement_plan`
   - `implement_task`
   - `review_task_imp`
+  - `review_worktree_imp`
   - `continue_task`
   - `merge_trees_into_dev`
   - `create_plan`
@@ -73,8 +74,11 @@ Behavior:
   - Codex: `~/.codex/prompts`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
-- existing files are backed up in-place before overwrite
+- existing files are overwritten in place after one confirmation prompt for the command
+- use `--yes` or `--force` to approve overwrites without prompting
+- `--json` and non-interactive TTY-less runs fail cleanly when overwrite approval is required but not pre-approved
 - this command is available from the normal CLI, but not from dashboard interactive mode
+- `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; pass the target worktree path or name as `$ARGUMENTS`
 
 ## Main Runtime Commands
 
@@ -139,6 +143,10 @@ Run and inspect:
 
 ```bash
 envctl show-config --json
+envctl explain-startup --json
+envctl --resume
+envctl dashboard
+```
 
 Review branch-relative changes:
 
@@ -155,10 +163,6 @@ Single-mode `review` resolves its base branch in this order:
 4. the repo default branch
 
 The generated markdown now reports the resolved base branch, base ref, resolution source, merge-base, and the full diff from that merge-base through the current worktree state.
-envctl explain-startup --json
-envctl --resume
-envctl dashboard
-```
 
 Run tests:
 
@@ -221,10 +225,6 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it before opening the new surfaces
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
-=======
-- treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
-- write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries
->>>>>>> 4c1f35c (Replaced the default `envctl commit` message source with a repo-local `.envctl-commit-message.md` ledger that uses a single `### Envctl pointer ###` marker, then aligned the dashboard copy, installed AI prompt presets, and user docs to the new contract.)
 
 Debug and diagnostics:
 

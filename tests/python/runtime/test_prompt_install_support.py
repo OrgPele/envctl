@@ -63,11 +63,12 @@ class PromptInstallSupportTests(unittest.TestCase):
             rendered = buffer.getvalue()
             self.assertIn("Would install implement_task for codex", rendered)
             self.assertIn("Would install review_task_imp for codex", rendered)
+            self.assertIn("Would install review_worktree_imp for codex", rendered)
             self.assertIn("Would install continue_task for codex", rendered)
             self.assertIn("Would install merge_trees_into_dev for codex", rendered)
             self.assertIn("Would install create_plan for codex", rendered)
             self.assertIn("Would install implement_plan for codex", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 6)
+            self.assertEqual(rendered.count("codex: planned "), 7)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,10 +94,113 @@ class PromptInstallSupportTests(unittest.TestCase):
                     str(Path(tmpdir) / ".codex" / "prompts" / "implement_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "merge_trees_into_dev.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "review_task_imp.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "review_worktree_imp.md"),
                 ],
             )
 
-    def test_install_prompts_overwrites_existing_file_with_backup(self) -> None:
+    def test_install_prompts_prompts_once_and_overwrites_all_existing_targets_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            claude_target = home / ".claude" / "commands" / "implement_task.md"
+            codex_target.parent.mkdir(parents=True, exist_ok=True)
+            claude_target.parent.mkdir(parents=True, exist_ok=True)
+            codex_target.write_text("old codex prompt\n", encoding="utf-8")
+            claude_target.write_text("old claude prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex,claude"], env={})
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("builtins.input", return_value="y") as prompt_mock,
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            rendered = buffer.getvalue()
+            self.assertIn("codex: overwritten", rendered)
+            self.assertIn("claude: overwritten", rendered)
+            self.assertEqual(prompt_mock.call_count, 1)
+            prompt_text = prompt_mock.call_args.args[0]
+            self.assertIn("Overwrite 2 existing prompt file(s)?", prompt_text)
+            self.assertIn("codex", prompt_text)
+            self.assertIn("claude", prompt_text)
+            for target in (codex_target, claude_target):
+                written = target.read_text(encoding="utf-8")
+                self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
+                self.assertIn("Before any implementation work, run `git add .`", written)
+            self.assertEqual(list(home.rglob("*.bak-*")), [])
+
+    def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            claude_target = home / ".claude" / "commands" / "implement_task.md"
+            codex_target.parent.mkdir(parents=True, exist_ok=True)
+            codex_target.write_text("old codex prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex,claude"], env={})
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("builtins.input", return_value="n") as prompt_mock,
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            self.assertEqual(prompt_mock.call_count, 1)
+            self.assertEqual(codex_target.read_text(encoding="utf-8"), "old codex prompt\n")
+            self.assertFalse(claude_target.exists())
+            self.assertIn("Overwrite declined", buffer.getvalue())
+
+    def test_install_prompts_yes_bypasses_prompt_for_existing_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex", "--yes", "--json"], env={})
+
+            buffer = StringIO()
+            with redirect_stdout(buffer), patch(
+                "builtins.input", side_effect=AssertionError("input() should not be called")
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["results"][0]["status"], "overwritten")
+            self.assertIsNone(payload["results"][0]["backup_path"])
+            self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
+
+    def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex", "--force", "--json"], env={})
+
+            buffer = StringIO()
+            with redirect_stdout(buffer), patch(
+                "builtins.input", side_effect=AssertionError("input() should not be called")
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["results"][0]["status"], "overwritten")
+            self.assertIsNone(payload["results"][0]["backup_path"])
+
+    def test_install_prompts_json_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
             target = home / ".codex" / "prompts" / "implement_task.md"
@@ -106,21 +210,61 @@ class PromptInstallSupportTests(unittest.TestCase):
             route = parse_route(["install-prompts", "--cli", "codex", "--json"], env={})
 
             buffer = StringIO()
+            with redirect_stdout(buffer), patch(
+                "builtins.input", side_effect=AssertionError("input() should not be called")
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["results"][0]["status"], "failed")
+            self.assertIn("Overwrite approval required", payload["results"][0]["message"])
+            self.assertIn("--yes or --force", payload["results"][0]["message"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
+
+    def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex"], env={})
+
+            buffer = StringIO()
             with (
                 redirect_stdout(buffer),
-                patch("envctl_engine.runtime.prompt_install_support._backup_timestamp", return_value="20260310-150000"),
+                patch("sys.stdin.isatty", return_value=False),
+                patch("sys.stdout.isatty", return_value=False),
+                patch("builtins.input", side_effect=AssertionError("input() should not be called")),
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            self.assertIn("Overwrite approval required", buffer.getvalue())
+            self.assertIn("--yes or --force", buffer.getvalue())
+            self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
+
+    def test_install_prompts_dry_run_existing_target_does_not_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(["install-prompts", "--cli", "codex", "--dry-run", "--json"], env={})
+
+            buffer = StringIO()
+            with redirect_stdout(buffer), patch(
+                "builtins.input", side_effect=AssertionError("input() should not be called")
             ):
                 code = run_install_prompts_command(runtime, route)
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["results"][0]["status"], "overwritten")
-            backup_path = home / ".codex" / "prompts" / "implement_task.bak-20260310-150000.md"
-            self.assertEqual(payload["results"][0]["backup_path"], str(backup_path))
-            self.assertEqual(backup_path.read_text(encoding="utf-8"), "old prompt\n")
-            written = target.read_text(encoding="utf-8")
-            self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
-            self.assertIn("Before any implementation work, run `git add .`", written)
+            self.assertEqual(payload["results"][0]["status"], "planned")
+            self.assertIsNone(payload["results"][0]["backup_path"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
 
     def test_install_prompts_reports_partial_failure_for_invalid_cli_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -177,10 +321,12 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
         self.assertIn("implement_task", _available_presets())
         self.assertIn("review_task_imp", _available_presets())
+        self.assertIn("review_worktree_imp", _available_presets())
         self.assertIn("continue_task", _available_presets())
         self.assertIn("merge_trees_into_dev", _available_presets())
         self.assertIn("create_plan", _available_presets())
         self.assertIn("implement_plan", _available_presets())
+        self.assertEqual(len(_available_presets()), 7)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -224,6 +370,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)
         self.assertIn("### Envctl pointer ###", review_prompt.body)
+
+        review_worktree_prompt = _load_template("review_worktree_imp")
+        self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
+        self.assertIn("current local repo directory is the unedited baseline", review_worktree_prompt.body)
+        self.assertIn("target worktree path or name that comes from `$ARGUMENTS`", review_worktree_prompt.body)
+        self.assertIn("read-only", review_worktree_prompt.body)
+        self.assertIn("findings-first", review_worktree_prompt.body)
 
         merge_prompt = _load_template("merge_trees_into_dev")
         self.assertEqual(merge_prompt.name, "merge_trees_into_dev")
