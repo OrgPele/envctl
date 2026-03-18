@@ -958,6 +958,53 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.dispatched_routes, [])
         self.assertIn("Cancelled PR creation.", out.getvalue())
 
+    def test_prompt_yes_no_dialog_supports_runtime_single_argument_signature(self) -> None:
+        prompts: list[str] = []
+
+        class _RuntimeSingleArgConfirm:
+            @staticmethod
+            def _prompt_yes_no(prompt: str) -> bool:
+                prompts.append(prompt)
+                return True
+
+        result = DashboardOrchestrator._prompt_yes_no_dialog(
+            _RuntimeSingleArgConfirm(),
+            title="Commit dirty changes before PR?",
+            prompt="Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: ",
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            prompts,
+            ["Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: "],
+        )
+
+    def test_prompt_yes_no_dialog_blank_fallback_declines_commit(self) -> None:
+        class _RuntimeReadFallback:
+            def __init__(self) -> None:
+                self.read_prompts: list[str] = []
+                self.read_responses: list[str] = [""]
+
+            def _read_interactive_command_line(self, prompt: str) -> str:
+                self.read_prompts.append(prompt)
+                if self.read_responses:
+                    return self.read_responses.pop(0)
+                return ""
+
+        runtime = _RuntimeReadFallback()
+
+        result = DashboardOrchestrator._prompt_yes_no_dialog(
+            runtime,
+            title="Commit dirty changes before PR?",
+            prompt="Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: ",
+        )
+
+        self.assertFalse(result)
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Main has unstaged changes. Commit before PR? [y]es / [n]o / [c]ancel: "],
+        )
+
     def test_pr_clean_target_skips_commit_prompt(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)

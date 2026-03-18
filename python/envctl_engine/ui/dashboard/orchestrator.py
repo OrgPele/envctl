@@ -728,14 +728,17 @@ class DashboardOrchestrator:
     def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> bool | None:
         confirm = getattr(runtime, "_prompt_yes_no", None)
         if callable(confirm):
-            result = confirm(title=title, prompt=prompt)
+            try:
+                result = confirm(title=title, prompt=prompt)
+            except TypeError:
+                result = confirm(prompt)
             if result is None:
                 return None
             return bool(result)
         response = DashboardOrchestrator._read_interactive_line(runtime, prompt).strip().lower()
-        if response in {"", "y", "yes"}:
+        if response in {"y", "yes"}:
             return True
-        if response in {"n", "no"}:
+        if response in {"", "n", "no"}:
             return False
         if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
             return None

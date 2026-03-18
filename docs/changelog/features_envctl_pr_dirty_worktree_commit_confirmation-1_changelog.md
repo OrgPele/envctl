@@ -32,6 +32,10 @@ Added a dashboard-side PR preflight that detects dirty selected worktrees, asks 
 ### Tests run + results
 - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_cli tests.python.ui.test_dashboard_orchestrator_restart_selector tests.python.actions.test_actions_parity`
   - result: `Ran 169 tests`, `OK`
+- `./.venv/bin/python -m pytest tests/python/ui/test_dashboard_orchestrator_restart_selector.py -q`
+  - result: `48 passed, 8 subtests passed`
+- `./.venv/bin/python -m pytest tests/python/actions/test_actions_cli.py tests/python/ui/test_dashboard_orchestrator_restart_selector.py tests/python/actions/test_actions_parity.py -q`
+  - result: `172 passed, 17 subtests passed`
 
 ### Config / env / migrations
 - No config schema changes.
@@ -42,3 +46,4 @@ Added a dashboard-side PR preflight that detects dirty selected worktrees, asks 
 - Dirty detection is repo-root based per selected target git root, so multiple selected projects sharing the same git root are intentionally deduplicated for the preflight commit prompt.
 - Shared-root multi-select PR dispatch is also deduplicated at the route layer, because PR/commit actions operate at git-root scope rather than per logical project within the same branch.
 - The existing dashboard PR message prompt still occurs before the dirty-worktree commit confirmation, because the PR target/base selection flow owns that prompt today.
+- Hardening pass: `_prompt_yes_no_dialog(...)` now supports both the dashboard test stub signature (`title=..., prompt=...`) and the real runtime `_prompt_yes_no(prompt)` shape, and blank raw-input fallback is treated as decline rather than implicit commit acceptance.
