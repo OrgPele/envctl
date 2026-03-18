@@ -66,3 +66,37 @@ Config / env / migrations:
 
 Risks / notes:
 - The carry-forward scope is verification-oriented, not core feature implementation: repo evidence shows the main runtime/docs/test changes landed, but the authoritative pytest lane and CLI-visible smoke/integration validation were not completed.
+
+## 2026-03-18 - Verification closeout for prompt overwrite review preset
+
+Scope:
+- Completed the remaining verification-focused iteration for the prompt overwrite confirmation and origin-review preset work.
+- Added CLI-path integration coverage through `envctl_engine.runtime.cli.run(...)`.
+- Bootstrapped the repo-local `.venv`, ran the authoritative focused pytest lane, and completed repo-local smoke validation against the installed CLI entrypoint.
+
+Key behavior changes:
+- Added CLI integration coverage proving the first `install-prompts` run reports `written`, a second approved run reports `overwritten`, and no `.bak-*` prompt files are created through the real command path.
+- Added CLI integration coverage proving `review_worktree_imp` installs through the normal command path and preserves the origin-review contract in the written prompt body.
+- No production runtime/doc behavior changed during this closeout step; the work here completed the missing verification surface and environment setup.
+
+Files / modules touched:
+- `tests/python/runtime/test_command_exit_codes.py`
+- `docs/changelog/features_envctl_prompt_overwrite_confirmation_and_origin_review_preset-1_changelog.md`
+
+Tests run + results:
+- `python3 -m unittest tests.python.runtime.test_command_exit_codes` -> passed
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_command_exit_codes.py tests/python/runtime/test_engine_runtime_dispatch.py -q` -> passed (`46 passed, 4 subtests passed`)
+- Repo-local smoke validation passed:
+  - `HOME="$PWD/.tmp/prompt-smoke-home" ./.venv/bin/envctl install-prompts --cli codex`
+  - `HOME="$PWD/.tmp/prompt-smoke-home" ./.venv/bin/envctl install-prompts --cli codex --yes`
+  - `find .tmp/prompt-smoke-home -name '*.bak-*' -print` -> no output
+  - `HOME="$PWD/.tmp/prompt-smoke-home" ./.venv/bin/envctl install-prompts --cli codex --preset review_worktree_imp --yes`
+
+Config / env / migrations:
+- Bootstrapped the repo-local validation environment:
+  - `python3.12 -m venv .venv`
+  - `./.venv/bin/python -m pip install -e '.[dev]'`
+- No runtime config changes or migrations.
+
+Risks / notes:
+- Smoke validation used a repo-local HOME under the current worktree and validated the non-interactive approved overwrite path; the interactive second-run prompt behavior remains covered by automated tests rather than manual smoke interaction.

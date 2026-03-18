@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -301,6 +302,74 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
             self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
+
+    def test_install_prompts_cli_run_writes_then_overwrites_without_backup_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            first_stdout = StringIO()
+            second_stdout = StringIO()
+
+            with (
+                patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap,
+            ):
+                with redirect_stdout(first_stdout):
+                    first_code = cli.run(
+                        ["install-prompts", "--cli", "codex", "--json"],
+                        env={
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "HOME": str(home),
+                        },
+                    )
+                with redirect_stdout(second_stdout):
+                    second_code = cli.run(
+                        ["install-prompts", "--cli", "codex", "--yes", "--json"],
+                        env={
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "HOME": str(home),
+                        },
+                    )
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            bootstrap.assert_not_called()
+            first_payload = json.loads(first_stdout.getvalue())
+            second_payload = json.loads(second_stdout.getvalue())
+            self.assertEqual(first_payload["results"][0]["status"], "written")
+            self.assertEqual(second_payload["results"][0]["status"], "overwritten")
+            self.assertTrue(target.exists())
+            self.assertEqual(list(home.rglob("*.bak-*")), [])
+
+    def test_install_prompts_cli_run_installs_review_worktree_prompt_with_origin_review_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "review_worktree_imp.md"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--preset", "review_worktree_imp", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("current local repo directory is the unedited baseline", written)
+            self.assertIn("target worktree path or name that comes from `$ARGUMENTS`", written)
+            self.assertIn("read-only", written)
+            self.assertIn("findings-first", written)
 
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
