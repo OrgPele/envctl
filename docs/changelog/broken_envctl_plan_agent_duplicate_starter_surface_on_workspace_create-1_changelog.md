@@ -123,3 +123,64 @@ Config / env / migrations:
 Risks / notes:
 - Batch-mode runs in this repo were sufficient to confirm surface-count behavior, but interactive verification provided the reliable proof that the real launched tab completed bootstrap before the process exited.
 - The live verification created additional worktrees under `trees/` for the exercised plans; that is expected for this task because the verification had to run the real `--plan` workflow end to end.
+
+## 2026-03-19 - Harden starter-surface parsing against duplicate and invalid refs
+
+Scope:
+- Tightened the cmux starter-surface parser used by the newly created workspace probe.
+- Added focused regression tests for duplicate surface refs and malformed `surface:` tokens so the launcher keeps reusing the starter surface when cmux output repeats the same handle.
+
+Key behavior changes:
+- `_surface_ids_from_list_output(...)` now accepts only numeric cmux surface handles that match `surface:<digits>`.
+- The parser now de-duplicates repeated surface refs while preserving encounter order, preventing a false `ambiguous` probe result when `cmux list-pane-surfaces` echoes the same surface more than once.
+- Starter-surface reuse remains conservative: only one unique valid surface ref results in reuse; anything else still falls back safely to `cmux new-surface`.
+
+Files / modules touched:
+- `python/envctl_engine/planning/plan_agent_launch_support.py`
+- `tests/python/planning/test_plan_agent_launch_support.py`
+- `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_surface_ids_parser_dedupes_repeated_surface_refs tests.python.planning.test_plan_agent_launch_support.PlanAgentLaunchSupportTests.test_surface_ids_parser_ignores_non_numeric_surface_tokens` -> passed (`Ran 2 tests`, `OK`)
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed (`Ran 41 tests`, `OK`)
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed (`Ran 58 tests`, `OK`)
+
+Config / env / migrations:
+- No config or env contract changes.
+- No migrations.
+
+Risks / notes:
+- This hardening assumes valid cmux surface refs continue to use the existing numeric `surface:<n>` format described by current repo evidence and tests.
+- The parser intentionally preserves first-seen order after de-duplication so downstream behavior stays stable if later code reuses the first detected starter surface.
+
+## 2026-03-19 - Archive completed task and close remaining scope
+
+Scope:
+- Audited the current `MAIN_TASK.md` against the implemented launcher code, targeted tests, updated docs, changelog evidence, and recent git history.
+- Archived the previous task into `OLD_TASK_2.md` and replaced `MAIN_TASK.md` with a closure-only follow-up task because no implementation scope remains for this bug on the current branch.
+
+Key behavior changes:
+- No runtime or user-facing behavior changed in this audit/closure step.
+- The new `MAIN_TASK.md` now records that the starter-surface reuse fix is complete and that any future work should start from fresh contradictory evidence rather than re-opening completed scope.
+
+Files / modules touched:
+- `OLD_TASK_2.md`
+- `MAIN_TASK.md`
+- `docs/changelog/broken_envctl_plan_agent_duplicate_starter_surface_on_workspace_create-1_changelog.md`
+
+Tests run + results:
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support` -> passed
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_command_parity` -> passed
+
+Config / env / migrations:
+- No config changes.
+- No env contract changes.
+- No migrations.
+
+Risks / notes:
+- This closure step relies on existing repo evidence that the task is fully implemented:
+  - launcher behavior in `python/envctl_engine/planning/plan_agent_launch_support.py`
+  - regression coverage in `tests/python/planning/test_plan_agent_launch_support.py`
+  - user-facing docs in `docs/reference/configuration.md`, `docs/reference/commands.md`, and `docs/user/planning-and-worktrees.md`
+  - recorded live cmux verification already present earlier in this changelog
+- If future cmux behavior changes invalidate the current assumptions, a new task should be created from fresh failing evidence rather than broadening this closure task.

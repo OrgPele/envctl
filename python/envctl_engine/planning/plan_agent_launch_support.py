@@ -1035,10 +1035,15 @@ def _workspace_entries_from_list_output(raw: str) -> tuple[tuple[str, str], ...]
 
 def _surface_ids_from_list_output(raw: str) -> tuple[str, ...]:
     surface_ids: list[str] = []
+    seen: set[str] = set()
     for token in raw.replace("\n", " ").split():
         normalized = token.strip()
-        if normalized.startswith("surface:"):
-            surface_ids.append(normalized)
+        if not re.fullmatch(r"surface:\d+", normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        surface_ids.append(normalized)
     return tuple(surface_ids)
 
 
