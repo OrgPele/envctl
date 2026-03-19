@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Callable, Mapping
 
 from envctl_engine.config import LocalConfigState, discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state
+from envctl_engine.runtime.runtime_dependency_contract import (
+    missing_runtime_dependency_modules,
+    runtime_dependency_failure_message,
+)
+from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_terminal, render_paths_in_terminal_text
 from envctl_engine.ui.textual.screens.config_wizard import ConfigWizardResult, run_config_wizard_textual
 
 
@@ -30,7 +36,7 @@ def ensure_local_config(
     if result is None:
         _emit_local_config_event(emit, "config.bootstrap.cancelled", local_state)
         raise RuntimeError("Configuration wizard cancelled. envctl requires a local .envctl file to continue.")
-    message = _save_message(result)
+    message = _save_message(result, env=env)
     _emit_ignore_status_event(emit, local_state=local_state, result=result)
     _emit_local_config_event(emit, "config.bootstrap.saved", local_state, saved_path=str(result.save_result.path))
     return ConfigCommandResult(changed=True, message=message)
@@ -51,7 +57,7 @@ def edit_local_config(
         return ConfigCommandResult(changed=False, message="Configuration edit cancelled.")
     _emit_ignore_status_event(emit, local_state=local_state, result=result)
     _emit_local_config_event(emit, "config.command.saved", local_state, saved_path=str(result.save_result.path))
-    return ConfigCommandResult(changed=True, message=_save_message(result))
+    return ConfigCommandResult(changed=True, message=_save_message(result, env=env))
 
 
 def _run_wizard(
@@ -79,10 +85,8 @@ def _require_interactive_config_bootstrap(env: Mapping[str, str]) -> None:
             "Run envctl from a terminal to create the config."
         )
     if not _textual_stack_available():
-        raise RuntimeError(
-            "Missing Textual/Rich dependencies required for initial configuration. "
-            "Install with: python -m pip install -r python/requirements.txt"
-        )
+        missing_modules = _missing_interactive_runtime_modules()
+        raise RuntimeError(runtime_dependency_failure_message(missing_modules, env=env))
 
 
 def _has_tty(env: Mapping[str, str]) -> bool:
@@ -98,22 +102,31 @@ def _has_tty(env: Mapping[str, str]) -> bool:
 
 
 def _textual_stack_available() -> bool:
-    try:
-        __import__("textual")
-        __import__("rich")
-    except Exception:
-        return False
-    return True
+    return not _missing_interactive_runtime_modules()
 
 
-def _save_message(result: ConfigWizardResult) -> str:
-    message = f"Saved startup config: {result.save_result.path}"
+def _missing_interactive_runtime_modules() -> list[str]:
+    return missing_runtime_dependency_modules()
+
+
+def _save_message(result: ConfigWizardResult, *, env: Mapping[str, str] | None = None) -> str:
+    message = f"Saved startup config: {render_path_for_terminal(result.save_result.path, env=env, stream=sys.stdout)}"
     status = result.save_result.ignore_status
     if status is not None and status.code == "configured_global_excludes":
-        target = f" at {status.target_path}" if status.target_path is not None else ""
+        target = (
+            f" at {render_path_for_terminal(status.target_path, env=env, stream=sys.stdout)}"
+            if status.target_path is not None
+            else ""
+        )
         message += f" (Configured Git global excludes{target}.)"
     if result.save_result.ignore_warning:
-        return message + f" ({result.save_result.ignore_warning})"
+        warning = render_paths_in_terminal_text(
+            result.save_result.ignore_warning,
+            paths=local_paths_in_text(result.save_result.ignore_warning),
+            env=env,
+            stream=sys.stdout,
+        )
+        return message + f" ({warning})"
     return message
 
 

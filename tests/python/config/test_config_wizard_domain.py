@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,8 +13,14 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import PortDefaults, StartupProfile
 from envctl_engine.config.git_global_ignore import GlobalIgnoreStatus
 from envctl_engine.config.persistence import ConfigSaveResult, ManagedConfigValues
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.textual.screens.config_wizard import ConfigWizardResult
 from envctl_engine.config.wizard_domain import _save_message, edit_local_config, ensure_local_config
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ConfigWizardDomainTests(unittest.TestCase):
@@ -42,6 +50,31 @@ class ConfigWizardDomainTests(unittest.TestCase):
             with patch("envctl_engine.config.wizard_domain._has_tty", return_value=False):
                 with self.assertRaises(RuntimeError):
                     ensure_local_config(base_dir=repo, env={})
+
+    def test_ensure_local_config_reports_full_runtime_dependency_bootstrap_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            launcher_root = Path(tmpdir) / "envctl-source"
+            launcher_requirements = launcher_root / "python" / "requirements.txt"
+            launcher_requirements.parent.mkdir(parents=True, exist_ok=True)
+            launcher_requirements.write_text(
+                "prompt_toolkit>=3.0\npsutil>=5.9\nrich>=13.7\ntextual>=0.58\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("envctl_engine.config.wizard_domain._has_tty", return_value=True),
+                patch("envctl_engine.config.wizard_domain._textual_stack_available", return_value=False),
+            ):
+                with self.assertRaises(RuntimeError) as exc:
+                    ensure_local_config(base_dir=repo, env={"ENVCTL_ROOT_DIR": str(launcher_root)})
+
+        self.assertIn("Missing required envctl runtime Python packages", str(exc.exception))
+        self.assertIn("prompt_toolkit", str(exc.exception))
+        self.assertIn("psutil", str(exc.exception))
+        self.assertIn("rich", str(exc.exception))
+        self.assertIn("textual", str(exc.exception))
+        self.assertIn("python/requirements.txt", str(exc.exception))
+        self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", str(exc.exception))
 
     def test_ensure_local_config_runs_wizard_and_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,6 +202,41 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
         self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
         self.assertIn("Configured Git global excludes", message)
+
+    def test_save_message_hyperlinks_embedded_global_ignore_paths_when_enabled(self) -> None:
+        excludes_path = Path("/tmp/home/.gitignore_global")
+        warning = f"Could not update global git excludes at {excludes_path}: denied"
+        result = ConfigWizardResult(
+            values=ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            ),
+            save_result=ConfigSaveResult(
+                path=Path("/tmp/repo/.envctl"),
+                ignore_updated=True,
+                ignore_warning=warning,
+                ignore_status=GlobalIgnoreStatus(
+                    code="configured_global_excludes",
+                    updated=True,
+                    scope="git_global_excludes",
+                    target_path=excludes_path,
+                    managed_patterns=(".envctl*",),
+                    warning=None,
+                ),
+            ),
+        )
+
+        buffer = _TtyStringIO()
+        with redirect_stdout(buffer):
+            message = _save_message(result, env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+
+        self.assertIn("\x1b]8;;file://", message)
+        plain = strip_ansi(message)
+        self.assertIn("Saved startup config: /tmp/repo/.envctl", plain)
+        self.assertIn(f"Configured Git global excludes at {excludes_path}.", plain)
+        self.assertIn(warning, plain)
 
     def test_ensure_local_config_emits_updated_event_for_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

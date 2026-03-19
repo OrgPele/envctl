@@ -53,6 +53,30 @@ class ValidationWorkflowContractTests(unittest.TestCase):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("PYTHONPATH=python", text, msg=relative)
 
+    def test_user_docs_distinguish_installed_source_and_contributor_runtime_bootstrap(self) -> None:
+        for relative in (
+            "README.md",
+            "docs/user/getting-started.md",
+            "docs/user/faq.md",
+            "docs/operations/troubleshooting.md",
+        ):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("pipx install", text, msg=relative)
+            self.assertIn("python/requirements.txt", text, msg=relative)
+            self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", text, msg=relative)
+
+    def test_docs_describe_runtime_dependency_gate_boundary(self) -> None:
+        for relative in (
+            "docs/user/getting-started.md",
+            "docs/operations/troubleshooting.md",
+            "docs/developer/config-and-bootstrap.md",
+        ):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("start`, `plan`, and `restart", text, msg=relative)
+            self.assertIn("`--version`, `--help`", text, msg=relative)
+            self.assertIn("`install`, and `uninstall`", text, msg=relative)
+            self.assertIn("`show-config`, `show-state`, `explain-startup`, and `list-commands`", text, msg=relative)
+
     def test_active_developer_docs_do_not_reference_deleted_shell_domain(self) -> None:
         for relative in (
             "docs/developer/debug-and-diagnostics.md",

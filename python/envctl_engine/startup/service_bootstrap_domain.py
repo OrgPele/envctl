@@ -13,6 +13,7 @@ from typing import Any, Mapping, Protocol
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 _STATE_DIRNAME = ".envctl-state"
 _BACKEND_SENSITIVE_ENV_KEYS = (
@@ -1211,7 +1212,8 @@ def _run_backend_migration_step(
             )
             if backend_log_path:
                 print("  backend log:")
-                print(f"  {backend_log_path}")
+                rendered_path = render_path_for_terminal(backend_log_path, env=getattr(self, "env", {}))
+                print(f"  {rendered_path}")
             detail = _backend_env_warning_line(env_contract)
             if detail is not None:
                 print(detail)

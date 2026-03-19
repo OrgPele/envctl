@@ -79,7 +79,7 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
-    def test_start_fails_when_rich_missing(self) -> None:
+    def test_start_fails_when_runtime_dependencies_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -103,9 +103,10 @@ class PrereqPolicyTests(unittest.TestCase):
                 ok, reason = cli.check_prereqs(route, config)
 
             self.assertFalse(ok)
+            self.assertIn("prompt_toolkit", str(reason))
+            self.assertIn("psutil", str(reason))
             self.assertIn("rich", str(reason))
-            self.assertIn("python3.12 -m venv .venv", str(reason))
-            self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", str(reason))
+            self.assertIn("textual", str(reason))
 
     def test_plan_does_not_require_cmux_or_ai_cli_when_feature_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

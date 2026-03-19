@@ -24,6 +24,7 @@ from envctl_engine.startup.startup_selection_support import (
     _state_project_names as _state_project_names_impl,
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.state import state_to_dict
 
 
@@ -156,7 +157,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         return 0
 
     effective = payload["effective"]
-    print(f"config_file: {payload['config_file']}")
+    print(f"config_file: {render_path_for_terminal(payload['config_file'], env=getattr(runtime, 'env', {}))}")
     print(f"config_exists: {payload['config_exists']}")
     print(f"config_source: {payload['config_source']}")
     print(f"default_mode: {effective['default_mode']}")
@@ -204,7 +205,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     print(f"services: {len(state_payload['services'])}")
     print(f"requirements: {len(state_payload['requirements'])}")
     print("run_state_path:")
-    print(str(payload["run_state_path"]))
+    print(render_path_for_terminal(payload["run_state_path"], env=getattr(runtime, "env", {})))
     return 0
 
 

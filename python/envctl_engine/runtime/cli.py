@@ -15,8 +15,11 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.launcher_support import resolve_envctl_version
+from envctl_engine.runtime.runtime_dependency_contract import (
+    missing_runtime_dependency_modules,
+    runtime_dependency_failure_message,
+)
 from envctl_engine.runtime.engine_runtime import dispatch_route
-from envctl_engine.runtime.release_gate import CANONICAL_BOOTSTRAP_COMMANDS
 
 
 def _best_effort_restore_terminal_state() -> None:
@@ -32,9 +35,8 @@ def _python_dependency_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
-def check_prereqs(route: Route, config: EngineConfig) -> tuple[bool, str | None]:
+def check_prereqs(route: Route, config: EngineConfig, *, env: Mapping[str, str] | None = None) -> tuple[bool, str | None]:
     required_tools = {"git"}
-    required_python_modules = {"rich"}
     effective_mode = _effective_prereq_mode(route)
     if route.command in {"start", "plan", "restart"} and _requires_docker(effective_mode, config):
         required_tools.add("docker")
@@ -45,16 +47,9 @@ def check_prereqs(route: Route, config: EngineConfig) -> tuple[bool, str | None]
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"
-    missing_modules = sorted(module for module in required_python_modules if not _python_dependency_available(module))
+    missing_modules = missing_runtime_dependency_modules(import_available=_python_dependency_available)
     if missing_modules:
-        bootstrap_lines = "\n".join(CANONICAL_BOOTSTRAP_COMMANDS)
-        return (
-            False,
-            "Missing required Python packages: "
-            + ", ".join(missing_modules)
-            + ". Bootstrap the repo-local envctl environment with:\n"
-            + bootstrap_lines,
-        )
+        return False, runtime_dependency_failure_message(missing_modules, env=env)
     return True, None
 
 
@@ -171,8 +166,11 @@ def run(
                 return 2
 
         skip_prereq_check = custom_dispatcher and route.command == "plan"
+        # Launcher-safe and inspection-oriented commands stay exempt. Operational commands
+        # that can dispatch into the managed runtime fail fast on the full envctl runtime
+        # dependency set instead of discovering gaps piecemeal later.
         if route.command in {"start", "plan", "restart"} and not skip_prereq_check:
-            ok, reason = check_prereqs(route, config)
+            ok, reason = check_prereqs(route, config, env=env_map)
             if not ok:
                 print(reason, file=sys.stderr)
                 return 1

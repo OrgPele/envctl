@@ -18,11 +18,17 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.planning.plan_agent_launch_support import PlanAgentLaunchResult
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.test_output.parser_base import strip_ansi
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class _FakeProcessRunner:
@@ -678,13 +684,58 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
-            out = StringIO()
+            out = _TtyStringIO()
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
             self.assertIn("ModuleNotFoundError", out.getvalue())
             self.assertIn("psycopg2", out.getvalue())
+
+    def test_listener_failure_output_renders_clickable_log_path_but_event_detail_stays_raw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                extra={"ENVCTL_RUNTIME_TRUTH_MODE": "strict"},
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = False
+            fake_runner.start_log_line = "ModuleNotFoundError: No module named 'psycopg2'"
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            captured_events: list[tuple[str, dict[str, object]]] = []
+            original_emit = engine._emit
+
+            def capture_emit(event: str, **payload: object) -> None:
+                captured_events.append((event, payload))
+                original_emit(event, **payload)
+
+            engine._emit = capture_emit  # type: ignore[method-assign]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("backend listener not detected", visible)
+            self.assertIn("log_path:", visible)
+            failure_events = [payload for event, payload in captured_events if event == "service.failure"]
+            self.assertTrue(failure_events)
+            detail = str(failure_events[0]["detail"])
+            self.assertIn("log_path:", detail)
+            self.assertNotIn("\x1b]8;;", detail)
 
     def test_startup_fails_when_service_loses_listener_immediately_after_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1481,6 +1532,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
+            engine.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             out = StringIO()
@@ -1490,8 +1542,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             output = out.getvalue()
             self.assertIn("Warning: backend migration step failed", output)
-            self.assertIn("backend log:", output)
-            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", output)
+            self.assertIn("\x1b]8;;file://", output)
+            visible = strip_ansi(output)
+            self.assertIn("backend log:", visible)
+            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", visible)
 
     def test_backend_alembic_failure_is_hard_when_bootstrap_strict_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

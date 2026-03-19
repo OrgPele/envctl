@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 models_module = importlib.import_module("envctl_engine.state.models")
 command_loop_module = importlib.import_module("envctl_engine.ui.command_loop")
+strip_ansi = importlib.import_module("envctl_engine.test_output.parser_base").strip_ansi
 
 RunState = models_module.RunState
 run_dashboard_command_loop = command_loop_module.run_dashboard_command_loop
@@ -501,6 +502,59 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn(("spin-start", ""), spinner_calls)
         self.assertIn(("update", "Starting backend for Main on port 8000..."), spinner_calls)
         self.assertIn(("succeed", "Command finished; leaving interactive mode..."), spinner_calls)
+
+    def test_dashboard_loop_hyperlinks_ui_status_paths_when_enabled(self) -> None:
+        state = RunState(run_id="run-6a", mode="trees")
+        runtime = _RuntimeStub(state)
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+
+        spinner_calls: list[tuple[str, str, bool] | tuple[str, str]] = []
+
+        class _SpinnerStub:
+            def start(self) -> None:
+                spinner_calls.append(("spin-start", ""))
+
+            def update(self, message: str) -> None:
+                spinner_calls.append(("update", message))
+
+            def succeed(self, message: str) -> None:
+                spinner_calls.append(("succeed", message))
+
+            def fail(self, message: str) -> None:
+                spinner_calls.append(("fail", message))
+
+        @contextmanager
+        def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+            _ = start_immediately
+            spinner_calls.append(("start", message, enabled))
+            yield _SpinnerStub()
+
+        def handle_command(_raw: str, current: RunState, rt: object):  # noqa: ANN001
+            runtime_any = cast(Any, rt)
+            runtime_any._emit("action.command.start", command="test")
+            runtime_any._emit("ui.status", message="Running pnpm test script in /tmp/project/frontend...")
+            runtime_any._emit("action.command.finish", command="test", code=0)
+            return False, current
+
+        with (
+            patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            patch("envctl_engine.ui.command_loop.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.ui.command_loop.spinner_enabled", return_value=True),
+        ):
+            code = run_dashboard_command_loop(
+                state=state,
+                runtime=runtime,
+                handle_command=handle_command,
+                sanitize=lambda value: value,
+                input_provider=lambda _prompt: "t",
+            )
+
+        self.assertEqual(code, 0)
+        update_messages = [entry[1] for entry in spinner_calls if entry[0] == "update"]
+        self.assertTrue(any("\x1b]8;;file://" in message for message in update_messages))
+        self.assertTrue(
+            any("Running pnpm test script in /tmp/project/frontend..." in strip_ansi(message) for message in update_messages)
+        )
 
     def test_dashboard_loop_does_not_emit_pr_complete_spinner_footer(self) -> None:
         state = RunState(run_id="run-pr-no-footer", mode="trees")

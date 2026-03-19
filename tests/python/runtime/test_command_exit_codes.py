@@ -94,7 +94,39 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("command"), "start")
             self.assertEqual(seen.get("mode"), "trees")
 
-    def test_start_command_fails_when_rich_dependency_missing(self) -> None:
+    def test_start_command_fails_with_source_checkout_runtime_bootstrap_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            launcher_root = Path(tmpdir) / "envctl-source"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (launcher_root / "python").mkdir(parents=True, exist_ok=True)
+            (launcher_root / "python" / "requirements.txt").write_text(
+                "prompt_toolkit>=3.0\npsutil>=5.9\nrich>=13.7\ntextual>=0.58\n",
+                encoding="utf-8",
+            )
+            env = {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime),
+                "ENVCTL_ROOT_DIR": str(launcher_root),
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "N8N_ENABLE": "false",
+            }
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            stderr = StringIO()
+            with (
+                redirect_stderr(stderr),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False),
+            ):
+                code = cli.run(["start"], env=env, dispatcher=lambda _route, _config: 0)
+            self.assertEqual(code, 1)
+            self.assertIn("Missing required envctl runtime Python packages", stderr.getvalue())
+            self.assertIn("python/requirements.txt", stderr.getvalue())
+            self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", stderr.getvalue())
+
+    def test_start_command_fails_with_installed_command_repair_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -115,7 +147,10 @@ class CommandExitCodeTests(unittest.TestCase):
             ):
                 code = cli.run(["start"], env=env, dispatcher=lambda _route, _config: 0)
             self.assertEqual(code, 1)
-            self.assertIn("Missing required Python packages", stderr.getvalue())
+            self.assertIn("Missing required envctl runtime Python packages", stderr.getvalue())
+            self.assertIn("pipx reinstall envctl", stderr.getvalue())
+            self.assertNotIn("python/requirements.txt", stderr.getvalue())
+            self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", stderr.getvalue())
 
     def test_missing_envctl_bootstraps_before_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -390,9 +425,41 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("current local repo directory is the unedited baseline", written)
             self.assertIn("defaults to the worktree created from the current plan file", written)
-            self.assertIn("unless `$ARGUMENTS` overrides that target", written)
+            self.assertIn("Launch arguments: `$ARGUMENTS`", written)
+            self.assertIn("Treat only the first path-like token as the explicit worktree override", written)
+            self.assertIn("use that bundle as the primary review guide", written)
+            self.assertIn("original plan file", written)
+            self.assertNotIn("MAIN_TASK.md", written)
+            self.assertNotIn("OLD_TASK_", written)
             self.assertIn("read-only", written)
             self.assertIn("findings-first", written)
+
+    def test_install_prompts_cli_run_installs_opencode_review_prompt_with_original_plan_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".config" / "opencode" / "commands" / "review_task_imp.md"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "opencode", "--preset", "review_task_imp", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("Authoritative source of truth: the original plan file that created this worktree.", written)
+            self.assertIn(".envctl-state/worktree-provenance.json", written)
+            self.assertIn("If no original plan file can be resolved, stop and report exactly what was missing", written)
+            self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
+            self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
 
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

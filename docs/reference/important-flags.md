@@ -85,6 +85,7 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `ENVCTL_UI_BACKEND=auto\|textual\|legacy\|non_interactive` | Select dashboard backend policy. `auto` currently stays on legacy by default. |
 | `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` | In `auto` mode, prefer the Textual dashboard when available. |
 | `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus. Default is the Textual plan-style selector; `planning_style` enables the prompt-toolkit rollback; `legacy` is a compatibility alias that still maps to the Textual selector. |
+| `ENVCTL_UI_HYPERLINK_MODE=auto\|on\|off` | Control clickable local filesystem paths in human-facing terminal output. `off` forces plain text; `on` forces OSC-8 links when stdout is terminal-like; `auto` enables links only on supported interactive terminals. |
 
 ## Requirements and Seeding
 | Flag | Purpose |

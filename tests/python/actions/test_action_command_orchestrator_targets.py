@@ -164,6 +164,52 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual(runtime._dashboard_pr_url_cache, {})
         self.assertEqual(runtime._emitted, [])
 
+    def test_review_success_handler_persists_review_artifact_paths(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        runtime._latest_state = RunState(run_id="run-1", mode="trees")
+
+        handler = orchestrator._project_action_success_handler("review", "trees", True)  # noqa: SLF001
+        self.assertIsNotNone(handler)
+
+        handler(  # type: ignore[misc]
+            SimpleNamespace(
+                name="feature-a-1",
+                root=Path("/tmp/worktree"),
+                index=1,
+                total=1,
+                target_obj=SimpleNamespace(name="feature-a-1"),
+            ),
+            SimpleNamespace(
+                stdout=(
+                    "Review Ready: feature-a-1\n"
+                    "  Output directory\n"
+                    "    /tmp/review-output\n"
+                    "  Summary file\n"
+                    "    /tmp/review-output/summary.md\n"
+                    "  Full review bundle\n"
+                    "    /tmp/review-output/all.md\n"
+                ),
+                stderr="",
+                returncode=0,
+            ),
+        )
+
+        assert runtime._latest_state is not None
+        metadata = runtime._latest_state.metadata.get("project_action_reports")
+        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
+        project_entry = metadata.get("feature-a-1")
+        self.assertIsInstance(project_entry, dict)
+        assert isinstance(project_entry, dict)
+        review_entry = project_entry.get("review")
+        self.assertIsInstance(review_entry, dict)
+        assert isinstance(review_entry, dict)
+        self.assertEqual(review_entry.get("status"), "success")
+        self.assertEqual(review_entry.get("output_dir"), "/tmp/review-output")
+        self.assertEqual(review_entry.get("summary_path"), "/tmp/review-output/summary.md")
+        self.assertEqual(review_entry.get("bundle_path"), "/tmp/review-output/all.md")
+
     def test_project_action_failure_handler_persists_summary_and_report_path(self) -> None:
         runtime = _RuntimeStub()
         runtime._latest_state = RunState(run_id="run-1", mode="main")

@@ -13,14 +13,23 @@ import sys
 import tempfile
 from typing import Mapping
 
+from envctl_engine.planning import planning_feature_name
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import (
+    normalize_local_path_text,
+    render_path_for_terminal,
+    render_paths_in_terminal_text,
+    rich_path_text,
+)
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
 COMMIT_MESSAGE_MAX_CHARS = 16_000
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+PLANNING_ROOT = Path("todo") / "plans"
+DONE_PLANNING_ROOT = Path("todo") / "done"
 ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
 ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
 
@@ -47,6 +56,12 @@ class ReviewBaseResolution:
 
 class ReviewBaseResolutionError(RuntimeError):
     """Raised when envctl cannot determine a usable review base."""
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalPlanResolution:
+    path: Path | None
+    source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +104,13 @@ def run_commit_action(context: ActionProjectContext) -> int:
 
     commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
     if error:
-        print(error)
+        error_paths: list[object] = []
+        explicit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
+        if explicit_message_file:
+            error_paths.append(explicit_message_file)
+        elif ledger_path is not None:
+            error_paths.append(ledger_path)
+        print(render_paths_in_terminal_text(error, paths=error_paths, env=context.env, stream=sys.stdout))
         return 1
 
     generated_message_file = message_file.endswith(".envctl-commit-message.txt")
@@ -111,7 +132,14 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if ledger_path is not None:
         advance_error = _advance_commit_ledger_pointer(ledger_path)
         if advance_error:
-            print(advance_error)
+            print(
+                render_paths_in_terminal_text(
+                    advance_error,
+                    paths=[ledger_path],
+                    env=context.env,
+                    stream=sys.stdout,
+                )
+            )
             return 1
 
     remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
@@ -197,6 +225,7 @@ def run_review_action(context: ActionProjectContext) -> int:
 
     mode = _resolve_analyze_mode(context)
     scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
+    original_plan = _resolve_original_plan(context)
     review_base: ReviewBaseResolution | None = None
     if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
         try:
@@ -216,6 +245,7 @@ def run_review_action(context: ActionProjectContext) -> int:
                 mode=mode,
                 scope=scope,
                 review_base=review_base,
+                original_plan=original_plan,
             )
 
     if review_base is None:
@@ -234,6 +264,7 @@ def run_review_action(context: ActionProjectContext) -> int:
                 f"Mode: {mode}",
                 f"Scope: {scope}",
                 "",
+                *_original_plan_markdown_lines(original_plan, include_contents=True),
                 "## Diff Stat",
                 diff_stat or "(no diff)",
                 "",
@@ -272,6 +303,7 @@ def run_review_action(context: ActionProjectContext) -> int:
             f"Mode: {mode}",
             f"Scope: {scope}",
             "",
+            *_original_plan_markdown_lines(original_plan, include_contents=True),
             "## Base branch",
             review_base.base_branch,
             "",
@@ -389,6 +421,117 @@ def sanitize_label(value: str) -> str:
     return cleaned.strip("_") or "project"
 
 
+def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
+    if context.project_root.resolve() == context.repo_root.resolve():
+        return OriginalPlanResolution(path=None, source="not_applicable")
+
+    provenance = _read_worktree_provenance(context.project_root)
+    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    resolved = _resolve_plan_file_from_record(provenance_root=context.repo_root, recorded_plan=recorded_plan)
+    if resolved is not None:
+        return OriginalPlanResolution(path=resolved, source="provenance")
+
+    inferred = _infer_original_plan_file(context.repo_root, feature_name=_feature_name_from_project_name(context.project_name))
+    if inferred is not None:
+        return OriginalPlanResolution(path=inferred, source="feature_inference")
+    return OriginalPlanResolution(path=None, source="unresolved")
+
+
+def _read_worktree_provenance(project_root: Path) -> dict[str, object]:
+    path = project_root / WORKTREE_PROVENANCE_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_plan_file_from_record(*, provenance_root: Path, recorded_plan: str) -> Path | None:
+    normalized = str(recorded_plan or "").strip()
+    if not normalized:
+        return None
+    relative = Path(normalized.replace("\\", "/").lstrip("./"))
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        candidate = provenance_root / root / relative
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _infer_original_plan_file(repo_root: Path, *, feature_name: str) -> Path | None:
+    normalized_feature = str(feature_name).strip()
+    if not normalized_feature:
+        return None
+    matches: list[Path] = []
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        planning_root = repo_root / root
+        if not planning_root.is_dir():
+            continue
+        for candidate in sorted(planning_root.glob("*/*.md")):
+            if candidate.name == "README.md":
+                continue
+            relative = candidate.relative_to(planning_root)
+            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
+                continue
+            matches.append(candidate.resolve())
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _feature_name_from_project_name(project_name: str) -> str:
+    normalized = str(project_name).strip()
+    return re.sub(r"-\d+$", "", normalized)
+
+
+def _original_plan_markdown_lines(resolution: OriginalPlanResolution, *, include_contents: bool) -> list[str]:
+    resolved_path = str(resolution.path) if resolution.path is not None else "(unresolved)"
+    lines = [
+        "## Original plan file",
+        resolved_path,
+        "",
+        "## Original plan resolution",
+        resolution.source,
+        "",
+    ]
+    if include_contents:
+        plan_text = _read_text(resolution.path) if resolution.path is not None else ""
+        lines.extend(
+            [
+                "## Original plan",
+                plan_text or "(unavailable)",
+                "",
+            ]
+        )
+    return lines
+
+
+def _augment_review_output_dir(output_dir: Path, *, original_plan: OriginalPlanResolution) -> None:
+    _augment_review_markdown_file(output_dir / "all.md", original_plan=original_plan, include_contents=True)
+    _augment_review_markdown_file(output_dir / "summary.md", original_plan=original_plan, include_contents=False)
+
+
+def _augment_review_markdown_file(path: Path, *, original_plan: OriginalPlanResolution, include_contents: bool) -> None:
+    if not path.is_file():
+        return
+    original_text = _read_text(path)
+    if not original_text:
+        return
+    if "## Original plan file" in original_text:
+        return
+    metadata_block = "\n".join(_original_plan_markdown_lines(original_plan, include_contents=include_contents)).strip()
+    if not metadata_block:
+        return
+    lines = original_text.splitlines()
+    if lines and lines[0].startswith("# "):
+        title = lines[0]
+        remainder = "\n".join(lines[1:]).strip()
+        rewritten = f"{title}\n\n{metadata_block}\n\n{remainder}".rstrip() + "\n"
+    else:
+        rewritten = f"{metadata_block}\n\n{original_text.strip()}".rstrip() + "\n"
+    _atomic_write(path, rewritten)
+
+
 def _resolve_commit_message(
     context: ActionProjectContext,
     *,
@@ -407,7 +550,7 @@ def _resolve_commit_message(
     ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
     payload, error = _read_commit_ledger_segment(ledger_path)
     if error:
-        return "", "", error, None
+        return "", "", error, ledger_path
     return "", str(_write_commit_message_file(payload)), None, ledger_path
 
 
@@ -908,6 +1051,7 @@ def _run_analyze_helper(
     mode: str,
     scope: str,
     review_base: ReviewBaseResolution | None,
+    original_plan: OriginalPlanResolution,
 ) -> int:
     project_root = context.project_root.resolve()
     family_dir = _project_family_dir(project_root)
@@ -941,6 +1085,9 @@ def _run_analyze_helper(
     env_map.update(context.env)
     env_map["BASE_DIR"] = str(context.repo_root)
     env_map["TREES_DIR_NAME"] = str(family_dir)
+    if original_plan.path is not None:
+        env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_FILE"] = str(original_plan.path)
+    env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_SOURCE"] = original_plan.source
 
     result = subprocess.run(
         [str(helper), *args],
@@ -951,6 +1098,7 @@ def _run_analyze_helper(
         check=False,
     )
     if result.returncode == 0:
+        _augment_review_output_dir(output_dir, original_plan=original_plan)
         short_summary_path = output_dir / "summary_short.txt"
         stats = _parse_review_stats(short_summary_path)
         _prune_review_output_dir(output_dir, keep_names={"summary.md", "all.md"})
@@ -1069,17 +1217,18 @@ def _print_review_completion(
     stats: list[tuple[str, str]],
     tree_count: int,
 ) -> None:
-    if _print_review_completion_rich(
-        context,
-        mode=mode,
-        scope=scope,
-        output_dir=output_dir,
-        summary_path=summary_path,
-        all_in_one_path=all_in_one_path,
-        stats=stats,
-        tree_count=tree_count,
-    ):
-        return
+    if parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False):
+        if _print_review_completion_rich(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_dir,
+            summary_path=summary_path,
+            all_in_one_path=all_in_one_path,
+            stats=stats,
+            tree_count=tree_count,
+        ):
+            return
     color = _review_colorizer(context)
     print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
     print(f"  Mode: {mode}")
@@ -1087,11 +1236,11 @@ def _print_review_completion(
     print(f"  Trees: {tree_count}")
     print()
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     print(color("  Summary file", fg="blue", bold=True))
-    print(f"    {_display_path(summary_path)}")
+    print(f"    {_display_path(summary_path, env=context.env)}")
     print(color("  Full review bundle", fg="blue", bold=True))
-    print(f"    {_display_path(all_in_one_path)}")
+    print(f"    {_display_path(all_in_one_path, env=context.env)}")
     if stats:
         print()
         print(color("  Quick stats", fg="green", bold=True))
@@ -1116,7 +1265,7 @@ def _print_review_completion_rich(
     tree_count: int,
 ) -> bool:
     force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
-    if not force_rich and not sys.stdout.isatty():
+    if not force_rich:
         return False
     try:
         from rich import box
@@ -1139,9 +1288,19 @@ def _print_review_completion_rich(
     details.add_row("Mode", mode)
     details.add_row("Scope", scope)
     details.add_row("Trees", str(tree_count))
-    details.add_row("Output", _display_path(output_dir))
-    details.add_row("Summary", _display_path(summary_path))
-    details.add_row("Bundle", _display_path(all_in_one_path))
+    link_tty = force_rich or sys.stdout.isatty()
+    details.add_row(
+        "Output",
+        rich_path_text(output_dir, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Summary",
+        rich_path_text(summary_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Bundle",
+        rich_path_text(all_in_one_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
     for label, value in stats:
         details.add_row(label, value)
 
@@ -1170,7 +1329,7 @@ def _print_review_failure(
     color = _review_colorizer(context)
     print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     stderr = str(result.stderr or "").strip()
     stdout = str(result.stdout or "").strip()
     details = stderr or stdout or f"exit:{result.returncode}"
@@ -1240,13 +1399,8 @@ def _review_colorizer(context: ActionProjectContext):
     return colorize
 
 
-def _display_path(path: Path) -> str:
-    text = str(path)
-    if text == "/private/tmp":
-        return "/tmp"
-    if text.startswith("/private/tmp/"):
-        return "/tmp/" + text[len("/private/tmp/") :]
-    return text
+def _display_path(path: Path, *, env: Mapping[str, str] | None = None) -> str:
+    return render_path_for_terminal(normalize_local_path_text(path), env=env, stream=sys.stdout)
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:

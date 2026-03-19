@@ -141,12 +141,25 @@ Relevant concepts include:
 - Textual importability
 - prompt-toolkit availability
 - terminal-specific guardrails
+- local-path hyperlink support for OSC-8 clickable file links
 
 One important example already encoded in selector behavior:
 
 - Apple Terminal may require the prompt-toolkit rollback path for reliable selector input
 
 When you change capability logic, verify the fallback reasons emitted to diagnostics still make sense.
+
+## Clickable Local Paths
+
+Human-facing CLI output now uses a shared local-path rendering helper in `python/envctl_engine/ui/path_links.py`.
+
+Current contract:
+
+- plain terminal and Rich-backed CLI surfaces use the same `ENVCTL_UI_HYPERLINK_MODE` policy
+- `auto` only emits OSC-8 links on supported interactive terminals
+- `on` and `off` are explicit operator overrides
+- visible path text must remain stable after ANSI/OSC stripping
+- JSON output, saved state, and persisted report artifacts must keep raw path strings with no terminal escapes
 
 ## UI Bridge Responsibilities
 

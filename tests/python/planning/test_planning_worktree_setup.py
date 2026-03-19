@@ -17,7 +17,13 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.planning.plan_agent_launch_support import PlanSelectionResult
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.spinner_service import SpinnerPolicy
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class PlanningWorktreeSetupTests(unittest.TestCase):
@@ -199,6 +205,39 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual(synced, [])
             self.assertIn("Blasted and deleted 1 worktree(s) for implementations/task.md.", out.getvalue())
 
+    def test_plan_selection_hyperlinks_plan_file_messages_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            plan_file = repo / "todo" / "plans" / "implementations" / "task.md"
+            plan_file.write_text("# task\n", encoding="utf-8")
+            (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(
+                repo,
+                runtime,
+                env={"ENVCTL_UI_SPINNER_MODE": "off", "ENVCTL_UI_HYPERLINK_MODE": "on"},
+            )
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                synced, error = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 0},
+                    raw_projects=raw_projects,
+                    keep_plan=False,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(synced, [])
+            rendered = out.getvalue()
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("Blasted and deleted 1 worktree(s) for implementations/task.md.", visible)
+            self.assertIn("Moved implementations/task.md to done/implementations/task.md.", visible)
+
     def test_plan_zero_target_does_not_move_inactive_plan_to_done(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -373,6 +412,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             provenance = self._read_provenance(repo / "trees" / "implementations_task" / "1")
             self.assertEqual(provenance.get("source_branch"), "release/2026.03")
             self.assertEqual(provenance.get("source_ref"), "origin/release/2026.03")
+            self.assertEqual(provenance.get("plan_file"), "implementations/task.md")
 
     def test_plan_sync_reports_created_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -730,6 +770,75 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertTrue(any(item.get("state") == "start" for item in lifecycle))
             self.assertTrue(any(item.get("state") == "success" for item in lifecycle))
             self.assertTrue(any(item.get("state") == "stop" for item in lifecycle))
+
+    def test_sync_plan_worktrees_hyperlinks_plan_file_in_spinner_updates_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            update_messages: list[str] = []
+            lifecycle_messages: list[str] = []
+
+            @contextmanager
+            def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+                _ = message, enabled, start_immediately
+
+                class _SpinnerStub:
+                    def start(self) -> None:
+                        return None
+
+                    def update(self, message: str) -> None:
+                        update_messages.append(message)
+
+                    def succeed(self, _message: str) -> None:
+                        return None
+
+                    def fail(self, _message: str) -> None:
+                        return None
+
+                yield _SpinnerStub()
+
+            def capture_emit(event: str, **payload: object) -> None:
+                if event == "ui.spinner.lifecycle" and payload.get("state") == "update":
+                    lifecycle_messages.append(str(payload.get("message", "")))
+
+            engine._emit = capture_emit  # type: ignore[method-assign]
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            with (
+                patch("envctl_engine.planning.worktree_domain.spinner", side_effect=fake_spinner),
+                patch(
+                    "envctl_engine.planning.worktree_domain.resolve_spinner_policy",
+                    return_value=SpinnerPolicy(
+                        mode="auto",
+                        enabled=True,
+                        reason="",
+                        backend="rich",
+                        min_ms=0,
+                        verbose_events=False,
+                    ),
+                ),
+            ):
+                synced, error = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 0},
+                    raw_projects=raw_projects,
+                    keep_plan=False,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(synced, [])
+            self.assertTrue(any("\x1b]8;;file://" in message for message in update_messages))
+            self.assertTrue(
+                any("implementations/task.md" in strip_ansi(message) for message in update_messages)
+            )
+            self.assertTrue(any("\x1b]8;;file://" not in message for message in lifecycle_messages))
+            self.assertTrue(any("implementations/task.md" in message for message in lifecycle_messages))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from envctl_engine.runtime.launcher_support import (
     is_explicit_wrapper_path,
     select_envctl_reexec_target,
 )
+from envctl_engine.runtime.runtime_dependency_contract import runtime_dependency_manifest_parity
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -371,6 +372,50 @@ class CliPackagingTests(unittest.TestCase):
         self.assertEqual(project["requires-python"], ">=3.12,<3.15")
         self.assertIn("rich>=13.7", project["dependencies"])
 
+    def test_runtime_dependency_manifests_match(self) -> None:
+        parity = runtime_dependency_manifest_parity(REPO_ROOT)
+        self.assertTrue(parity.matches)
+
+    def test_runtime_dependency_manifest_parity_normalizes_formatting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            (repo_root / "python").mkdir(parents=True, exist_ok=True)
+            (repo_root / "python" / "requirements.txt").write_text(
+                "\n".join(
+                    [
+                        "rich >=13.7",
+                        " prompt_toolkit>=3.0  # comment",
+                        "TEXTUAL>=0.58",
+                        "psutil>=5.9",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (repo_root / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl-test"',
+                        'version = "0.0.1"',
+                        "dependencies = [",
+                        '  "Prompt-Toolkit >=3.0",',
+                        '  "psutil>=5.9",',
+                        '  "rich>=13.7",',
+                        '  "textual>=0.58",',
+                        "]",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            parity = runtime_dependency_manifest_parity(repo_root)
+
+        self.assertTrue(parity.matches)
+        self.assertEqual(parity.only_in_requirements, ())
+        self.assertEqual(parity.only_in_pyproject, ())
+
     def test_pyproject_declares_release_validation_dev_extra(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         dev_dependencies = set(payload["project"]["optional-dependencies"]["dev"])
@@ -484,6 +529,89 @@ class CliPackagingTests(unittest.TestCase):
                 )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(result.stdout.strip())
+
+    def test_regular_install_without_dependencies_fails_before_operational_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "--repo", str(repo), "start"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertIn("pipx reinstall envctl", result.stderr)
+        self.assertNotIn("python/requirements.txt", result.stderr)
+
+    def test_source_checkout_wrapper_without_dependencies_fails_before_operational_dispatch(self) -> None:
+        with self._source_checkout_env() as env:
+            runtime_root = Path(env["tmpdir"]) / "runtime"
+            target_repo = Path(env["tmpdir"]) / "target-repo"
+            target_repo.mkdir(parents=True, exist_ok=True)
+            (target_repo / ".git").mkdir(parents=True, exist_ok=True)
+            (target_repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [str(env["python"]), str(env["script"]), "--repo", str(target_repo), "start"],
+                capture_output=True,
+                text=True,
+                env={
+                    **env["env"],
+                    "RUN_SH_RUNTIME_DIR": str(runtime_root),
+                },
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertIn("python/requirements.txt", result.stderr)
+        self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", result.stderr)
+        self.assertFalse(runtime_root.exists())
+
+    def test_source_checkout_wrapper_without_dependencies_still_supports_launcher_doctor(self) -> None:
+        with self._source_checkout_env() as env:
+            target_repo = Path(env["tmpdir"]) / "target-repo"
+            target_repo.mkdir(parents=True, exist_ok=True)
+            (target_repo / ".git").mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                [str(env["python"]), str(env["script"]), "doctor", "--repo", str(target_repo)],
+                capture_output=True,
+                text=True,
+                env=env["env"],
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Launcher: envctl", result.stdout)
+        self.assertNotIn("Missing required envctl runtime Python packages", result.stderr)
 
     def test_regular_install_supports_direct_inspection_command_spelling(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -638,6 +766,31 @@ class CliPackagingTests(unittest.TestCase):
                 "env": env,
                 "python": python_bin,
                 "script": venv_dir / "bin" / "envctl",
+            }
+
+    @contextmanager
+    def _source_checkout_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            source_root = tmp_root / "source-checkout"
+            shutil.copytree(REPO_ROOT / "bin", source_root / "bin")
+            shutil.copytree(REPO_ROOT / "python", source_root / "python")
+            venv_dir = tmp_root / "wrapper-venv"
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, capture_output=True, text=True)
+            python_bin = venv_dir / "bin" / "python"
+            env = {
+                **os.environ,
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(tmp_root / "home"),
+            }
+            env.pop("ENVCTL_ROOT_DIR", None)
+            env.pop("PYTHONPATH", None)
+            env.pop("VIRTUAL_ENV", None)
+            yield {
+                "tmpdir": tmpdir,
+                "env": env,
+                "python": python_bin,
+                "script": source_root / "bin" / "envctl",
             }
 
 

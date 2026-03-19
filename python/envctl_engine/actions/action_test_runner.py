@@ -14,6 +14,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.progress_markers import strip_progress_markers
 from envctl_engine.test_output.symbols import format_duration
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def _render_command(command: list[str]) -> str:
@@ -392,7 +393,14 @@ def run_test_action(
                 state_text = orchestrator._colorize("started", fg="blue")
                 print(f"  - {index_text} {suite_text} {state_text}")
                 command_text = orchestrator._colorize(_render_command([*spec.command, *args]), fg="gray")
-                cwd_text = orchestrator._colorize(str(Path(spec.cwd).resolve()), fg="gray")
+                cwd_text = orchestrator._colorize(
+                    render_path_for_terminal(
+                        str(Path(spec.cwd).resolve()),
+                        env=getattr(orchestrator.runtime, "env", {}),
+                        stream=sys.stdout,
+                    ),
+                    fg="gray",
+                )
                 print(f"      command: {command_text}")
                 print(f"      cwd: {cwd_text}")
         progress_status: dict[str, object] = {

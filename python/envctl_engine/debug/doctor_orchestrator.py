@@ -7,6 +7,7 @@ from envctl_engine.shared.hooks import legacy_shell_hook_issue
 from envctl_engine.shared.reason_codes import GateFailureReason
 from envctl_engine.runtime.runtime_readiness import evaluate_runtime_readiness
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 class DoctorRuntimeFacade:
@@ -97,7 +98,7 @@ class DoctorOrchestrator:
                     and (text.startswith("/") or text.startswith("~"))
                 ):
                     print(f"{key}:")
-                    print(text)
+                    print(render_path_for_terminal(text, env=rt.env))
                 else:
                     print(f"{key}: {value}")
 

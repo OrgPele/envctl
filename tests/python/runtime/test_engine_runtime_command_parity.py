@@ -16,9 +16,16 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.command_router import list_supported_commands
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+import envctl_engine.runtime.engine_runtime as engine_runtime_module
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class EngineRuntimeCommandParityTests(unittest.TestCase):
@@ -96,6 +103,37 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             if line.strip()
         }
         self.assertIn("cutover.gate.evaluate", event_names)
+
+    def test_show_config_show_state_and_doctor_hyperlink_path_fields_when_enabled(self) -> None:
+        runtime = self._runtime()
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+        state = RunState(run_id="run-1", mode="main")
+        runtime.state_repository.save_resume_state(
+            state=state,
+            emit=runtime._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
+        )
+
+        show_config_out = _TtyStringIO()
+        with redirect_stdout(show_config_out):
+            show_config_code = runtime.dispatch(parse_route(["show-config"], env={}))
+        self.assertEqual(show_config_code, 0)
+        self.assertIn("\x1b]8;;file://", show_config_out.getvalue())
+        self.assertIn("config_file:", strip_ansi(show_config_out.getvalue()))
+
+        show_state_out = _TtyStringIO()
+        with redirect_stdout(show_state_out):
+            show_state_code = runtime.dispatch(parse_route(["show-state"], env={}))
+        self.assertEqual(show_state_code, 0)
+        self.assertIn("\x1b]8;;file://", show_state_out.getvalue())
+        self.assertIn("run_state_path:", strip_ansi(show_state_out.getvalue()))
+
+        doctor_out = _TtyStringIO()
+        with redirect_stdout(doctor_out):
+            doctor_code = runtime.dispatch(parse_route(["--doctor"], env={}))
+        self.assertEqual(doctor_code, 0)
+        self.assertIn("\x1b]8;;file://", doctor_out.getvalue())
+        self.assertIn("runtime_gap_report_path:", strip_ansi(doctor_out.getvalue()))
 
     def test_doctor_supports_json_output(self) -> None:
         runtime = self._runtime()

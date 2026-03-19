@@ -54,6 +54,7 @@ from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -939,12 +940,19 @@ class ActionCommandOrchestrator:
         def handle_success(context: ActionTargetContext, completed: Any) -> None:
             self._clear_dashboard_pr_cache()
             status = self._project_action_success_status(command_name=command_name, completed=completed)
+            extra_entry: dict[str, object] | None = None
+            if command_name == "review" and status == "success":
+                extra_entry = self._review_success_artifact_paths(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                )
             self._persist_project_action_result(
                 command_name=command_name,
                 mode=mode,
                 project_name=context.name,
                 status=status,
                 error_output="",
+                extra_entry=extra_entry,
             )
             if command_name != "pr" or not interactive_command or status != "success":
                 return
@@ -978,6 +986,7 @@ class ActionCommandOrchestrator:
         project_name: str,
         status: str,
         error_output: str,
+        extra_entry: Mapping[str, object] | None = None,
     ) -> None:
         rt = self.runtime
         state = rt.load_existing_state(mode=mode)
@@ -996,6 +1005,8 @@ class ActionCommandOrchestrator:
         )
         if migrate_env_metadata:
             entry["backend_env"] = migrate_env_metadata
+        if isinstance(extra_entry, Mapping):
+            entry.update({str(key): value for key, value in extra_entry.items()})
         if status == "failed":
             clean_output = strip_ansi(str(error_output or "")).strip()
             summary_lines = self._project_action_failure_summary_lines(
@@ -1020,6 +1031,29 @@ class ActionCommandOrchestrator:
             emit=rt.emit,
             runtime_map_builder=build_runtime_map,
         )
+
+    @staticmethod
+    def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
+        cleaned = strip_ansi("\n".join(part for part in [str(stdout or ""), str(stderr or "")] if str(part or "").strip()))
+        lines = [line.rstrip() for line in cleaned.splitlines()]
+        label_map = {
+            "output directory": "output_dir",
+            "summary file": "summary_path",
+            "full review bundle": "bundle_path",
+        }
+        parsed: dict[str, object] = {}
+        for index, raw_line in enumerate(lines):
+            label = raw_line.strip().lower()
+            key = label_map.get(label)
+            if not key:
+                continue
+            for follow_line in lines[index + 1 :]:
+                candidate = follow_line.strip()
+                if not candidate:
+                    continue
+                parsed[key] = candidate
+                break
+        return parsed
 
     def _write_project_action_failure_report(
         self,
@@ -2034,7 +2068,10 @@ class ActionCommandOrchestrator:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
-                    print(f"{prefix}{summary_path}")
+                    rendered_path = render_path_for_terminal(
+                        summary_path, env=getattr(self.runtime, "env", {}), stream=sys.stdout
+                    )
+                    print(f"{prefix}{rendered_path}")
             if multi_project:
                 print("")
 

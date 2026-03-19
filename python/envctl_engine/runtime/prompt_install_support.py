@@ -5,8 +5,9 @@ from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
 import sys
-from typing import Any, Final
+from typing import Any, Final, Mapping
 
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
@@ -59,6 +60,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="*",
@@ -75,6 +77,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="",
@@ -106,6 +109,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=results,
         )
     overwrite_candidates = [plan for plan in plans if plan.existed]
@@ -113,6 +117,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
         overwrite_error = _require_overwrite_approval(
             overwrite_candidates=overwrite_candidates,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
         )
         if overwrite_error is not None:
             results.append(overwrite_error)
@@ -120,6 +125,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                 preset=preset_label,
                 dry_run=dry_run,
                 json_output=json_output,
+                env=getattr(runtime, "env", {}),
                 results=results,
             )
     for plan in plans:
@@ -128,6 +134,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
         preset=preset_label,
         dry_run=dry_run,
         json_output=json_output,
+        env=getattr(runtime, "env", {}),
         results=results,
     )
 
@@ -224,6 +231,7 @@ def _require_overwrite_approval(
     *,
     overwrite_candidates: list[PromptInstallPlan],
     json_output: bool,
+    env: Mapping[str, str] | None = None,
 ) -> PromptInstallResult | None:
     if json_output:
         return _overwrite_failure(
@@ -233,7 +241,7 @@ def _require_overwrite_approval(
         return _overwrite_failure(
             "Overwrite approval required for existing prompt files; rerun with --yes or --force because no interactive TTY is available.",
         )
-    response = input(_overwrite_prompt(overwrite_candidates)).strip().lower()
+    response = input(_overwrite_prompt(overwrite_candidates, env=env)).strip().lower()
     if response in {"y", "yes"}:
         return None
     return _overwrite_failure("Overwrite declined; no prompt files were changed.")
@@ -255,10 +263,14 @@ def _interactive_stdio() -> bool:
     return bool(callable(stdin_isatty) and stdin_isatty() and callable(stdout_isatty) and stdout_isatty())
 
 
-def _overwrite_prompt(overwrite_candidates: list[PromptInstallPlan]) -> str:
+def _overwrite_prompt(
+    overwrite_candidates: list[PromptInstallPlan],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
     lines = [f"Overwrite {len(overwrite_candidates)} existing prompt file(s)?"]
     for plan in overwrite_candidates:
-        lines.append(f"- {plan.cli}: {plan.target_path}")
+        lines.append(f"- {plan.cli}: {render_path_for_terminal(plan.target_path, env=env, stream=sys.stdout)}")
     lines.append("Type 'y' to continue [y/N]: ")
     return "\n".join(lines)
 
@@ -378,6 +390,7 @@ def _print_install_results(
     preset: str,
     dry_run: bool,
     json_output: bool,
+    env: dict[str, str] | Mapping[str, str] | None = None,
     results: list[PromptInstallResult],
 ) -> int:
     payload = {
@@ -390,9 +403,10 @@ def _print_install_results(
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         for result in results:
-            line = f"{result.cli or 'install-prompts'}: {result.status} {result.path}".rstrip()
+            rendered_path = render_path_for_terminal(result.path, env=env, stream=sys.stdout) if result.path else ""
+            line = f"{result.cli or 'install-prompts'}: {result.status} {rendered_path}".rstrip()
             if result.backup_path:
-                line += f" (backup: {result.backup_path})"
+                line += f" (backup: {render_path_for_terminal(result.backup_path, env=env, stream=sys.stdout)})"
             if result.message:
                 line += f" - {result.message}"
             print(line)

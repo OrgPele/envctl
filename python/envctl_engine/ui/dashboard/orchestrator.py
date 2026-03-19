@@ -4,10 +4,12 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any, Literal, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
+from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from envctl_engine.state.models import RunState
@@ -27,6 +29,7 @@ from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import (
     no_target_selected_message,
     project_names_from_state,
@@ -40,6 +43,9 @@ from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_di
 
 
 DirtyPrDecision = Literal["commit", "skip", "cancel"]
+_REVIEW_TAB_OPEN_TOKEN = "__REVIEW_TAB_OPEN__"
+_REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
+_REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 
 
 class DashboardOrchestrator:
@@ -184,6 +190,9 @@ class DashboardOrchestrator:
             refreshed = state
         if code not in {0, 2, 130}:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
+        next_state = refreshed if refreshed is not None else state
+        if code == 0 and route.command == "review":
+            self._maybe_offer_review_tab_launch(route, next_state, rt)
         if route.command == "test":
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
                 self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
@@ -248,7 +257,14 @@ class DashboardOrchestrator:
             for line in excerpt_lines:
                 print(line)
             if summary_path:
-                print(summary_path)
+                print(
+                    render_path_for_terminal(
+                        summary_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
             printed = True
         return printed
 
@@ -318,12 +334,26 @@ class DashboardOrchestrator:
                         print(hint)
                     if report_path:
                         print(f"{route.command} failure log for {project_name}:")
-                        print(report_path)
+                        print(
+                            render_path_for_terminal(
+                                report_path,
+                                env=getattr(self.runtime, "env", {}),
+                                stream=sys.stdout,
+                                interactive_tty=True,
+                            )
+                        )
                 printed = True
                 continue
             if report_path:
                 print(f"{route.command} failure log for {project_name}:")
-                print(report_path)
+                print(
+                    render_path_for_terminal(
+                        report_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
                 printed = True
         return printed
 
@@ -338,7 +368,12 @@ class DashboardOrchestrator:
             return route
 
         if route.command in self._dashboard_owned_project_selection_commands():
-            return self._apply_project_target_selection(route, state, rt)
+            selected_route = self._apply_project_target_selection(route, state, rt)
+            if selected_route is None:
+                return None
+            if selected_route.command == "review":
+                return self._apply_review_tab_launch_selection(selected_route, state, rt)
+            return selected_route
 
         runtime_any = cast(Any, rt)
         if self._route_has_explicit_target(route, runtime_any):
@@ -708,12 +743,153 @@ class DashboardOrchestrator:
                 project_roots[project_name] = repo_root
         return project_roots
 
+    def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
+        runtime_any = cast(Any, rt)
+        if not bool(route.flags.get(_REVIEW_TAB_LAUNCH_FLAG)):
+            return
+        target = self._review_tab_target(route, state, runtime_any)
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return
+        project_name, project_root = target
+        launch_review_agent_terminal(
+            runtime_any,
+            repo_root=self._repo_root(runtime_any),
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=self._review_bundle_path(state, project_name=project_name),
+        )
+
+    def _apply_review_tab_launch_selection(self, route: Route, state: RunState, rt: object) -> Route:
+        runtime_any = cast(Any, rt)
+        route.flags = {key: value for key, value in route.flags.items() if key != _REVIEW_TAB_LAUNCH_FLAG}
+        target = self._review_tab_target(route, state, runtime_any)
+        runtime_any._emit(
+            "dashboard.review_tab.evaluate",
+            command="review",
+            project_count=len(route.projects or []),
+            eligible=target is not None,
+        )
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return route
+        project_name, _project_root = target
+        readiness = review_agent_launch_readiness(runtime_any)
+        if not readiness.ready:
+            runtime_any._emit(
+                "dashboard.review_tab.skipped",
+                command="review",
+                reason=readiness.reason,
+                project=project_name,
+                cli=readiness.cli,
+                missing=list(readiness.missing),
+            )
+            message = self._review_tab_unavailable_message(readiness.reason, readiness.missing)
+            if message:
+                print(message)
+            return route
+        runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
+        decision = self._prompt_review_tab_menu(runtime_any, project_name=project_name)
+        if decision != "commit":
+            runtime_any._emit("dashboard.review_tab.declined", command="review", project=project_name, cli=readiness.cli)
+            return route
+        runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
+        route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}
+        return route
+
+    def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
+        repo_root = self._repo_root(runtime)
+        project_roots = self._project_roots_for_route(route, state, runtime)
+        distinct_targets: list[tuple[str, Path]] = []
+        seen_git_roots: set[str] = set()
+        for project_name in route.projects or []:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                continue
+            git_root = resolve_git_root(project_root, repo_root)
+            if git_root == repo_root and project_root != repo_root and not (project_root / ".git").exists():
+                git_root = project_root
+            git_root_key = str(git_root.resolve())
+            if git_root_key in seen_git_roots:
+                continue
+            seen_git_roots.add(git_root_key)
+            distinct_targets.append((project_name, project_root))
+        if len(distinct_targets) != 1:
+            return None
+        project_name, project_root = distinct_targets[0]
+        if str(project_name).strip().casefold() == "main":
+            return None
+        if project_root.resolve() == repo_root:
+            return None
+        return project_name, project_root
+
+    @staticmethod
+    def _review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
+        if reason == "missing_executables" and missing:
+            return f"Origin review tab unavailable: missing required executables: {', '.join(missing)}."
+        if reason in {"missing_cmux_context", "workspace_unavailable"}:
+            return "Origin review tab unavailable: current cmux workspace context is unavailable."
+        return ""
+
+    @staticmethod
+    def _review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        reports = metadata.get("project_action_reports")
+        if not isinstance(reports, dict):
+            return None
+        project_entry = reports.get(project_name)
+        if not isinstance(project_entry, dict):
+            return None
+        review_entry = project_entry.get("review")
+        if not isinstance(review_entry, dict):
+            return None
+        if str(review_entry.get("status", "")).strip().lower() != "success":
+            return None
+        raw_path = str(review_entry.get("bundle_path", "") or "").strip()
+        if not raw_path:
+            return None
+        return Path(raw_path).expanduser()
+
     @staticmethod
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
         if len(dirty_targets) == 1:
             target = dirty_targets[0]
             return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
         return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
+
+    @staticmethod
+    def _prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
+        prompt = f"Open an origin-side AI review tab for {project_name}?"
+        values = _run_selector_with_impl(
+            prompt=prompt,
+            options=[
+                SelectorItem(
+                    id="review-tab:open",
+                    label="Yes",
+                    kind="",
+                    token=_REVIEW_TAB_OPEN_TOKEN,
+                    scope_signature=("review-tab:open",),
+                ),
+                SelectorItem(
+                    id="review-tab:skip",
+                    label="No",
+                    kind="",
+                    token=_REVIEW_TAB_SKIP_TOKEN,
+                    scope_signature=("review-tab:skip",),
+                ),
+            ],
+            multi=False,
+            initial_tokens=[_REVIEW_TAB_SKIP_TOKEN],
+            emit=getattr(runtime, "_emit", None),
+        )
+        if not values:
+            return "skip"
+        chosen = str(values[0]).strip()
+        if chosen == _REVIEW_TAB_OPEN_TOKEN:
+            return "commit"
+        if chosen == _REVIEW_TAB_SKIP_TOKEN:
+            return "skip"
+        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title="Open origin review tab?", prompt=prompt)
 
     @staticmethod
     def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:

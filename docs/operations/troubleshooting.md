@@ -40,10 +40,18 @@ That sequence answers four different questions:
   - `./bin/envctl --version`
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
+- If a source-checkout invocation such as `./bin/envctl` reports missing runtime Python packages, install them into that interpreter with:
+  - `python -m pip install -r python/requirements.txt`
+- Do not use the contributor editable-install bootstrap to repair an installed end-user command.
 - Wrapper precedence:
   - explicit wrapper paths such as `./bin/envctl` or `/absolute/path/to/bin/envctl` now run that wrapper directly, even if another `envctl` exists later on `PATH`
   - bare `envctl` still prefers the installed command path when the repo wrapper shadows it
   - `ENVCTL_USE_REPO_WRAPPER=1` is still useful when a PATH-based invocation needs to force the repo wrapper
+
+## Runtime dependency gate boundary
+- The full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`.
+- Launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate.
+- Inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate.
 
 ## Required external tools are missing
 - `envctl` itself installs through `pipx`, but some workflows rely on system tools:

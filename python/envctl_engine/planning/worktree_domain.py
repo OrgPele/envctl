@@ -27,6 +27,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
+from envctl_engine.ui.path_links import render_path_fragment_for_terminal
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
@@ -59,9 +60,10 @@ def _worktree_spinner_update(
     active_spinner: Any,
     op_id: str,
     message: str,
+    terminal_message: str | None = None,
 ) -> None:
     if enabled:
-        active_spinner.update(message)
+        active_spinner.update(terminal_message or message)
         self._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
             component="worktree_planning",
@@ -70,7 +72,23 @@ def _worktree_spinner_update(
             message=message,
         )
         return
-    print(message)
+    print(terminal_message or message)
+
+
+def _render_planning_path(
+    self: Any,
+    *,
+    absolute_path: Path,
+    display_text: str,
+    interactive_tty: bool | None = None,
+) -> str:
+    return render_path_fragment_for_terminal(
+        absolute_path,
+        display_text=display_text,
+        env=getattr(self, "env", {}),
+        stream=sys.stdout,
+        interactive_tty=interactive_tty,
+    )
 
 
 def _worktree_spinner_start(
@@ -1037,6 +1055,11 @@ def _sync_single_plan_worktree_target(
             active_spinner=active_spinner,
             op_id=op_id,
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
+            terminal_message=(
+                f"Setting up {create_count} worktree(s) for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}"
+                f" -> {feature}..."
+            ),
         )
         create_result = _create_feature_worktrees_result(
             self,
@@ -1062,6 +1085,11 @@ def _sync_single_plan_worktree_target(
                 f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
                 f"removing {remove_count} worktree(s)."
             ),
+            terminal_message=(
+                f"Selected count for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))} "
+                f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
+            ),
         )
         remove_error = self._delete_feature_worktrees(
             feature=feature,
@@ -1070,7 +1098,10 @@ def _sync_single_plan_worktree_target(
         )
         if remove_error:
             return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
-        print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
+        print(
+            f"Blasted and deleted {remove_count} worktree(s) for "
+            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}."
+        )
         removed_worktrees = tuple(name for name, _root in sorted(
             candidates,
             key=lambda item: self._project_sort_key_for_feature(item[0], feature),
@@ -1126,7 +1157,7 @@ def _create_feature_worktrees_result(
             if error:
                 return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
         else:
-            _write_worktree_provenance(self, target=target)
+            _write_worktree_provenance(self, target=target, plan_file=plan_file)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         created_worktrees.append(
             CreatedPlanWorktree(name=f"{feature}-{iteration}", root=target.resolve(), plan_file=plan_file)
@@ -1212,8 +1243,8 @@ def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
     return parse_bool(raw, False)
 
 
-def _write_worktree_provenance(self: Any, *, target: Path) -> None:
-    provenance = _build_worktree_provenance(self)
+def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None = None) -> None:
+    provenance = _build_worktree_provenance(self, plan_file=plan_file)
     if provenance is None or not target.is_dir():
         return
     path = target / WORKTREE_PROVENANCE_PATH
@@ -1224,10 +1255,15 @@ def _write_worktree_provenance(self: Any, *, target: Path) -> None:
         return
 
 
-def _build_worktree_provenance(self: Any) -> dict[str, object] | None:
+def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> dict[str, object] | None:
     source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if source_branch and source_branch != "HEAD":
-        return _worktree_provenance_payload(self, source_branch=source_branch, resolution_reason="attached_branch")
+        return _worktree_provenance_payload(
+            self,
+            source_branch=source_branch,
+            resolution_reason="attached_branch",
+            plan_file=plan_file,
+        )
 
     default_branch = _detect_default_branch(self)
     if not default_branch:
@@ -1236,6 +1272,7 @@ def _build_worktree_provenance(self: Any) -> dict[str, object] | None:
         self,
         source_branch=default_branch,
         resolution_reason="default_branch_detached_head",
+        plan_file=plan_file,
     )
 
 
@@ -1244,9 +1281,10 @@ def _worktree_provenance_payload(
     *,
     source_branch: str,
     resolution_reason: str,
+    plan_file: str | None = None,
 ) -> dict[str, object]:
     source_ref = _resolve_branch_ref(self, source_branch=source_branch)
-    return {
+    payload: dict[str, object] = {
         "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
         "source_branch": source_branch,
         "source_ref": source_ref or source_branch,
@@ -1254,6 +1292,10 @@ def _worktree_provenance_payload(
         "created_from_repo": str(self.config.base_dir.resolve()),
         "recorded_at": datetime.now(tz=UTC).isoformat(),
     }
+    normalized_plan_file = str(plan_file or "").strip()
+    if normalized_plan_file:
+        payload["plan_file"] = normalized_plan_file
+    return payload
 
 
 def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:
@@ -1372,7 +1414,12 @@ def _move_plan_to_done(self: Any, plan_file: str) -> None:
         dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
     src.replace(dest)
     relative_done = dest.relative_to(self._planning_done_root())
-    print(f"Moved {plan_file} to done/{relative_done}.")
+    print(
+        "Moved "
+        f"{_render_planning_path(self, absolute_path=src, display_text=plan_file)} "
+        "to "
+        f"{_render_planning_path(self, absolute_path=dest, display_text=f'done/{relative_done}') }."
+    )
 
 
 def _feature_project_candidates(
