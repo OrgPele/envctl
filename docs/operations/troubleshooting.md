@@ -48,6 +48,11 @@ That sequence answers four different questions:
   - bare `envctl` still prefers the installed command path when the repo wrapper shadows it
   - `ENVCTL_USE_REPO_WRAPPER=1` is still useful when a PATH-based invocation needs to force the repo wrapper
 
+## Runtime dependency gate boundary
+- The full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`.
+- Launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate.
+- Inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate.
+
 ## Required external tools are missing
 - `envctl` itself installs through `pipx`, but some workflows rely on system tools:
   - `git` for repo/worktree/action flows

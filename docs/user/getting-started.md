@@ -77,6 +77,12 @@ python -m pip install -r python/requirements.txt
 
 That `python/requirements.txt` flow is for source-wrapper usage such as `./bin/envctl`. Contributor validation still uses the editable `.[dev]` workflow from the developer docs.
 
+Current runtime-dependency gate boundary:
+
+- the full envctl runtime dependency check currently runs before `start`, `plan`, and `restart`
+- launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate
+- inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate
+
 ## 2. Pick a Repository
 
 `envctl` operates on a git repository root.
