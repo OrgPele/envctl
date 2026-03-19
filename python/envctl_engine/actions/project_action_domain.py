@@ -13,6 +13,7 @@ import sys
 import tempfile
 from typing import Mapping
 
+from envctl_engine.planning import planning_feature_name
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
 
@@ -21,6 +22,8 @@ PR_TITLE_MAX_CHARS = 240
 COMMIT_MESSAGE_MAX_CHARS = 16_000
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+PLANNING_ROOT = Path("todo") / "plans"
+DONE_PLANNING_ROOT = Path("todo") / "done"
 ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
 ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
 
@@ -47,6 +50,12 @@ class ReviewBaseResolution:
 
 class ReviewBaseResolutionError(RuntimeError):
     """Raised when envctl cannot determine a usable review base."""
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalPlanResolution:
+    path: Path | None
+    source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +206,7 @@ def run_review_action(context: ActionProjectContext) -> int:
 
     mode = _resolve_analyze_mode(context)
     scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
+    original_plan = _resolve_original_plan(context)
     review_base: ReviewBaseResolution | None = None
     if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
         try:
@@ -216,6 +226,7 @@ def run_review_action(context: ActionProjectContext) -> int:
                 mode=mode,
                 scope=scope,
                 review_base=review_base,
+                original_plan=original_plan,
             )
 
     if review_base is None:
@@ -234,6 +245,7 @@ def run_review_action(context: ActionProjectContext) -> int:
                 f"Mode: {mode}",
                 f"Scope: {scope}",
                 "",
+                *_original_plan_markdown_lines(original_plan, include_contents=True),
                 "## Diff Stat",
                 diff_stat or "(no diff)",
                 "",
@@ -272,6 +284,7 @@ def run_review_action(context: ActionProjectContext) -> int:
             f"Mode: {mode}",
             f"Scope: {scope}",
             "",
+            *_original_plan_markdown_lines(original_plan, include_contents=True),
             "## Base branch",
             review_base.base_branch,
             "",
@@ -387,6 +400,117 @@ def existing_pr_url(git_root: Path, branch: str) -> str:
 def sanitize_label(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
     return cleaned.strip("_") or "project"
+
+
+def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
+    if context.project_root.resolve() == context.repo_root.resolve():
+        return OriginalPlanResolution(path=None, source="not_applicable")
+
+    provenance = _read_worktree_provenance(context.project_root)
+    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    resolved = _resolve_plan_file_from_record(provenance_root=context.repo_root, recorded_plan=recorded_plan)
+    if resolved is not None:
+        return OriginalPlanResolution(path=resolved, source="provenance")
+
+    inferred = _infer_original_plan_file(context.repo_root, feature_name=_feature_name_from_project_name(context.project_name))
+    if inferred is not None:
+        return OriginalPlanResolution(path=inferred, source="feature_inference")
+    return OriginalPlanResolution(path=None, source="unresolved")
+
+
+def _read_worktree_provenance(project_root: Path) -> dict[str, object]:
+    path = project_root / WORKTREE_PROVENANCE_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_plan_file_from_record(*, provenance_root: Path, recorded_plan: str) -> Path | None:
+    normalized = str(recorded_plan or "").strip()
+    if not normalized:
+        return None
+    relative = Path(normalized.replace("\\", "/").lstrip("./"))
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        candidate = provenance_root / root / relative
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _infer_original_plan_file(repo_root: Path, *, feature_name: str) -> Path | None:
+    normalized_feature = str(feature_name).strip()
+    if not normalized_feature:
+        return None
+    matches: list[Path] = []
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        planning_root = repo_root / root
+        if not planning_root.is_dir():
+            continue
+        for candidate in sorted(planning_root.glob("*/*.md")):
+            if candidate.name == "README.md":
+                continue
+            relative = candidate.relative_to(planning_root)
+            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
+                continue
+            matches.append(candidate.resolve())
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _feature_name_from_project_name(project_name: str) -> str:
+    normalized = str(project_name).strip()
+    return re.sub(r"-\d+$", "", normalized)
+
+
+def _original_plan_markdown_lines(resolution: OriginalPlanResolution, *, include_contents: bool) -> list[str]:
+    resolved_path = str(resolution.path) if resolution.path is not None else "(unresolved)"
+    lines = [
+        "## Original plan file",
+        resolved_path,
+        "",
+        "## Original plan resolution",
+        resolution.source,
+        "",
+    ]
+    if include_contents:
+        plan_text = _read_text(resolution.path) if resolution.path is not None else ""
+        lines.extend(
+            [
+                "## Original plan",
+                plan_text or "(unavailable)",
+                "",
+            ]
+        )
+    return lines
+
+
+def _augment_review_output_dir(output_dir: Path, *, original_plan: OriginalPlanResolution) -> None:
+    _augment_review_markdown_file(output_dir / "all.md", original_plan=original_plan, include_contents=True)
+    _augment_review_markdown_file(output_dir / "summary.md", original_plan=original_plan, include_contents=False)
+
+
+def _augment_review_markdown_file(path: Path, *, original_plan: OriginalPlanResolution, include_contents: bool) -> None:
+    if not path.is_file():
+        return
+    original_text = _read_text(path)
+    if not original_text:
+        return
+    if "## Original plan file" in original_text:
+        return
+    metadata_block = "\n".join(_original_plan_markdown_lines(original_plan, include_contents=include_contents)).strip()
+    if not metadata_block:
+        return
+    lines = original_text.splitlines()
+    if lines and lines[0].startswith("# "):
+        title = lines[0]
+        remainder = "\n".join(lines[1:]).strip()
+        rewritten = f"{title}\n\n{metadata_block}\n\n{remainder}".rstrip() + "\n"
+    else:
+        rewritten = f"{metadata_block}\n\n{original_text.strip()}".rstrip() + "\n"
+    _atomic_write(path, rewritten)
 
 
 def _resolve_commit_message(
@@ -908,6 +1032,7 @@ def _run_analyze_helper(
     mode: str,
     scope: str,
     review_base: ReviewBaseResolution | None,
+    original_plan: OriginalPlanResolution,
 ) -> int:
     project_root = context.project_root.resolve()
     family_dir = _project_family_dir(project_root)
@@ -941,6 +1066,9 @@ def _run_analyze_helper(
     env_map.update(context.env)
     env_map["BASE_DIR"] = str(context.repo_root)
     env_map["TREES_DIR_NAME"] = str(family_dir)
+    if original_plan.path is not None:
+        env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_FILE"] = str(original_plan.path)
+    env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_SOURCE"] = original_plan.source
 
     result = subprocess.run(
         [str(helper), *args],
@@ -951,6 +1079,7 @@ def _run_analyze_helper(
         check=False,
     )
     if result.returncode == 0:
+        _augment_review_output_dir(output_dir, original_plan=original_plan)
         short_summary_path = output_dir / "summary_short.txt"
         stats = _parse_review_stats(short_summary_path)
         _prune_review_output_dir(output_dir, keep_names={"summary.md", "all.md"})

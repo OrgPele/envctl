@@ -1194,6 +1194,7 @@ class ActionsCliTests(unittest.TestCase):
                 (
                     "{\n"
                     '  "schema_version": 1,\n'
+                    '  "plan_file": "implementations/feature-a.md",\n'
                     '  "source_branch": "release/2026.03",\n'
                     '  "source_ref": "origin/release/2026.03",\n'
                     '  "resolution_reason": "attached_branch"\n'
@@ -1201,6 +1202,9 @@ class ActionsCliTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            plan_path = repo_root / "todo" / "plans" / "implementations" / "feature-a.md"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Original plan\n\nShip feature A.\n", encoding="utf-8")
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
                 if args == ["rev-parse", "--verify", "origin/release/2026.03"]:
@@ -1235,6 +1239,10 @@ class ActionsCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             written_path = next((runtime_root / "review").glob("*.md"))
             markdown = written_path.read_text(encoding="utf-8")
+            self.assertIn("## Original plan file", markdown)
+            self.assertIn(str(plan_path.resolve()), markdown)
+            self.assertIn("## Original plan", markdown)
+            self.assertIn("Ship feature A.", markdown)
             self.assertIn("release/2026.03", markdown)
             self.assertIn("provenance", markdown)
             self.assertIn("mbase-provenance", markdown)
@@ -1454,6 +1462,72 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse((written_dir / "prompt.md").exists())
             self.assertFalse((written_dir / "summary_short.txt").exists())
             self.assertFalse((repo_root / "tree-diffs").exists())
+
+    def test_analyze_action_helper_receives_original_plan_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            runtime_root = (Path(tmpdir) / "runtime" / "scope" / "runs" / "run-123" / "tree-diffs").resolve()
+            project_root = repo_root / "trees" / "implementations_task" / "1"
+            helper = repo_root / "utils" / "analyze-tree-changes.sh"
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / ".git").write_text("gitdir: /tmp/feature-a-1\n", encoding="utf-8")
+            provenance_path = project_root / ".envctl-state" / "worktree-provenance.json"
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(
+                '{\n  "schema_version": 1,\n  "plan_file": "implementations/task.md"\n}\n',
+                encoding="utf-8",
+            )
+            plan_path = repo_root / "todo" / "plans" / "implementations" / "task.md"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# task\n", encoding="utf-8")
+            seen_env: dict[str, str] = {}
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "--verify", "origin/main"]:
+                    return "deadbeef\n"
+                if args == ["merge-base", "HEAD", "origin/main"]:
+                    return "mbase123\n"
+                return ""
+
+            def fake_run(args: list[str], **kwargs):  # noqa: ANN001
+                command = [str(token) for token in args]
+                env = kwargs.get("env") or {}
+                seen_env.update({str(key): str(value) for key, value in env.items()})
+                output_dir_arg = next(arg for arg in command if arg.startswith("output-dir="))
+                output_dir = Path(output_dir_arg.split("=", 1)[1])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "summary.md").write_text("# Summary\n", encoding="utf-8")
+                (output_dir / "all.md").write_text("# Full\n", encoding="utf-8")
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ENVCTL_ACTION_TREE_DIFFS_ROOT": str(runtime_root),
+                        "ENVCTL_ACTION_RUNTIME_ROOT": str(Path(tmpdir) / "runtime" / "scope"),
+                        "ENVCTL_ACTION_RUN_ID": "run-123",
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
+            ):
+                code = actions_cli._run_analyze_action(project_root, repo_root, "implementations_task-1")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen_env.get("ENVCTL_REVIEW_ORIGINAL_PLAN_FILE"), str(plan_path.resolve()))
+            written_dir = next(runtime_root.glob("analysis_implementations_task-1_*"))
+            bundle = (written_dir / "all.md").read_text(encoding="utf-8")
+            self.assertIn("## Original plan file", bundle)
+            self.assertIn(str(plan_path.resolve()), bundle)
 
     def test_analyze_action_helper_receives_explicit_review_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

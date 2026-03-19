@@ -1,20 +1,22 @@
 You are doing a post-implementation review and hardening pass.
-Authoritative source of truth: `MAIN_TASK.md`.
-First, read `MAIN_TASK.md`, then inspect the changed code paths and the existing tests in depth.
+Authoritative source of truth: the original plan file that created this worktree.
+First, resolve and read that original plan file, then inspect the changed code paths and the existing tests in depth.
 Ask questions only if a blocking ambiguity remains after deep code and test review; otherwise resolve everything yourself according to repo evidence and best practices.
 Final output must include: what you validated, commands run, tests added or changed, code improvements made, and any material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
-Primary spec / expected behavior: MAIN_TASK.md
+Primary spec / expected behavior: the original plan file for this worktree
 Additional notes (optional):
 $ARGUMENTS
 
-If $ARGUMENTS contains pasted spec content, write that content into `MAIN_TASK.md` first, then use `MAIN_TASK.md` as the only source of truth.
-Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless the user explicitly says to update `MAIN_TASK.md`.
+If $ARGUMENTS includes an explicit original plan file path, use that first.
+Otherwise read `.envctl-state/worktree-provenance.json` from the current worktree and resolve the recorded `plan_file` relative to `todo/plans/` first, then `todo/done/`.
+If provenance does not contain a usable `plan_file`, infer the original plan only when there is exactly one unique plan-file match for the worktree feature name under `todo/plans/` or `todo/done/`.
+If no original plan file can be resolved, stop and report exactly what was missing instead of substituting `MAIN_TASK.md`.
 
 ## Goals (in order)
-1. Verify functionality matches MAIN_TASK.md exactly (including edge cases).
+1. Verify functionality matches the original plan file exactly, including edge cases and acceptance criteria.
 2. Ensure the change is correctly wired into the system (routing/exports/DI/config/build steps).
 3. Run the relevant tests and make them pass.
 4. Improve test coverage: add tests for gaps, regressions, and tricky edge cases.
@@ -26,7 +28,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Prefer reading more code over speculation.
 - No TODOs, no “should work”, no partial implementations.
 - If tests are flaky or slow, fix or isolate causes (determinism, time, randomness, IO, cleanup).
-- Maintain backwards compatibility unless MAIN_TASK.md explicitly changes it.
+- Maintain backwards compatibility unless the original plan file explicitly changes it.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Iterate until behavior matches the spec and tests are green; expect multiple cycles.
@@ -35,7 +37,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Do not stop after partial implementation.
 
 ## Review protocol (do this before changing code)
-1. Read MAIN_TASK.md and summarize the expected behavior and acceptance criteria.
+1. Read the original plan file and summarize the expected behavior and acceptance criteria.
 2. Identify all files changed in the implementation; understand intent and data flow end-to-end.
 3. Trace execution paths: happy path + error paths + boundary cases.
 4. Locate and understand the existing tests and test utilities.
@@ -44,7 +46,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 ## Execution (must do)
 - Run the relevant test suites and record failures.
 - Fix failing tests or implementation issues.
-- Add/adjust tests to cover missing cases from MAIN_TASK.md.
+- Add/adjust tests to cover missing cases from the original plan file.
 - Re-run tests until green.
 - If there are no tests, create them following repo conventions.
 - Refactor for clarity and maintainability after correctness is proven by tests.
@@ -60,7 +62,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Types and API contracts (no breaking changes unless intended)
 
 ## Final response format
-1. What you validated (bullet list against MAIN_TASK.md).
+1. What you validated (bullet list against the original plan file).
 2. Commands you ran (exact).
 3. Tests added/changed (what they cover).
 4. Code changes made (high level).

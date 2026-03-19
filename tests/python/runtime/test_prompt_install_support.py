@@ -426,6 +426,10 @@ class PromptInstallSupportTests(unittest.TestCase):
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)
         self.assertIn("### Envctl pointer ###", review_prompt.body)
+        self.assertIn("original plan file", review_prompt.body)
+        self.assertIn(".envctl-state/worktree-provenance.json", review_prompt.body)
+        self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`", review_prompt.body)
+        self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", review_prompt.body)
 
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
