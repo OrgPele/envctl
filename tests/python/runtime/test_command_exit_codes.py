@@ -399,6 +399,33 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertIn("read-only", written)
             self.assertIn("findings-first", written)
 
+    def test_install_prompts_cli_run_installs_opencode_review_prompt_with_original_plan_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".config" / "opencode" / "commands" / "review_task_imp.md"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "opencode", "--preset", "review_task_imp", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("Authoritative source of truth: the original plan file that created this worktree.", written)
+            self.assertIn(".envctl-state/worktree-provenance.json", written)
+            self.assertIn("If no original plan file can be resolved, stop and report exactly what was missing", written)
+            self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
+            self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
+
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
