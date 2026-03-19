@@ -133,7 +133,7 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
@@ -168,17 +168,19 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             rendered = out.getvalue()
-            self.assertIn("command: ", rendered)
-            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", rendered)
-            self.assertIn(f"cwd: {tree_root.resolve()}", rendered)
-            self.assertIn("2 passed, 0 failed, 0 skipped", rendered)
-            self.assertIn("Repository tests (unittest)", rendered)
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("command: ", visible)
+            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", visible)
+            self.assertIn(f"cwd: {tree_root.resolve()}", visible)
+            self.assertIn("2 passed, 0 failed, 0 skipped", visible)
+            self.assertIn("Repository tests (unittest)", visible)
 
     def test_interactive_test_action_emits_live_progress_status_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

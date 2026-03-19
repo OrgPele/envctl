@@ -109,6 +109,11 @@ class PathLinksTests(unittest.TestCase):
 
         self.assertEqual(paths, ("/tmp/home/.gitignore_global",))
 
+    def test_local_paths_in_text_ignores_https_urls(self) -> None:
+        paths = local_paths_in_text("PR already exists: https://github.com/kfiramar/supportopia/pull/53")
+
+        self.assertEqual(paths, ())
+
     def test_render_paths_in_terminal_text_preserves_trailing_colon_outside_link(self) -> None:
         rendered = render_paths_in_terminal_text(
             "Could not update global git excludes at /tmp/home/.gitignore_global: denied",
@@ -123,3 +128,16 @@ class PathLinksTests(unittest.TestCase):
             strip_ansi(rendered),
             "Could not update global git excludes at /tmp/home/.gitignore_global: denied",
         )
+
+    def test_render_paths_in_terminal_text_excludes_trailing_ellipsis_from_uri(self) -> None:
+        text = "Running pnpm test script in /tmp/project/frontend..."
+        rendered = render_paths_in_terminal_text(
+            text,
+            paths=local_paths_in_text(text),
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertIn("\x1b]8;;file:///tmp/project/frontend\x1b\\", rendered)
+        self.assertNotIn("file:///tmp/project/frontend...", rendered)
+        self.assertEqual(strip_ansi(rendered), text)

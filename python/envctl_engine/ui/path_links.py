@@ -131,7 +131,12 @@ def local_paths_in_text(text: str) -> tuple[str, ...]:
 
 
 def _trim_extracted_path(candidate: str) -> str:
-    return candidate.rstrip(":")
+    if candidate.startswith("//"):
+        return ""
+    trimmed = candidate.rstrip(":")
+    if trimmed.endswith("..."):
+        trimmed = trimmed[:-3]
+    return trimmed
 
 
 def _file_uri(display_text: str) -> str | None:
