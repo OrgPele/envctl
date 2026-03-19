@@ -174,11 +174,13 @@ Check toggles:
   - `MAIN_ENV_FILE_PATH` for Main mode
   - default `backend/.env`
 - When an env file is found, envctl exports `APP_ENV_FILE` for the migrate subprocess.
-- If the project already has saved run state, envctl also reuses the current projected dependency URLs for `DATABASE_URL` and `REDIS_URL` unless an explicit backend env override file is meant to stay authoritative.
+- Relative override paths are checked against both the target root and repo root. If both exist and differ, envctl fails and requires an absolute path.
+- Inherited shell backend keys such as `DATABASE_URL`, `APP_ENV_FILE`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `DB_*` are scrubbed before target-specific merge.
+- If the project already has saved run state, envctl also reuses the current projected dependency URLs for `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `REDIS_URL` unless an explicit backend env override file is meant to stay authoritative.
 - Inspect the persisted raw failure log from the dashboard output or from `envctl show-state --json` under `metadata.project_action_reports.<project>.migrate.report_path`.
 - If you intentionally need a different env file, set one of:
-  - `BACKEND_ENV_FILE_OVERRIDE=/absolute/or/repo-relative/path.env`
-  - `MAIN_ENV_FILE_PATH=/absolute/or/repo-relative/path.env`
+  - `BACKEND_ENV_FILE_OVERRIDE=/absolute/or/relative/path.env`
+  - `MAIN_ENV_FILE_PATH=/absolute/or/relative/path.env`
 - If the raw report shows missing env vars even after that, verify the target env file exists and actually defines the required backend settings.
 
 ## Planning files are not found

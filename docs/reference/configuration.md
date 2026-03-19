@@ -91,20 +91,29 @@ Native `envctl migrate` uses the same backend env-file discovery contract as bac
 2. `MAIN_ENV_FILE_PATH` when the target project is `Main`
 3. default `backend/.env`
 
+Override path resolution is explicit:
+
+- absolute paths are used as-is
+- relative paths are checked against both the target project root and the repo root
+- if exactly one relative candidate exists, envctl uses it
+- if both candidates exist and differ, envctl fails and requires an absolute path
+- if neither candidate exists, envctl falls back to the default `backend/.env` contract when present
+
 When an env file is found, envctl exports `APP_ENV_FILE` into the migrate subprocess so backends that explicitly look up their env file can resolve it during Alembic imports.
 
 Runtime dependency projection also applies to migrate:
 
-- if the selected project already has saved requirements state, envctl reuses its canonical dependency URLs such as `DATABASE_URL` and `REDIS_URL`
-- the default backend `.env` is not authoritative for those projected dependency URLs during migrate
-- an explicit non-default backend env override file remains authoritative for its `DATABASE_URL` value, matching the existing `SKIP_LOCAL_DB_ENV` semantics
+- inherited shell backend keys such as `DATABASE_URL`, `APP_ENV_FILE`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `DB_*` are scrubbed before target-specific merge
+- if the selected project already has saved requirements state, envctl reuses its canonical dependency URLs such as `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `REDIS_URL`
+- the default backend `.env` is not authoritative for those projected dependency URLs during migrate or startup bootstrap
+- an explicit non-default backend env override file remains authoritative for DB-family keys, matching the existing `SKIP_LOCAL_DB_ENV` semantics
 
 Relevant keys:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for worktree/tree targets and other non-Main projects. |
-| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main mode. |
+| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for worktree/tree targets and other non-Main projects. Relative paths can resolve from the target root or repo root. |
+| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main mode. Relative paths can resolve from the target root or repo root. |
 | `APP_ENV_FILE` | set by envctl when a backend env file is resolved | Exported into backend startup/migrate subprocesses for apps that discover env files from process env. |
 | `SKIP_LOCAL_DB_ENV` | `false` | Compatibility toggle for preserving explicit backend env-file database URLs instead of replacing them with envctl-projected local DB URLs. |
 
@@ -274,8 +283,8 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `BACKEND_PORT_BASE` | `8000` | Backend base port for allocation. |
 | `FRONTEND_DIR` | `frontend` | Preferred frontend directory name. |
 | `FRONTEND_PORT_BASE` | `9000` | Frontend base port for allocation. |
-| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. |
-| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. |
+| `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
+| `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 
 ## Optional Hooks (`.envctl.sh`)
 

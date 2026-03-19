@@ -972,7 +972,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 )
             )
 
-    def test_backend_env_file_upserts_database_url_and_preserves_existing_redis_url(self) -> None:
+    def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1011,7 +1011,43 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 f"DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db",
                 content,
             )
-            self.assertIn("REDIS_URL=redis://legacy", content)
+            self.assertIn(
+                f"REDIS_URL=redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0",
+                content,
+            )
+
+    def test_backend_env_file_writeback_removes_stale_db_alias_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text(
+                "DATABASE_URL=postgresql://legacy\n"
+                "SQLALCHEMY_DATABASE_URL=postgresql://legacy\n"
+                "ASYNC_DATABASE_URL=postgresql://legacy\n"
+                "REDIS_URL=redis://legacy\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            content = env_file.read_text(encoding="utf-8")
+            self.assertIn("DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:", content)
+            self.assertNotIn("SQLALCHEMY_DATABASE_URL=postgresql://legacy", content)
+            self.assertNotIn("ASYNC_DATABASE_URL=postgresql://legacy", content)
 
     def test_backend_service_start_env_includes_backend_env_file_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1147,6 +1183,54 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "active" for env in frontend_start_envs))
+
+    def test_startup_scrubs_inherited_shell_backend_env_keys_before_backend_prep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
+
+            with patch.dict(
+                os.environ,
+                {
+                    "APP_ENV_FILE": "/tmp/leaked.env",
+                    "DATABASE_URL": "postgresql://shell-leak",
+                    "SQLALCHEMY_DATABASE_URL": "postgresql://shell-leak",
+                    "ASYNC_DATABASE_URL": "postgresql://shell-leak",
+                },
+                clear=False,
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            bootstrap_envs = [
+                env
+                for (cmd, _cwd), env in zip(fake_runner.run_calls, fake_runner.run_envs)
+                if len(cmd) >= 4 and cmd[1:4] == ("-m", "pip", "install") and isinstance(env, dict)
+            ]
+            self.assertTrue(bootstrap_envs)
+            env = bootstrap_envs[0]
+            self.assertEqual(env.get("APP_ENV_FILE"), str(env_file.resolve()))
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                f"postgresql+asyncpg://postgres:postgres@localhost:{planned_db_port}/postgres",
+            )
+            self.assertNotEqual(env.get("SQLALCHEMY_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertNotEqual(env.get("ASYNC_DATABASE_URL"), "postgresql://shell-leak")
 
     def test_frontend_api_env_overrides_stale_env_local_per_project_backend_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1421,6 +1505,86 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertGreaterEqual(len(alembic_envs), 2)
             self.assertTrue(any("psycopg2" in str(env.get("DATABASE_URL", "")) for env in alembic_envs))
             self.assertTrue(any("postgresql+asyncpg://" in str(env.get("DATABASE_URL", "")) for env in alembic_envs))
+
+    def test_startup_backend_migrations_use_distinct_env_contracts_for_multiple_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            first_backend = repo / "trees" / "feature-a" / "1" / "backend"
+            second_backend = repo / "trees" / "feature-b" / "1" / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for backend_dir, marker in ((first_backend, "a"), (second_backend, "b")):
+                backend_dir.mkdir(parents=True, exist_ok=True)
+                (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+                (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
+                (backend_dir / ".env").write_text(f"PROJECT_MARKER={marker}\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(
+                ["--trees", "--project", "feature-a-1", "--project", "feature-b-1", "--batch"],
+                env={},
+            )
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            alembic_envs = [
+                env
+                for (cmd, _cwd), env in zip(fake_runner.run_calls, fake_runner.run_envs)
+                if tuple(cmd[-3:]) == ("alembic", "upgrade", "head") and isinstance(env, dict)
+            ]
+            self.assertEqual(len(alembic_envs), 2)
+            first_env = next(env for env in alembic_envs if env.get("PROJECT_MARKER") == "a")
+            second_env = next(env for env in alembic_envs if env.get("PROJECT_MARKER") == "b")
+            self.assertEqual(first_env.get("APP_ENV_FILE"), str((first_backend / ".env").resolve()))
+            self.assertEqual(second_env.get("APP_ENV_FILE"), str((second_backend / ".env").resolve()))
+            self.assertNotEqual(first_env.get("DATABASE_URL"), second_env.get("DATABASE_URL"))
+
+    def test_startup_migration_warnings_include_backend_env_source_without_secret_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
+            env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://svc_user:super-secret@localhost:5432/svc_db\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.fail_alembic = True
+            fake_runner.alembic_error_text = "alembic failure"
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("backend env source: default", rendered)
+            self.assertIn(str(env_file.resolve()), rendered)
+            self.assertNotIn("super-secret", rendered)
 
     def test_startup_fails_when_requirements_are_unavailable_in_strict_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

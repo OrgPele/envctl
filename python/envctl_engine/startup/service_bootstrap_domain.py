@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pyright: reportUnusedFunction=false
 
+from dataclasses import dataclass
 import hashlib
 import json
 import re
@@ -14,11 +15,46 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
 
 _STATE_DIRNAME = ".envctl-state"
+_BACKEND_SENSITIVE_ENV_KEYS = (
+    "APP_ENV_FILE",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "SQLALCHEMY_DATABASE_URL",
+    "ASYNC_DATABASE_URL",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_NAME",
+)
 
 
 class ProjectContextLike(Protocol):
     name: str
     root: Path
+
+
+@dataclass(frozen=True)
+class _EnvFileResolution:
+    path: Path | None
+    is_default: bool
+    source: str
+    override_requested: bool
+    override_resolution: str
+
+
+@dataclass(frozen=True)
+class _BackendEnvContract:
+    env: dict[str, str]
+    env_file_path: Path | None
+    env_file_is_default: bool
+    env_file_source: str
+    override_requested: bool
+    override_resolution: str
+    override_authoritative: bool
+    skip_local_db_env: bool
+    scrubbed_keys: tuple[str, ...]
+    projected_keys: tuple[str, ...]
 
 
 def _prepare_backend_runtime(
@@ -36,27 +72,22 @@ def _prepare_backend_runtime(
     requirements_file = backend_cwd / "requirements.txt"
     pyproject_file = backend_cwd / "pyproject.toml"
     manager = "poetry" if pyproject_file.is_file() and self._command_exists("poetry") else "pip"
-    env = self._command_env(port=0, extra=project_env_base)
-    skip_local_db_env = self._skip_local_db_env(
-        backend_env_file=backend_env_file,
-        backend_env_is_default=backend_env_is_default,
+    env_contract = _resolve_backend_env_contract(
+        self,
+        context=context,
+        backend_cwd=backend_cwd,
+        base_env=self._command_env(port=0),
+        projected_env=project_env_base,
     )
+    env = env_contract.env
     env_merge_started = time.monotonic()
-    if backend_env_file is not None and backend_env_file.is_file():
-        loaded_env = self._read_env_file_safe(backend_env_file)
-        for key, value in loaded_env.items():
-            env[key] = value
-        env["APP_ENV_FILE"] = str(backend_env_file)
-    if not skip_local_db_env:
-        database_url = project_env_base.get("DATABASE_URL")
-        if isinstance(database_url, str) and database_url.strip():
-            env["DATABASE_URL"] = database_url
-    if not str(env.get("REDIS_URL", "")).strip():
-        redis_url = project_env_base.get("REDIS_URL")
-        if isinstance(redis_url, str) and redis_url.strip():
-            env["REDIS_URL"] = redis_url
-    if backend_env_file is not None and backend_env_file.is_file() and backend_env_is_default and not skip_local_db_env:
-        self._sync_backend_env_file(backend_env_file, env=env)
+    if (
+        env_contract.env_file_path is not None
+        and env_contract.env_file_path.is_file()
+        and env_contract.env_file_is_default
+        and not env_contract.skip_local_db_env
+    ):
+        self._sync_backend_env_file(env_contract.env_file_path, env=env)
     _emit_bootstrap_phase(
         self,
         project=context.name,
@@ -70,9 +101,9 @@ def _prepare_backend_runtime(
         backend_cwd=backend_cwd,
         manager=manager,
         env=env,
-        backend_env_file=backend_env_file,
-        backend_env_is_default=backend_env_is_default,
-        skip_local_db_env=skip_local_db_env,
+        backend_env_file=env_contract.env_file_path,
+        backend_env_is_default=env_contract.env_file_is_default,
+        skip_local_db_env=env_contract.skip_local_db_env,
         migrations_enabled=migrations_enabled,
     )
     if not runtime_required:
@@ -163,6 +194,7 @@ def _prepare_backend_runtime(
                 cwd=backend_cwd,
                 backend_log_path=backend_log_path,
                 env=env,
+                env_contract=env_contract,
                 step="poetry alembic upgrade head",
             )
             _emit_bootstrap_phase(
@@ -284,6 +316,7 @@ def _prepare_backend_runtime(
             cwd=backend_cwd,
             backend_log_path=backend_log_path,
             env=env,
+            env_contract=env_contract,
             step="alembic upgrade head",
         )
         _emit_bootstrap_phase(
@@ -848,21 +881,12 @@ def _resolve_backend_env_file(
     context: ProjectContextLike,
     backend_cwd: Path,
 ) -> tuple[Path | None, bool]:
-    override = self._override_env_path(
-        self._command_override_value("BACKEND_ENV_FILE_OVERRIDE"),
-        base_dir=context.root,
+    resolution = _resolve_backend_env_file_resolution(
+        self,
+        context=context,
+        backend_cwd=backend_cwd,
     )
-    if override is None and context.name == "Main":
-        override = self._override_env_path(
-            self._command_override_value("MAIN_ENV_FILE_PATH"),
-            base_dir=context.root,
-        )
-    if override is not None:
-        return override, False
-    default_env_file = backend_cwd / ".env"
-    if default_env_file.is_file():
-        return default_env_file, True
-    return None, False
+    return resolution.path, resolution.is_default
 
 
 def _resolve_frontend_env_file(
@@ -871,21 +895,209 @@ def _resolve_frontend_env_file(
     context: ProjectContextLike,
     frontend_cwd: Path,
 ) -> Path | None:
-    override = self._override_env_path(
-        self._command_override_value("FRONTEND_ENV_FILE_OVERRIDE"),
-        base_dir=context.root,
+    return _resolve_frontend_env_file_resolution(
+        self,
+        context=context,
+        frontend_cwd=frontend_cwd,
+    ).path
+
+
+def _resolve_backend_env_file_resolution(
+    self: Any,
+    *,
+    context: ProjectContextLike,
+    backend_cwd: Path,
+) -> _EnvFileResolution:
+    override_raw = self._command_override_value("BACKEND_ENV_FILE_OVERRIDE")
+    if override_raw is None and context.name == "Main":
+        override_raw = self._command_override_value("MAIN_ENV_FILE_PATH")
+    return _resolve_env_file_resolution(
+        self,
+        override_raw=override_raw,
+        target_root=context.root,
+        default_env_file=backend_cwd / ".env",
     )
-    if override is None and context.name == "Main":
-        override = self._override_env_path(
-            self._command_override_value("MAIN_FRONTEND_ENV_FILE_PATH"),
-            base_dir=context.root,
+
+
+def _resolve_frontend_env_file_resolution(
+    self: Any,
+    *,
+    context: ProjectContextLike,
+    frontend_cwd: Path,
+) -> _EnvFileResolution:
+    override_raw = self._command_override_value("FRONTEND_ENV_FILE_OVERRIDE")
+    if override_raw is None and context.name == "Main":
+        override_raw = self._command_override_value("MAIN_FRONTEND_ENV_FILE_PATH")
+    return _resolve_env_file_resolution(
+        self,
+        override_raw=override_raw,
+        target_root=context.root,
+        default_env_file=frontend_cwd / ".env",
+    )
+
+
+def _resolve_env_file_resolution(
+    self: Any,
+    *,
+    override_raw: str | None,
+    target_root: Path,
+    default_env_file: Path,
+) -> _EnvFileResolution:
+    override_requested = isinstance(override_raw, str) and bool(override_raw.strip())
+    resolution = "none"
+    override_path: Path | None = None
+    if override_requested:
+        override_path, resolution = _resolve_override_env_path_details(
+            str(override_raw),
+            target_root=target_root,
+            repo_root=Path(str(getattr(self.config, "base_dir", target_root))),
         )
-    if override is not None:
-        return override
-    default_env_file = frontend_cwd / ".env"
+    if override_path is not None:
+        return _EnvFileResolution(
+            path=override_path,
+            is_default=False,
+            source="explicit_override",
+            override_requested=override_requested,
+            override_resolution=resolution,
+        )
     if default_env_file.is_file():
-        return default_env_file
-    return None
+        return _EnvFileResolution(
+            path=default_env_file.resolve(),
+            is_default=True,
+            source="default",
+            override_requested=override_requested,
+            override_resolution=resolution,
+        )
+    return _EnvFileResolution(
+        path=None,
+        is_default=False,
+        source="none",
+        override_requested=override_requested,
+        override_resolution=resolution,
+    )
+
+
+def _resolve_override_env_path_details(raw_path: str, *, target_root: Path, repo_root: Path) -> tuple[Path | None, str]:
+    candidate = Path(raw_path.strip()).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        if resolved.is_file():
+            return resolved, "absolute"
+        return None, "missing"
+
+    target_candidate = (target_root / candidate).resolve()
+    repo_candidate = (repo_root / candidate).resolve()
+    target_exists = target_candidate.is_file()
+    repo_exists = repo_candidate.is_file()
+
+    if target_exists and repo_exists and target_candidate != repo_candidate:
+        raise RuntimeError(
+            "Relative env-file override is ambiguous; the path exists under both the target root and repo root. "
+            "Use an absolute path."
+        )
+    if target_exists:
+        return target_candidate, "target_root"
+    if repo_exists:
+        return repo_candidate, "repo_root"
+    return None, "missing"
+
+
+def _resolve_backend_env_contract(
+    self: Any,
+    *,
+    context: ProjectContextLike,
+    backend_cwd: Path,
+    base_env: Mapping[str, str],
+    projected_env: Mapping[str, str],
+) -> _BackendEnvContract:
+    env_resolution = _resolve_backend_env_file_resolution(
+        self,
+        context=context,
+        backend_cwd=backend_cwd,
+    )
+    skip_local_db_env = _skip_local_db_env(
+        self,
+        backend_env_file=env_resolution.path,
+        backend_env_is_default=env_resolution.is_default,
+    )
+    env, scrubbed_keys = _scrub_backend_sensitive_env(base_env)
+    normalized_projected_env = _normalize_projected_backend_env(projected_env)
+    env.update(normalized_projected_env)
+    if env_resolution.path is not None and env_resolution.path.is_file():
+        env.update(self._read_env_file_safe(env_resolution.path))
+        env["APP_ENV_FILE"] = str(env_resolution.path)
+    if not skip_local_db_env:
+        for key, value in normalized_projected_env.items():
+            if value.strip():
+                env[key] = value
+    contract = _BackendEnvContract(
+        env=env,
+        env_file_path=env_resolution.path,
+        env_file_is_default=env_resolution.is_default,
+        env_file_source=env_resolution.source,
+        override_requested=env_resolution.override_requested,
+        override_resolution=env_resolution.override_resolution,
+        override_authoritative=(env_resolution.source == "explicit_override" and skip_local_db_env),
+        skip_local_db_env=skip_local_db_env,
+        scrubbed_keys=scrubbed_keys,
+        projected_keys=tuple(sorted(normalized_projected_env)),
+    )
+    _emit_backend_env_resolved(
+        self,
+        context=context,
+        backend_cwd=backend_cwd,
+        contract=contract,
+    )
+    return contract
+
+
+def _scrub_backend_sensitive_env(base_env: Mapping[str, str]) -> tuple[dict[str, str], tuple[str, ...]]:
+    scrubbed: list[str] = []
+    merged: dict[str, str] = {}
+    for key, value in base_env.items():
+        if key in _BACKEND_SENSITIVE_ENV_KEYS and isinstance(value, str) and value.strip():
+            scrubbed.append(key)
+            continue
+        merged[str(key)] = str(value)
+    return merged, tuple(sorted(scrubbed))
+
+
+def _normalize_projected_backend_env(projected_env: Mapping[str, str]) -> dict[str, str]:
+    normalized = {
+        str(key): str(value)
+        for key, value in projected_env.items()
+        if isinstance(key, str) and isinstance(value, str) and value.strip()
+    }
+    database_url = normalized.get("DATABASE_URL")
+    if isinstance(database_url, str) and database_url.strip():
+        normalized.setdefault("SQLALCHEMY_DATABASE_URL", database_url)
+        normalized.setdefault("ASYNC_DATABASE_URL", database_url)
+    return normalized
+
+
+def _emit_backend_env_resolved(
+    self: Any,
+    *,
+    context: ProjectContextLike,
+    backend_cwd: Path,
+    contract: _BackendEnvContract,
+) -> None:
+    emitter = getattr(self, "_emit", None)
+    if not callable(emitter):
+        return
+    emitter(
+        "backend.env.resolved",
+        project=context.name,
+        project_root=str(context.root),
+        backend_cwd=str(backend_cwd),
+        env_file_path=str(contract.env_file_path) if contract.env_file_path is not None else None,
+        env_file_source=contract.env_file_source,
+        override_requested=contract.override_requested,
+        override_resolution=contract.override_resolution,
+        override_authoritative=contract.override_authoritative,
+        scrubbed_keys=list(contract.scrubbed_keys),
+        projected_keys=list(contract.projected_keys),
+    )
 
 
 def _override_env_path(raw_path: str | None, *, base_dir: Path) -> Path | None:
@@ -944,6 +1156,7 @@ def _run_backend_migration_step(
     cwd: Path,
     backend_log_path: str,
     env: Mapping[str, str],
+    env_contract: _BackendEnvContract | None = None,
     step: str,
 ) -> None:
     try:
@@ -989,6 +1202,9 @@ def _run_backend_migration_step(
             )
             if backend_log_path:
                 record_warning(context.name, f"backend log: {backend_log_path}")
+            detail = _backend_env_warning_line(env_contract)
+            if detail is not None:
+                record_warning(context.name, detail)
         else:
             print(
                 f"Warning: backend migration step failed for {context.name}; continuing without migration ({message})"
@@ -996,6 +1212,9 @@ def _run_backend_migration_step(
             if backend_log_path:
                 print("  backend log:")
                 print(f"  {backend_log_path}")
+            detail = _backend_env_warning_line(env_contract)
+            if detail is not None:
+                print(detail)
         missing_revision = _backend_missing_revision_id(message)
         if missing_revision:
             hint_text = (
@@ -1017,7 +1236,21 @@ def _run_backend_migration_step(
             error=message,
             backend_log_path=backend_log_path,
             missing_revision=missing_revision,
+            env_file_path=str(env_contract.env_file_path) if env_contract and env_contract.env_file_path else None,
+            env_file_source=env_contract.env_file_source if env_contract else None,
+            override_resolution=env_contract.override_resolution if env_contract else None,
         )
+
+
+def _backend_env_warning_line(env_contract: _BackendEnvContract | None) -> str | None:
+    if env_contract is None:
+        return None
+    parts = [f"backend env source: {env_contract.env_file_source}"]
+    if env_contract.env_file_path is not None:
+        parts.append(str(env_contract.env_file_path))
+    if env_contract.override_requested:
+        parts.append(f"override_resolution={env_contract.override_resolution}")
+    return " | ".join(parts)
 
 
 def _backend_migration_retry_env_for_async_driver_mismatch(
@@ -1033,13 +1266,8 @@ def _backend_migration_retry_env_for_async_driver_mismatch(
     if rewritten_url is None or rewritten_url == current_url:
         return None
     retry_env = dict(env)
-    retry_env["DATABASE_URL"] = rewritten_url
-    sqlalchemy_url = str(retry_env.get("SQLALCHEMY_DATABASE_URL", "")).strip()
-    if not sqlalchemy_url or sqlalchemy_url == current_url:
-        retry_env["SQLALCHEMY_DATABASE_URL"] = rewritten_url
-    async_url = str(retry_env.get("ASYNC_DATABASE_URL", "")).strip()
-    if not async_url or async_url == current_url:
-        retry_env["ASYNC_DATABASE_URL"] = rewritten_url
+    for key in ("DATABASE_URL", "SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL"):
+        retry_env[key] = rewritten_url
     return retry_env
 
 
@@ -1110,11 +1338,12 @@ def _read_env_file_safe(path: Path) -> dict[str, str]:
 
 def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> None:
     updates: dict[str, str] = {}
-    for key in ("DATABASE_URL", "REDIS_URL"):
+    removals = {"SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL"}
+    for key in ("DATABASE_URL", "SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL", "REDIS_URL"):
         value = env.get(key)
         if isinstance(value, str) and value.strip():
             updates[key] = value
-    if not updates:
+    if not updates and not removals:
         return
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -1126,7 +1355,14 @@ def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> 
     rendered: list[str] = []
     for line in lines:
         key = self._env_assignment_key(line)
-        if key is None or key not in updates or key in replaced:
+        if key is None or key in replaced:
+            rendered.append(line)
+            continue
+        if key in removals and key not in updates:
+            changed = True
+            replaced.add(key)
+            continue
+        if key not in updates:
             rendered.append(line)
             continue
         new_line = f"{key}={updates[key]}"
