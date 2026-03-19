@@ -103,3 +103,23 @@ class PathLinksTests(unittest.TestCase):
         )
 
         self.assertEqual(paths, ("/var/folders/x/backend.log", "/tmp/backup.txt"))
+
+    def test_local_paths_in_text_excludes_trailing_colon_from_absolute_path(self) -> None:
+        paths = local_paths_in_text("Could not update global git excludes at /tmp/home/.gitignore_global: denied")
+
+        self.assertEqual(paths, ("/tmp/home/.gitignore_global",))
+
+    def test_render_paths_in_terminal_text_preserves_trailing_colon_outside_link(self) -> None:
+        rendered = render_paths_in_terminal_text(
+            "Could not update global git excludes at /tmp/home/.gitignore_global: denied",
+            paths=local_paths_in_text("Could not update global git excludes at /tmp/home/.gitignore_global: denied"),
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertIn("\x1b]8;;file:///tmp/home/.gitignore_global\x1b\\", rendered)
+        self.assertNotIn("file:///tmp/home/.gitignore_global%3A", rendered)
+        self.assertEqual(
+            strip_ansi(rendered),
+            "Could not update global git excludes at /tmp/home/.gitignore_global: denied",
+        )

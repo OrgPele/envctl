@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,8 +13,14 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import PortDefaults, StartupProfile
 from envctl_engine.config.git_global_ignore import GlobalIgnoreStatus
 from envctl_engine.config.persistence import ConfigSaveResult, ManagedConfigValues
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.textual.screens.config_wizard import ConfigWizardResult
 from envctl_engine.config.wizard_domain import _save_message, edit_local_config, ensure_local_config
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ConfigWizardDomainTests(unittest.TestCase):
@@ -169,6 +177,41 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
         self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
         self.assertIn("Configured Git global excludes", message)
+
+    def test_save_message_hyperlinks_embedded_global_ignore_paths_when_enabled(self) -> None:
+        excludes_path = Path("/tmp/home/.gitignore_global")
+        warning = f"Could not update global git excludes at {excludes_path}: denied"
+        result = ConfigWizardResult(
+            values=ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            ),
+            save_result=ConfigSaveResult(
+                path=Path("/tmp/repo/.envctl"),
+                ignore_updated=True,
+                ignore_warning=warning,
+                ignore_status=GlobalIgnoreStatus(
+                    code="configured_global_excludes",
+                    updated=True,
+                    scope="git_global_excludes",
+                    target_path=excludes_path,
+                    managed_patterns=(".envctl*",),
+                    warning=None,
+                ),
+            ),
+        )
+
+        buffer = _TtyStringIO()
+        with redirect_stdout(buffer):
+            message = _save_message(result, env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+
+        self.assertIn("\x1b]8;;file://", message)
+        plain = strip_ansi(message)
+        self.assertIn("Saved startup config: /tmp/repo/.envctl", plain)
+        self.assertIn(f"Configured Git global excludes at {excludes_path}.", plain)
+        self.assertIn(warning, plain)
 
     def test_ensure_local_config_emits_updated_event_for_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

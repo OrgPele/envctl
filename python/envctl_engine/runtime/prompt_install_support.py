@@ -117,6 +117,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
         overwrite_error = _require_overwrite_approval(
             overwrite_candidates=overwrite_candidates,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
         )
         if overwrite_error is not None:
             results.append(overwrite_error)
@@ -230,6 +231,7 @@ def _require_overwrite_approval(
     *,
     overwrite_candidates: list[PromptInstallPlan],
     json_output: bool,
+    env: Mapping[str, str] | None = None,
 ) -> PromptInstallResult | None:
     if json_output:
         return _overwrite_failure(
@@ -239,7 +241,7 @@ def _require_overwrite_approval(
         return _overwrite_failure(
             "Overwrite approval required for existing prompt files; rerun with --yes or --force because no interactive TTY is available.",
         )
-    response = input(_overwrite_prompt(overwrite_candidates)).strip().lower()
+    response = input(_overwrite_prompt(overwrite_candidates, env=env)).strip().lower()
     if response in {"y", "yes"}:
         return None
     return _overwrite_failure("Overwrite declined; no prompt files were changed.")
@@ -261,10 +263,14 @@ def _interactive_stdio() -> bool:
     return bool(callable(stdin_isatty) and stdin_isatty() and callable(stdout_isatty) and stdout_isatty())
 
 
-def _overwrite_prompt(overwrite_candidates: list[PromptInstallPlan]) -> str:
+def _overwrite_prompt(
+    overwrite_candidates: list[PromptInstallPlan],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
     lines = [f"Overwrite {len(overwrite_candidates)} existing prompt file(s)?"]
     for plan in overwrite_candidates:
-        lines.append(f"- {plan.cli}: {plan.target_path}")
+        lines.append(f"- {plan.cli}: {render_path_for_terminal(plan.target_path, env=env, stream=sys.stdout)}")
     lines.append("Type 'y' to continue [y/N]: ")
     return "\n".join(lines)
 

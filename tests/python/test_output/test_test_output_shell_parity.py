@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import os
 from io import StringIO
 from pathlib import Path
 import unittest
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.test_output.parser_base import TestResult
+from envctl_engine.test_output.parser_base import TestResult, strip_ansi
 from envctl_engine.test_output.parser_jest import JestOutputParser
 from envctl_engine.test_output.parser_pytest import PytestOutputParser
 from envctl_engine.test_output.summary import TestSummaryFormatter
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class TestOutputShellParityTests(unittest.TestCase):
@@ -200,6 +207,22 @@ ERROR /Users/example/project/backend/tests/unit/test_repo.py::test_repo - Assert
         self.assertEqual(result.skipped, 1)
         self.assertEqual(result.total, 44)
         self.assertAlmostEqual(result.duration, 189.0, places=1)
+
+    def test_summary_formatter_hyperlinks_coverage_report_path_when_enabled(self) -> None:
+        result = TestResult(
+            passed=1,
+            total=1,
+            coverage_percent=87.5,
+            coverage_path="/tmp/repo/coverage/index.html",
+        )
+        formatter = TestSummaryFormatter()
+        out = _TtyStringIO()
+
+        with patch.dict(os.environ, {"ENVCTL_UI_HYPERLINK_MODE": "on"}, clear=False), redirect_stdout(out):
+            formatter.print_coverage(result)
+
+        self.assertIn("\x1b]8;;file://", out.getvalue())
+        self.assertIn(result.coverage_path, strip_ansi(out.getvalue()))
 
 
 if __name__ == "__main__":

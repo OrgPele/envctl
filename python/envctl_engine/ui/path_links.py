@@ -124,10 +124,14 @@ def rich_path_text(
 def local_paths_in_text(text: str) -> tuple[str, ...]:
     candidates: list[str] = []
     for match in _ABSOLUTE_PATH_FRAGMENT_RE.finditer(str(text)):
-        candidate = match.group("path").strip()
+        candidate = _trim_extracted_path(match.group("path").strip())
         if candidate and candidate not in candidates:
             candidates.append(candidate)
     return tuple(candidates)
+
+
+def _trim_extracted_path(candidate: str) -> str:
+    return candidate.rstrip(":")
 
 
 def _file_uri(display_text: str) -> str | None:

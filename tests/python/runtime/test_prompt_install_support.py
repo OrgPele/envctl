@@ -181,6 +181,31 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertIn("Before any implementation work, run `git add .`", written)
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
+    def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old codex prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir, "ENVCTL_UI_HYPERLINK_MODE": "on"})
+            route = parse_route(["install-prompts", "--cli", "codex"], env={})
+
+            buffer = _TtyStringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("builtins.input", return_value="n") as prompt_mock,
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            prompt_text = prompt_mock.call_args.args[0]
+            self.assertIn("\x1b]8;;file://", prompt_text)
+            plain = strip_ansi(prompt_text)
+            self.assertIn("Overwrite 1 existing prompt file(s)?", plain)
+            self.assertIn(f"- codex: {target}", plain)
+
     def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
