@@ -373,6 +373,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             provenance = self._read_provenance(repo / "trees" / "implementations_task" / "1")
             self.assertEqual(provenance.get("source_branch"), "release/2026.03")
             self.assertEqual(provenance.get("source_ref"), "origin/release/2026.03")
+            self.assertEqual(provenance.get("plan_file"), "implementations/task.md")
 
     def test_plan_sync_reports_created_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

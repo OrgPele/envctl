@@ -1126,7 +1126,7 @@ def _create_feature_worktrees_result(
             if error:
                 return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
         else:
-            _write_worktree_provenance(self, target=target)
+            _write_worktree_provenance(self, target=target, plan_file=plan_file)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         created_worktrees.append(
             CreatedPlanWorktree(name=f"{feature}-{iteration}", root=target.resolve(), plan_file=plan_file)
@@ -1212,8 +1212,8 @@ def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
     return parse_bool(raw, False)
 
 
-def _write_worktree_provenance(self: Any, *, target: Path) -> None:
-    provenance = _build_worktree_provenance(self)
+def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None = None) -> None:
+    provenance = _build_worktree_provenance(self, plan_file=plan_file)
     if provenance is None or not target.is_dir():
         return
     path = target / WORKTREE_PROVENANCE_PATH
@@ -1224,10 +1224,15 @@ def _write_worktree_provenance(self: Any, *, target: Path) -> None:
         return
 
 
-def _build_worktree_provenance(self: Any) -> dict[str, object] | None:
+def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> dict[str, object] | None:
     source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if source_branch and source_branch != "HEAD":
-        return _worktree_provenance_payload(self, source_branch=source_branch, resolution_reason="attached_branch")
+        return _worktree_provenance_payload(
+            self,
+            source_branch=source_branch,
+            resolution_reason="attached_branch",
+            plan_file=plan_file,
+        )
 
     default_branch = _detect_default_branch(self)
     if not default_branch:
@@ -1236,6 +1241,7 @@ def _build_worktree_provenance(self: Any) -> dict[str, object] | None:
         self,
         source_branch=default_branch,
         resolution_reason="default_branch_detached_head",
+        plan_file=plan_file,
     )
 
 
@@ -1244,9 +1250,10 @@ def _worktree_provenance_payload(
     *,
     source_branch: str,
     resolution_reason: str,
+    plan_file: str | None = None,
 ) -> dict[str, object]:
     source_ref = _resolve_branch_ref(self, source_branch=source_branch)
-    return {
+    payload: dict[str, object] = {
         "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
         "source_branch": source_branch,
         "source_ref": source_ref or source_branch,
@@ -1254,6 +1261,10 @@ def _worktree_provenance_payload(
         "created_from_repo": str(self.config.base_dir.resolve()),
         "recorded_at": datetime.now(tz=UTC).isoformat(),
     }
+    normalized_plan_file = str(plan_file or "").strip()
+    if normalized_plan_file:
+        payload["plan_file"] = normalized_plan_file
+    return payload
 
 
 def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:

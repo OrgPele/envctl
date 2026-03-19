@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -1848,11 +1849,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             project_root = repo / "trees" / "feature-a" / "1"
             review_bundle = repo / "runtime" / "review" / "all.md"
-            original_task = project_root / "OLD_TASK_1.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
             project_root.mkdir(parents=True, exist_ok=True)
             review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
             review_bundle.write_text("# review\n", encoding="utf-8")
-            original_task.write_text("# Original task\n", encoding="utf-8")
+            original_plan.write_text("# Original plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
             rt = self._runtime(
                 repo,
                 runtime,
@@ -1913,7 +1920,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "workspace:10",
                     "--surface",
                     "surface:12",
-                    f"/prompts:review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original task file: {original_task}",
+                    f"/prompts:review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original plan file: {original_plan.resolve()}",
                 ],
                 rt.process_runner.calls,
             )
@@ -1924,11 +1931,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             project_root = repo / "trees" / "feature-a" / "1"
             review_bundle = repo / "runtime" / "review" / "all.md"
-            original_task = project_root / "MAIN_TASK.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
             project_root.mkdir(parents=True, exist_ok=True)
             review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
             review_bundle.write_text("# review\n", encoding="utf-8")
-            original_task.write_text("# Current task\n", encoding="utf-8")
+            original_plan.write_text("# Current plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
             rt = self._runtime(
                 repo,
                 runtime,
@@ -1970,26 +1983,62 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "workspace:9",
                     "--surface",
                     "surface:15",
-                    f"/review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original task file: {original_task}",
+                    f"/review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original plan file: {original_plan.resolve()}",
                 ],
                 rt.process_runner.calls,
             )
 
-    def test_review_launch_prefers_lowest_archived_task_file_for_original_task_note(self) -> None:
+    def test_review_launch_resolves_original_plan_file_from_worktree_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
             project_root = repo / "trees" / "feature-a" / "1"
-            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
             project_root.mkdir(parents=True, exist_ok=True)
-            review_bundle.parent.mkdir(parents=True, exist_ok=True)
-            review_bundle.write_text("# review\n", encoding="utf-8")
-            (project_root / "OLD_TASK_2.md").write_text("# later task\n", encoding="utf-8")
-            (project_root / "OLD_TASK_1.md").write_text("# first task\n", encoding="utf-8")
-            (project_root / "MAIN_TASK.md").write_text("# closure task\n", encoding="utf-8")
-            original_task = getattr(launch_support, "_review_original_task_path")(project_root)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.write_text("# first plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
+            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+                "feature-a-1",
+                project_root,
+                repo_root=repo,
+            )
 
-            self.assertEqual(original_task, (project_root / "OLD_TASK_1.md"))
+            self.assertEqual(original_plan_path, original_plan.resolve())
+
+    def test_review_launch_returns_none_when_original_plan_file_cannot_be_resolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            project_root = repo / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+
+            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+                "feature-a-1",
+                project_root,
+                repo_root=repo,
+            )
+
+            self.assertIsNone(original_plan_path)
+
+    def test_review_launch_can_infer_original_plan_file_without_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            project_root = repo / "trees" / "implementations_task" / "1"
+            original_plan = repo / "todo" / "done" / "implementations" / "task.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.write_text("# done plan\n", encoding="utf-8")
+
+            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+                "implementations_task-1",
+                project_root,
+                repo_root=repo,
+            )
+
+            self.assertEqual(original_plan_path, original_plan.resolve())
 
 
 if __name__ == "__main__":

@@ -187,7 +187,7 @@ Dashboard review-tab note:
 - the optional post-review origin tab in `envctl dashboard` reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - it does not read `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; the dashboard selector menu is the opt-in
 - when no explicit cmux workspace override is set, the review-tab flow targets a sibling workspace named `"<current workspace> reviews"`
-- the launched review prompt includes reviewer notes pointing at the generated review bundle, target worktree directory, and original implementation task file when archived task iterations exist
+- the launched review prompt includes reviewer notes pointing at the generated review bundle, target worktree directory, and the original plan file that created the worktree when provenance can resolve it
 
 Alias env vars:
 

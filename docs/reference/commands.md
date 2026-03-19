@@ -171,7 +171,7 @@ The generated markdown now reports the resolved base branch, base ref, resolutio
 Interactive dashboard follow-up:
 
 - during dashboard `review` setup for exactly one non-`Main` worktree, envctl can use the standard selector menu to ask whether to open one origin-side AI review tab if the launch transport is ready
-- if you opt in and the review succeeds, envctl opens one cmux surface, starts the configured AI CLI from the repo root, and submits `review_worktree_imp` with the selected worktree plus reviewer notes pointing at the generated review bundle, worktree directory, and original implementation task file
+- if you opt in and the review succeeds, envctl opens one cmux surface, starts the configured AI CLI from the repo root, and submits `review_worktree_imp` with the selected worktree plus reviewer notes pointing at the generated review bundle, worktree directory, and the original plan file that created the worktree
 - choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the current markdown bundle-only flow
 - direct `envctl review ...`, `python -m envctl_engine.actions.actions_cli review`, and other non-dashboard review paths never prompt for or launch this tab in v1
 

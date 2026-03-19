@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
@@ -35,6 +36,9 @@ _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
 _PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
 _PLAN_AGENT_CODEX_CYCLE_CAP = 10
 _REVIEW_WORKTREE_PRESET = "review_worktree_imp"
+_WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+_PLANNING_ROOT = Path("todo") / "plans"
+_DONE_PLANNING_ROOT = Path("todo") / "done"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
 _CODEX_LOADING_MARKERS = (
@@ -863,7 +867,7 @@ def _run_review_surface_bootstrap(
                 project_name=project_name,
                 project_root=project_root,
                 review_bundle_path=review_bundle_path,
-                original_task_path=_review_original_task_path(project_root),
+                original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
             ),
         ),
         failure_event="dashboard.review_tab.failed",
@@ -1210,31 +1214,66 @@ def _review_prompt_arguments(
     project_name: str,
     project_root: Path,
     review_bundle_path: Path | None,
-    original_task_path: Path | None,
+    original_plan_path: Path | None,
 ) -> str:
     parts = [project_name]
     if review_bundle_path is not None:
         parts.append(f"Review bundle: {review_bundle_path}")
     parts.append(f"Worktree directory: {project_root}")
-    if original_task_path is not None:
-        parts.append(f"Original task file: {original_task_path}")
+    if original_plan_path is not None:
+        parts.append(f"Original plan file: {original_plan_path}")
     return " ".join(str(part).strip() for part in parts if str(part).strip())
 
 
-def _review_original_task_path(project_root: Path) -> Path | None:
+def _review_original_plan_path(project_name: str, project_root: Path, *, repo_root: Path) -> Path | None:
     root = Path(project_root)
-    archived: list[tuple[int, Path]] = []
-    for candidate in root.glob("OLD_TASK_*.md"):
-        match = re.fullmatch(r"OLD_TASK_(\d+)\.md", candidate.name)
-        if match is None:
+    provenance_path = root / _WORKTREE_PROVENANCE_PATH
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        provenance = {}
+    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    resolved = _resolve_recorded_plan_file(Path(repo_root), recorded_plan)
+    if resolved is not None:
+        return resolved
+    return _infer_plan_file_from_feature(Path(repo_root), feature_name=_feature_name_from_project_name(project_name))
+
+
+def _resolve_recorded_plan_file(repo_root: Path, recorded_plan: str) -> Path | None:
+    normalized_plan = str(recorded_plan or "").strip()
+    if not normalized_plan:
+        return None
+    normalized = Path(normalized_plan.replace("\\", "/").lstrip("./"))
+    for root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
+        candidate = repo_root / root / normalized
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _feature_name_from_project_name(project_name: str) -> str:
+    normalized = str(project_name).strip()
+    return re.sub(r"-\d+$", "", normalized)
+
+
+def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path | None:
+    normalized_feature = str(feature_name).strip()
+    if not normalized_feature:
+        return None
+    matches: list[Path] = []
+    for planning_root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
+        root = repo_root / planning_root
+        if not root.is_dir():
             continue
-        archived.append((int(match.group(1)), candidate))
-    if archived:
-        archived.sort(key=lambda item: item[0])
-        return archived[0][1]
-    main_task = root / "MAIN_TASK.md"
-    if main_task.exists():
-        return main_task
+        for candidate in sorted(root.glob("*/*.md")):
+            if candidate.name == "README.md":
+                continue
+            relative = candidate.relative_to(root)
+            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
+                continue
+            matches.append(candidate.resolve())
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 

@@ -393,6 +393,9 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertIn("Launch arguments: `$ARGUMENTS`", written)
             self.assertIn("Treat only the first path-like token as the explicit worktree override", written)
             self.assertIn("use that bundle as the primary review guide", written)
+            self.assertIn("original plan file", written)
+            self.assertNotIn("MAIN_TASK.md", written)
+            self.assertNotIn("OLD_TASK_", written)
             self.assertIn("read-only", written)
             self.assertIn("findings-first", written)
 
