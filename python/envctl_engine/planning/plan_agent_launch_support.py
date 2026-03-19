@@ -334,8 +334,7 @@ def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
         )
     if launch_config.cmux_workspace:
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
-    workspace_id = _resolve_workspace_id(runtime, launch_config, workspace_mode="current")
-    if workspace_id:
+    if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     reason = "missing_cmux_context" if _missing_required_cmux_context(runtime, launch_config) else "workspace_unavailable"
     return ReviewAgentLaunchReadiness(ready=False, reason=reason, cli=launch_config.cli)
@@ -347,6 +346,7 @@ def launch_review_agent_terminal(
     repo_root: Path,
     project_name: str,
     project_root: Path,
+    review_bundle_path: Path | None = None,
 ) -> AgentTerminalLaunchResult:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
     missing_commands = _missing_launch_commands(runtime, launch_config)
@@ -362,7 +362,7 @@ def launch_review_agent_terminal(
     workspace_target = _ensure_workspace_id(
         runtime,
         launch_config,
-        workspace_mode="current",
+        workspace_mode="reviews",
         event_prefix="dashboard.review_tab",
     )
     if workspace_target is None:
@@ -401,6 +401,7 @@ def launch_review_agent_terminal(
         repo_root=repo_root,
         project_name=project_name,
         project_root=project_root,
+        review_bundle_path=review_bundle_path,
     )
     runtime._emit(
         "dashboard.review_tab.launched",
@@ -619,6 +620,7 @@ def _start_background_review_surface_bootstrap(
     repo_root: Path,
     project_name: str,
     project_root: Path,
+    review_bundle_path: Path | None,
 ) -> None:
     thread = threading.Thread(
         target=_complete_review_surface_bootstrap,
@@ -630,6 +632,7 @@ def _start_background_review_surface_bootstrap(
             "repo_root": repo_root,
             "project_name": project_name,
             "project_root": project_root,
+            "review_bundle_path": review_bundle_path,
         },
         name=f"envctl-review-agent-{project_name}",
         daemon=False,
@@ -690,8 +693,8 @@ def _complete_review_surface_bootstrap(
     repo_root: Path,
     project_name: str,
     project_root: Path,
+    review_bundle_path: Path | None,
 ) -> None:
-    _ = project_root
     try:
         error = _run_review_surface_bootstrap(
             runtime,
@@ -700,6 +703,8 @@ def _complete_review_surface_bootstrap(
             launch_config=launch_config,
             repo_root=repo_root,
             project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=review_bundle_path,
         )
         if error is None:
             runtime._emit(
@@ -816,6 +821,8 @@ def _run_review_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     repo_root: Path,
     project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
 ) -> str | None:
     error = _prepare_surface(
         runtime,
@@ -849,7 +856,16 @@ def _run_review_surface_bootstrap(
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=launch_config.cli,
-        prompt_text=_slash_command(launch_config.cli, _REVIEW_WORKTREE_PRESET, arguments=project_name),
+        prompt_text=_slash_command(
+            launch_config.cli,
+            _REVIEW_WORKTREE_PRESET,
+            arguments=_review_prompt_arguments(
+                project_name=project_name,
+                project_root=project_root,
+                review_bundle_path=review_bundle_path,
+                original_task_path=_review_original_task_path(project_root),
+            ),
+        ),
         failure_event="dashboard.review_tab.failed",
     )
 
@@ -1123,7 +1139,7 @@ def _resolve_workspace_id(
     runtime: Any,
     launch_config: PlanAgentLaunchConfig,
     *,
-    workspace_mode: Literal["implementation", "current"] = "implementation",
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
 ) -> str | None:
     if launch_config.cmux_workspace:
         return _resolve_configured_workspace_id(runtime, launch_config.cmux_workspace)
@@ -1135,7 +1151,7 @@ def _ensure_workspace_id(
     runtime: Any,
     launch_config: PlanAgentLaunchConfig,
     *,
-    workspace_mode: Literal["implementation", "current"] = "implementation",
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
     event_prefix: str = "planning.agent_launch",
 ) -> _WorkspaceLaunchTarget | None:
     if launch_config.cmux_workspace:
@@ -1156,7 +1172,7 @@ def _default_target_workspace_title(
     runtime: Any,
     launch_config: PlanAgentLaunchConfig,
     *,
-    workspace_mode: Literal["implementation", "current"] = "implementation",
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
 ) -> str | None:
     current_title, _ = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     return current_title
@@ -1166,7 +1182,7 @@ def _default_workspace_target(
     runtime: Any,
     launch_config: PlanAgentLaunchConfig,
     *,
-    workspace_mode: Literal["implementation", "current"] = "implementation",
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
 ) -> tuple[str | None, str | None]:
     if _missing_required_cmux_context(runtime, launch_config):
         return None, None
@@ -1181,12 +1197,45 @@ def _default_workspace_target(
     if workspace_mode == "current":
         target_title = current_title
     else:
-        suffix = " implementation"
+        suffix = " reviews" if workspace_mode == "reviews" else " implementation"
         target_title = current_title if current_title.endswith(suffix) else f"{current_title}{suffix}"
     for workspace_ref, workspace_title in entries:
         if workspace_title == target_title:
             return target_title, workspace_ref
     return target_title, None
+
+
+def _review_prompt_arguments(
+    *,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+    original_task_path: Path | None,
+) -> str:
+    parts = [project_name]
+    if review_bundle_path is not None:
+        parts.append(f"Review bundle: {review_bundle_path}")
+    parts.append(f"Worktree directory: {project_root}")
+    if original_task_path is not None:
+        parts.append(f"Original task file: {original_task_path}")
+    return " ".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def _review_original_task_path(project_root: Path) -> Path | None:
+    root = Path(project_root)
+    archived: list[tuple[int, Path]] = []
+    for candidate in root.glob("OLD_TASK_*.md"):
+        match = re.fullmatch(r"OLD_TASK_(\d+)\.md", candidate.name)
+        if match is None:
+            continue
+        archived.append((int(match.group(1)), candidate))
+    if archived:
+        archived.sort(key=lambda item: item[0])
+        return archived[0][1]
+    main_task = root / "MAIN_TASK.md"
+    if main_task.exists():
+        return main_task
+    return None
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:

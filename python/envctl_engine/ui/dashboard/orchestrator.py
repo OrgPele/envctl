@@ -41,6 +41,9 @@ from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_di
 
 
 DirtyPrDecision = Literal["commit", "skip", "cancel"]
+_REVIEW_TAB_OPEN_TOKEN = "__REVIEW_TAB_OPEN__"
+_REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
+_REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 
 
 class DashboardOrchestrator:
@@ -342,7 +345,12 @@ class DashboardOrchestrator:
             return route
 
         if route.command in self._dashboard_owned_project_selection_commands():
-            return self._apply_project_target_selection(route, state, rt)
+            selected_route = self._apply_project_target_selection(route, state, rt)
+            if selected_route is None:
+                return None
+            if selected_route.command == "review":
+                return self._apply_review_tab_launch_selection(selected_route, state, rt)
+            return selected_route
 
         runtime_any = cast(Any, rt)
         if self._route_has_explicit_target(route, runtime_any):
@@ -714,6 +722,24 @@ class DashboardOrchestrator:
 
     def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
         runtime_any = cast(Any, rt)
+        if not bool(route.flags.get(_REVIEW_TAB_LAUNCH_FLAG)):
+            return
+        target = self._review_tab_target(route, state, runtime_any)
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return
+        project_name, project_root = target
+        launch_review_agent_terminal(
+            runtime_any,
+            repo_root=self._repo_root(runtime_any),
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=self._review_bundle_path(state, project_name=project_name),
+        )
+
+    def _apply_review_tab_launch_selection(self, route: Route, state: RunState, rt: object) -> Route:
+        runtime_any = cast(Any, rt)
+        route.flags = {key: value for key, value in route.flags.items() if key != _REVIEW_TAB_LAUNCH_FLAG}
         target = self._review_tab_target(route, state, runtime_any)
         runtime_any._emit(
             "dashboard.review_tab.evaluate",
@@ -723,8 +749,8 @@ class DashboardOrchestrator:
         )
         if target is None:
             runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
-            return
-        project_name, project_root = target
+            return route
+        project_name, _project_root = target
         readiness = review_agent_launch_readiness(runtime_any)
         if not readiness.ready:
             runtime_any._emit(
@@ -738,23 +764,15 @@ class DashboardOrchestrator:
             message = self._review_tab_unavailable_message(readiness.reason, readiness.missing)
             if message:
                 print(message)
-            return
+            return route
         runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
-        decision = self._prompt_yes_no_dialog(
-            runtime_any,
-            title="Open origin review tab?",
-            prompt=f"Open an origin-side AI review tab for {project_name}?",
-        )
+        decision = self._prompt_review_tab_menu(runtime_any, project_name=project_name)
         if decision != "commit":
             runtime_any._emit("dashboard.review_tab.declined", command="review", project=project_name, cli=readiness.cli)
-            return
+            return route
         runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
-        launch_review_agent_terminal(
-            runtime_any,
-            repo_root=self._repo_root(runtime_any),
-            project_name=project_name,
-            project_root=project_root,
-        )
+        route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}
+        return route
 
     def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
         repo_root = self._repo_root(runtime)
@@ -791,11 +809,64 @@ class DashboardOrchestrator:
         return ""
 
     @staticmethod
+    def _review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        reports = metadata.get("project_action_reports")
+        if not isinstance(reports, dict):
+            return None
+        project_entry = reports.get(project_name)
+        if not isinstance(project_entry, dict):
+            return None
+        review_entry = project_entry.get("review")
+        if not isinstance(review_entry, dict):
+            return None
+        if str(review_entry.get("status", "")).strip().lower() != "success":
+            return None
+        raw_path = str(review_entry.get("bundle_path", "") or "").strip()
+        if not raw_path:
+            return None
+        return Path(raw_path).expanduser()
+
+    @staticmethod
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
         if len(dirty_targets) == 1:
             target = dirty_targets[0]
             return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
         return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
+
+    @staticmethod
+    def _prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
+        prompt = f"Open an origin-side AI review tab for {project_name}?"
+        values = _run_selector_with_impl(
+            prompt=prompt,
+            options=[
+                SelectorItem(
+                    id="review-tab:open",
+                    label="Yes",
+                    kind="",
+                    token=_REVIEW_TAB_OPEN_TOKEN,
+                    scope_signature=("review-tab:open",),
+                ),
+                SelectorItem(
+                    id="review-tab:skip",
+                    label="No",
+                    kind="",
+                    token=_REVIEW_TAB_SKIP_TOKEN,
+                    scope_signature=("review-tab:skip",),
+                ),
+            ],
+            multi=False,
+            initial_tokens=[_REVIEW_TAB_SKIP_TOKEN],
+            emit=getattr(runtime, "_emit", None),
+        )
+        if not values:
+            return "skip"
+        chosen = str(values[0]).strip()
+        if chosen == _REVIEW_TAB_OPEN_TOKEN:
+            return "commit"
+        if chosen == _REVIEW_TAB_SKIP_TOKEN:
+            return "skip"
+        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title="Open origin review tab?", prompt=prompt)
 
     @staticmethod
     def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:

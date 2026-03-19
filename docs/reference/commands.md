@@ -170,9 +170,9 @@ The generated markdown now reports the resolved base branch, base ref, resolutio
 
 Interactive dashboard follow-up:
 
-- after a successful dashboard `review` against exactly one non-`Main` worktree, envctl can ask whether to open one origin-side AI review tab
-- accepting the prompt opens one cmux surface, starts the configured AI CLI from the repo root, and submits `review_worktree_imp` with the selected worktree name as an explicit override
-- declining the prompt, reviewing `Main`, or reviewing multiple targets keeps the current markdown bundle-only flow
+- during dashboard `review` setup for exactly one non-`Main` worktree, envctl can use the standard selector menu to ask whether to open one origin-side AI review tab if the launch transport is ready
+- if you opt in and the review succeeds, envctl opens one cmux surface, starts the configured AI CLI from the repo root, and submits `review_worktree_imp` with the selected worktree plus reviewer notes pointing at the generated review bundle, worktree directory, and original implementation task file
+- choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the current markdown bundle-only flow
 - direct `envctl review ...`, `python -m envctl_engine.actions.actions_cli review`, and other non-dashboard review paths never prompt for or launch this tab in v1
 
 Run tests:
@@ -266,7 +266,7 @@ Optional dashboard review-tab launch:
 
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
-- when no explicit workspace override is set, the review tab uses the current cmux workspace instead of the sibling `"<current workspace> implementation"` workspace
+- when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `/prompts:finalize_task` for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow

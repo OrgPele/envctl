@@ -1842,12 +1842,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ],
             )
 
-    def test_review_launch_uses_current_workspace_and_repo_root_for_codex_prompt(self) -> None:
+    def test_review_launch_uses_reviews_workspace_and_repo_root_for_codex_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_task = project_root / "OLD_TASK_1.md"
             project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            original_task.write_text("# Original task\n", encoding="utf-8")
             rt = self._runtime(
                 repo,
                 runtime,
@@ -1863,6 +1868,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         stdout="* workspace:4  envctl  [selected]\n  workspace:8  envctl implementation\n",
                         stderr="",
                     ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="workspace:10\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:12\n", stderr=""),
                 ]
             )
@@ -1880,17 +1888,21 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     repo_root=repo,
                     project_name="feature-a-1",
                     project_root=project_root,
+                    review_bundle_path=review_bundle,
                 )
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:4"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:10", "envctl reviews"])
+            self.assertEqual(rt.process_runner.calls[3], ["cmux", "list-pane-surfaces", "--workspace", "workspace:10"])
+            self.assertEqual(rt.process_runner.calls[4], ["cmux", "new-surface", "--workspace", "workspace:10"])
             self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", f"cd {repo}"],
+                ["cmux", "send", "--workspace", "workspace:10", "--surface", "surface:12", f"cd {repo}"],
                 rt.process_runner.calls,
             )
             self.assertNotIn(
-                ["cmux", "send", "--workspace", "workspace:4", "--surface", "surface:12", f"cd {project_root}"],
+                ["cmux", "send", "--workspace", "workspace:10", "--surface", "surface:12", f"cd {project_root}"],
                 rt.process_runner.calls,
             )
             self.assertIn(
@@ -1898,10 +1910,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "cmux",
                     "send",
                     "--workspace",
-                    "workspace:4",
+                    "workspace:10",
                     "--surface",
                     "surface:12",
-                    "/prompts:review_worktree_imp feature-a-1",
+                    f"/prompts:review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original task file: {original_task}",
                 ],
                 rt.process_runner.calls,
             )
@@ -1911,7 +1923,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_task = project_root / "MAIN_TASK.md"
             project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            original_task.write_text("# Current task\n", encoding="utf-8")
             rt = self._runtime(
                 repo,
                 runtime,
@@ -1939,15 +1956,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     repo_root=repo,
                     project_name="feature-a-1",
                     project_root=project_root,
+                    review_bundle_path=review_bundle,
                 )
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
             self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:15", "/review_worktree_imp feature-a-1"],
+                [
+                    "cmux",
+                    "send",
+                    "--workspace",
+                    "workspace:9",
+                    "--surface",
+                    "surface:15",
+                    f"/review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original task file: {original_task}",
+                ],
                 rt.process_runner.calls,
             )
+
+    def test_review_launch_prefers_lowest_archived_task_file_for_original_task_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            (project_root / "OLD_TASK_2.md").write_text("# later task\n", encoding="utf-8")
+            (project_root / "OLD_TASK_1.md").write_text("# first task\n", encoding="utf-8")
+            (project_root / "MAIN_TASK.md").write_text("# closure task\n", encoding="utf-8")
+            original_task = getattr(launch_support, "_review_original_task_path")(project_root)
+
+            self.assertEqual(original_task, (project_root / "OLD_TASK_1.md"))
 
 
 if __name__ == "__main__":
