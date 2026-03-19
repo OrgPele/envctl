@@ -51,6 +51,31 @@ class ConfigWizardDomainTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     ensure_local_config(base_dir=repo, env={})
 
+    def test_ensure_local_config_reports_full_runtime_dependency_bootstrap_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            launcher_root = Path(tmpdir) / "envctl-source"
+            launcher_requirements = launcher_root / "python" / "requirements.txt"
+            launcher_requirements.parent.mkdir(parents=True, exist_ok=True)
+            launcher_requirements.write_text(
+                "prompt_toolkit>=3.0\npsutil>=5.9\nrich>=13.7\ntextual>=0.58\n",
+                encoding="utf-8",
+            )
+            with (
+                patch("envctl_engine.config.wizard_domain._has_tty", return_value=True),
+                patch("envctl_engine.config.wizard_domain._textual_stack_available", return_value=False),
+            ):
+                with self.assertRaises(RuntimeError) as exc:
+                    ensure_local_config(base_dir=repo, env={"ENVCTL_ROOT_DIR": str(launcher_root)})
+
+        self.assertIn("Missing required envctl runtime Python packages", str(exc.exception))
+        self.assertIn("prompt_toolkit", str(exc.exception))
+        self.assertIn("psutil", str(exc.exception))
+        self.assertIn("rich", str(exc.exception))
+        self.assertIn("textual", str(exc.exception))
+        self.assertIn("python/requirements.txt", str(exc.exception))
+        self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", str(exc.exception))
+
     def test_ensure_local_config_runs_wizard_and_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

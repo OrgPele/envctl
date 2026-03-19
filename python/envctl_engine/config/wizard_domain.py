@@ -7,6 +7,10 @@ from typing import Callable, Mapping
 
 from envctl_engine.config import LocalConfigState, discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state
+from envctl_engine.runtime.runtime_dependency_contract import (
+    missing_runtime_dependency_modules,
+    runtime_dependency_failure_message,
+)
 from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_terminal, render_paths_in_terminal_text
 from envctl_engine.ui.textual.screens.config_wizard import ConfigWizardResult, run_config_wizard_textual
 
@@ -81,10 +85,8 @@ def _require_interactive_config_bootstrap(env: Mapping[str, str]) -> None:
             "Run envctl from a terminal to create the config."
         )
     if not _textual_stack_available():
-        raise RuntimeError(
-            "Missing Textual/Rich dependencies required for initial configuration. "
-            "Install with: python -m pip install -r python/requirements.txt"
-        )
+        missing_modules = _missing_interactive_runtime_modules()
+        raise RuntimeError(runtime_dependency_failure_message(missing_modules, env=env))
 
 
 def _has_tty(env: Mapping[str, str]) -> bool:
@@ -100,12 +102,11 @@ def _has_tty(env: Mapping[str, str]) -> bool:
 
 
 def _textual_stack_available() -> bool:
-    try:
-        __import__("textual")
-        __import__("rich")
-    except Exception:
-        return False
-    return True
+    return not _missing_interactive_runtime_modules()
+
+
+def _missing_interactive_runtime_modules() -> list[str]:
+    return missing_runtime_dependency_modules()
 
 
 def _save_message(result: ConfigWizardResult, *, env: Mapping[str, str] | None = None) -> str:

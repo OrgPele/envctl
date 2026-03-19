@@ -85,10 +85,11 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus one plain follow-up message telling Codex to commit, push, and open or update the PR when that pass finishes
+- default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus `/prompts:finalize_task`
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` keeps the current one-shot launch behavior
-- values greater than `1` queue repeated rounds of `continue_task`, `implement_task`, and the same finalization message in that same Codex session
+- `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `/prompts:finalize_task` for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself

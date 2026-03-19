@@ -112,10 +112,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Would install review_task_imp for codex", rendered)
             self.assertIn("Would install review_worktree_imp for codex", rendered)
             self.assertIn("Would install continue_task for codex", rendered)
+            self.assertIn("Would install finalize_task for codex", rendered)
             self.assertIn("Would install merge_trees_into_dev for codex", rendered)
             self.assertIn("Would install create_plan for codex", rendered)
             self.assertIn("Would install implement_plan for codex", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 7)
+            self.assertEqual(rendered.count("codex: planned "), 8)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -137,6 +138,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 [
                     str(Path(tmpdir) / ".codex" / "prompts" / "continue_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "create_plan.md"),
+                    str(Path(tmpdir) / ".codex" / "prompts" / "finalize_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "implement_plan.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "implement_task.md"),
                     str(Path(tmpdir) / ".codex" / "prompts" / "merge_trees_into_dev.md"),
@@ -425,10 +427,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("review_task_imp", _available_presets())
         self.assertIn("review_worktree_imp", _available_presets())
         self.assertIn("continue_task", _available_presets())
+        self.assertIn("finalize_task", _available_presets())
         self.assertIn("merge_trees_into_dev", _available_presets())
         self.assertIn("create_plan", _available_presets())
         self.assertIn("implement_plan", _available_presets())
-        self.assertEqual(len(_available_presets()), 7)
+        self.assertEqual(len(_available_presets()), 8)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -470,6 +473,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", continue_prompt.body)
         self.assertIn(".envctl-state/worktree-provenance.json", continue_prompt.body)
         self.assertIn("git merge-base HEAD <originating-base>", continue_prompt.body)
+
+        finalize_prompt = _load_template("finalize_task")
+        self.assertEqual(finalize_prompt.name, "finalize_task")
+        self.assertIn("run `envctl test --project <current-worktree-name>`", finalize_prompt.body)
+        self.assertIn("Commit the work.", finalize_prompt.body)
+        self.assertIn("Push the branch.", finalize_prompt.body)
+        self.assertIn("Open the PR if none exists yet, or update the existing PR.", finalize_prompt.body)
 
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)

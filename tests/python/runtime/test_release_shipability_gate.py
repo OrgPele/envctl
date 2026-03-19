@@ -17,6 +17,7 @@ from envctl_engine.runtime.release_gate import (
     canonical_packaging_command,
     canonical_validation_command,
     evaluate_shipability,
+    ShipabilityResult,
 )
 
 
@@ -175,6 +176,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
                     "[project]",
                     'name = "shipability-test"',
                     'version = "0.0.1"',
+                    'dependencies = ["textual>=0.58"]',
                     "",
                 ]
             )
@@ -250,6 +252,48 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
 
             self.assertFalse(result.passed)
             self.assertTrue(any("parity manifest is not fully python_complete" in error for error in result.errors))
+
+    def test_gate_fails_when_runtime_dependency_manifests_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._write_minimal_pyproject(repo)
+            self._write_required_engine_init(repo)
+            (repo / "python").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "requirements.txt").write_text("rich>=13.7\n", encoding="utf-8")
+            self._write_parity_manifest(repo, complete=True)
+            self._commit_paths(
+                repo,
+                "pyproject.toml",
+                "python/envctl_engine/__init__.py",
+                "python/requirements.txt",
+                self._PARITY_MANIFEST_PATH,
+            )
+
+            with (
+                patch("envctl_engine.runtime.release_gate._runtime_parity_is_complete", return_value=True),
+                patch(
+                    "envctl_engine.runtime.release_gate._manifest_freshness_is_valid",
+                    return_value=(True, "manifest fresh"),
+                ),
+                patch(
+                    "envctl_engine.runtime.release_gate.evaluate_runtime_readiness",
+                    return_value=ShipabilityResult(passed=True, errors=[], warnings=[]),
+                ),
+            ):
+                result = evaluate_shipability(
+                    repo_root=repo,
+                    required_paths=(),
+                    required_scopes=(),
+                    check_tests=False,
+                    check_packaging=False,
+                    enforce_parity_sync=True,
+                    enforce_runtime_readiness_contract=False,
+                )
+
+            self.assertFalse(result.passed)
+            self.assertTrue(any("runtime dependency manifests differ" in error for error in result.errors))
 
     def test_manifest_freshness_accepts_offset_aware_and_z_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

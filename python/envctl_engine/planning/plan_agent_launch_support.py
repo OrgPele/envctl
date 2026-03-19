@@ -141,7 +141,15 @@ class _PlanAgentWorkflow:
 
 
 def _finalization_instruction_text() -> str:
+    return _slash_command("codex", "finalize_task")
+
+
+def _first_cycle_completion_instruction_text() -> str:
     return "When the current implementation pass finishes, commit the work, push the branch, and open or update the PR."
+
+
+def _intermediate_cycle_completion_instruction_text() -> str:
+    return "When the current implementation pass finishes, commit the work and push the branch."
 
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
@@ -176,7 +184,13 @@ def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _
         )
     steps = [_PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command("codex", "implement_task"))]
     for cycle in range(1, bounded_cycles + 1):
-        steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_finalization_instruction_text()))
+        if cycle == bounded_cycles:
+            completion_text = _finalization_instruction_text()
+        elif cycle == 1:
+            completion_text = _first_cycle_completion_instruction_text()
+        else:
+            completion_text = _intermediate_cycle_completion_instruction_text()
+        steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=completion_text))
         if cycle < bounded_cycles:
             steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "continue_task")))
             steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "implement_task")))

@@ -48,6 +48,12 @@ pipx ensurepath
 
 Use editable/source installs only when you are developing `envctl` itself.
 
+If you intentionally run from an `envctl` source checkout, install the runtime dependencies for that interpreter with:
+
+```bash
+python -m pip install -r python/requirements.txt
+```
+
 ## How do I verify which `envctl` version is installed?
 
 Run:
@@ -73,6 +79,12 @@ Yes, depending on the workflow.
 If one of those tools is missing, install it separately and retry the affected workflow.
 
 `envctl` installs target project dependencies when the repo needs them, so in Python repos `pytest` is normally provided by the backend project's own dependencies rather than as a separate global prerequisite for `envctl`.
+
+Install-path summary:
+
+- installed command: `pipx install ...` already installs `envctl`'s runtime Python dependencies
+- source checkout / `./bin/envctl`: install `python/requirements.txt`
+- contributor development: use the editable workflow from `docs/developer/contributing.md`
 
 ## Why did `envctl` open a config wizard?
 

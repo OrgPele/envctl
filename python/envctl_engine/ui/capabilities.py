@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 from collections.abc import Mapping
 
+from envctl_engine.runtime.runtime_dependency_contract import python_dependency_available
+
 
 def textual_importable() -> bool:
-    try:
-        __import__("textual")
-    except Exception:
-        return False
-    return True
+    return python_dependency_available("textual")
 
 
 def prompt_toolkit_disabled(env: Mapping[str, str]) -> bool:
@@ -51,4 +48,4 @@ def interactive_tty_available() -> bool:
 
 
 def prompt_toolkit_available() -> bool:
-    return importlib.util.find_spec("prompt_toolkit") is not None
+    return python_dependency_available("prompt_toolkit")
