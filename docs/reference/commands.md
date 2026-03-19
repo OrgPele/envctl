@@ -70,6 +70,7 @@ Behavior:
   - `review_task_imp`
   - `review_worktree_imp`
   - `continue_task`
+  - `finalize_task`
   - `merge_trees_into_dev`
   - `create_plan`
 - target roots:
@@ -250,11 +251,12 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues one finalization message in the same Codex tab
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues `/prompts:finalize_task` in the same Codex tab
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>1`, envctl additionally queues `continue_task`, `implement_task`, and another finalization message for each later round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `/prompts:finalize_task` for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
-- envctl only appends queued messages; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
+- envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
 
 Debug and diagnostics:
 

@@ -18,6 +18,8 @@ _prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_scre
 _tab_title_for_worktree = getattr(launch_support, "_tab_title_for_worktree")
 _build_plan_agent_workflow = getattr(launch_support, "_build_plan_agent_workflow", None)
 _finalization_instruction_text = getattr(launch_support, "_finalization_instruction_text", None)
+_first_cycle_completion_instruction_text = getattr(launch_support, "_first_cycle_completion_instruction_text", None)
+_intermediate_cycle_completion_instruction_text = getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None)
 _wait_for_codex_queue_ready = getattr(launch_support, "_wait_for_codex_queue_ready", None)
 _WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
 
@@ -445,6 +447,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_build_plan_agent_workflow_for_multiple_cycles_queues_continue_and_implement_rounds(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_first_cycle_completion_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=2)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -452,7 +455,29 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", _first_cycle_completion_instruction_text()),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
                 ("queue_message", _finalization_instruction_text()),
+            ],
+        )
+
+    def test_build_plan_agent_workflow_for_three_cycles_uses_commit_push_middle_round(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_first_cycle_completion_instruction_text)
+        self.assertIsNotNone(_intermediate_cycle_completion_instruction_text)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=3)
+
+        self.assertEqual(workflow.mode, "codex_cycles")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", _first_cycle_completion_instruction_text()),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
+                ("queue_message", _intermediate_cycle_completion_instruction_text()),
                 ("queue_message", "/prompts:continue_task"),
                 ("queue_message", "/prompts:implement_task"),
                 ("queue_message", _finalization_instruction_text()),
@@ -840,7 +865,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 patch(
                     "envctl_engine.planning.plan_agent_launch_support._send_surface_text",
                     side_effect=lambda runtime, *, workspace_id, surface_id, text, emit_failure_event=True: (
-                        "queue failed" if text.startswith("When the current implementation pass finishes") else None
+                        "queue failed" if text.startswith("/prompts:finalize_task") else None
                     ),
                 ),
             ):

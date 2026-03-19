@@ -38,6 +38,7 @@ Current built-in presets:
 - `review_task_imp`
 - `review_worktree_imp`
 - `continue_task`
+- `finalize_task`
 - `merge_trees_into_dev`
 - `create_plan`
 
@@ -80,11 +81,12 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 
 Codex-only cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus one finalization message
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus `/prompts:finalize_task`
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus one finalization message
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` or more keeps queueing `continue_task`, `implement_task`, and the finalization message in the same Codex tab
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `/prompts:finalize_task`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR follow-up, use commit/push-only follow-ups in the middle, and reserve `/prompts:finalize_task` for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself
