@@ -941,6 +941,56 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("/tmp/review-output", rendered)
             self.assertIn("analyzer could not resolve docs path", rendered)
 
+    def test_review_dispatch_outside_dashboard_does_not_launch_origin_review_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Review summary written: /tmp/review.md'"},
+            )
+            fake_runner = _FakeRunner(returncode=0, stdout="Review summary written: /tmp/review.md\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
+    def test_headless_review_outside_dashboard_does_not_launch_origin_review_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_DEFAULT_MODE": "main",
+                    }
+                ),
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Review summary written: /tmp/review.md'"},
+            )
+            fake_runner = _FakeRunner(returncode=0, stdout="Review summary written: /tmp/review.md\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"})
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
     def test_interactive_pr_reports_existing_pr_status_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

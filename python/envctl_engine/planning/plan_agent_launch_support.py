@@ -7,8 +7,9 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
@@ -34,6 +35,10 @@ _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
 _PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
 _PLAN_AGENT_CODEX_CYCLE_CAP = 10
+_REVIEW_WORKTREE_PRESET = "review_worktree_imp"
+_WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+_PLANNING_ROOT = Path("todo") / "plans"
+_DONE_PLANNING_ROOT = Path("todo") / "done"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
 _CODEX_LOADING_MARKERS = (
@@ -117,6 +122,21 @@ class PlanAgentLaunchResult:
     status: str
     reason: str
     outcomes: tuple[PlanAgentLaunchOutcome, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class AgentTerminalLaunchResult:
+    status: str
+    reason: str
+    surface_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ReviewAgentLaunchReadiness:
+    ready: bool
+    reason: str
+    cli: str
+    missing: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -304,6 +324,98 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         return payload
     payload["reason"] = "awaiting_new_worktrees"
     return payload
+
+
+def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
+    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    missing_commands = tuple(_missing_launch_commands(runtime, launch_config))
+    if missing_commands:
+        return ReviewAgentLaunchReadiness(
+            ready=False,
+            reason="missing_executables",
+            cli=launch_config.cli,
+            missing=missing_commands,
+        )
+    if launch_config.cmux_workspace:
+        return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
+    if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
+        return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
+    reason = "missing_cmux_context" if _missing_required_cmux_context(runtime, launch_config) else "workspace_unavailable"
+    return ReviewAgentLaunchReadiness(ready=False, reason=reason, cli=launch_config.cli)
+
+
+def launch_review_agent_terminal(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None = None,
+) -> AgentTerminalLaunchResult:
+    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    missing_commands = _missing_launch_commands(runtime, launch_config)
+    if missing_commands:
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="missing_executables",
+            project=project_name,
+            cli=launch_config.cli,
+            missing=missing_commands,
+        )
+        return AgentTerminalLaunchResult(status="failed", reason="missing_executables")
+    workspace_target = _ensure_workspace_id(
+        runtime,
+        launch_config,
+        workspace_mode="reviews",
+        event_prefix="dashboard.review_tab",
+    )
+    if workspace_target is None:
+        reason = "missing_cmux_context" if _missing_required_cmux_context(runtime, launch_config) else "workspace_unavailable"
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason=reason,
+            project=project_name,
+            cli=launch_config.cli,
+        )
+        return AgentTerminalLaunchResult(status="failed", reason=reason)
+    workspace_id = workspace_target.workspace_id
+    surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
+    if create_error or surface_id is None:
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="surface_create_failed",
+            project=project_name,
+            workspace_id=workspace_id,
+            error=create_error,
+            cli=launch_config.cli,
+        )
+        return AgentTerminalLaunchResult(status="failed", reason=create_error or "surface_create_failed")
+    runtime._emit(
+        "dashboard.review_tab.surface_created",
+        project=project_name,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+    )
+    _start_background_review_surface_bootstrap(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        repo_root=repo_root,
+        project_name=project_name,
+        project_root=project_root,
+        review_bundle_path=review_bundle_path,
+    )
+    runtime._emit(
+        "dashboard.review_tab.launched",
+        project=project_name,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+    )
+    _print_launch_summary(f"Opened origin review tab for {project_name}.")
+    return AgentTerminalLaunchResult(status="launched", reason="launched", surface_id=surface_id)
 
 
 def launch_plan_agent_terminals(
@@ -503,6 +615,35 @@ def _start_background_surface_bootstrap(
     thread.start()
 
 
+def _start_background_review_surface_bootstrap(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+) -> None:
+    thread = threading.Thread(
+        target=_complete_review_surface_bootstrap,
+        kwargs={
+            "runtime": runtime,
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "launch_config": launch_config,
+            "repo_root": repo_root,
+            "project_name": project_name,
+            "project_root": project_root,
+            "review_bundle_path": review_bundle_path,
+        },
+        name=f"envctl-review-agent-{project_name}",
+        daemon=False,
+    )
+    thread.start()
+
+
 def _complete_surface_bootstrap(
     runtime: Any,
     *,
@@ -547,6 +688,51 @@ def _complete_surface_bootstrap(
         _persist_runtime_events_snapshot(runtime)
 
 
+def _complete_review_surface_bootstrap(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+) -> None:
+    try:
+        error = _run_review_surface_bootstrap(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            launch_config=launch_config,
+            repo_root=repo_root,
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=review_bundle_path,
+        )
+        if error is None:
+            runtime._emit(
+                "dashboard.review_tab.command_sent",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                project=project_name,
+                cli=launch_config.cli,
+                preset=_REVIEW_WORKTREE_PRESET,
+            )
+            return
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="bootstrap_failed",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            project=project_name,
+            cli=launch_config.cli,
+            error=error,
+        )
+    finally:
+        _persist_runtime_events_snapshot(runtime)
+
+
 def _run_surface_bootstrap(
     runtime: Any,
     *,
@@ -560,23 +746,21 @@ def _run_surface_bootstrap(
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
     )
-    respawn_command = _surface_respawn_command(launch_config, worktree)
-    tab_title = _tab_title_for_worktree(worktree.name)
-    commands = [
-        ["cmux", "rename-tab", "--workspace", workspace_id, "--surface", surface_id, tab_title],
-        ["cmux", "respawn-pane", "--workspace", workspace_id, "--surface", surface_id, "--command", respawn_command],
-    ]
-    for command in commands:
-        error = _run_cmux_command(runtime, command)
-        if error is not None:
-            return error
-    time.sleep(_SURFACE_READY_DELAY_SECONDS)
+    error = _prepare_surface(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        tab_title=_tab_title_for_worktree(worktree.name),
+        shell_command=_surface_respawn_command(launch_config, worktree),
+    )
+    if error is not None:
+        return error
     send_errors = _launch_cli_bootstrap_commands(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        launch_config=launch_config,
-        worktree=worktree,
+        cwd=worktree.root,
+        cli_command=launch_config.cli_command,
     )
     for error in send_errors:
         if error is not None:
@@ -633,6 +817,84 @@ def _run_surface_bootstrap(
     return None
 
 
+def _run_review_surface_bootstrap(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+) -> str | None:
+    error = _prepare_surface(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        tab_title=_tab_title_for_worktree(project_name),
+        shell_command=launch_config.shell,
+        failure_event="dashboard.review_tab.failed",
+    )
+    if error is not None:
+        return error
+    send_errors = _launch_cli_bootstrap_commands(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cwd=repo_root,
+        cli_command=launch_config.cli_command,
+        failure_event="dashboard.review_tab.failed",
+    )
+    for send_error in send_errors:
+        if send_error is not None:
+            return send_error
+    _wait_for_cli_ready(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+    )
+    return _submit_prompt_workflow_step(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=launch_config.cli,
+        prompt_text=_slash_command(
+            launch_config.cli,
+            _REVIEW_WORKTREE_PRESET,
+            arguments=_review_prompt_arguments(
+                project_name=project_name,
+                project_root=project_root,
+                review_bundle_path=review_bundle_path,
+                original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
+            ),
+        ),
+        failure_event="dashboard.review_tab.failed",
+    )
+
+
+def _prepare_surface(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    tab_title: str,
+    shell_command: str,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    commands = [
+        ["cmux", "rename-tab", "--workspace", workspace_id, "--surface", surface_id, tab_title],
+        ["cmux", "respawn-pane", "--workspace", workspace_id, "--surface", surface_id, "--command", shell_command],
+    ]
+    for command in commands:
+        error = _run_cmux_command(runtime, command, failure_event=failure_event)
+        if error is not None:
+            return error
+    time.sleep(_SURFACE_READY_DELAY_SECONDS)
+    return None
+
+
 def _submit_prompt_workflow_step(
     runtime: Any,
     *,
@@ -640,7 +902,9 @@ def _submit_prompt_workflow_step(
     surface_id: str,
     cli: str,
     prompt_text: str,
+    failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
+    failure_kwargs = {} if failure_event == "planning.agent_launch.failed" else {"failure_event": failure_event}
     final_errors = [
         _send_prompt_text(
             runtime,
@@ -648,8 +912,15 @@ def _submit_prompt_workflow_step(
             surface_id=surface_id,
             cli=cli,
             text=prompt_text,
+            **failure_kwargs,
         ),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="ctrl+e"),
+        _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="ctrl+e",
+            **failure_kwargs,
+        ),
     ]
     for error in final_errors:
         if error is not None:
@@ -661,7 +932,13 @@ def _submit_prompt_workflow_step(
         cli=cli,
         prompt_text=prompt_text,
     )
-    submit_error = _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
+    submit_error = _send_surface_key(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        key="enter",
+        **failure_kwargs,
+    )
     if submit_error is not None:
         return submit_error
     _wait_for_prompt_submit_ready(
@@ -671,7 +948,13 @@ def _submit_prompt_workflow_step(
         cli=cli,
         prompt_text=prompt_text,
     )
-    return _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter")
+    return _send_surface_key(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        key="enter",
+        **failure_kwargs,
+    )
 
 
 def _queue_codex_workflow_steps(
@@ -810,15 +1093,41 @@ def _launch_cli_bootstrap_commands(
     *,
     workspace_id: str,
     surface_id: str,
-    launch_config: PlanAgentLaunchConfig,
-    worktree: CreatedPlanWorktree,
+    cwd: Path,
+    cli_command: str,
+    failure_event: str = "planning.agent_launch.failed",
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(worktree.root))
+    typed_root = shlex.quote(str(cwd))
+    failure_kwargs = {} if failure_event == "planning.agent_launch.failed" else {"failure_event": failure_event}
     return [
-        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=f"cd {typed_root}"),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
-        _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=launch_config.cli_command),
-        _send_surface_key(runtime, workspace_id=workspace_id, surface_id=surface_id, key="enter"),
+        _send_surface_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=f"cd {typed_root}",
+            **failure_kwargs,
+        ),
+        _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            **failure_kwargs,
+        ),
+        _send_surface_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=cli_command,
+            **failure_kwargs,
+        ),
+        _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            **failure_kwargs,
+        ),
     ]
 
 
@@ -830,36 +1139,54 @@ def _surface_id_from_output(raw: str) -> str | None:
     return None
 
 
-def _resolve_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
+def _resolve_workspace_id(
+    runtime: Any,
+    launch_config: PlanAgentLaunchConfig,
+    *,
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+) -> str | None:
     if launch_config.cmux_workspace:
         return _resolve_configured_workspace_id(runtime, launch_config.cmux_workspace)
-    _, target_ref = _default_workspace_target(runtime, launch_config)
+    _, target_ref = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     return target_ref
 
 
-def _ensure_workspace_id(runtime: Any, launch_config: PlanAgentLaunchConfig) -> _WorkspaceLaunchTarget | None:
+def _ensure_workspace_id(
+    runtime: Any,
+    launch_config: PlanAgentLaunchConfig,
+    *,
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+    event_prefix: str = "planning.agent_launch",
+) -> _WorkspaceLaunchTarget | None:
     if launch_config.cmux_workspace:
-        return _ensure_configured_workspace_id(runtime, launch_config.cmux_workspace)
-    target_title, resolved = _default_workspace_target(runtime, launch_config)
+        return _ensure_configured_workspace_id(runtime, launch_config.cmux_workspace, event_prefix=event_prefix)
+    target_title, resolved = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     if not target_title:
         return None
     if resolved:
         return _WorkspaceLaunchTarget(workspace_id=resolved, created=False)
-    created_target, error = _create_named_workspace(runtime, title=target_title)
+    created_target, error = _create_named_workspace(runtime, title=target_title, event_prefix=event_prefix)
     if error is not None:
-        runtime._emit("planning.agent_launch.failed", reason="workspace_create_failed", workspace=target_title, error=error)
+        runtime._emit(f"{event_prefix}.failed", reason="workspace_create_failed", workspace=target_title, error=error)
         return None
     return created_target
 
 
-def _default_target_workspace_title(runtime: Any, launch_config: PlanAgentLaunchConfig) -> str | None:
-    current_title, _ = _default_workspace_target(runtime, launch_config)
+def _default_target_workspace_title(
+    runtime: Any,
+    launch_config: PlanAgentLaunchConfig,
+    *,
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+) -> str | None:
+    current_title, _ = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     return current_title
 
 
 def _default_workspace_target(
     runtime: Any,
     launch_config: PlanAgentLaunchConfig,
+    *,
+    workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
 ) -> tuple[str | None, str | None]:
     if _missing_required_cmux_context(runtime, launch_config):
         return None, None
@@ -871,12 +1198,83 @@ def _default_workspace_target(
     )
     if not current_title:
         return None, None
-    suffix = " implementation"
-    target_title = current_title if current_title.endswith(suffix) else f"{current_title}{suffix}"
+    if workspace_mode == "current":
+        target_title = current_title
+    else:
+        suffix = " reviews" if workspace_mode == "reviews" else " implementation"
+        target_title = current_title if current_title.endswith(suffix) else f"{current_title}{suffix}"
     for workspace_ref, workspace_title in entries:
         if workspace_title == target_title:
             return target_title, workspace_ref
     return target_title, None
+
+
+def _review_prompt_arguments(
+    *,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+    original_plan_path: Path | None,
+) -> str:
+    parts = [project_name]
+    if review_bundle_path is not None:
+        parts.append(f"Review bundle: {review_bundle_path}")
+    parts.append(f"Worktree directory: {project_root}")
+    if original_plan_path is not None:
+        parts.append(f"Original plan file: {original_plan_path}")
+    return " ".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def _review_original_plan_path(project_name: str, project_root: Path, *, repo_root: Path) -> Path | None:
+    root = Path(project_root)
+    provenance_path = root / _WORKTREE_PROVENANCE_PATH
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        provenance = {}
+    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    resolved = _resolve_recorded_plan_file(Path(repo_root), recorded_plan)
+    if resolved is not None:
+        return resolved
+    return _infer_plan_file_from_feature(Path(repo_root), feature_name=_feature_name_from_project_name(project_name))
+
+
+def _resolve_recorded_plan_file(repo_root: Path, recorded_plan: str) -> Path | None:
+    normalized_plan = str(recorded_plan or "").strip()
+    if not normalized_plan:
+        return None
+    normalized = Path(normalized_plan.replace("\\", "/").lstrip("./"))
+    for root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
+        candidate = repo_root / root / normalized
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _feature_name_from_project_name(project_name: str) -> str:
+    normalized = str(project_name).strip()
+    return re.sub(r"-\d+$", "", normalized)
+
+
+def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path | None:
+    normalized_feature = str(feature_name).strip()
+    if not normalized_feature:
+        return None
+    matches: list[Path] = []
+    for planning_root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
+        root = repo_root / planning_root
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.glob("*/*.md")):
+            if candidate.name == "README.md":
+                continue
+            relative = candidate.relative_to(root)
+            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
+                continue
+            matches.append(candidate.resolve())
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:
@@ -979,7 +1377,12 @@ def _resolve_configured_workspace_id(runtime: Any, configured: str) -> str | Non
     return resolved
 
 
-def _ensure_configured_workspace_id(runtime: Any, configured: str) -> _WorkspaceLaunchTarget | None:
+def _ensure_configured_workspace_id(
+    runtime: Any,
+    configured: str,
+    *,
+    event_prefix: str = "planning.agent_launch",
+) -> _WorkspaceLaunchTarget | None:
     normalized = str(configured).strip()
     if not normalized:
         return None
@@ -988,9 +1391,9 @@ def _ensure_configured_workspace_id(runtime: Any, configured: str) -> _Workspace
     resolved = _resolve_workspace_ref_by_title(runtime, normalized)
     if resolved:
         return _WorkspaceLaunchTarget(workspace_id=resolved, created=False)
-    created_target, error = _create_named_workspace(runtime, title=normalized)
+    created_target, error = _create_named_workspace(runtime, title=normalized, event_prefix=event_prefix)
     if error is not None:
-        runtime._emit("planning.agent_launch.failed", reason="workspace_create_failed", workspace=normalized, error=error)
+        runtime._emit(f"{event_prefix}.failed", reason="workspace_create_failed", workspace=normalized, error=error)
         return None
     return created_target
 
@@ -1087,7 +1490,12 @@ def _starter_surface_for_new_workspace(runtime: Any, *, workspace_id: str) -> tu
     return None, "ambiguous", len(surface_ids)
 
 
-def _create_named_workspace(runtime: Any, *, title: str) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
+def _create_named_workspace(
+    runtime: Any,
+    *,
+    title: str,
+    event_prefix: str = "planning.agent_launch",
+) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
     create_result = runtime.process_runner.run(
         ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
         cwd=runtime.config.base_dir,
@@ -1117,7 +1525,7 @@ def _create_named_workspace(runtime: Any, *, title: str) -> tuple[_WorkspaceLaun
     )
     if getattr(rename_result, "returncode", 1) != 0:
         return None, _completed_process_error_text(rename_result)
-    runtime._emit("planning.agent_launch.workspace_created", workspace_id=workspace_ref, title=title)
+    runtime._emit(f"{event_prefix}.workspace_created", workspace_id=workspace_ref, title=title)
     starter_surface_id, probe_result, surface_count = _starter_surface_for_new_workspace(runtime, workspace_id=workspace_ref)
     probe_payload: dict[str, object] = {
         "workspace_id": workspace_ref,
@@ -1127,7 +1535,7 @@ def _create_named_workspace(runtime: Any, *, title: str) -> tuple[_WorkspaceLaun
         probe_payload["surface_count"] = surface_count
     if starter_surface_id is not None:
         probe_payload["surface_id"] = starter_surface_id
-    runtime._emit("planning.agent_launch.workspace_surface_probe", **probe_payload)
+    runtime._emit(f"{event_prefix}.workspace_surface_probe", **probe_payload)
     return (
         _WorkspaceLaunchTarget(
             workspace_id=workspace_ref,
@@ -1154,17 +1562,40 @@ def _send_surface_text(
     surface_id: str,
     text: str,
     emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     return _run_cmux_command(
         runtime,
         ["cmux", "send", "--workspace", workspace_id, "--surface", surface_id, text],
         emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
     )
 
 
-def _send_prompt_text(runtime: Any, *, workspace_id: str, surface_id: str, cli: str, text: str) -> str | None:
+def _send_prompt_text(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cli: str,
+    text: str,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
     _ = cli
-    return _send_surface_text(runtime, workspace_id=workspace_id, surface_id=surface_id, text=text)
+    if failure_event == "planning.agent_launch.failed":
+        return _send_surface_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=text,
+        )
+    return _send_surface_text(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        text=text,
+        failure_event=failure_event,
+    )
 
 
 def _send_surface_key(
@@ -1174,15 +1605,23 @@ def _send_surface_key(
     surface_id: str,
     key: str,
     emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     return _run_cmux_command(
         runtime,
         ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
         emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
     )
 
 
-def _run_cmux_command(runtime: Any, command: list[str], *, emit_failure_event: bool = True) -> str | None:
+def _run_cmux_command(
+    runtime: Any,
+    command: list[str],
+    *,
+    emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
     result = runtime.process_runner.run(
         command,
         cwd=runtime.config.base_dir,
@@ -1193,7 +1632,7 @@ def _run_cmux_command(runtime: Any, command: list[str], *, emit_failure_event: b
         return None
     error = _completed_process_error_text(result)
     if emit_failure_event:
-        runtime._emit("planning.agent_launch.failed", reason="cmux_command_failed", command=command[1], error=error)
+        runtime._emit(failure_event, reason="cmux_command_failed", command=command[1], error=error)
     return error
 
 
@@ -1386,16 +1825,22 @@ def _normalized_screen_text(raw: str) -> str:
     return " ".join(cleaned.split())
 
 
-def _slash_command(cli: str, preset: str) -> str:
+def _slash_command(cli: str, preset: str, *, arguments: str = "") -> str:
     normalized = str(preset).strip()
     if not normalized:
         normalized = _DEFAULT_PRESET
     trimmed = normalized[1:] if normalized.startswith("/") else normalized
     if str(cli).strip().lower() == "codex":
         if trimmed.startswith("prompts:"):
-            return f"/{trimmed}"
-        return f"/prompts:{trimmed}"
-    return normalized if normalized.startswith("/") else f"/{normalized}"
+            command = f"/{trimmed}"
+        else:
+            command = f"/prompts:{trimmed}"
+    else:
+        command = normalized if normalized.startswith("/") else f"/{normalized}"
+    extra = str(arguments).strip()
+    if not extra:
+        return command
+    return f"{command} {extra}"
 
 
 def _print_launch_summary(message: str) -> None:

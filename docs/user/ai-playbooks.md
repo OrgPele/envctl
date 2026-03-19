@@ -48,6 +48,15 @@ Current built-in presets:
 
 Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
+Dashboard review follow-up:
+
+- during interactive `envctl dashboard` -> `review` setup for exactly one non-`Main` worktree, envctl can offer one origin-side AI review tab through the same selector UI used for dashboard target selection
+- the opened tab starts in the current repo root, not the target worktree
+- the submitted prompt includes reviewer notes pointing at the generated full review bundle, the target worktree directory, and the original plan file that created the worktree when provenance can resolve it
+- Codex receives `/prompts:review_worktree_imp <worktree>` and OpenCode receives `/review_worktree_imp <worktree>`
+- choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the existing markdown bundle-only behavior
+- this optional review-tab launch reuses the same `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` transport settings as the post-`--plan` launcher, but it does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`
+
 ## Parallel Implementation Loop
 
 ```bash
@@ -76,6 +85,8 @@ CYCLES=3
 ```
 
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
+
+The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it targets a sibling workspace named `"<current workspace> reviews"`.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 

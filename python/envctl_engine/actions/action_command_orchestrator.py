@@ -949,12 +949,19 @@ class ActionCommandOrchestrator:
         def handle_success(context: ActionTargetContext, completed: Any) -> None:
             self._clear_dashboard_pr_cache()
             status = self._project_action_success_status(command_name=command_name, completed=completed)
+            extra_entry: dict[str, object] | None = None
+            if command_name == "review" and status == "success":
+                extra_entry = self._review_success_artifact_paths(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                )
             self._persist_project_action_result(
                 command_name=command_name,
                 mode=mode,
                 project_name=context.name,
                 status=status,
                 error_output="",
+                extra_entry=extra_entry,
             )
             if command_name != "pr" or not interactive_command or status != "success":
                 return
@@ -988,6 +995,7 @@ class ActionCommandOrchestrator:
         project_name: str,
         status: str,
         error_output: str,
+        extra_entry: Mapping[str, object] | None = None,
     ) -> None:
         rt = self.runtime
         state = rt.load_existing_state(mode=mode)
@@ -1001,6 +1009,8 @@ class ActionCommandOrchestrator:
             "status": status,
             "updated_at": datetime.now(tz=UTC).isoformat(),
         }
+        if isinstance(extra_entry, Mapping):
+            entry.update({str(key): value for key, value in extra_entry.items()})
         if status == "failed":
             clean_output = strip_ansi(str(error_output or "")).strip()
             summary_lines = self._project_action_failure_summary_lines(
@@ -1024,6 +1034,29 @@ class ActionCommandOrchestrator:
             emit=rt.emit,
             runtime_map_builder=build_runtime_map,
         )
+
+    @staticmethod
+    def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
+        cleaned = strip_ansi("\n".join(part for part in [str(stdout or ""), str(stderr or "")] if str(part or "").strip()))
+        lines = [line.rstrip() for line in cleaned.splitlines()]
+        label_map = {
+            "output directory": "output_dir",
+            "summary file": "summary_path",
+            "full review bundle": "bundle_path",
+        }
+        parsed: dict[str, object] = {}
+        for index, raw_line in enumerate(lines):
+            label = raw_line.strip().lower()
+            key = label_map.get(label)
+            if not key:
+                continue
+            for follow_line in lines[index + 1 :]:
+                candidate = follow_line.strip()
+                if not candidate:
+                    continue
+                parsed[key] = candidate
+                break
+        return parsed
 
     def _write_project_action_failure_report(
         self,
