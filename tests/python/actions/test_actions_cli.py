@@ -1819,8 +1819,71 @@ class ActionsCliTests(unittest.TestCase):
                 env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
             )
 
+            class FakeText:
+                def __init__(self, text: str = "", style: str | None = None) -> None:
+                    self.plain = text
+                    self.style = style
+
+                @classmethod
+                def assemble(cls, *parts):
+                    return cls("".join(str(part[0]) for part in parts))
+
+            class FakeTable:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.rows: list[tuple[object, ...]] = []
+
+                @classmethod
+                def grid(cls, *args, **kwargs):  # noqa: ANN002, ANN003
+                    return cls()
+
+                def add_column(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    return None
+
+                def add_row(self, *values: object) -> None:
+                    self.rows.append(values)
+
+            class FakePanel:
+                def __init__(self, body: object, title: object, box: object, expand: bool) -> None:
+                    self.body = body
+                    self.title = title
+                    self.box = box
+                    self.expand = expand
+
+            class FakeConsole:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.printed: list[object] = []
+
+                def print(self, value: object) -> None:
+                    self.printed.append(value)
+
+            fake_rich = types.ModuleType("rich")
+            fake_box = types.ModuleType("rich.box")
+            fake_box.ROUNDED = object()
+            fake_console = types.ModuleType("rich.console")
+            fake_console.Console = FakeConsole
+            fake_panel = types.ModuleType("rich.panel")
+            fake_panel.Panel = FakePanel
+            fake_table = types.ModuleType("rich.table")
+            fake_table.Table = FakeTable
+            fake_text = types.ModuleType("rich.text")
+            fake_text.Text = FakeText
+
             buffer = _TtyStringIO()
-            with redirect_stdout(buffer):
+            with (
+                redirect_stdout(buffer),
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "rich": fake_rich,
+                        "rich.box": fake_box,
+                        "rich.console": fake_console,
+                        "rich.panel": fake_panel,
+                        "rich.table": fake_table,
+                        "rich.text": fake_text,
+                    },
+                    clear=False,
+                ),
+            ):
                 domain._print_review_completion(
                     context,
                     mode="single",
@@ -1834,6 +1897,7 @@ class ActionsCliTests(unittest.TestCase):
 
         output = buffer.getvalue()
         self.assertIn("\x1b]8;;file://", output)
+        self.assertIn("Review Ready: Main", strip_ansi(output))
         self.assertIn(str(summary_path), strip_ansi(output))
         self.assertIn(str(bundle_path), strip_ansi(output))
 

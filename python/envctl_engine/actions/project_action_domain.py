@@ -1088,17 +1088,18 @@ def _print_review_completion(
     stats: list[tuple[str, str]],
     tree_count: int,
 ) -> None:
-    if _print_review_completion_rich(
-        context,
-        mode=mode,
-        scope=scope,
-        output_dir=output_dir,
-        summary_path=summary_path,
-        all_in_one_path=all_in_one_path,
-        stats=stats,
-        tree_count=tree_count,
-    ):
-        return
+    if parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False):
+        if _print_review_completion_rich(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_dir,
+            summary_path=summary_path,
+            all_in_one_path=all_in_one_path,
+            stats=stats,
+            tree_count=tree_count,
+        ):
+            return
     color = _review_colorizer(context)
     print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
     print(f"  Mode: {mode}")
@@ -1135,7 +1136,7 @@ def _print_review_completion_rich(
     tree_count: int,
 ) -> bool:
     force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
-    if not force_rich and not sys.stdout.isatty():
+    if not force_rich:
         return False
     try:
         from rich import box
