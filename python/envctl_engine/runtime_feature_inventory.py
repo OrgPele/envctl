@@ -576,6 +576,24 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Install-prompts is Python-owned and intentionally excluded from dashboard interactive command entry.",
     ),
+    "codex-tmux": FeatureDefinition(
+        area="cli",
+        feature="Command: launch or reuse the dedicated Codex tmux session for repo-local workflows",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/command_router.py",
+            "python/envctl_engine/runtime/codex_tmux_support.py",
+            "python/envctl_engine/runtime/utility_command_support.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_codex_tmux_support.py",
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_command_exit_codes.py",
+        ),
+        parity_status="verified_python",
+        notes="Codex tmux session launch and reuse are Python-owned utility flows with dedicated routing and subprocess coverage.",
+    ),
     "list-targets": FeatureDefinition(
         area="cli",
         feature="Command: print available project and service targets",
