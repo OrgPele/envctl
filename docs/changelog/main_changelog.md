@@ -14031,3 +14031,46 @@ Added a supported launcher-level `--version` flag so the package-installed `envc
 - Config/env/migrations:
   - Planned scope includes global Git excludes behavior, but no runtime config/env keys were added in this planning-only change.
   - No data/state migrations.
+
+## 2026-03-20 - Fix repo-root bootstrap precedence over hostile PYTHONPATH entries
+
+- Scope:
+  - Fixed repo-local Python bootstrap so raw unittest discovery and the source `bin/envctl` wrapper prefer this checkout even when another `envctl_engine` package is injected earlier through `PYTHONPATH`.
+
+- Key behavior changes:
+  - `scripts/_bootstrap.py`
+    - `ensure_python_root()` now resolves the repo `python/` directory, removes duplicate path entries, prepends the repo path unconditionally, and evicts already-imported `envctl_engine` modules that were loaded from a different checkout.
+  - `tests/__init__.py`
+    - Replaced ad hoc bootstrap logic with the shared helper so repo-root test package initialization always promotes the local `python/` tree ahead of editable-install or foreign `PYTHONPATH` entries.
+  - `tests/python/__init__.py`
+    - Reused the shared bootstrap helper for package discovery under `tests/python`.
+  - `bin/envctl`
+    - Hardened the source wrapper bootstrap so repo-wrapper execution also promotes the local `python/` tree ahead of hostile `PYTHONPATH` entries before importing `envctl_engine.runtime.launcher_support`.
+  - `tests/python/shared/test_repo_root_bootstrap.py`
+    - Added wrapper regression coverage alongside the existing unittest-discovery regression so both entrypoints prove “this checkout wins” when a foreign checkout is present on `PYTHONPATH`.
+
+- Files/modules touched:
+  - `bin/envctl`
+  - `scripts/_bootstrap.py`
+  - `tests/__init__.py`
+  - `tests/python/__init__.py`
+  - `tests/python/shared/test_repo_root_bootstrap.py`
+
+- Tests run + results:
+  - `./.venv/bin/python -m unittest tests.python.shared.test_repo_root_bootstrap`
+    - Result: pass (`Ran 3 tests in 0.307s`, `OK`).
+  - `./.venv/bin/python -m unittest tests.python.runtime.test_cli_packaging`
+    - Result: pass (`Ran 32 tests in 33.511s`, `OK`).
+  - `./.venv/bin/python -m unittest tests.python.shared.test_validation_workflow_contract`
+    - Result: pass (`Ran 9 tests in 0.007s`, `OK`).
+  - `tmpdir=$(mktemp -d); ...; PYTHONPATH="$tmpdir/foreign_checkout" .venv/bin/python -m unittest discover -s tests/python -p test_repo_root_bootstrap_probe.py`
+    - Result: pass (`Ran 1 test in 0.000s`, `OK`).
+  - `tmpdir=$(mktemp -d); ...; PYTHONPATH="$tmpdir/foreign_checkout" ENVCTL_USE_REPO_WRAPPER=1 .venv/bin/python ./bin/envctl doctor --repo "$tmpdir/repo"`
+    - Result: pass (`Launcher: envctl`, repo wrapper imported from this checkout; no foreign-checkout crash).
+
+- Config/env/migrations:
+  - No new config or environment keys.
+  - No schema, state, or migration changes.
+
+- Risks/notes:
+  - The bootstrap hardening only targets repo-local precedence for `envctl_engine` imports; it intentionally does not rewrite unrelated `sys.path` entries beyond deduplicating the repo `python/` path.

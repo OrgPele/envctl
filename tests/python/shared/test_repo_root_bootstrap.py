@@ -35,6 +35,24 @@ class RepoRootBootstrapTests(unittest.TestCase):
             env=env,
         )
 
+    def _run_wrapper(self, *, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+            env = dict(os.environ)
+            env["ENVCTL_USE_REPO_WRAPPER"] = "1"
+            env.pop("PYTHONPATH", None)
+            if extra_env:
+                env.update(extra_env)
+            return subprocess.run(
+                [str(REPO_ROOT / "bin" / "envctl"), "doctor", "--repo", str(repo_root)],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
     def test_repo_root_discovery_imports_python_package_without_pythonpath(self) -> None:
         completed = self._run_discovery()
         self.assertEqual(
@@ -56,6 +74,26 @@ class RepoRootBootstrapTests(unittest.TestCase):
             )
 
             completed = self._run_discovery(extra_env={"PYTHONPATH": str(fake_root)})
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}",
+        )
+
+    def test_repo_wrapper_prefers_this_checkout_over_pythonpath_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_root = Path(tmpdir) / "foreign_checkout"
+            fake_runtime = fake_root / "envctl_engine" / "runtime"
+            fake_runtime.mkdir(parents=True, exist_ok=True)
+            (fake_root / "envctl_engine" / "__init__.py").write_text('"""foreign checkout"""\n', encoding="utf-8")
+            (fake_runtime / "__init__.py").write_text('"""foreign runtime"""\n', encoding="utf-8")
+            (fake_runtime / "launcher_support.py").write_text(
+                "raise RuntimeError('wrong checkout imported')\n",
+                encoding="utf-8",
+            )
+
+            completed = self._run_wrapper(extra_env={"PYTHONPATH": str(fake_root)})
 
         self.assertEqual(
             completed.returncode,

@@ -52,11 +52,29 @@ def _reexec_supported_python(original_argv0: str) -> None:
     raise SystemExit("Python 3.12-3.14 is required for envctl.")
 
 
+def _ensure_repo_python_root() -> None:
+    python_root_str = str(PYTHON_ROOT.resolve())
+    sys.path[:] = [entry for entry in sys.path if entry != python_root_str]
+    sys.path.insert(0, python_root_str)
+    for name in list(sys.modules):
+        if name != "envctl_engine" and not name.startswith("envctl_engine."):
+            continue
+        module = sys.modules.get(name)
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            continue
+        try:
+            module_path = Path(module_file).resolve()
+        except OSError:
+            continue
+        if PYTHON_ROOT.resolve() not in module_path.parents:
+            del sys.modules[name]
+
+
 def main() -> int:
     original_argv0 = _preserve_original_wrapper_argv0()
     _reexec_supported_python(original_argv0)
-    if str(PYTHON_ROOT) not in sys.path:
-        sys.path.insert(0, str(PYTHON_ROOT))
+    _ensure_repo_python_root()
     from envctl_engine.runtime.launcher_support import select_envctl_reexec_target
 
     alternate = select_envctl_reexec_target(Path(__file__).resolve(), original_argv0, env=os.environ)
