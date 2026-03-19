@@ -16,11 +16,19 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.prompt_install_support import (  # noqa: E402
     _available_presets,
     _load_template,
+    _print_install_results,
     _render_claude_template,
     _render_codex_template,
     _render_opencode_template,
+    PromptInstallResult,
     run_install_prompts_command,
 )
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class PromptInstallSupportTests(unittest.TestCase):
@@ -264,6 +272,31 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Overwrite approval required", payload["results"][0]["message"])
             self.assertIn("--yes or --force", payload["results"][0]["message"])
             self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
+
+    def test_non_json_install_results_hyperlink_paths_when_enabled(self) -> None:
+        buffer = _TtyStringIO()
+        with redirect_stdout(buffer):
+            code = _print_install_results(
+                preset="implement_task",
+                dry_run=False,
+                json_output=False,
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+                results=[
+                    PromptInstallResult(
+                        cli="codex",
+                        path="/tmp/prompt.md",
+                        status="written",
+                        backup_path="/tmp/prompt.md.bak",
+                        message="Installed prompt",
+                    )
+                ],
+            )
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("\x1b]8;;file://", rendered)
+        self.assertIn("/tmp/prompt.md", strip_ansi(rendered))
+        self.assertIn("/tmp/prompt.md.bak", strip_ansi(rendered))
 
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -15,6 +15,12 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ConfigCommandSupportTests(unittest.TestCase):
@@ -184,6 +190,22 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("Config saved. Restart required for running services to adopt changes.", output)
             self.assertIn("global excludes", output.lower())
             self.assertNotIn(".gitignore on save", output)
+
+    def test_config_plain_output_hyperlinks_saved_path_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            runtime = self._runtime(repo, runtime_root)
+            runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+
+            buffer = _TtyStringIO()
+            with redirect_stdout(buffer):
+                code = runtime.dispatch(parse_route(["config", "--set", "ENVCTL_DEFAULT_MODE=trees"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertIn("\x1b]8;;file://", buffer.getvalue())
+            self.assertIn(str(repo / ".envctl"), strip_ansi(buffer.getvalue()))
 
 
 if __name__ == "__main__":

@@ -21,6 +21,12 @@ from envctl_engine.runtime.engine_runtime_debug_support import (  # noqa: E402
     latest_scope_session_id,
     scope_latest_run_id,
 )
+from envctl_engine.test_output.parser_base import strip_ansi  # noqa: E402
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class EngineRuntimeDebugSupportTests(unittest.TestCase):
@@ -79,6 +85,58 @@ class EngineRuntimeDebugSupportTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("/tmp/bundle.tar.gz", out.getvalue())
+
+    def test_debug_pack_and_report_hyperlink_bundle_paths_when_enabled(self) -> None:
+        runtime = SimpleNamespace(
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            config=SimpleNamespace(runtime_scope_id="repo-1", runtime_dir=Path("/tmp/runtime")),
+            runtime_root=Path("/tmp/runtime/python-engine/repo-1"),
+            state_repository=SimpleNamespace(load_latest=lambda mode=None, strict_mode_match=False: None),
+            _scope_latest_run_id=lambda scope_dir: None,
+            _latest_scope_session_id=lambda scope_dir: None,
+            _latest_debug_scope_session=lambda: None,
+            _debug_doctor_snapshot_text=lambda: "doctor snapshot\n",
+            _last_debug_bundle_path=None,
+            _debug_pack=lambda _route: 0,
+        )
+        route = SimpleNamespace(flags={})
+
+        with patch(
+            "envctl_engine.runtime.engine_runtime_debug_support.pack_debug_bundle",
+            return_value=Path("/tmp/bundle.tar.gz"),
+        ):
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = debug_pack(runtime, route)
+        self.assertEqual(code, 0)
+        self.assertIn("\x1b]8;;file://", out.getvalue())
+        self.assertIn("/tmp/bundle.tar.gz", strip_ansi(out.getvalue()))
+
+        report_runtime = SimpleNamespace(
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            _debug_pack=lambda _route: 0,
+            _last_debug_bundle_path="/tmp/bundle.tar.gz",
+            runtime_root=Path("/tmp/runtime-root"),
+        )
+        report_out = _TtyStringIO()
+        with (
+            redirect_stdout(report_out),
+            patch(
+                "envctl_engine.debug.debug_bundle.summarize_debug_bundle",
+                return_value={
+                    "session_id": "session-1",
+                    "events": 2,
+                    "anomalies": 0,
+                    "probable_root_causes": [],
+                    "next_data_needed": [],
+                },
+            ),
+        ):
+            report_code = debug_report(report_runtime, route=None)
+
+        self.assertEqual(report_code, 0)
+        self.assertIn("\x1b]8;;file://", report_out.getvalue())
+        self.assertIn("/tmp/bundle.tar.gz", strip_ansi(report_out.getvalue()))
 
     def test_latest_scope_session_id_prefers_latest_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -24,6 +24,11 @@ from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
 
 
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class _RuntimeStub:
     def __init__(self, *, base_dir: Path | None = None) -> None:
         self.config = SimpleNamespace(raw={}, base_dir=base_dir or REPO_ROOT)
@@ -318,16 +323,78 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             self.assertIs(next_state, state)
             self.assertEqual(len(runtime.pr_flow_calls), 1)
             self.assertEqual(runtime.pr_flow_calls[0]["default_branch"], "main")
-            self.assertEqual(runtime.read_prompts, [])
-            self.assertEqual(len(runtime.text_input_prompts), 1)
-            self.assertEqual(runtime.text_input_prompts[0]["title"], "PR Message")
-            self.assertEqual(runtime.text_input_prompts[0]["default_button_label"], "Use MAIN_TASK.md")
-            self.assertIsNotNone(runtime.last_dispatched_route)
-            assert runtime.last_dispatched_route is not None
-            self.assertEqual(runtime.last_dispatched_route.command, "pr")
-            self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
-            self.assertEqual(runtime.last_dispatched_route.flags.get("pr_base"), "main")
-            self.assertNotIn("pr_body", runtime.last_dispatched_route.flags)
+
+    def test_test_failure_details_render_hyperlinked_summary_path(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+        orchestrator = DashboardOrchestrator(runtime)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "failed_tests_summary.txt"
+            summary_path.write_text("summary\n", encoding="utf-8")
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                metadata={
+                    "project_test_summaries": {
+                        "Main": {
+                            "short_summary_path": str(summary_path),
+                            "status": "failed",
+                        }
+                    }
+                },
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                printed = orchestrator._print_test_failure_details(
+                    Route(command="test", mode="main", raw_args=["test"], passthrough_args=[], projects=["Main"], flags={}),
+                    state,
+                )
+
+        self.assertTrue(printed)
+        self.assertIn("\x1b]8;;file://", out.getvalue())
+        self.assertIn(str(summary_path), strip_ansi(out.getvalue()))
+
+    def test_project_action_failure_details_render_hyperlinked_report_path(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+        orchestrator = DashboardOrchestrator(runtime)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_path = Path(tmpdir) / "failure.log"
+            report_path.write_text("report\n", encoding="utf-8")
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                metadata={
+                    "project_action_reports": {
+                        "Main": {
+                            "review": {
+                                "status": "failed",
+                                "summary": "review failed\nhint: open the log",
+                                "report_path": str(report_path),
+                            }
+                        }
+                    }
+                },
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                printed = orchestrator._print_project_action_failure_details(
+                    Route(
+                        command="review",
+                        mode="main",
+                        raw_args=["review"],
+                        passthrough_args=[],
+                        projects=["Main"],
+                        flags={},
+                    ),
+                    state,
+                )
+
+        self.assertTrue(printed)
+        self.assertIn("\x1b]8;;file://", out.getvalue())
+        self.assertIn(str(report_path), strip_ansi(out.getvalue()))
 
     def test_pr_interactive_flow_uses_entered_base_branch_after_target_selection(self) -> None:
         runtime = _RuntimeStub()

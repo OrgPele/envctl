@@ -13,6 +13,7 @@ from envctl_engine.config.persistence import (
     save_local_config,
 )
 from envctl_engine.config.wizard_domain import edit_local_config
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def run_config_command(runtime: Any, route: Any) -> int:
@@ -85,7 +86,7 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print("Saved startup config:")
-        print(str(save_result.path))
+        print(render_path_for_terminal(save_result.path, env=getattr(runtime, "env", {}), stream=sys.stdout))
         print("Config saved. Restart required for running services to adopt changes.")
         if save_result.ignore_warning:
             print(save_result.ignore_warning)

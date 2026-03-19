@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from envctl_engine.startup.service_bootstrap_domain import (
     _backend_dependency_install_required,
     _read_backend_bootstrap_state,
+    _run_backend_migration_step,
     _write_backend_bootstrap_state,
 )
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ServiceBootstrapDomainTests(unittest.TestCase):
@@ -92,6 +101,43 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             _write_backend_bootstrap_state(backend_cwd=backend, state=state)
 
             self.assertEqual(_read_backend_bootstrap_state(backend), state)
+
+    def test_backend_migration_warning_hyperlinks_backend_log_path(self) -> None:
+        class _RuntimeStub:
+            env = {"ENVCTL_UI_HYPERLINK_MODE": "on"}
+
+            @staticmethod
+            def _emit(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                return None
+
+            @staticmethod
+            def _backend_migration_retry_env_for_async_driver_mismatch(*, env, error_message):  # noqa: ANN001
+                _ = env, error_message
+                return None
+
+            @staticmethod
+            def _backend_bootstrap_strict() -> bool:
+                return False
+
+            @staticmethod
+            def _run_backend_bootstrap_command(**kwargs) -> None:  # noqa: ANN003
+                raise RuntimeError("migration failed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                _run_backend_migration_step(
+                    _RuntimeStub(),
+                    context=type("Ctx", (), {"name": "Main"})(),
+                    command=["alembic", "upgrade", "head"],
+                    cwd=Path(tmpdir),
+                    backend_log_path="/tmp/backend.log",
+                    env={},
+                    step="alembic upgrade head",
+                )
+
+        self.assertIn("\x1b]8;;file://", out.getvalue())
+        self.assertIn("/tmp/backend.log", strip_ansi(out.getvalue()))
 
 
 if __name__ == "__main__":

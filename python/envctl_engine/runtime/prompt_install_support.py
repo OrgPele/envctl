@@ -5,8 +5,9 @@ from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
 import sys
-from typing import Any, Final
+from typing import Any, Final, Mapping
 
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
@@ -59,6 +60,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="*",
@@ -75,6 +77,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="",
@@ -106,6 +109,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=results,
         )
     overwrite_candidates = [plan for plan in plans if plan.existed]
@@ -120,6 +124,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                 preset=preset_label,
                 dry_run=dry_run,
                 json_output=json_output,
+                env=getattr(runtime, "env", {}),
                 results=results,
             )
     for plan in plans:
@@ -128,6 +133,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
         preset=preset_label,
         dry_run=dry_run,
         json_output=json_output,
+        env=getattr(runtime, "env", {}),
         results=results,
     )
 
@@ -378,6 +384,7 @@ def _print_install_results(
     preset: str,
     dry_run: bool,
     json_output: bool,
+    env: dict[str, str] | Mapping[str, str] | None = None,
     results: list[PromptInstallResult],
 ) -> int:
     payload = {
@@ -390,9 +397,10 @@ def _print_install_results(
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         for result in results:
-            line = f"{result.cli or 'install-prompts'}: {result.status} {result.path}".rstrip()
+            rendered_path = render_path_for_terminal(result.path, env=env, stream=sys.stdout) if result.path else ""
+            line = f"{result.cli or 'install-prompts'}: {result.status} {rendered_path}".rstrip()
             if result.backup_path:
-                line += f" (backup: {result.backup_path})"
+                line += f" (backup: {render_path_for_terminal(result.backup_path, env=env, stream=sys.stdout)})"
             if result.message:
                 line += f" - {result.message}"
             print(line)

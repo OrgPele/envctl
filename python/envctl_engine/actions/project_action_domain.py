@@ -15,6 +15,7 @@ from typing import Mapping
 
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import normalize_local_path_text, render_path_for_terminal, rich_path_text
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
@@ -1087,11 +1088,11 @@ def _print_review_completion(
     print(f"  Trees: {tree_count}")
     print()
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     print(color("  Summary file", fg="blue", bold=True))
-    print(f"    {_display_path(summary_path)}")
+    print(f"    {_display_path(summary_path, env=context.env)}")
     print(color("  Full review bundle", fg="blue", bold=True))
-    print(f"    {_display_path(all_in_one_path)}")
+    print(f"    {_display_path(all_in_one_path, env=context.env)}")
     if stats:
         print()
         print(color("  Quick stats", fg="green", bold=True))
@@ -1139,9 +1140,19 @@ def _print_review_completion_rich(
     details.add_row("Mode", mode)
     details.add_row("Scope", scope)
     details.add_row("Trees", str(tree_count))
-    details.add_row("Output", _display_path(output_dir))
-    details.add_row("Summary", _display_path(summary_path))
-    details.add_row("Bundle", _display_path(all_in_one_path))
+    link_tty = force_rich or sys.stdout.isatty()
+    details.add_row(
+        "Output",
+        rich_path_text(output_dir, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Summary",
+        rich_path_text(summary_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Bundle",
+        rich_path_text(all_in_one_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
     for label, value in stats:
         details.add_row(label, value)
 
@@ -1170,7 +1181,7 @@ def _print_review_failure(
     color = _review_colorizer(context)
     print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     stderr = str(result.stderr or "").strip()
     stdout = str(result.stdout or "").strip()
     details = stderr or stdout or f"exit:{result.returncode}"
@@ -1240,13 +1251,8 @@ def _review_colorizer(context: ActionProjectContext):
     return colorize
 
 
-def _display_path(path: Path) -> str:
-    text = str(path)
-    if text == "/private/tmp":
-        return "/tmp"
-    if text.startswith("/private/tmp/"):
-        return "/tmp/" + text[len("/private/tmp/") :]
-    return text
+def _display_path(path: Path, *, env: Mapping[str, str] | None = None) -> str:
+    return render_path_for_terminal(normalize_local_path_text(path), env=env, stream=sys.stdout)
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:

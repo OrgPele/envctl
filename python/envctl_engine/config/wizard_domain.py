@@ -7,6 +7,7 @@ from typing import Callable, Mapping
 from envctl_engine.config import LocalConfigState, discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state
 from envctl_engine.ui.textual.screens.config_wizard import ConfigWizardResult, run_config_wizard_textual
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 @dataclass(slots=True)
@@ -107,7 +108,7 @@ def _textual_stack_available() -> bool:
 
 
 def _save_message(result: ConfigWizardResult) -> str:
-    message = f"Saved startup config: {result.save_result.path}"
+    message = f"Saved startup config: {render_path_for_terminal(result.save_result.path)}"
     status = result.save_result.ignore_status
     if status is not None and status.code == "configured_global_excludes":
         target = f" at {status.target_path}" if status.target_path is not None else ""
