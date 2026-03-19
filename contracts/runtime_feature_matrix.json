@@ -1,11 +1,12 @@
 {
   "version": 1,
-  "generated_at": "2026-03-17T09:31:00+00:00",
+  "generated_at": "2026-03-19T10:51:58+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
       "blast-worktree",
       "clear-logs",
+      "codex-tmux",
       "commit",
       "config",
       "dashboard",
@@ -57,6 +58,7 @@
       "--clear-port-state",
       "--clear-ports",
       "--cli",
+      "--codex-tmux",
       "--command",
       "--command-only",
       "--command-resume",
@@ -252,12 +254,12 @@
     ]
   },
   "summary": {
-    "feature_count": 46,
-    "user_visible_feature_count": 45,
+    "feature_count": 47,
+    "user_visible_feature_count": 46,
     "areas": {
       "actions": 5,
       "artifacts": 3,
-      "cli": 8,
+      "cli": 9,
       "diagnostics": 5,
       "inspection": 8,
       "launcher": 3,
@@ -266,7 +268,7 @@
       "requirements": 3
     },
     "parity_status": {
-      "verified_python": 46
+      "verified_python": 47
     }
   },
   "features": [
@@ -344,6 +346,26 @@
     },
     {
       "id": "F-004",
+      "area": "cli",
+      "feature": "Command: launch or reuse the dedicated Codex tmux session for repo-local workflows",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/command_router.py",
+        "python/envctl_engine/runtime/codex_tmux_support.py",
+        "python/envctl_engine/runtime/utility_command_support.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_codex_tmux_support.py",
+        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_command_exit_codes.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Codex tmux session launch and reuse are Python-owned utility flows with dedicated routing and subprocess coverage.",
+      "command": "codex-tmux"
+    },
+    {
+      "id": "F-005",
       "area": "actions",
       "feature": "Command: stage, commit, and push selected project changes",
       "user_visible": true,
@@ -370,7 +392,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-005",
+      "id": "F-006",
       "area": "cli",
       "feature": "Command: open the configuration wizard or headless config editor",
       "user_visible": true,
@@ -388,7 +410,7 @@
       "command": "config"
     },
     {
-      "id": "F-006",
+      "id": "F-007",
       "area": "inspection",
       "feature": "Command: render the interactive dashboard and command loop",
       "user_visible": true,
@@ -416,7 +438,7 @@
       "wave": "Wave E"
     },
     {
-      "id": "F-007",
+      "id": "F-008",
       "area": "diagnostics",
       "feature": "Command: inspect the latest generated debug bundle",
       "user_visible": true,
@@ -433,7 +455,7 @@
       "command": "debug-last"
     },
     {
-      "id": "F-008",
+      "id": "F-009",
       "area": "diagnostics",
       "feature": "Command: create a debug bundle pack from the Python runtime",
       "user_visible": true,
@@ -450,7 +472,7 @@
       "command": "debug-pack"
     },
     {
-      "id": "F-009",
+      "id": "F-010",
       "area": "diagnostics",
       "feature": "Command: render the last generated debug report",
       "user_visible": true,
@@ -467,7 +489,7 @@
       "command": "debug-report"
     },
     {
-      "id": "F-010",
+      "id": "F-011",
       "area": "planning",
       "feature": "Command: delete selected worktree directories after scoped cleanup",
       "user_visible": true,
@@ -485,7 +507,7 @@
       "command": "delete-worktree"
     },
     {
-      "id": "F-011",
+      "id": "F-012",
       "area": "diagnostics",
       "feature": "Command: print readiness and runtime diagnostics",
       "user_visible": true,
@@ -511,7 +533,7 @@
       "wave": "Wave E"
     },
     {
-      "id": "F-012",
+      "id": "F-013",
       "area": "inspection",
       "feature": "Command: print current error diagnostics for the latest run",
       "user_visible": true,
@@ -529,7 +551,7 @@
       "command": "errors"
     },
     {
-      "id": "F-013",
+      "id": "F-014",
       "area": "inspection",
       "feature": "Command: explain startup selection and gating without starting services",
       "user_visible": true,
@@ -546,7 +568,7 @@
       "command": "explain-startup"
     },
     {
-      "id": "F-014",
+      "id": "F-015",
       "area": "inspection",
       "feature": "Command: print current health for services and requirements",
       "user_visible": true,
@@ -563,7 +585,7 @@
       "command": "health"
     },
     {
-      "id": "F-015",
+      "id": "F-016",
       "area": "cli",
       "feature": "Command: print runtime help and usage guidance",
       "user_visible": true,
@@ -593,7 +615,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-016",
+      "id": "F-017",
       "area": "cli",
       "feature": "Command: install envctl-managed AI CLI prompt presets into user-local directories",
       "user_visible": true,
@@ -612,7 +634,7 @@
       "command": "install-prompts"
     },
     {
-      "id": "F-017",
+      "id": "F-018",
       "area": "cli",
       "feature": "Command: print the supported command inventory",
       "user_visible": true,
@@ -628,7 +650,7 @@
       "command": "list-commands"
     },
     {
-      "id": "F-018",
+      "id": "F-019",
       "area": "cli",
       "feature": "Command: print available project and service targets",
       "user_visible": true,
@@ -646,7 +668,7 @@
       "command": "list-targets"
     },
     {
-      "id": "F-019",
+      "id": "F-020",
       "area": "cli",
       "feature": "Command: print available tree targets",
       "user_visible": true,
@@ -664,7 +686,7 @@
       "command": "list-trees"
     },
     {
-      "id": "F-020",
+      "id": "F-021",
       "area": "inspection",
       "feature": "Command: tail or follow logs for selected services",
       "user_visible": true,
@@ -681,7 +703,7 @@
       "command": "logs"
     },
     {
-      "id": "F-021",
+      "id": "F-022",
       "area": "actions",
       "feature": "Command: run project migration actions on selected targets",
       "user_visible": true,
@@ -707,7 +729,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-022",
+      "id": "F-023",
       "area": "cli",
       "feature": "Command: migrate legacy shell hook functions into a Python .envctl_hooks.py module",
       "user_visible": true,
@@ -725,7 +747,7 @@
       "command": "migrate-hooks"
     },
     {
-      "id": "F-023",
+      "id": "F-024",
       "area": "planning",
       "feature": "Command: create or sync planning-driven worktrees and start or attach to the selected environment",
       "user_visible": true,
@@ -743,7 +765,7 @@
       "command": "plan"
     },
     {
-      "id": "F-024",
+      "id": "F-025",
       "area": "actions",
       "feature": "Command: create pull requests for selected projects",
       "user_visible": true,
@@ -770,7 +792,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-025",
+      "id": "F-026",
       "area": "lifecycle",
       "feature": "Command: restart selected services or projects without losing the current run context",
       "user_visible": true,
@@ -788,7 +810,7 @@
       "command": "restart"
     },
     {
-      "id": "F-026",
+      "id": "F-027",
       "area": "lifecycle",
       "feature": "Command: resume the last saved run state for the selected mode",
       "user_visible": true,
@@ -806,7 +828,7 @@
       "command": "resume"
     },
     {
-      "id": "F-027",
+      "id": "F-028",
       "area": "actions",
       "feature": "Command: generate a merge/readiness review bundle for selected projects",
       "user_visible": true,
@@ -834,7 +856,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-028",
+      "id": "F-029",
       "area": "inspection",
       "feature": "Command: print the effective local configuration",
       "user_visible": true,
@@ -852,7 +874,7 @@
       "command": "show-config"
     },
     {
-      "id": "F-029",
+      "id": "F-030",
       "area": "inspection",
       "feature": "Command: print the latest saved runtime state",
       "user_visible": true,
@@ -870,7 +892,7 @@
       "command": "show-state"
     },
     {
-      "id": "F-030",
+      "id": "F-031",
       "area": "lifecycle",
       "feature": "Command: start main or tree services for the selected mode",
       "user_visible": true,
@@ -888,7 +910,7 @@
       "command": "start"
     },
     {
-      "id": "F-031",
+      "id": "F-032",
       "area": "lifecycle",
       "feature": "Command: stop selected services or projects",
       "user_visible": true,
@@ -906,7 +928,7 @@
       "command": "stop"
     },
     {
-      "id": "F-032",
+      "id": "F-033",
       "area": "lifecycle",
       "feature": "Command: stop all managed services for the current runtime scope",
       "user_visible": true,
@@ -923,7 +945,7 @@
       "command": "stop-all"
     },
     {
-      "id": "F-033",
+      "id": "F-034",
       "area": "actions",
       "feature": "Command: run tests for selected projects and service scopes",
       "user_visible": true,
@@ -951,7 +973,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-034",
+      "id": "F-035",
       "area": "launcher",
       "feature": "Top-level envctl launcher resolves repo root, honors --repo, and forwards commands into the runtime",
       "user_visible": true,
@@ -977,7 +999,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-035",
+      "id": "F-036",
       "area": "launcher",
       "feature": "envctl install writes a shell-file hook block that exposes envctl on PATH",
       "user_visible": true,
@@ -1004,7 +1026,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-036",
+      "id": "F-037",
       "area": "launcher",
       "feature": "envctl uninstall removes the shell-file hook block cleanly and idempotently",
       "user_visible": true,
@@ -1031,7 +1053,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-037",
+      "id": "F-038",
       "area": "cli",
       "feature": "Python command parser remains aligned with the supported public command and flag surface",
       "user_visible": true,
@@ -1047,7 +1069,7 @@
       "notes": "Parser compatibility is now enforced against the Python-owned public command and documentation surface."
     },
     {
-      "id": "F-038",
+      "id": "F-039",
       "area": "planning",
       "feature": "Interactive planning selection and count synchronization preserve existing runs while adding or removing trees",
       "user_visible": true,
@@ -1074,7 +1096,7 @@
       "wave": "Wave B"
     },
     {
-      "id": "F-039",
+      "id": "F-040",
       "area": "planning",
       "feature": "Worktree setup flags reuse, recreate, and include-existing-worktrees behave consistently across planning workflows",
       "user_visible": true,
@@ -1100,7 +1122,7 @@
       "wave": "Wave B"
     },
     {
-      "id": "F-040",
+      "id": "F-041",
       "area": "requirements",
       "feature": "Dependency startup and cleanup remain symmetric for postgres, redis, supabase, and n8n across startup, stop, blast, and planning scale-down",
       "user_visible": true,
@@ -1127,7 +1149,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-041",
+      "id": "F-042",
       "area": "requirements",
       "feature": "Supabase lifecycle, project naming, and container cleanup remain stable for long project names and repeated plan cycles",
       "user_visible": true,
@@ -1154,7 +1176,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-042",
+      "id": "F-043",
       "area": "requirements",
       "feature": "Seed or copy-db-storage behavior for per-tree requirements remains consistent with existing workflows",
       "user_visible": true,
@@ -1180,7 +1202,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-043",
+      "id": "F-044",
       "area": "artifacts",
       "feature": "Run state, runtime map, ports manifest, and error report remain the authoritative per-run artifact set",
       "user_visible": true,
@@ -1197,7 +1219,7 @@
       "notes": "Core runtime artifacts are already Python-owned and well covered."
     },
     {
-      "id": "F-044",
+      "id": "F-045",
       "area": "artifacts",
       "feature": "Test results and review artifacts live under the scoped runtime /tmp tree and retain valid dashboard links",
       "user_visible": true,
@@ -1215,7 +1237,7 @@
       "notes": "Artifact relocation into runtime scope is Python-owned and covered by focused tests."
     },
     {
-      "id": "F-045",
+      "id": "F-046",
       "area": "artifacts",
       "feature": "Artifact retention and cleanup remain correct across stop, blast, resume, and plan scale-down flows",
       "user_visible": true,
@@ -1242,7 +1264,7 @@
       "wave": "Wave E"
     },
     {
-      "id": "F-046",
+      "id": "F-047",
       "area": "diagnostics",
       "feature": "Release or shipability checks reflect the retained product contract instead of historical shell migration governance",
       "user_visible": false,
