@@ -2215,6 +2215,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
     def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
         runtime = _RuntimeStub()
         runtime.dispatch_code = 1
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -2273,12 +2274,13 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         self.assertIn(
             "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
-            rendered,
+            strip_ansi(rendered),
         )
         self.assertIn(
             "migrate failure log for Main:\n/tmp/runtime/Main_migrate.txt",
-            rendered,
+            strip_ansi(rendered),
         )
+        self.assertIn("\x1b]8;;file://", rendered)
         self.assertNotIn("Command failed (exit 1).", rendered)
 
 

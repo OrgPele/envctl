@@ -4,6 +4,7 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any, Literal, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
@@ -249,7 +250,14 @@ class DashboardOrchestrator:
             for line in excerpt_lines:
                 print(line)
             if summary_path:
-                print(render_path_for_terminal(summary_path, env=getattr(self.runtime, "env", {})))
+                print(
+                    render_path_for_terminal(
+                        summary_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
             printed = True
         return printed
 
@@ -319,12 +327,26 @@ class DashboardOrchestrator:
                         print(hint)
                     if report_path:
                         print(f"{route.command} failure log for {project_name}:")
-                        print(render_path_for_terminal(report_path, env=getattr(self.runtime, "env", {})))
+                        print(
+                            render_path_for_terminal(
+                                report_path,
+                                env=getattr(self.runtime, "env", {}),
+                                stream=sys.stdout,
+                                interactive_tty=True,
+                            )
+                        )
                 printed = True
                 continue
             if report_path:
                 print(f"{route.command} failure log for {project_name}:")
-                print(render_path_for_terminal(report_path, env=getattr(self.runtime, "env", {})))
+                print(
+                    render_path_for_terminal(
+                        report_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
                 printed = True
         return printed
 
