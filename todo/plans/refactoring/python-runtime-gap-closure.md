@@ -6,13 +6,12 @@
 - Open gaps: 0
 - High or medium gaps: 0
 
-This plan keeps the current shell runtime available as a compatibility oracle while Python closes the remaining retained-behavior gaps. No shell deletion work should begin until all high and medium gaps below are closed or explicitly accepted.
+This plan records the retained-behavior gaps that had to close before shell runtime retirement. Keep these contracts green without reintroducing shell governance.
 
 ## Shared Rules
 - Preserve current user-visible behavior while implementing each wave.
-- Keep shell-backed verification where it is still the behavior oracle.
 - Mark a feature `verified_python` only after the behavior exists and the acceptance tests are in place.
-- Run full Python unittest discovery and the full BATS suite after each completed wave.
+- Run full Python unittest discovery after each completed wave.
 
 ## Wave Breakdown
 
@@ -46,7 +45,6 @@ No currently reported gaps in this wave.
 - `contracts/runtime_feature_matrix.json` is updated so closed items are marked `verified_python`.
 - `contracts/python_runtime_gap_report.json` shows no remaining high or medium gaps.
 - Full Python unittest discovery passes.
-- Full BATS suite passes.
 
 ## Follow-Up Boundary
-Only after this plan is complete should a separate shell-retirement plan be executed.
+Shell-runtime retirement follow-up should stay mechanical and must not reintroduce shell-era governance.

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.shell.release_gate import (
+from envctl_engine.runtime.release_gate import (
     _manifest_freshness_is_valid,
     canonical_packaging_command,
     canonical_validation_command,
@@ -336,7 +336,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self._prepare_repo(repo)
             python_bin = self._write_repo_local_python(repo)
 
-            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+            with patch("envctl_engine.runtime.release_gate._run_cmd_capture") as run_cmd:
                 run_cmd.return_value = type("Result", (), {"returncode": 0, "output": ""})()
                 result = evaluate_shipability(
                     repo_root=repo,
@@ -361,7 +361,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self._write_repo_local_python(repo)
             self._write_minimal_pyproject(repo)
 
-            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+            with patch("envctl_engine.runtime.release_gate._run_cmd_capture") as run_cmd:
                 run_cmd.return_value = type("Result", (), {"returncode": 2, "output": "build failed"})()
                 result = evaluate_shipability(
                     repo_root=repo,
@@ -385,7 +385,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self._write_repo_local_python(repo)
             self._write_minimal_pyproject(repo)
 
-            with patch("envctl_engine.shell.release_gate._run_cmd_capture") as run_cmd:
+            with patch("envctl_engine.runtime.release_gate._run_cmd_capture") as run_cmd:
                 run_cmd.return_value = type(
                     "Result",
                     (),

@@ -43,7 +43,7 @@ When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MA
   - `python/envctl_engine/actions/project_action_domain.py:_pr_body`
   - `python/envctl_engine/actions/project_action_domain.py:_main_task_title`
 - Release/readiness behavior that already depends on Git ignore semantics:
-  - `python/envctl_engine/shell/release_gate.py:evaluate_shipability`
+  - `python/envctl_engine/runtime/release_gate.py:evaluate_shipability`
   - `scripts/release_shipability_gate.py:main`
 - Documentation surfaces that currently describe repo-local ignore mutation:
   - `docs/user/first-run-wizard.md`
@@ -146,7 +146,7 @@ When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MA
   - user-global persistence manages envctl’s ignore block
 
 ### 5) Align release/readiness behavior and repository cleanup expectations
-- Add coverage proving `python/envctl_engine/shell/release_gate.py:evaluate_shipability` behaves correctly when envctl artifacts are hidden by global excludes rather than repo `.gitignore`.
+- Add coverage proving `python/envctl_engine/runtime/release_gate.py:evaluate_shipability` behaves correctly when envctl artifacts are hidden by global excludes rather than repo `.gitignore`.
 - Update this repository’s own ignore policy after the feature lands:
   - remove envctl-owned local-artifact entries from this repo’s tracked `.gitignore`
   - do not build code that auto-rewrites downstream repos’ tracked `.gitignore` files to remove historical entries
@@ -186,7 +186,7 @@ When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MA
   - verify interactive bootstrap/edit flows surface warnings instead of silently claiming local `.gitignore` updates
 
 ### Integration/E2E tests
-- Prefer focused Python integration coverage over broad BATS for this change:
+- Prefer focused Python integration coverage over broader end-to-end matrix expansion for this change:
   - `tests/python/config/test_config_command_support.py` should exercise a real `config --set` / `config --stdin-json` save path against a temporary git repo plus temporary global Git config
   - `tests/python/runtime/test_release_shipability_gate_cli.py` should exercise the shipped CLI script against the same style of isolated global-config fixture
 - No frontend/browser or runtime-startup E2E lane is required because startup behavior and service orchestration are unchanged.
@@ -208,10 +208,10 @@ When a user bootstraps or edits envctl config, envctl should keep `.envctl`, `MA
   5. update docs
   6. clean this repo’s tracked `.gitignore` entries once the new contract is live
 - Verification commands:
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence`
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_command_support`
-  - `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_wizard_domain tests.python.config.test_config_wizard_textual`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli`
+  - `python3 -m unittest tests.python.config.test_config_persistence`
+  - `python3 -m unittest tests.python.config.test_config_command_support`
+  - `python3 -m unittest tests.python.config.test_config_wizard_domain tests.python.config.test_config_wizard_textual`
+  - `python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli`
 - Manual verification:
   - in a temporary git repo with no `.gitignore`, run `envctl config` and confirm `.envctl` is saved while repo `.gitignore` remains unchanged
   - create `MAIN_TASK.md` and verify `git status --short` stays clean when the configured global excludes file contains the envctl block

@@ -15,14 +15,14 @@ Each plan must include, at minimum:
 
 ## Evidence rules
 - Claims must reference concrete code paths (files and symbols).
-- “Done” claims require matching automated coverage (unit and/or BATS).
+- “Done” claims require matching automated coverage (unit, integration, or contract tests).
 - Plans that describe migration/parity work must map to release gate checks.
 
 ## Migration gate alignment
 For Python-engine migration work:
 - `contracts/python_engine_parity_manifest.json` must not overstate runtime reality.
 - plan and migration artifacts live under `todo/plans/...`, not `docs/planning/...`.
-- Release gate checks in `python/envctl_engine/shell/release_gate.py` are authoritative for shipability.
+- Release gate checks in `python/envctl_engine/runtime/release_gate.py` are authoritative for shipability.
 
 ## File placement
 - Keep plan files under `todo/plans/<category>/<slug>.md`.

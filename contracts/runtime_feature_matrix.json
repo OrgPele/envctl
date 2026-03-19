@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-03-19T10:51:58+00:00",
+  "generated_at": "2026-03-19T11:39:43+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -286,7 +286,7 @@
         "tests/python/runtime/test_engine_runtime_lifecycle_support.py"
       ],
       "parity_status": "verified_python",
-      "notes": "Blast-all cleanup breadth is covered by lifecycle support tests and the blast-all contract BATS lane.",
+      "notes": "Blast-all cleanup breadth is covered by lifecycle support tests.",
       "command": "blast-all",
       "current_behavior": "Python blast-all works and is tested, but the shell path still carries legacy cleanup breadth for global runtime teardown.",
       "missing_python_behavior": "Prove and, where needed, close cleanup symmetry for ports, processes, Docker resources, and stale dependency artifacts across mixed failure states.",
@@ -699,7 +699,7 @@
         "tests/python/runtime/test_logs_parity.py"
       ],
       "parity_status": "verified_python",
-      "notes": "Logs/follow behavior is covered by runtime parity tests and BATS.",
+      "notes": "Logs/follow behavior is covered by runtime parity tests.",
       "command": "logs"
     },
     {
@@ -1110,7 +1110,7 @@
         "tests/python/runtime/test_engine_runtime_real_startup.py"
       ],
       "parity_status": "verified_python",
-      "notes": "Setup-worktree reuse, recreate, and include-existing flag behavior is covered by planning/runtime tests and the setup-worktree BATS lane.",
+      "notes": "Setup-worktree reuse, recreate, and include-existing flag behavior is covered by planning/runtime tests.",
       "current_behavior": "Setup-worktree and include-existing-worktrees flags are present, but parity evidence is still mostly external and shell-era.",
       "missing_python_behavior": "Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
       "python_owner_module": "python/envctl_engine/planning/worktree_domain.py",
@@ -1190,7 +1190,7 @@
         "tests/python/requirements/test_requirements_orchestrator.py"
       ],
       "parity_status": "verified_python",
-      "notes": "Seed and copy-db-storage behavior is covered by runtime startup/requirements tests and the adapter parity BATS lane.",
+      "notes": "Seed and copy-db-storage behavior is covered by runtime startup and requirements tests.",
       "current_behavior": "Seed/copy-db flags still carry shell-era expectations and are not yet expressed as a full Python-owned contract.",
       "missing_python_behavior": "Define the exact retained seeding behavior and cover it with Python and end-to-end tests so the feature is no longer implicitly shell-defined.",
       "python_owner_module": "python/envctl_engine/requirements/supabase.py",
@@ -1270,7 +1270,7 @@
       "user_visible": false,
       "shell_source_of_truth": [],
       "python_source_of_truth": [
-        "python/envctl_engine/shell/release_gate.py",
+        "python/envctl_engine/runtime/release_gate.py",
         "python/envctl_engine/debug/doctor_orchestrator.py"
       ],
       "evidence_tests": [
@@ -1281,7 +1281,7 @@
       "notes": "Release and cutover gate behavior is Python-owned and covered by release gate and cutover truth tests.",
       "current_behavior": "Release and doctor readiness checks now use the Python runtime readiness contract and parity manifest as their source of truth.",
       "missing_python_behavior": "Keep the release gate aligned with runtime readiness and parity freshness, then cover the retained contract directly in Python tests.",
-      "python_owner_module": "python/envctl_engine/shell/release_gate.py",
+      "python_owner_module": "python/envctl_engine/runtime/release_gate.py",
       "proposed_tests": [
         "tests/python/runtime/test_release_shipability_gate.py",
         "tests/python/runtime/test_cutover_gate_truth.py"

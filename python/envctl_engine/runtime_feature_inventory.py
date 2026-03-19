@@ -136,7 +136,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=("tests/python/runtime/test_engine_runtime_lifecycle_support.py",),
         parity_status="verified_python",
-        notes="Blast-all cleanup breadth is covered by lifecycle support tests and the blast-all contract BATS lane.",
+        notes="Blast-all cleanup breadth is covered by lifecycle support tests.",
         current_behavior="Python blast-all works and is tested, but the shell path still carries legacy cleanup breadth for global runtime teardown.",
         missing_python_behavior="Prove and, where needed, close cleanup symmetry for ports, processes, Docker resources, and stale dependency artifacts across mixed failure states.",
         python_owner_module="python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
@@ -316,7 +316,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=("tests/python/runtime/test_logs_parity.py",),
         parity_status="verified_python",
-        notes="Logs/follow behavior is covered by runtime parity tests and BATS.",
+        notes="Logs/follow behavior is covered by runtime parity tests.",
     ),
     "clear-logs": FeatureDefinition(
         area="inspection",
@@ -483,6 +483,22 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         evidence_tests=("tests/python/startup/test_hooks_bridge.py",),
         parity_status="verified_python",
         notes="Hook migration is Python-owned and provides an explicit path away from executable shell hooks.",
+    ),
+    "codex-tmux": FeatureDefinition(
+        area="cli",
+        feature="Command: launch or attach a repo-scoped Codex tmux session",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/codex_tmux_support.py",
+            "python/envctl_engine/runtime/utility_command_support.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_codex_tmux_support.py",
+            "tests/python/runtime/test_engine_runtime_dispatch.py",
+        ),
+        parity_status="verified_python",
+        notes="Codex tmux launch and attach behavior is Python-owned and covered by focused runtime tests.",
     ),
     "debug-pack": FeatureDefinition(
         area="diagnostics",
@@ -753,7 +769,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
             "tests/python/runtime/test_engine_runtime_real_startup.py",
         ),
         parity_status="verified_python",
-        notes="Setup-worktree reuse, recreate, and include-existing flag behavior is covered by planning/runtime tests and the setup-worktree BATS lane.",
+        notes="Setup-worktree reuse, recreate, and include-existing flag behavior is covered by planning/runtime tests.",
         current_behavior="Setup-worktree and include-existing-worktrees flags are present, but parity evidence is still mostly external and shell-era.",
         missing_python_behavior="Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
         python_owner_module="python/envctl_engine/planning/worktree_domain.py",
@@ -828,7 +844,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
             "tests/python/requirements/test_requirements_orchestrator.py",
         ),
         parity_status="verified_python",
-        notes="Seed and copy-db-storage behavior is covered by runtime startup/requirements tests and the adapter parity BATS lane.",
+        notes="Seed and copy-db-storage behavior is covered by runtime startup and requirements tests.",
         current_behavior="Seed/copy-db flags still carry shell-era expectations and are not yet expressed as a full Python-owned contract.",
         missing_python_behavior="Define the exact retained seeding behavior and cover it with Python and end-to-end tests so the feature is no longer implicitly shell-defined.",
         python_owner_module="python/envctl_engine/requirements/supabase.py",
@@ -902,7 +918,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         user_visible=False,
         shell_source_of_truth=(),
         python_source_of_truth=(
-            "python/envctl_engine/shell/release_gate.py",
+            "python/envctl_engine/runtime/release_gate.py",
             "python/envctl_engine/debug/doctor_orchestrator.py",
         ),
         evidence_tests=(
@@ -913,7 +929,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         notes="Release and cutover gate behavior is Python-owned and covered by release gate and cutover truth tests.",
         current_behavior="Release and doctor readiness checks now use the Python runtime readiness contract and parity manifest as their source of truth.",
         missing_python_behavior="Keep the release gate aligned with runtime readiness and parity freshness, then cover the retained contract directly in Python tests.",
-        python_owner_module="python/envctl_engine/shell/release_gate.py",
+        python_owner_module="python/envctl_engine/runtime/release_gate.py",
         proposed_tests=(
             "tests/python/runtime/test_release_shipability_gate.py",
             "tests/python/runtime/test_cutover_gate_truth.py",
@@ -930,7 +946,6 @@ _FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
 
 _ALLOWED_PARITY_STATUSES = {"verified_python", "shell_only", "unverified", "python_partial"}
 _ALLOWED_SEVERITIES = {"high", "medium", "low"}
-_LEGACY_SHELL_FALLBACK_ENV = "ENVCTL_ENGINE_" + "SHELL_FALLBACK"
 
 
 def _documented_flag_tokens(repo_root: Path) -> list[str]:
@@ -1039,7 +1054,6 @@ def build_python_runtime_gap_report(
     status_counts = Counter(str(gap["parity_status"]) for gap in gaps)
     area_counts = Counter(str(gap["area"]) for gap in gaps)
     matrix_rendered = json.dumps(matrix_payload, indent=2, sort_keys=True) + "\n"
-    shell_retirement_blockers = _shell_retirement_blockers(repo_root=repo_root)
     return {
         "version": 1,
         "generated_at": generated_at,
@@ -1053,7 +1067,6 @@ def build_python_runtime_gap_report(
             "by_severity": dict(sorted(severity_counts.items())),
             "by_area": dict(sorted(area_counts.items())),
         },
-        "shell_retirement_blockers": shell_retirement_blockers,
         "gaps": gaps,
     }
 
@@ -1090,13 +1103,12 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
         f"- Open gaps: {summary.get('gap_count', 0)}",
         f"- High or medium gaps: {summary.get('high_or_medium_gap_count', 0)}",
         "",
-        "This plan keeps the current shell runtime available as a compatibility oracle while Python closes the remaining retained-behavior gaps. No shell deletion work should begin until all high and medium gaps below are closed or explicitly accepted.",
+        "This plan records the retained-behavior gaps that had to close before shell runtime retirement. Keep these contracts green without reintroducing shell governance.",
         "",
         "## Shared Rules",
         "- Preserve current user-visible behavior while implementing each wave.",
-        "- Keep shell-backed verification where it is still the behavior oracle.",
         "- Mark a feature `verified_python` only after the behavior exists and the acceptance tests are in place.",
-        "- Run full Python unittest discovery and the full BATS suite after each completed wave.",
+        "- Run full Python unittest discovery after each completed wave.",
         "",
         "## Wave Breakdown",
     ]
@@ -1149,10 +1161,9 @@ def render_python_runtime_gap_closure_plan(*, report_payload: dict[str, Any]) ->
             "- `contracts/runtime_feature_matrix.json` is updated so closed items are marked `verified_python`.",
             "- `contracts/python_runtime_gap_report.json` shows no remaining high or medium gaps.",
             "- Full Python unittest discovery passes.",
-            "- Full BATS suite passes.",
             "",
             "## Follow-Up Boundary",
-            "Only after this plan is complete should a separate shell-retirement plan be executed.",
+            "Shell-runtime retirement follow-up should stay mechanical and must not reintroduce shell-era governance.",
             "",
         ]
     )
@@ -1169,212 +1180,6 @@ def _wave_for_area(area: str) -> str:
     if area == "actions":
         return "Wave D"
     return "Wave E"
-
-
-def _shell_retirement_blockers(*, repo_root: Path) -> dict[str, Any]:
-    checks = {
-        "runtime_selector_removed": _check_runtime_selector_removed(repo_root),
-        "bash_launchers_removed": _check_bash_launchers_removed(repo_root),
-        "shell_fallback_contract_removed": _check_shell_fallback_contract_removed(repo_root),
-        "bash_hook_bridge_removed": _check_bash_hook_bridge_removed(repo_root),
-        "shell_governance_removed": _check_shell_governance_removed(repo_root),
-        "legacy_config_python_owned": _check_legacy_config_python_owned(repo_root),
-        "bats_harness_removed": _check_bats_harness_removed(repo_root),
-    }
-    return {
-        "ready_for_shell_retirement": all(bool(check["passed"]) for check in checks.values()),
-        "checks": checks,
-    }
-
-
-def _check_runtime_selector_removed(repo_root: Path) -> dict[str, Any]:
-    main_sh = repo_root / "lib" / "engine" / "main.sh"
-    if not main_sh.is_file():
-        return {"passed": True, "details": ["The legacy runtime selector bridge is already absent."]}
-    text = main_sh.read_text(encoding="utf-8")
-    passed = "exec_shell_engine" not in text
-    details = (
-        ["The legacy shell runtime selector no longer contains exec_shell_engine()."]
-        if passed
-        else ["The legacy shell runtime selector still contains exec_shell_engine()."]
-    )
-    return {"passed": passed, "details": details}
-
-
-def _check_bash_launchers_removed(repo_root: Path) -> dict[str, Any]:
-    paths = (
-        Path("lib") / "envctl.sh",
-        Path("lib") / "engine" / "main.sh",
-        Path("scripts") / "install.sh",
-    )
-    lingering = [str(path) for path in paths if (repo_root / path).exists()]
-    passed = not lingering
-    details = (
-        ["No tracked Bash launcher/install wrappers remain."]
-        if passed
-        else [f"Tracked Bash launcher/install files remain: {', '.join(lingering)}"]
-    )
-    return {"passed": passed, "details": details}
-
-
-def _check_shell_fallback_contract_removed(repo_root: Path) -> dict[str, Any]:
-    active_paths = (
-        "README.md",
-        "python/envctl_engine/runtime/launcher_cli.py",
-        "python/envctl_engine/runtime/engine_runtime_debug_support.py",
-        "python/envctl_engine/config/__init__.py",
-        "docs/reference/configuration.md",
-        "docs/reference/important-flags.md",
-        "docs/user/getting-started.md",
-        "docs/user/python-engine-guide.md",
-        "docs/user/faq.md",
-        "docs/operations/troubleshooting.md",
-        "docs/developer/runtime-lifecycle.md",
-        "docs/developer/architecture-overview.md",
-        "docs/developer/command-surface.md",
-    )
-    matches = _path_matches(repo_root, active_paths, _LEGACY_SHELL_FALLBACK_ENV)
-    passed = not matches
-    details = (
-        ["No active code/docs reference the legacy shell fallback environment variable."]
-        if passed
-        else [f"Active shell fallback references remain: {', '.join(matches)}"]
-    )
-    return {"passed": passed, "details": details}
-
-
-def _check_bash_hook_bridge_removed(repo_root: Path) -> dict[str, Any]:
-    hook_bridge = repo_root / "python" / "envctl_engine" / "shared" / "hooks.py"
-    if not hook_bridge.is_file():
-        return {"passed": False, "details": ["python/envctl_engine/shared/hooks.py is missing."]}
-    text = hook_bridge.read_text(encoding="utf-8")
-    forbidden_tokens = ('["bash", "-lc"', 'source "$ENVCTL_HOOK_FILE"', "subprocess.run(")
-    matches = [token for token in forbidden_tokens if token in text]
-    passed = not matches
-    details = (
-        ["The hook bridge no longer shells out through bash."]
-        if passed
-        else [f"The hook bridge still contains Bash execution markers: {', '.join(matches)}"]
-    )
-    return {"passed": passed, "details": details}
-
-
-def _check_shell_governance_removed(repo_root: Path) -> dict[str, Any]:
-    deleted_paths = (
-        Path("python") / "envctl_engine" / "shell" / ("shell" + "_prune.py"),
-        Path("contracts") / ("envctl-shell" + "-ownership-ledger.json"),
-        Path("scripts") / ("verify_shell" + "_prune_contract.py"),
-        Path("scripts") / "report_unmigrated_shell.py",
-        Path("scripts") / ("generate_shell" + "_ownership_ledger.py"),
-        Path("tests") / "python" / "shell" / ("test_shell" + "_prune_contract.py"),
-        Path("tests") / "python" / "shell" / "test_shell_ownership_ledger.py",
-        Path("docs") / "developer" / "shell-compatibility.md",
-    )
-    lingering_files = [str(path) for path in deleted_paths if (repo_root / path).exists()]
-    active_reference_paths = (
-        "python/envctl_engine/runtime/engine_runtime.py",
-        "python/envctl_engine/runtime/engine_runtime_artifacts.py",
-        "python/envctl_engine/shared/protocols.py",
-        "python/envctl_engine/state/repository.py",
-        "python/envctl_engine/shell/release_gate.py",
-        "python/envctl_engine/debug/doctor_orchestrator.py",
-        "scripts/release_shipability_gate.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
-        "tests/python/runtime/test_release_shipability_gate.py",
-        "tests/python/runtime/test_cutover_gate_truth.py",
-        "tests/python/state/test_state_repository_contract.py",
-        "docs/developer/python-runtime-guide.md",
-        "docs/developer/debug-and-diagnostics.md",
-    )
-    active_refs = sorted(
-        set(
-            _path_matches(repo_root, active_reference_paths, "shell" + "_prune")
-            + _path_matches(repo_root, active_reference_paths, "envctl-shell" + "-ownership-ledger")
-        )
-    )
-    passed = not lingering_files and not active_refs
-    details: list[str] = []
-    if lingering_files:
-        details.append(f"Shell governance files still exist: {', '.join(lingering_files)}")
-    if active_refs:
-        details.append(f"Active shell governance references remain: {', '.join(active_refs)}")
-    if not details:
-        details.append("Shell governance files are deleted and active references are gone.")
-    return {"passed": passed, "details": details}
-
-
-def _check_legacy_config_python_owned(repo_root: Path) -> dict[str, Any]:
-    hook_bridge = repo_root / "python" / "envctl_engine" / "runtime" / "engine_runtime_hooks.py"
-    passed = hook_bridge.is_file()
-    details: list[str] = []
-    if not hook_bridge.is_file():
-        details.append("Python .envctl.sh compatibility hook is missing.")
-    else:
-        details.append("Python .envctl.sh compatibility hook exists.")
-    config_loader_refs = _path_matches(
-        repo_root,
-        (
-            "python",
-            "scripts",
-            "tests",
-            "docs",
-            "lib",
-        ),
-        "config_loader.sh",
-    )
-    # Ignore the shell tree itself; we only care whether active non-shell surfaces still rely on it.
-    legacy_shell_tree_prefix = "lib/engine/" + "lib/"
-    config_loader_refs = [
-        ref
-        for ref in config_loader_refs
-        if not ref.startswith(legacy_shell_tree_prefix) and ref != "python/envctl_engine/runtime_feature_inventory.py"
-    ]
-    if config_loader_refs:
-        passed = False
-        details.append(f"Active non-shell references to config_loader.sh remain: {', '.join(config_loader_refs)}")
-    else:
-        details.append("No active non-shell surface references config_loader.sh.")
-    return {"passed": passed, "details": details}
-
-
-def _check_bats_harness_removed(repo_root: Path) -> dict[str, Any]:
-    bats_dir = repo_root / "tests" / "bats"
-    bats_files = (
-        sorted(str(path.relative_to(repo_root)) for path in bats_dir.rglob("*.bats")) if bats_dir.exists() else []
-    )
-    passed = not bats_files
-    details = (
-        ["The BATS harness has been fully removed."]
-        if passed
-        else [f"Tracked BATS files remain: {', '.join(bats_files[:5])}" + (" ..." if len(bats_files) > 5 else "")]
-    )
-    return {"passed": passed, "details": details}
-
-
-def _path_matches(repo_root: Path, relative_paths: tuple[str, ...], needle: str) -> list[str]:
-    matches: list[str] = []
-    for raw_path in relative_paths:
-        path = repo_root / raw_path
-        if not path.exists():
-            continue
-        if path.is_dir():
-            for child in sorted(path.rglob("*")):
-                if not child.is_file():
-                    continue
-                try:
-                    text = child.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
-                if needle in text:
-                    matches.append(str(child.relative_to(repo_root)))
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if needle in text:
-            matches.append(str(path.relative_to(repo_root)))
-    return sorted(set(matches))
 
 
 def validate_runtime_feature_matrix_payload(payload: dict[str, Any], *, repo_root: Path) -> None:
@@ -1446,35 +1251,6 @@ def validate_python_runtime_gap_report_payload(payload: dict[str, Any], *, matri
             raise ValueError(f"gap missing python owner module: {feature_id}")
         if not list(gap.get("proposed_tests", [])):
             raise ValueError(f"gap missing proposed tests: {feature_id}")
-    blockers = payload.get("shell_retirement_blockers")
-    if not isinstance(blockers, dict):
-        raise ValueError("shell_retirement_blockers must be an object")
-    if not isinstance(blockers.get("ready_for_shell_retirement"), bool):
-        raise ValueError("shell_retirement_blockers.ready_for_shell_retirement must be a boolean")
-    checks = blockers.get("checks")
-    if not isinstance(checks, dict):
-        raise ValueError("shell_retirement_blockers.checks must be an object")
-    required_checks = {
-        "runtime_selector_removed",
-        "bash_launchers_removed",
-        "shell_fallback_contract_removed",
-        "bash_hook_bridge_removed",
-        "shell_governance_removed",
-        "legacy_config_python_owned",
-        "bats_harness_removed",
-    }
-    missing_checks = required_checks.difference(checks)
-    if missing_checks:
-        raise ValueError(f"missing shell retirement blocker checks: {', '.join(sorted(missing_checks))}")
-    for name in required_checks:
-        check = checks.get(name)
-        if not isinstance(check, dict):
-            raise ValueError(f"shell retirement blocker {name} must be an object")
-        if not isinstance(check.get("passed"), bool):
-            raise ValueError(f"shell retirement blocker {name}.passed must be a boolean")
-        details = check.get("details")
-        if not isinstance(details, list) or not all(isinstance(item, str) for item in details):
-            raise ValueError(f"shell retirement blocker {name}.details must be a list of strings")
 
 
 def default_timestamp() -> str:

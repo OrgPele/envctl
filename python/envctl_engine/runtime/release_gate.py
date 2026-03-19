@@ -275,6 +275,46 @@ def _normalize_freshness_clock(now: datetime | None) -> datetime:
     return now.astimezone(UTC)
 
 
+def _unsupported_documented_flags(repo_root: Path) -> list[str]:
+    docs_path = repo_root / "docs/reference/important-flags.md"
+    if not docs_path.is_file():
+        return []
+    text = docs_path.read_text(encoding="utf-8")
+    tokens = sorted({match.group(0) for match in re.finditer(r"--[a-z0-9][a-z0-9-]*", text)})
+    supported = set(list_supported_flag_tokens())
+    ignored = {"--help", "--repo", "--version"}
+    return [token for token in tokens if token not in supported and token not in ignored]
+
+
+def _warning_line(output: str) -> str | None:
+    for line in output.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if "deprecationwarning" in lowered or "warning:" in lowered or lowered.startswith("warning "):
+            return text
+    return None
+
+
+def _misconfigured_repo_local_python(
+    args: Sequence[str],
+    *,
+    repo_root: Path,
+    error_prefix: str,
+) -> str | None:
+    if not args:
+        return f"{error_prefix}_misconfigured: empty command"
+    executable = Path(str(args[0]))
+    expected = canonical_repo_python(repo_root)
+    if executable == expected and not executable.exists():
+        return (
+            f"{error_prefix}_misconfigured: expected repo-local interpreter at "
+            f"{expected.relative_to(repo_root)}"
+        )
+    return None
+
+
 def _is_file_tracked(repo_root: Path, relative_path: str) -> bool:
     completed = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files", "--error-unmatch", "--", relative_path],
@@ -316,38 +356,3 @@ def _run_cmd_capture(repo_root: Path, args: Sequence[str]) -> CommandExecution:
     )
     output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
     return CommandExecution(returncode=int(completed.returncode), output=output)
-
-
-def _misconfigured_repo_local_python(args: Sequence[str], *, repo_root: Path, error_prefix: str) -> str | None:
-    if not args:
-        return f"{error_prefix}_misconfigured: empty command"
-    executable = Path(str(args[0]))
-    expected = canonical_repo_python(repo_root)
-    if executable == expected and not executable.exists():
-        return (
-            f"{error_prefix}_misconfigured: expected repo-local interpreter at "
-            f"{expected.relative_to(repo_root)}"
-        )
-    return None
-
-
-def _warning_line(output: str) -> str | None:
-    for line in output.splitlines():
-        text = line.strip()
-        if not text:
-            continue
-        lowered = text.lower()
-        if "deprecationwarning" in lowered or "warning:" in lowered or lowered.startswith("warning "):
-            return text
-    return None
-
-
-def _unsupported_documented_flags(repo_root: Path) -> list[str]:
-    docs_path = repo_root / "docs/reference/important-flags.md"
-    if not docs_path.is_file():
-        return []
-    text = docs_path.read_text(encoding="utf-8")
-    tokens = sorted({match.group(0) for match in re.finditer(r"--[a-z0-9][a-z0-9-]*", text)})
-    supported = set(list_supported_flag_tokens())
-    ignored = {"--help", "--repo", "--version"}
-    return [token for token in tokens if token not in supported and token not in ignored]

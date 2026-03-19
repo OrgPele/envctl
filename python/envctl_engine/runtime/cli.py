@@ -16,7 +16,7 @@ from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.launcher_support import resolve_envctl_version
 from envctl_engine.runtime.engine_runtime import dispatch_route
-from envctl_engine.shell.release_gate import CANONICAL_BOOTSTRAP_COMMANDS
+from envctl_engine.runtime.release_gate import CANONICAL_BOOTSTRAP_COMMANDS
 
 
 def _best_effort_restore_terminal_state() -> None:
