@@ -27,6 +27,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
+from envctl_engine.ui.path_links import render_path_fragment_for_terminal
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
@@ -59,9 +60,10 @@ def _worktree_spinner_update(
     active_spinner: Any,
     op_id: str,
     message: str,
+    terminal_message: str | None = None,
 ) -> None:
     if enabled:
-        active_spinner.update(message)
+        active_spinner.update(terminal_message or message)
         self._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
             component="worktree_planning",
@@ -70,7 +72,23 @@ def _worktree_spinner_update(
             message=message,
         )
         return
-    print(message)
+    print(terminal_message or message)
+
+
+def _render_planning_path(
+    self: Any,
+    *,
+    absolute_path: Path,
+    display_text: str,
+    interactive_tty: bool | None = None,
+) -> str:
+    return render_path_fragment_for_terminal(
+        absolute_path,
+        display_text=display_text,
+        env=getattr(self, "env", {}),
+        stream=sys.stdout,
+        interactive_tty=interactive_tty,
+    )
 
 
 def _worktree_spinner_start(
@@ -1037,6 +1055,11 @@ def _sync_single_plan_worktree_target(
             active_spinner=active_spinner,
             op_id=op_id,
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
+            terminal_message=(
+                f"Setting up {create_count} worktree(s) for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}"
+                f" -> {feature}..."
+            ),
         )
         create_result = _create_feature_worktrees_result(
             self,
@@ -1062,6 +1085,11 @@ def _sync_single_plan_worktree_target(
                 f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
                 f"removing {remove_count} worktree(s)."
             ),
+            terminal_message=(
+                f"Selected count for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))} "
+                f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
+            ),
         )
         remove_error = self._delete_feature_worktrees(
             feature=feature,
@@ -1070,7 +1098,10 @@ def _sync_single_plan_worktree_target(
         )
         if remove_error:
             return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
-        print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
+        print(
+            f"Blasted and deleted {remove_count} worktree(s) for "
+            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}."
+        )
         removed_worktrees = tuple(name for name, _root in sorted(
             candidates,
             key=lambda item: self._project_sort_key_for_feature(item[0], feature),
@@ -1372,7 +1403,12 @@ def _move_plan_to_done(self: Any, plan_file: str) -> None:
         dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
     src.replace(dest)
     relative_done = dest.relative_to(self._planning_done_root())
-    print(f"Moved {plan_file} to done/{relative_done}.")
+    print(
+        "Moved "
+        f"{_render_planning_path(self, absolute_path=src, display_text=plan_file)} "
+        "to "
+        f"{_render_planning_path(self, absolute_path=dest, display_text=f'done/{relative_done}') }."
+    )
 
 
 def _feature_project_candidates(

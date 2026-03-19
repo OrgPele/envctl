@@ -33,6 +33,7 @@ PythonEngineRuntime = engine_runtime_module.PythonEngineRuntime
 RunState = engine_runtime_module.RunState
 ServiceRecord = engine_runtime_module.ServiceRecord
 RequirementsResult = engine_runtime_module.RequirementsResult
+strip_ansi = importlib.import_module("envctl_engine.test_output.parser_base").strip_ansi
 
 
 class _FakeRunner:
@@ -59,6 +60,11 @@ class _FakeRunner:
 
     def is_pid_running(self, _pid: int) -> bool:
         return False
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ActionsParityTests(unittest.TestCase):
@@ -127,7 +133,7 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
@@ -148,7 +154,7 @@ class ActionsParityTests(unittest.TestCase):
             tree_root.mkdir(parents=True, exist_ok=True)
             (tree_root / "tests").mkdir(parents=True, exist_ok=True)
 
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
             fake_runner = _FakeRunner(
                 returncode=0,
                 stdout="..\n----------------------------------------------------------------------\nRan 2 tests in 0.003s\n\nOK\n",
@@ -162,17 +168,19 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             rendered = out.getvalue()
-            self.assertIn("command: ", rendered)
-            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", rendered)
-            self.assertIn(f"cwd: {tree_root.resolve()}", rendered)
-            self.assertIn("2 passed, 0 failed, 0 skipped", rendered)
-            self.assertIn("Repository tests (unittest)", rendered)
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("command: ", visible)
+            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", visible)
+            self.assertIn(f"cwd: {tree_root.resolve()}", visible)
+            self.assertIn("2 passed, 0 failed, 0 skipped", visible)
+            self.assertIn("Repository tests (unittest)", visible)
 
     def test_interactive_test_action_emits_live_progress_status_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -418,6 +426,26 @@ class ActionsParityTests(unittest.TestCase):
             )
             engine.process_runner = fake_runner  # type: ignore[assignment]
             state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+            state = RunState(
                 run_id="run-interactive-failure-summary",
                 mode="trees",
                 services={
@@ -437,7 +465,6 @@ class ActionsParityTests(unittest.TestCase):
                 emit=engine._emit,
                 runtime_map_builder=engine_runtime_module.build_runtime_map,
             )
-
             route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
@@ -445,15 +472,17 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertNotIn("failure: ", rendered)
-            self.assertIn("failure summary:", rendered)
-            self.assertIn("ft_", rendered)
+            visible = strip_ansi(rendered)
+            self.assertNotIn("failure: ", visible)
+            self.assertIn("failure summary:", visible)
+            self.assertIn("ft_", visible)
+            self.assertIn("\x1b]8;;file://", rendered)
             self.assertNotIn("Test command failed:", rendered)
             self.assertNotIn("ImportError: cannot import name 'x' from 'y'", rendered)
             status_messages = [

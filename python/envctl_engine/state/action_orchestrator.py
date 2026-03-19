@@ -14,6 +14,7 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.path_links import render_paths_in_terminal_text
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
     no_target_selected_message,
@@ -242,6 +243,8 @@ class StateActionOrchestrator:
             cleared, missing, unavailable, failed = self._clear_service_logs(
                 current_state,
                 quiet=bool(route.flags.get("json")),
+                env=rt.env,
+                interactive_tty=RuntimeTerminalUI._can_interactive_tty(),
             )
             if bool(route.flags.get("json")):
                 print(
@@ -797,20 +800,56 @@ class StateActionOrchestrator:
         return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
 
     @staticmethod
-    def _clear_service_logs(state: RunState, *, quiet: bool = False) -> tuple[int, int, int, int]:
+    def _clear_service_logs(
+        state: RunState,
+        *,
+        quiet: bool = False,
+        env: dict[str, str] | None = None,
+        interactive_tty: bool | None = None,
+    ) -> tuple[int, int, int, int]:
         def clear_one(service: ServiceRecord) -> tuple[int, int, int, int, str | None]:
             raw_path = str(getattr(service, "log_path", "") or "").strip()
             if not raw_path:
                 return 0, 0, 1, 0, (None if quiet else f"{service.name}: log=n/a")
             log_path = Path(raw_path)
             if not log_path.is_file():
-                return 0, 1, 0, 0, (None if quiet else f"{service.name}: log missing at {log_path}")
+                line = f"{service.name}: log missing at {log_path}"
+                return 0, 1, 0, 0, (
+                    None
+                    if quiet
+                    else render_paths_in_terminal_text(
+                        line,
+                        paths=[log_path],
+                        env=env,
+                        interactive_tty=interactive_tty,
+                    )
+                )
             try:
                 with log_path.open("w", encoding="utf-8"):
                     pass
-                return 1, 0, 0, 0, (None if quiet else f"{service.name}: log cleared at {log_path}")
+                line = f"{service.name}: log cleared at {log_path}"
+                return 1, 0, 0, 0, (
+                    None
+                    if quiet
+                    else render_paths_in_terminal_text(
+                        line,
+                        paths=[log_path],
+                        env=env,
+                        interactive_tty=interactive_tty,
+                    )
+                )
             except OSError as exc:
-                return 0, 0, 0, 1, (None if quiet else f"{service.name}: failed to clear log at {log_path} ({exc})")
+                line = f"{service.name}: failed to clear log at {log_path} ({exc})"
+                return 0, 0, 0, 1, (
+                    None
+                    if quiet
+                    else render_paths_in_terminal_text(
+                        line,
+                        paths=[log_path],
+                        env=env,
+                        interactive_tty=interactive_tty,
+                    )
+                )
 
         cleared = 0
         missing = 0

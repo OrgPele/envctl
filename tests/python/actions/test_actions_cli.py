@@ -4,15 +4,23 @@ import importlib
 import os
 import subprocess
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+from envctl_engine.test_output.parser_base import strip_ansi
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 actions_cli = importlib.import_module("envctl_engine.actions.actions_cli")
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ActionsCliTests(unittest.TestCase):
@@ -922,6 +930,70 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse(any(args[:2] == ["commit", "-F"] for args in seen_git_args))
             self.assertEqual(ledger.read_text(encoding="utf-8"), "# Envctl Commit Log\n\n### Envctl pointer ###\n")
 
+    def test_commit_action_renders_clickable_missing_commit_message_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            missing_file = project_root / "missing-message.txt"
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {"ENVCTL_COMMIT_MESSAGE_FILE": str(missing_file), "ENVCTL_UI_HYPERLINK_MODE": "on"},
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = _TtyStringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+                output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("\x1b]8;;file://", output)
+            self.assertIn(f"Commit message file is missing or empty: {missing_file}", strip_ansi(output))
+
+    def test_commit_action_renders_clickable_ledger_path_in_empty_pointer_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_UI_HYPERLINK_MODE": "on"}, clear=False),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = _TtyStringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+                output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("\x1b]8;;file://", output)
+            visible = strip_ansi(output)
+            self.assertIn("Envctl commit log is empty after the pointer", visible)
+            self.assertIn(str(ledger), visible)
+
     def test_commit_action_explicit_message_overrides_envctl_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
@@ -1729,6 +1801,209 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse((repo_root / "review").exists())
             self.assertFalse((repo_root / "tree-diffs").exists())
             run_mock.assert_not_called()
+
+    def test_review_completion_plain_output_hyperlinks_paths_when_enabled(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "review"
+            output_dir.mkdir()
+            summary_path = output_dir / "summary.md"
+            bundle_path = output_dir / "all.md"
+            summary_path.write_text("# Summary\n", encoding="utf-8")
+            bundle_path.write_text("# Bundle\n", encoding="utf-8")
+            context = domain.ActionProjectContext(
+                repo_root=root,
+                project_root=root,
+                project_name="Main",
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            )
+
+            class FakeText:
+                def __init__(self, text: str = "", style: str | None = None) -> None:
+                    self.plain = text
+                    self.style = style
+
+                @classmethod
+                def assemble(cls, *parts):
+                    return cls("".join(str(part[0]) for part in parts))
+
+            class FakeTable:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.rows: list[tuple[object, ...]] = []
+
+                @classmethod
+                def grid(cls, *args, **kwargs):  # noqa: ANN002, ANN003
+                    return cls()
+
+                def add_column(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    return None
+
+                def add_row(self, *values: object) -> None:
+                    self.rows.append(values)
+
+            class FakePanel:
+                def __init__(self, body: object, title: object, box: object, expand: bool) -> None:
+                    self.body = body
+                    self.title = title
+                    self.box = box
+                    self.expand = expand
+
+            class FakeConsole:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.printed: list[object] = []
+
+                def print(self, value: object) -> None:
+                    self.printed.append(value)
+
+            fake_rich = types.ModuleType("rich")
+            fake_box = types.ModuleType("rich.box")
+            fake_box.ROUNDED = object()
+            fake_console = types.ModuleType("rich.console")
+            fake_console.Console = FakeConsole
+            fake_panel = types.ModuleType("rich.panel")
+            fake_panel.Panel = FakePanel
+            fake_table = types.ModuleType("rich.table")
+            fake_table.Table = FakeTable
+            fake_text = types.ModuleType("rich.text")
+            fake_text.Text = FakeText
+
+            buffer = _TtyStringIO()
+            with (
+                redirect_stdout(buffer),
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "rich": fake_rich,
+                        "rich.box": fake_box,
+                        "rich.console": fake_console,
+                        "rich.panel": fake_panel,
+                        "rich.table": fake_table,
+                        "rich.text": fake_text,
+                    },
+                    clear=False,
+                ),
+            ):
+                domain._print_review_completion(
+                    context,
+                    mode="single",
+                    scope="all",
+                    output_dir=output_dir,
+                    summary_path=summary_path,
+                    all_in_one_path=bundle_path,
+                    stats=[],
+                    tree_count=1,
+                )
+
+        output = buffer.getvalue()
+        self.assertIn("\x1b]8;;file://", output)
+        self.assertIn("Review Ready: Main", strip_ansi(output))
+        self.assertIn(str(summary_path), strip_ansi(output))
+        self.assertIn(str(bundle_path), strip_ansi(output))
+
+    def test_review_completion_rich_output_uses_link_styled_text(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "review"
+            output_dir.mkdir()
+            summary_path = output_dir / "summary.md"
+            bundle_path = output_dir / "all.md"
+            summary_path.write_text("# Summary\n", encoding="utf-8")
+            bundle_path.write_text("# Bundle\n", encoding="utf-8")
+            context = domain.ActionProjectContext(
+                repo_root=root,
+                project_root=root,
+                project_name="Main",
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_ACTION_FORCE_RICH": "1"},
+            )
+
+            captured: dict[str, object] = {}
+
+            class FakeText:
+                def __init__(self, text: str = "", style: str | None = None) -> None:
+                    self.plain = text
+                    self.style = style
+
+                @classmethod
+                def assemble(cls, *parts):
+                    return cls("".join(str(part[0]) for part in parts))
+
+            class FakeTable:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.rows: list[tuple[object, ...]] = []
+
+                @classmethod
+                def grid(cls, *args, **kwargs):  # noqa: ANN002, ANN003
+                    return cls()
+
+                def add_column(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    return None
+
+                def add_row(self, *values: object) -> None:
+                    self.rows.append(values)
+
+            class FakePanel:
+                def __init__(self, body: object, title: object, box: object, expand: bool) -> None:
+                    self.body = body
+                    self.title = title
+                    self.box = box
+                    self.expand = expand
+
+            class FakeConsole:
+                def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                    self.printed: list[object] = []
+                    captured["console"] = self
+
+                def print(self, value: object) -> None:
+                    self.printed.append(value)
+
+            fake_rich = types.ModuleType("rich")
+            fake_box = types.ModuleType("rich.box")
+            fake_box.ROUNDED = object()
+            fake_console = types.ModuleType("rich.console")
+            fake_console.Console = FakeConsole
+            fake_panel = types.ModuleType("rich.panel")
+            fake_panel.Panel = FakePanel
+            fake_table = types.ModuleType("rich.table")
+            fake_table.Table = FakeTable
+            fake_text = types.ModuleType("rich.text")
+            fake_text.Text = FakeText
+
+            with patch.dict(
+                "sys.modules",
+                {
+                    "rich": fake_rich,
+                    "rich.box": fake_box,
+                    "rich.console": fake_console,
+                    "rich.panel": fake_panel,
+                    "rich.table": fake_table,
+                    "rich.text": fake_text,
+                },
+                clear=False,
+            ):
+                rendered = domain._print_review_completion_rich(
+                    context,
+                    mode="single",
+                    scope="all",
+                    output_dir=output_dir,
+                    summary_path=summary_path,
+                    all_in_one_path=bundle_path,
+                    stats=[],
+                    tree_count=1,
+                )
+
+        self.assertTrue(rendered)
+        console = captured["console"]
+        assert isinstance(console, FakeConsole)
+        panel = console.printed[0]
+        assert isinstance(panel, FakePanel)
+        details = panel.body.rows[0][0]
+        assert isinstance(details, FakeTable)
+        summary_row = next(row for row in details.rows if row[0] == "Summary")
+        bundle_row = next(row for row in details.rows if row[0] == "Bundle")
+        self.assertEqual(summary_row[1].style, f"link {summary_path.as_uri()}")
+        self.assertEqual(bundle_row[1].style, f"link {bundle_path.as_uri()}")
 
 
 if __name__ == "__main__":

@@ -222,6 +222,7 @@ Cycle mode notes:
 | `ENVCTL_UI_SPINNER_VERBOSE_EVENTS` | `false` | Emit extra spinner lifecycle diagnostics in debug traces. |
 | `ENVCTL_UI_SPINNER` | `true` | Compatibility toggle; still honored when mode is `auto`. |
 | `ENVCTL_UI_RICH` | `true` | Compatibility toggle for rich-backed UI rendering when mode is `auto`. |
+| `ENVCTL_UI_HYPERLINK_MODE` | `auto` | Local-path hyperlink policy for human-facing CLI output (`auto`, `on`, `off`). `auto` only emits OSC-8 links on supported interactive terminals; JSON output stays raw. |
 
 Selector implementation is controlled separately from dashboard backend policy:
 

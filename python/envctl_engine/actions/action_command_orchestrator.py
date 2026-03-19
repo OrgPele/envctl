@@ -56,6 +56,7 @@ from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -2017,7 +2018,10 @@ class ActionCommandOrchestrator:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
-                    print(f"{prefix}{summary_path}")
+                    rendered_path = render_path_for_terminal(
+                        summary_path, env=getattr(self.runtime, "env", {}), stream=sys.stdout
+                    )
+                    print(f"{prefix}{rendered_path}")
             if multi_project:
                 print("")
 

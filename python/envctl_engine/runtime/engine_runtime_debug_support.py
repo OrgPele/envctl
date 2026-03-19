@@ -9,6 +9,7 @@ from typing import Any
 from envctl_engine.debug.debug_bundle import pack_debug_bundle
 from envctl_engine.debug.debug_utils import debug_env_value
 from envctl_engine.shared.parsing import parse_bool, parse_float
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def debug_pack(runtime: Any, route: Any) -> int:
@@ -66,7 +67,7 @@ def debug_pack(runtime: Any, route: Any) -> int:
         print(str(exc))
         return 1
 
-    print(str(bundle_path))
+    print(render_path_for_terminal(bundle_path, env=getattr(runtime, "env", {})))
     runtime._last_debug_bundle_path = str(bundle_path)
     try:
         latest = runtime_scope_dir / "debug" / "latest_bundle"
@@ -152,14 +153,14 @@ def debug_last(runtime: Any, route: object) -> int:
     _ = route
     if runtime._last_debug_bundle_path:
         print("bundle:")
-        print(runtime._last_debug_bundle_path)
+        print(render_path_for_terminal(runtime._last_debug_bundle_path, env=getattr(runtime, "env", {})))
         return 0
     latest = runtime.runtime_root / "debug" / "latest_bundle"
     if latest.is_file():
         payload = latest.read_text(encoding="utf-8").strip()
         if payload:
             print("bundle:")
-            print(payload)
+            print(render_path_for_terminal(payload, env=getattr(runtime, "env", {})))
             return 0
     print("No debug bundle has been created yet.")
     return 1
@@ -184,7 +185,7 @@ def debug_report(runtime: Any, route: object) -> int:
         print(str(exc))
         return 1
     print("bundle:")
-    print(str(bundle_path))
+    print(render_path_for_terminal(bundle_path, env=getattr(runtime, "env", {})))
     session_id_value = summary.get("session_id")
     session_id = session_id_value if isinstance(session_id_value, str) else ""
     session_id = session_id.strip() or "unknown"

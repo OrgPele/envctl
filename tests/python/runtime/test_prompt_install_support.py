@@ -16,11 +16,19 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.prompt_install_support import (  # noqa: E402
     _available_presets,
     _load_template,
+    _print_install_results,
     _render_claude_template,
     _render_codex_template,
     _render_opencode_template,
+    PromptInstallResult,
     run_install_prompts_command,
 )
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class PromptInstallSupportTests(unittest.TestCase):
@@ -175,6 +183,31 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertIn("Before any implementation work, run `git add .`", written)
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
+    def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old codex prompt\n", encoding="utf-8")
+            runtime = SimpleNamespace(env={"HOME": tmpdir, "ENVCTL_UI_HYPERLINK_MODE": "on"})
+            route = parse_route(["install-prompts", "--cli", "codex"], env={})
+
+            buffer = _TtyStringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("builtins.input", return_value="n") as prompt_mock,
+            ):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            prompt_text = prompt_mock.call_args.args[0]
+            self.assertIn("\x1b]8;;file://", prompt_text)
+            plain = strip_ansi(prompt_text)
+            self.assertIn("Overwrite 1 existing prompt file(s)?", plain)
+            self.assertIn(f"- codex: {target}", plain)
+
     def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
@@ -266,6 +299,31 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Overwrite approval required", payload["results"][0]["message"])
             self.assertIn("--yes or --force", payload["results"][0]["message"])
             self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
+
+    def test_non_json_install_results_hyperlink_paths_when_enabled(self) -> None:
+        buffer = _TtyStringIO()
+        with redirect_stdout(buffer):
+            code = _print_install_results(
+                preset="implement_task",
+                dry_run=False,
+                json_output=False,
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+                results=[
+                    PromptInstallResult(
+                        cli="codex",
+                        path="/tmp/prompt.md",
+                        status="written",
+                        backup_path="/tmp/prompt.md.bak",
+                        message="Installed prompt",
+                    )
+                ],
+            )
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("\x1b]8;;file://", rendered)
+        self.assertIn("/tmp/prompt.md", strip_ansi(rendered))
+        self.assertIn("/tmp/prompt.md.bak", strip_ansi(rendered))
 
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

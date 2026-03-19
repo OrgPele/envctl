@@ -26,6 +26,12 @@ from envctl_engine.runtime.engine_runtime_misc_support import (  # noqa: E402
 )
 from envctl_engine.state.models import RunState, ServiceRecord  # noqa: E402
 from envctl_engine.state.repository import RuntimeStateRepository  # noqa: E402
+from envctl_engine.test_output.parser_base import strip_ansi  # noqa: E402
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class EngineRuntimeMiscSupportTests(unittest.TestCase):
@@ -99,7 +105,10 @@ class EngineRuntimeMiscSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "svc.log"
             log_path.write_text("line1\nline2\n", encoding="utf-8")
-            runtime = SimpleNamespace(_normalize_log_line=lambda line, no_color=False: line.upper())
+            runtime = SimpleNamespace(
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+                _normalize_log_line=lambda line, no_color=False: line.upper(),
+            )
             state = RunState(
                 run_id="run-1",
                 services={
@@ -117,13 +126,14 @@ class EngineRuntimeMiscSupportTests(unittest.TestCase):
                 mode="main",
             )
 
-            out = io.StringIO()
+            out = _TtyStringIO()
             with redirect_stdout(out):
                 print_logs(runtime, state, tail=1, no_color=True)
 
         rendered = out.getvalue()
-        self.assertIn("svc: log\n", rendered)
-        self.assertIn(str(log_path), rendered)
+        self.assertIn("svc: log\n", strip_ansi(rendered))
+        self.assertIn(str(log_path), strip_ansi(rendered))
+        self.assertIn("\x1b]8;;file://", rendered)
         self.assertIn("LINE2", rendered)
 
 

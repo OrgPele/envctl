@@ -4,6 +4,7 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any, Literal, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
@@ -27,6 +28,7 @@ from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import (
     no_target_selected_message,
     project_names_from_state,
@@ -248,7 +250,14 @@ class DashboardOrchestrator:
             for line in excerpt_lines:
                 print(line)
             if summary_path:
-                print(summary_path)
+                print(
+                    render_path_for_terminal(
+                        summary_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
             printed = True
         return printed
 
@@ -318,12 +327,26 @@ class DashboardOrchestrator:
                         print(hint)
                     if report_path:
                         print(f"{route.command} failure log for {project_name}:")
-                        print(report_path)
+                        print(
+                            render_path_for_terminal(
+                                report_path,
+                                env=getattr(self.runtime, "env", {}),
+                                stream=sys.stdout,
+                                interactive_tty=True,
+                            )
+                        )
                 printed = True
                 continue
             if report_path:
                 print(f"{route.command} failure log for {project_name}:")
-                print(report_path)
+                print(
+                    render_path_for_terminal(
+                        report_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
                 printed = True
         return printed
 

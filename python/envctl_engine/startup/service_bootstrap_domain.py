@@ -12,6 +12,7 @@ from typing import Any, Mapping, Protocol
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 _STATE_DIRNAME = ".envctl-state"
 
@@ -995,7 +996,8 @@ def _run_backend_migration_step(
             )
             if backend_log_path:
                 print("  backend log:")
-                print(f"  {backend_log_path}")
+                rendered_path = render_path_for_terminal(backend_log_path, env=getattr(self, "env", {}))
+                print(f"  {rendered_path}")
         missing_revision = _backend_missing_revision_id(message)
         if missing_revision:
             hint_text = (

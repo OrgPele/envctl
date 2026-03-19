@@ -15,6 +15,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.target_selector import TargetSelection
 
 
@@ -184,6 +185,78 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             rendered = output.getvalue()
             self.assertIn("log cleared at", rendered)
             self.assertIn("Log clear summary: cleared=1", rendered)
+
+    def test_clear_logs_renders_clickable_paths_when_forced_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("line1\nline2\n", encoding="utf-8")
+            state = RunState(
+                run_id="run-2a",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/main",
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+            runtime = _RuntimeStub(state)
+            runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+            orchestrator = StateActionOrchestrator(runtime)
+            route = Route(command="clear-logs", mode="main")
+
+            output = StringIO()
+            with (
+                redirect_stdout(output),
+                patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            ):
+                code = orchestrator.execute(route)
+
+            self.assertEqual(code, 0)
+            rendered = output.getvalue()
+            self.assertIn("\x1b]8;;file://", rendered)
+            self.assertIn(f"Main Backend: log cleared at {log_path}", strip_ansi(rendered))
+
+    def test_clear_logs_preserves_visible_failure_path_text_when_open_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("line1\n", encoding="utf-8")
+            state = RunState(
+                run_id="run-2b",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/main",
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+            runtime = _RuntimeStub(state)
+            runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+            orchestrator = StateActionOrchestrator(runtime)
+            route = Route(command="clear-logs", mode="main")
+
+            output = StringIO()
+            with (
+                redirect_stdout(output),
+                patch("pathlib.Path.open", side_effect=OSError("permission denied")),
+                patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            ):
+                code = orchestrator.execute(route)
+
+            self.assertEqual(code, 1)
+            rendered = output.getvalue()
+            self.assertIn("\x1b]8;;file://", rendered)
+            self.assertIn(
+                f"Main Backend: failed to clear log at {log_path} (permission denied)",
+                strip_ansi(rendered),
+            )
 
     def test_logs_supports_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

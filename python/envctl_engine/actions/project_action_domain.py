@@ -15,6 +15,12 @@ from typing import Mapping
 
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import (
+    normalize_local_path_text,
+    render_path_for_terminal,
+    render_paths_in_terminal_text,
+    rich_path_text,
+)
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
@@ -89,7 +95,13 @@ def run_commit_action(context: ActionProjectContext) -> int:
 
     commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
     if error:
-        print(error)
+        error_paths: list[object] = []
+        explicit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
+        if explicit_message_file:
+            error_paths.append(explicit_message_file)
+        elif ledger_path is not None:
+            error_paths.append(ledger_path)
+        print(render_paths_in_terminal_text(error, paths=error_paths, env=context.env, stream=sys.stdout))
         return 1
 
     generated_message_file = message_file.endswith(".envctl-commit-message.txt")
@@ -111,7 +123,14 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if ledger_path is not None:
         advance_error = _advance_commit_ledger_pointer(ledger_path)
         if advance_error:
-            print(advance_error)
+            print(
+                render_paths_in_terminal_text(
+                    advance_error,
+                    paths=[ledger_path],
+                    env=context.env,
+                    stream=sys.stdout,
+                )
+            )
             return 1
 
     remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
@@ -407,7 +426,7 @@ def _resolve_commit_message(
     ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
     payload, error = _read_commit_ledger_segment(ledger_path)
     if error:
-        return "", "", error, None
+        return "", "", error, ledger_path
     return "", str(_write_commit_message_file(payload)), None, ledger_path
 
 
@@ -1069,17 +1088,18 @@ def _print_review_completion(
     stats: list[tuple[str, str]],
     tree_count: int,
 ) -> None:
-    if _print_review_completion_rich(
-        context,
-        mode=mode,
-        scope=scope,
-        output_dir=output_dir,
-        summary_path=summary_path,
-        all_in_one_path=all_in_one_path,
-        stats=stats,
-        tree_count=tree_count,
-    ):
-        return
+    if parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False):
+        if _print_review_completion_rich(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_dir,
+            summary_path=summary_path,
+            all_in_one_path=all_in_one_path,
+            stats=stats,
+            tree_count=tree_count,
+        ):
+            return
     color = _review_colorizer(context)
     print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
     print(f"  Mode: {mode}")
@@ -1087,11 +1107,11 @@ def _print_review_completion(
     print(f"  Trees: {tree_count}")
     print()
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     print(color("  Summary file", fg="blue", bold=True))
-    print(f"    {_display_path(summary_path)}")
+    print(f"    {_display_path(summary_path, env=context.env)}")
     print(color("  Full review bundle", fg="blue", bold=True))
-    print(f"    {_display_path(all_in_one_path)}")
+    print(f"    {_display_path(all_in_one_path, env=context.env)}")
     if stats:
         print()
         print(color("  Quick stats", fg="green", bold=True))
@@ -1116,7 +1136,7 @@ def _print_review_completion_rich(
     tree_count: int,
 ) -> bool:
     force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
-    if not force_rich and not sys.stdout.isatty():
+    if not force_rich:
         return False
     try:
         from rich import box
@@ -1139,9 +1159,19 @@ def _print_review_completion_rich(
     details.add_row("Mode", mode)
     details.add_row("Scope", scope)
     details.add_row("Trees", str(tree_count))
-    details.add_row("Output", _display_path(output_dir))
-    details.add_row("Summary", _display_path(summary_path))
-    details.add_row("Bundle", _display_path(all_in_one_path))
+    link_tty = force_rich or sys.stdout.isatty()
+    details.add_row(
+        "Output",
+        rich_path_text(output_dir, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Summary",
+        rich_path_text(summary_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Bundle",
+        rich_path_text(all_in_one_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
     for label, value in stats:
         details.add_row(label, value)
 
@@ -1170,7 +1200,7 @@ def _print_review_failure(
     color = _review_colorizer(context)
     print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     stderr = str(result.stderr or "").strip()
     stdout = str(result.stdout or "").strip()
     details = stderr or stdout or f"exit:{result.returncode}"
@@ -1240,13 +1270,8 @@ def _review_colorizer(context: ActionProjectContext):
     return colorize
 
 
-def _display_path(path: Path) -> str:
-    text = str(path)
-    if text == "/private/tmp":
-        return "/tmp"
-    if text.startswith("/private/tmp/"):
-        return "/tmp/" + text[len("/private/tmp/") :]
-    return text
+def _display_path(path: Path, *, env: Mapping[str, str] | None = None) -> str:
+    return render_path_for_terminal(normalize_local_path_text(path), env=env, stream=sys.stdout)
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:
