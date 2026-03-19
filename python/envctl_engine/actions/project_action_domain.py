@@ -15,7 +15,12 @@ from typing import Mapping
 
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
-from envctl_engine.ui.path_links import normalize_local_path_text, render_path_for_terminal, rich_path_text
+from envctl_engine.ui.path_links import (
+    normalize_local_path_text,
+    render_path_for_terminal,
+    render_paths_in_terminal_text,
+    rich_path_text,
+)
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
@@ -90,7 +95,13 @@ def run_commit_action(context: ActionProjectContext) -> int:
 
     commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
     if error:
-        print(error)
+        error_paths: list[object] = []
+        explicit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
+        if explicit_message_file:
+            error_paths.append(explicit_message_file)
+        elif ledger_path is not None:
+            error_paths.append(ledger_path)
+        print(render_paths_in_terminal_text(error, paths=error_paths, env=context.env, stream=sys.stdout))
         return 1
 
     generated_message_file = message_file.endswith(".envctl-commit-message.txt")
@@ -112,7 +123,14 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if ledger_path is not None:
         advance_error = _advance_commit_ledger_pointer(ledger_path)
         if advance_error:
-            print(advance_error)
+            print(
+                render_paths_in_terminal_text(
+                    advance_error,
+                    paths=[ledger_path],
+                    env=context.env,
+                    stream=sys.stdout,
+                )
+            )
             return 1
 
     remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
@@ -408,7 +426,7 @@ def _resolve_commit_message(
     ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
     payload, error = _read_commit_ledger_segment(ledger_path)
     if error:
-        return "", "", error, None
+        return "", "", error, ledger_path
     return "", str(_write_commit_message_file(payload)), None, ledger_path
 
 

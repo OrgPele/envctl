@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 from contextlib import nullcontext
+import sys
 import threading
 import time
 
@@ -48,6 +49,7 @@ from envctl_engine.startup.startup_execution_support import (
     startup_breakdown_enabled as startup_breakdown_enabled_impl,
 )
 from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
+from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -944,7 +946,16 @@ class StartupOrchestrator:
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
         self._emit_phase(session, "artifacts_write", artifacts_started, status="error")
-        print(final_error)
+        link_mode = str(rt.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+        print(
+            render_paths_in_terminal_text(
+                final_error,
+                paths=local_paths_in_text(final_error),
+                env=rt.env,
+                stream=sys.stdout,
+                interactive_tty=(True if link_mode == "on" else None),
+            )
+        )
         return 1
 
     def _record_project_startup(

@@ -4,7 +4,7 @@ import io
 import unittest
 
 from envctl_engine.test_output.parser_base import strip_ansi
-from envctl_engine.ui.path_links import render_path_for_terminal, resolve_path_link, rich_path_text
+from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_terminal, render_paths_in_terminal_text, resolve_path_link, rich_path_text
 
 
 class _TtyStringIO(io.StringIO):
@@ -85,3 +85,21 @@ class PathLinksTests(unittest.TestCase):
 
         self.assertEqual(rendered.plain, "/tmp/example.txt")
         self.assertEqual(rendered.style, "link file:///tmp/example.txt")
+
+    def test_render_paths_in_terminal_text_preserves_visible_text(self) -> None:
+        rendered = render_paths_in_terminal_text(
+            "failure summary: /tmp/example.txt",
+            paths=["/tmp/example.txt"],
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertIn("\x1b]8;;file:///tmp/example.txt", rendered)
+        self.assertEqual(strip_ansi(rendered), "failure summary: /tmp/example.txt")
+
+    def test_local_paths_in_text_extracts_absolute_paths(self) -> None:
+        paths = local_paths_in_text(
+            "listener failed (log_path: /var/folders/x/backend.log; backup: /tmp/backup.txt)"
+        )
+
+        self.assertEqual(paths, ("/var/folders/x/backend.log", "/tmp/backup.txt"))

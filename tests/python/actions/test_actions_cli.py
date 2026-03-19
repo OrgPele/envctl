@@ -930,6 +930,70 @@ class ActionsCliTests(unittest.TestCase):
             self.assertFalse(any(args[:2] == ["commit", "-F"] for args in seen_git_args))
             self.assertEqual(ledger.read_text(encoding="utf-8"), "# Envctl Commit Log\n\n### Envctl pointer ###\n")
 
+    def test_commit_action_renders_clickable_missing_commit_message_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            missing_file = project_root / "missing-message.txt"
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {"ENVCTL_COMMIT_MESSAGE_FILE": str(missing_file), "ENVCTL_UI_HYPERLINK_MODE": "on"},
+                    clear=False,
+                ),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = _TtyStringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+                output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("\x1b]8;;file://", output)
+            self.assertIn(f"Commit message file is missing or empty: {missing_file}", strip_ansi(output))
+
+    def test_commit_action_renders_clickable_ledger_path_in_empty_pointer_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["add", "-A"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch.dict(os.environ, {"ENVCTL_UI_HYPERLINK_MODE": "on"}, clear=False),
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = _TtyStringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+                output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("\x1b]8;;file://", output)
+            visible = strip_ansi(output)
+            self.assertIn("Envctl commit log is empty after the pointer", visible)
+            self.assertIn(str(ledger), visible)
+
     def test_commit_action_explicit_message_overrides_envctl_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
