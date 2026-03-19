@@ -219,6 +219,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `1`
+- `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - Codex launches send `/prompts:<preset>` while OpenCode launches send `/<preset>`
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
@@ -229,6 +230,7 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
+- `CYCLES=<n>` only adjusts the Codex cycle count; it does not enable plan-agent launch by itself
 - by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues one finalization message in the same Codex tab
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>1`, envctl additionally queues `continue_task`, `implement_task`, and another finalization message for each later round

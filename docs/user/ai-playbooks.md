@@ -71,11 +71,14 @@ Shorthand aliases:
 
 ```dotenv
 CMUX=true
+CYCLES=3
 ```
 
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
+
+`CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and only changes the Codex cycle count when plan-agent launch is already enabled.
 
 Codex-only cycle mode:
 

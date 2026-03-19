@@ -316,6 +316,45 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.codex_cycles, 2)
         self.assertIsNone(launch_config.codex_cycles_warning)
 
+    def test_resolve_plan_agent_launch_config_applies_cycles_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CYCLES": "3",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 3)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_prefers_canonical_cycles_over_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                    "CYCLES": "2",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 4)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
     def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -327,6 +366,25 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "RUN_SH_RUNTIME_DIR": str(runtime),
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "many",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 0)
+        self.assertEqual(launch_config.codex_cycles_warning, "invalid_codex_cycles")
+
+    def test_resolve_plan_agent_launch_config_reports_invalid_cycles_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CYCLES": "many",
                 }
             )
 
@@ -518,21 +576,45 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 if call == ["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:9", "tab"]
             ]
             self.assertEqual(len(tab_calls), 4)
-            self.assertEqual(
-                self._events(rt, "planning.agent_launch.workflow_queued"),
-                [
-                    {
-                        "event": "planning.agent_launch.workflow_queued",
-                        "workspace_id": "workspace:7",
-                        "surface_id": "surface:9",
-                        "worktree": "feature-a-1",
-                        "cli": "codex",
-                        "workflow_mode": "codex_cycles",
-                        "codex_cycles": 2,
-                        "queued_steps": 4,
-                    }
-                ],
+
+    def test_codex_cycle_launch_uses_cycles_alias_in_summary_and_workflow_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "CYCLES": "3",
+                },
             )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:9\n", stderr=""),
+                ]
+            )
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=3) for 1 surface(s).", buffer.getvalue())
+            workflow_events = self._events(rt, "planning.agent_launch.workflow_selected")
+            self.assertEqual(len(workflow_events), 1)
+            self.assertEqual(workflow_events[0]["codex_cycles"], 3)
+            self.assertEqual(self._events(rt, "planning.agent_launch.workflow_queued"), [])
 
     def test_codex_cycle_queue_failure_falls_back_to_initial_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -63,6 +63,7 @@ Shorthand aliases also work:
 
 ```dotenv
 CMUX=true
+CYCLES=3
 ```
 
 Behavior:
@@ -77,6 +78,7 @@ Behavior:
 - when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
 - `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+- `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and only changes the Codex cycle count when the feature is already enabled
 
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
 
