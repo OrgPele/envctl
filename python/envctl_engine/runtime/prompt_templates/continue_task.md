@@ -65,6 +65,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Requirements are specific enough to implement confidently from the spec.
 - Explicitly state to fully implement all items end-to-end.
 - No placeholders, no TODO language, no “later” buckets for core scope.
+- If the previous iteration is genuinely 100% complete and nothing remains, do not invent more work; make that explicit in the new `MAIN_TASK.md` by stating clearly that there is nothing left to implement and that the prior task is fully complete.
 
 ## Deliverables (required)
 - `OLD_TASK_<iteration>.md` created from the previous MAIN_TASK.md.
