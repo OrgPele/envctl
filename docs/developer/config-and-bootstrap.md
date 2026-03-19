@@ -177,6 +177,8 @@ When `.envctl` is missing:
 - inspect-only commands proceed with defaults
 - operational commands call `ensure_local_config()`
 - non-interactive environments fail with a clear error instead of guessing
+- source-checkout runtime dependency fixes use `python -m pip install -r python/requirements.txt`
+- contributor validation bootstrap still uses `.venv/bin/python -m pip install -e '.[dev]'`
 
 That policy is part of the runtime contract. Do not weaken it casually.
 

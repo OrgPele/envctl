@@ -40,6 +40,9 @@ That sequence answers four different questions:
   - `./bin/envctl --version`
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
+- If a source-checkout invocation such as `./bin/envctl` reports missing runtime Python packages, install them into that interpreter with:
+  - `python -m pip install -r python/requirements.txt`
+- Do not use the contributor editable-install bootstrap to repair an installed end-user command.
 - Wrapper precedence:
   - explicit wrapper paths such as `./bin/envctl` or `/absolute/path/to/bin/envctl` now run that wrapper directly, even if another `envctl` exists later on `PATH`
   - bare `envctl` still prefers the installed command path when the repo wrapper shadows it

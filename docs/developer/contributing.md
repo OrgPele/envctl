@@ -17,6 +17,8 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 ```
 
+If you are only operating `envctl` from a source checkout and are not doing contributor validation work, install the runtime-only stack with `python -m pip install -r python/requirements.txt` instead. The editable `.[dev]` lane is for contributors working on this repository itself.
+
 4. Run the authoritative repo-wide validation lane:
 
 ```bash

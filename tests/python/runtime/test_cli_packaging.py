@@ -371,6 +371,16 @@ class CliPackagingTests(unittest.TestCase):
         self.assertEqual(project["requires-python"], ">=3.12,<3.15")
         self.assertIn("rich>=13.7", project["dependencies"])
 
+    def test_runtime_dependency_manifests_match(self) -> None:
+        payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        pyproject_dependencies = sorted(str(item).strip() for item in payload["project"]["dependencies"])
+        requirements = sorted(
+            line.strip()
+            for line in (REPO_ROOT / "python" / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        self.assertEqual(requirements, pyproject_dependencies)
+
     def test_pyproject_declares_release_validation_dev_extra(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         dev_dependencies = set(payload["project"]["optional-dependencies"]["dev"])
@@ -484,6 +494,36 @@ class CliPackagingTests(unittest.TestCase):
                 )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(result.stdout.strip())
+
+    def test_regular_install_without_dependencies_fails_before_operational_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "--repo", str(repo), "start"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertIn("pipx reinstall envctl", result.stderr)
+        self.assertNotIn("python/requirements.txt", result.stderr)
 
     def test_regular_install_supports_direct_inspection_command_spelling(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

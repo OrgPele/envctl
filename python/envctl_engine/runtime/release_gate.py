@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Sequence
 
 from envctl_engine.runtime.command_router import list_supported_flag_tokens
+from envctl_engine.runtime.runtime_dependency_contract import (
+    CANONICAL_CONTRIBUTOR_BOOTSTRAP_COMMANDS,
+    runtime_dependency_manifest_parity,
+)
 from envctl_engine.runtime.runtime_readiness import evaluate_runtime_readiness
 
 DEFAULT_REQUIRED_PATHS: tuple[str, ...] = (
@@ -25,10 +29,7 @@ DEFAULT_REQUIRED_SCOPES: tuple[str, ...] = (
     "contracts",
 )
 
-CANONICAL_BOOTSTRAP_COMMANDS: tuple[str, ...] = (
-    "python3.12 -m venv .venv",
-    ".venv/bin/python -m pip install -e '.[dev]'",
-)
+CANONICAL_BOOTSTRAP_COMMANDS: tuple[str, ...] = CANONICAL_CONTRIBUTOR_BOOTSTRAP_COMMANDS
 CANONICAL_VALIDATION_COMMAND_DISPLAY = ".venv/bin/python -m pytest -q"
 CANONICAL_BUILD_COMMAND_DISPLAY = ".venv/bin/python -m build"
 CANONICAL_RELEASE_GATE_COMMAND = ".venv/bin/python scripts/release_shipability_gate.py --repo ."
@@ -91,6 +92,14 @@ def evaluate_shipability(
         errors.append(f"untracked files found in required scopes: {preview}{suffix}")
 
     if enforce_parity_sync:
+        if _runtime_dependency_parity_applicable(repo_root):
+            dependency_parity = runtime_dependency_manifest_parity(repo_root)
+            if not dependency_parity.matches:
+                errors.append(
+                    "runtime dependency manifests differ: "
+                    f"only in python/requirements.txt={list(dependency_parity.only_in_requirements)}, "
+                    f"only in pyproject.toml={list(dependency_parity.only_in_pyproject)}"
+                )
         manifest_status = _manifest_is_complete(repo_root)
         runtime_status = _runtime_parity_is_complete()
         if manifest_status != runtime_status:
@@ -220,6 +229,14 @@ def _manifest_is_complete(repo_root: Path) -> bool:
         if not all(str(status) == "python_complete" for status in mode_payload.values()):
             return False
     return True
+
+
+def _runtime_dependency_parity_applicable(repo_root: Path) -> bool:
+    return (
+        (repo_root / "pyproject.toml").is_file()
+        and (repo_root / "python" / "requirements.txt").is_file()
+        and (repo_root / "python" / "envctl_engine").exists()
+    )
 
 
 def _runtime_parity_is_complete() -> bool:

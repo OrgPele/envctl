@@ -69,6 +69,14 @@ Contributor note:
 - if you are developing `envctl` itself, use the editable install documented in [Contributing](../developer/contributing.md)
 - source/editable install is not the primary end-user path
 
+If you are running from an `envctl` source checkout instead of an installed command, bootstrap the runtime dependencies first:
+
+```bash
+python -m pip install -r python/requirements.txt
+```
+
+That `python/requirements.txt` flow is for source-wrapper usage such as `./bin/envctl`. Contributor validation still uses the editable `.[dev]` workflow from the developer docs.
+
 ## 2. Pick a Repository
 
 `envctl` operates on a git repository root.
