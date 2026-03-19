@@ -129,7 +129,7 @@ Tests run + results:
 - `python3 -m unittest tests.python.shared.test_repo_root_bootstrap tests.python.shared.test_validation_workflow_contract tests.python.runtime.test_runtime_feature_inventory` -> passed (`17` tests).
 - `python3 -m unittest discover -s tests/python -p 'test_*.py'` -> passed (`1567` tests, `59` skipped).
 - `rg -n "lib/engine/lib/|lib/engine/main\\.sh|lib/envctl\\.sh|ENVCTL_ENGINE_SHELL_FALLBACK|shell_prune|envctl-shell-ownership-ledger" . --glob '!docs/changelog/**' --glob '!todo/done/**' --glob '!OLD_TASK_*.md'` -> no matches.
-- `rg -n "tests/bats|BATS" todo/plans docs/developer python/envctl_engine tests/python --glob '!docs/changelog/**' --glob '!todo/done/**'` -> only intentional `BATS_TEST_FILENAME` / `BATS_RUN_TMPDIR` runtime-test-harness checks remain.
+- `rg -n "tests/bats|BATS" todo/plans docs/developer python/envctl_engine tests/python --glob '!docs/changelog/**' --glob '!todo/done/**'` -> only intentional non-interactive terminal harness checks remained at that point.
 - `rg -n "shell/|python/envctl_engine/shell/release_gate\\.py|shell/release_gate\\.py" docs/developer todo/plans --glob '!docs/changelog/**' --glob '!todo/done/**'` -> no matches.
 
 Config/env/migrations:
@@ -138,4 +138,35 @@ Config/env/migrations:
 
 Risks/notes:
 - The raw discovery command still emits noisy stdout/stderr from some existing integration-style tests, but the suite is green and the import-path failure is resolved.
-- Intentional BATS-environment guards remain in `python/envctl_engine/ui/terminal_session.py` and `tests/python/runtime/test_engine_runtime_real_startup.py`; those are retained because they still enforce non-interactive test-harness behavior rather than shell-runtime governance.
+- Non-interactive terminal harness checks remained in `python/envctl_engine/ui/terminal_session.py` and `tests/python/runtime/test_engine_runtime_real_startup.py`; those were retained in that iteration because they still enforced test-harness behavior rather than shell-runtime governance.
+
+## 2026-03-19 - Remove legacy terminal harness env-var guards
+
+Scope:
+- Removed the final runtime/test references to the legacy terminal harness environment variables.
+- Kept the non-interactive startup protection by relying on real TTY signals that already exist in the runtime (`isatty` and `TERM=dumb`).
+
+Key behavior changes:
+- `can_interactive_tty()` now decides interactivity from terminal state only; it no longer has special-case environment-variable handling for the retired harness.
+- Startup coverage now exercises `TERM=dumb` as the explicit non-interactive path instead of a harness-specific environment variable.
+- Validation coverage now asserts the legacy env-var names are absent from active runtime code and tests.
+
+Files/modules touched:
+- `python/envctl_engine/ui/terminal_session.py`
+- `tests/python/runtime/test_engine_runtime_real_startup.py`
+- `tests/python/shared/test_validation_workflow_contract.py`
+- `tests/python/ui/test_terminal_session_debug.py`
+- `docs/changelog/refactoring_shell_runtime_retirement-1_changelog.md`
+- `docs/changelog/main_changelog.md`
+
+Tests run + results:
+- `python3 -m unittest tests.python.shared.test_validation_workflow_contract` -> initially failed on the legacy env-var guard, then passed after cleanup.
+- `python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup` -> passed (`134` tests).
+- `python3 -m unittest tests.python.ui.test_terminal_session_debug` -> passed (`21` tests).
+- `rg -n "BATS_TEST_FILENAME|BATS_RUN_TMPDIR" .` -> no matches.
+
+Config/env/migrations:
+- No schema, migration, or config-key changes.
+
+Risks/notes:
+- Interactive suppression now depends only on actual terminal conditions already used elsewhere in the UI path. If a future harness needs forced non-interactive behavior, it should disable TTY conditions directly instead of introducing another harness-only runtime branch.

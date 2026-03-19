@@ -7547,17 +7547,15 @@ Aligned doctor/readiness shell-prune budget resolution with strict cutover defau
 ### Risks / notes
 - Repository-level config/env may provide partial shell budgets by default; in that case strict doctor intentionally continues to surface missing-budget failures rather than auto-filling only the missing subset.
 
-## 2026-02-26 - BATS harness interactive deadlock fix: force non-interactive runtime when BATS markers are present
+## 2026-02-26 - BATS harness interactive deadlock fix: force non-interactive runtime when harness markers are present
 
 ### Scope
-Removed an intermittent startup/dashboard interactive deadlock in BATS E2E lanes by hardening runtime TTY gating to treat BATS harness execution as non-interactive, even when pseudo-TTY checks return true.
+Removed an intermittent startup/dashboard interactive deadlock in BATS E2E lanes by hardening runtime TTY gating to treat harness execution as non-interactive, even when pseudo-TTY checks return true.
 
 ### Key behavior changes
-- `PythonEngineRuntime._can_interactive_tty()` now returns `False` when either of these environment markers are present:
-  - `BATS_TEST_FILENAME`
-  - `BATS_RUN_TMPDIR`
-- This prevents startup/resume/dashboard command families from entering interactive loops in BATS test harness subprocesses.
-- Interactive default behavior for real terminal users is unchanged when BATS markers are absent.
+- `PythonEngineRuntime._can_interactive_tty()` now returns `False` when harness-only environment markers are present.
+- This prevents startup/resume/dashboard command families from entering interactive loops in BATS test-harness subprocesses.
+- Interactive default behavior for real terminal users is unchanged when those harness markers are absent.
 
 ### File paths / modules touched
 - `/Users/kfiramar/projects/envctl/python/envctl_engine/engine_runtime.py`

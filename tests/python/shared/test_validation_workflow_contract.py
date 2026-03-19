@@ -73,6 +73,16 @@ class ValidationWorkflowContractTests(unittest.TestCase):
             self.assertNotIn("python/envctl_engine/shell/release_gate.py", text, msg=str(relative))
             self.assertNotIn("shell/release_gate.py", text, msg=str(relative))
 
+    def test_active_runtime_code_and_tests_do_not_reference_legacy_bats_env_guards(self) -> None:
+        env_markers = ("BATS" + "_TEST" + "_FILENAME", "BATS" + "_RUN" + "_TMPDIR")
+        for relative in (
+            "python/envctl_engine/ui/terminal_session.py",
+            "tests/python/runtime/test_engine_runtime_real_startup.py",
+        ):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            for marker in env_markers:
+                self.assertNotIn(marker, text, msg=relative)
+
     def test_python_cleanup_bootstrap_hint_matches_dev_extra_contract(self) -> None:
         script = (REPO_ROOT / "scripts" / "python_cleanup.py").read_text(encoding="utf-8")
         self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", script)
