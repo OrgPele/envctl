@@ -1295,6 +1295,130 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(env.get("REDIS_URL"), "redis://localhost:6399/0")
             self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
 
+    def test_migrate_action_scrubs_inherited_shell_backend_env_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-shell-scrub",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "APP_ENV_FILE": "/tmp/leaked.env",
+                    "DATABASE_URL": "postgresql://shell-leak",
+                    "SQLALCHEMY_DATABASE_URL": "postgresql://shell-leak",
+                    "ASYNC_DATABASE_URL": "postgresql://shell-leak",
+                },
+                clear=False,
+            ):
+                route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+            )
+            self.assertNotEqual(env.get("SQLALCHEMY_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertNotEqual(env.get("ASYNC_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "enabled")
+
+    def test_migrate_action_reconciles_full_db_url_family_for_default_backend_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "SQLALCHEMY_DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "ASYNC_DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-db-family",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            expected_database_url = "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres"
+            self.assertEqual(env.get("DATABASE_URL"), expected_database_url)
+            self.assertEqual(env.get("SQLALCHEMY_DATABASE_URL"), expected_database_url)
+            self.assertEqual(env.get("ASYNC_DATABASE_URL"), expected_database_url)
+
     def test_migrate_action_preserves_override_env_file_database_url_when_skip_local_db_applies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1355,6 +1479,176 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "override")
             self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
 
+    def test_migrate_action_preserves_override_db_url_family_when_explicit_override_is_authoritative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            override_database_url = "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text(
+                f"DATABASE_URL={override_database_url}\n"
+                f"SQLALCHEMY_DATABASE_URL={override_database_url}\n"
+                f"ASYNC_DATABASE_URL={override_database_url}\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-override-family",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("SQLALCHEMY_DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("ASYNC_DATABASE_URL"), override_database_url)
+
+    def test_migrate_action_accepts_repo_root_relative_backend_env_override_for_tree_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text("CUSTOM_BACKEND_FLAG=repo-relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": "config/backend.override.env"},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "repo-relative")
+
+    def test_migrate_action_uses_distinct_env_contracts_for_each_target_in_multi_target_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            first_target = repo / "trees" / "feature-a" / "1"
+            second_target = repo / "trees" / "feature-b" / "1"
+            first_backend = first_target / "backend"
+            second_backend = second_target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for backend_dir, marker in ((first_backend, "a"), (second_backend, "b")):
+                (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+                (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+                (backend_dir / ".env").write_text(f"PROJECT_MARKER={marker}\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-multi-target",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(first_backend),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(second_backend),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        ),
+                        "feature-b-1": RequirementsResult(
+                            project="feature-b-1",
+                            supabase={"enabled": True, "success": True, "final": 6644},
+                            health="healthy",
+                            failures=[],
+                        ),
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fake_runner.run_envs), 2)
+            first_env = fake_runner.run_envs[0] or {}
+            second_env = fake_runner.run_envs[1] or {}
+            self.assertEqual(first_env.get("APP_ENV_FILE"), str((first_backend / ".env").resolve()))
+            self.assertEqual(second_env.get("APP_ENV_FILE"), str((second_backend / ".env").resolve()))
+            self.assertEqual(first_env.get("PROJECT_MARKER"), "a")
+            self.assertEqual(second_env.get("PROJECT_MARKER"), "b")
+            self.assertEqual(
+                first_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres",
+            )
+            self.assertEqual(
+                second_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:6644/postgres",
+            )
+            self.assertEqual(first_env.get("SQLALCHEMY_DATABASE_URL"), first_env.get("DATABASE_URL"))
+            self.assertEqual(second_env.get("SQLALCHEMY_DATABASE_URL"), second_env.get("DATABASE_URL"))
+
     def test_migrate_action_failure_summary_includes_env_hint_for_missing_settings_vars(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1364,6 +1658,7 @@ class ActionsParityTests(unittest.TestCase):
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
             (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
 
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             self._save_state(
@@ -1419,6 +1714,15 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("ValidationError", summary)
             self.assertIn("hint: envctl migrate loads backend env from backend/.env by default.", summary)
             self.assertIn("BACKEND_ENV_FILE_OVERRIDE", summary)
+            self.assertIn("hint: backend env source: default", summary)
+            backend_env_metadata = migrate_entry.get("backend_env")
+            self.assertIsInstance(backend_env_metadata, dict)
+            assert isinstance(backend_env_metadata, dict)
+            self.assertEqual(backend_env_metadata.get("env_file_source"), "default")
+            self.assertEqual(
+                Path(str(backend_env_metadata.get("env_file_path", ""))).resolve(),
+                (backend_dir / ".env").resolve(),
+            )
             report_path = Path(str(migrate_entry.get("report_path", "")))
             self.assertTrue(report_path.is_file())
             report_text = report_path.read_text(encoding="utf-8")

@@ -44,9 +44,7 @@ from envctl_engine.actions.action_worktree_runner import run_delete_worktree_act
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
-    _read_env_file_safe,
-    _resolve_backend_env_file,
-    _skip_local_db_env,
+    _resolve_backend_env_contract,
 )
 from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -195,6 +193,7 @@ class ActionRuntimeFacade:
 class ActionCommandOrchestrator:
     def __init__(self, runtime: Any) -> None:
         self.runtime = ActionRuntimeFacade(runtime)
+        self._migrate_env_contracts: dict[str, dict[str, object]] = {}
 
     @staticmethod
     def _short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
@@ -882,17 +881,9 @@ class ActionCommandOrchestrator:
         project_name = str(getattr(target, "name", "")).strip()
         target_root = Path(str(getattr(target, "root")))
         backend_cwd = self._migrate_backend_cwd(target_root)
-        backend_shaped = backend_cwd != target_root
 
         runtime_raw = self.runtime.raw_runtime
         context = _MigrateProjectContext(name=project_name, root=target_root, ports={})
-        backend_env_file, backend_env_is_default = _resolve_backend_env_file(
-            runtime_raw,
-            context=context,
-            backend_cwd=backend_cwd,
-        )
-        if not backend_shaped and backend_env_file is None:
-            return env
 
         projected_env: dict[str, str] = {}
         requirements = self._migrate_requirements_for_target(route=route, project_name=project_name)
@@ -912,23 +903,23 @@ class ActionCommandOrchestrator:
                         if isinstance(key, str) and isinstance(value, str)
                     }
 
-        merged = dict(env)
-        merged.update(projected_env)
-        if backend_env_file is not None and backend_env_file.is_file():
-            merged.update(_read_env_file_safe(backend_env_file))
-            merged["APP_ENV_FILE"] = str(backend_env_file)
-
-        skip_local_db_env = _skip_local_db_env(
+        contract = _resolve_backend_env_contract(
             runtime_raw,
-            backend_env_file=backend_env_file,
-            backend_env_is_default=backend_env_is_default,
+            context=context,
+            backend_cwd=backend_cwd,
+            base_env=env,
+            projected_env=projected_env,
         )
-        if not skip_local_db_env:
-            for key in ("DATABASE_URL", "REDIS_URL"):
-                value = projected_env.get(key)
-                if isinstance(value, str) and value.strip():
-                    merged[key] = value
-        return merged
+        self._migrate_env_contracts[project_name] = {
+            "env_file_path": str(contract.env_file_path) if contract.env_file_path is not None else None,
+            "env_file_source": contract.env_file_source,
+            "override_requested": contract.override_requested,
+            "override_resolution": contract.override_resolution,
+            "override_authoritative": contract.override_authoritative,
+            "scrubbed_keys": list(contract.scrubbed_keys),
+            "projected_keys": list(contract.projected_keys),
+        }
+        return contract.env
 
     def run_delete_worktree_action(self, route: Route) -> int:
         return run_delete_worktree_action_impl(self, route)
@@ -1009,6 +1000,11 @@ class ActionCommandOrchestrator:
             "status": status,
             "updated_at": datetime.now(tz=UTC).isoformat(),
         }
+        migrate_env_metadata = (
+            dict(self._migrate_env_contracts.get(project_name, {})) if command_name == "migrate" else None
+        )
+        if migrate_env_metadata:
+            entry["backend_env"] = migrate_env_metadata
         if isinstance(extra_entry, Mapping):
             entry.update({str(key): value for key, value in extra_entry.items()})
         if status == "failed":
@@ -1016,6 +1012,7 @@ class ActionCommandOrchestrator:
             summary_lines = self._project_action_failure_summary_lines(
                 command_name=command_name,
                 error_output=clean_output,
+                migrate_env_metadata=migrate_env_metadata,
             )
             summary_text = "\n".join(summary_lines).strip() or "Command failed."
             report_path = self._write_project_action_failure_report(
@@ -1639,14 +1636,16 @@ class ActionCommandOrchestrator:
         *,
         command_name: str,
         error_output: str,
+        migrate_env_metadata: Mapping[str, object] | None = None,
     ) -> list[str]:
         lines = self._format_summary_error_lines(error_output)
         if command_name != "migrate":
             return lines
         hint_lines = self._migrate_failure_hint_lines(error_output)
+        env_lines = self._migrate_env_source_hint_lines(migrate_env_metadata)
         merged = list(lines)
         seen = set(merged)
-        for hint in hint_lines:
+        for hint in [*hint_lines, *env_lines]:
             if hint in seen:
                 continue
             merged.append(hint)
@@ -1676,6 +1675,24 @@ class ActionCommandOrchestrator:
             "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
             "hint: APP_ENV_FILE is exported when an env file is found, and running projects reuse current dependency URLs when available.",
         ]
+
+    @staticmethod
+    def _migrate_env_source_hint_lines(migrate_env_metadata: Mapping[str, object] | None) -> list[str]:
+        if not isinstance(migrate_env_metadata, Mapping):
+            return []
+        source = str(migrate_env_metadata.get("env_file_source", "")).strip()
+        if not source:
+            return []
+        parts = [f"hint: backend env source: {source}"]
+        env_file_path_raw = migrate_env_metadata.get("env_file_path")
+        env_file_path = str(env_file_path_raw).strip() if isinstance(env_file_path_raw, str) else ""
+        if env_file_path:
+            parts.append(env_file_path)
+        if bool(migrate_env_metadata.get("override_requested")):
+            resolution = str(migrate_env_metadata.get("override_resolution", "")).strip()
+            if resolution:
+                parts.append(f"override_resolution={resolution}")
+        return [" | ".join(parts)]
 
     def _migrate_requirements_for_target(
         self,
