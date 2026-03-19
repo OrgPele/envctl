@@ -2993,7 +2993,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(loop_mock.call_count, 0)
 
-    def test_start_skips_interactive_dashboard_loop_under_bats_environment(self) -> None:
+    def test_start_skips_interactive_dashboard_loop_when_term_is_dumb(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -3011,11 +3011,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             with (
                 patch("sys.stdin.isatty", return_value=True),
                 patch("sys.stdout.isatty", return_value=True),
-                patch.dict(
-                    os.environ,
-                    {"TERM": "xterm-256color", "BATS_TEST_FILENAME": "/tmp/sample.bats"},
-                    clear=False,
-                ),
+                patch.dict(os.environ, {"TERM": "dumb"}, clear=False),
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as loop_mock,
             ):
                 code = engine.dispatch(route)

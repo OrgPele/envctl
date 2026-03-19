@@ -21,8 +21,6 @@ _PUSHBACK_BYTES: dict[int, bytearray] = {}
 
 
 def can_interactive_tty() -> bool:
-    if os.environ.get("BATS_TEST_FILENAME") or os.environ.get("BATS_RUN_TMPDIR"):
-        return False
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
     term = os.environ.get("TERM", "")

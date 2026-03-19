@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ensure_python_root(repo_root_from(__file__))
-    from envctl_engine.shell.release_gate import (
+    from envctl_engine.runtime.release_gate import (
         canonical_packaging_command,
         canonical_validation_command,
         evaluate_shipability,

@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-03-19T10:52:01+00:00",
-  "matrix_generated_at": "2026-03-19T10:51:58+00:00",
-  "matrix_sha256": "54bb8717a97c091a34cfe07b43651fe2a12dcd8f98a6354f9b31cc1635387fd4",
+  "generated_at": "2026-03-19T11:40:14+00:00",
+  "matrix_generated_at": "2026-03-19T11:39:43+00:00",
+  "matrix_sha256": "f3abd5b93a63ee90fa40a76bdb46d51abad6d4ec5f80102748d2103ca48ea3a8",
   "summary": {
     "feature_count": 47,
     "gap_count": 0,
@@ -10,54 +10,6 @@
     "by_status": {},
     "by_severity": {},
     "by_area": {}
-  },
-  "shell_retirement_blockers": {
-    "ready_for_shell_retirement": true,
-    "checks": {
-      "runtime_selector_removed": {
-        "passed": true,
-        "details": [
-          "The legacy runtime selector bridge is already absent."
-        ]
-      },
-      "bash_launchers_removed": {
-        "passed": true,
-        "details": [
-          "No tracked Bash launcher/install wrappers remain."
-        ]
-      },
-      "shell_fallback_contract_removed": {
-        "passed": true,
-        "details": [
-          "No active code/docs reference the legacy shell fallback environment variable."
-        ]
-      },
-      "bash_hook_bridge_removed": {
-        "passed": true,
-        "details": [
-          "The hook bridge no longer shells out through bash."
-        ]
-      },
-      "shell_governance_removed": {
-        "passed": true,
-        "details": [
-          "Shell governance files are deleted and active references are gone."
-        ]
-      },
-      "legacy_config_python_owned": {
-        "passed": true,
-        "details": [
-          "Python .envctl.sh compatibility hook exists.",
-          "No active non-shell surface references config_loader.sh."
-        ]
-      },
-      "bats_harness_removed": {
-        "passed": true,
-        "details": [
-          "The BATS harness has been fully removed."
-        ]
-      }
-    }
   },
   "gaps": []
 }

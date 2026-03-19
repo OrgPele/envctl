@@ -48,7 +48,6 @@ SOURCE_TEST_DIR_MAP: Final[dict[str, str]] = {
     "python/envctl_engine/requirements": "tests/python/requirements",
     "python/envctl_engine/runtime": "tests/python/runtime",
     "python/envctl_engine/shared": "tests/python/shared",
-    "python/envctl_engine/shell": "tests/python/shell",
     "python/envctl_engine/startup": "tests/python/startup",
     "python/envctl_engine/state": "tests/python/state",
     "python/envctl_engine/test_output": "tests/python/test_output",

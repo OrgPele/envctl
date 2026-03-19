@@ -31,7 +31,7 @@ Key boundary decisions:
 - The launcher resolves repo root and prepares the Python runtime handoff.
 - Launcher-owned flags such as `--version` must resolve before repo detection, config bootstrap, prereq checks, or runtime dispatch.
 - Source checkouts should use `bin/envctl`; explicit wrapper paths stay on that exact wrapper, while bare `envctl` still prefers an installed command on `PATH`.
-- Direct module execution from the repo root requires `PYTHONPATH=python`.
+- Package-style test runs and raw `python3 -m unittest discover -s tests/python ...` both bootstrap the local `python/` package through the repo-owned test package initializers under `tests/`; standalone scripts use `scripts/_bootstrap.py` when launched directly.
 - Contributor and release-readiness validation should run from the editable repo-local install (`.venv/bin/python -m pip install -e '.[dev]'`) so the canonical `pytest -q` lane and packaging/build smoke exercise the installed runtime.
 - `runtime/cli.py` owns prereq checks, local config bootstrap policy, and exit code normalization.
 - `EngineRuntime` is the runtime facade that wires the domains together.
@@ -97,7 +97,6 @@ The package layout under `python/envctl_engine/` is now the main architecture bo
 - `debug/`: debug bundle packaging, sanitization, diagnostics, doctor support
 - `ui/`: dashboard loop, selector flows, textual integration, spinners, input
 - `shared/`: low-level helpers such as ports, process probing, parsing, environment access, hooks
-- `shell/`: remaining release/readiness checks during the final cutover period
 - `planning/`: plan discovery, selection, worktree setup support
 
 Use the grouped package paths. The flat compatibility shims remain only for migration tolerance.
@@ -461,7 +460,7 @@ The repository now uses a Python-native runtime readiness contract.
 
 Main files:
 
-- `shell/release_gate.py`
+- `runtime/release_gate.py`
 - `runtime/runtime_readiness.py`
 - `contracts/python_runtime_gap_report.json`
 - `contracts/python_engine_parity_manifest.json`
@@ -535,12 +534,11 @@ This repository now has meaningful coverage for:
 - debug bundle generation and analysis
 - selector/UI behavior
 - runtime readiness and shipability gates
-- BATS end-to-end parity flows
 
 Minimum bar for non-trivial runtime changes:
 
 - targeted Python unit tests for the affected domain
-- any needed BATS coverage when behavior is externally visible or parity-sensitive
+- any needed Python integration coverage when behavior crosses module or process boundaries
 - docs updates when behavior or operator workflow changed
 
 ## Practical Rule of Thumb
@@ -553,7 +551,7 @@ If you are unsure where new code belongs:
 - action command logic: `actions/`
 - dependency management: `requirements/`
 - artifact or state model: `state/`
-- runtime health/truth/diagnostics: `runtime/*truth.py`, `debug/`, `shell/`
+- runtime health/truth/diagnostics: `runtime/*truth.py`, `runtime/release_gate.py`, `debug/`
 - interactive flow: `ui/`
 
 If your change needs more than one of those, put the policy in the domain package and keep `EngineRuntime` as the composition layer.

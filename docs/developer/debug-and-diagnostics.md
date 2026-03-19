@@ -160,7 +160,7 @@ Doctor and related diagnostics rely on:
 Relevant modules:
 
 - `runtime/engine_runtime_diagnostics.py`
-- `shell/release_gate.py`
+- `runtime/release_gate.py`
 - `debug/doctor_orchestrator.py`
 
 If you change cutover semantics, you are changing both engineering governance and user/operator output.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from envctl_engine.shell.release_gate import (
+from envctl_engine.runtime.release_gate import (
     CANONICAL_BOOTSTRAP_COMMANDS,
     CANONICAL_BUILD_COMMAND_DISPLAY,
     CANONICAL_RELEASE_GATE_COMMAND,
@@ -40,9 +40,10 @@ class ValidationWorkflowContractTests(unittest.TestCase):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn(legacy, text, msg=relative)
 
-    def test_pythonpath_guidance_is_limited_to_runtime_guide(self) -> None:
+    def test_runtime_guide_describes_repo_root_bootstrap_without_pythonpath(self) -> None:
         runtime_guide = (REPO_ROOT / "docs" / "developer" / "python-runtime-guide.md").read_text(encoding="utf-8")
-        self.assertIn("PYTHONPATH=python", runtime_guide)
+        self.assertIn("tests/python", runtime_guide)
+        self.assertNotIn("PYTHONPATH=python", runtime_guide)
 
         for relative in (
             "README.md",
@@ -51,6 +52,36 @@ class ValidationWorkflowContractTests(unittest.TestCase):
         ):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("PYTHONPATH=python", text, msg=relative)
+
+    def test_active_developer_docs_do_not_reference_deleted_shell_domain(self) -> None:
+        for relative in (
+            "docs/developer/debug-and-diagnostics.md",
+            "docs/developer/module-layout.md",
+            "docs/developer/python-runtime-guide.md",
+        ):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("shell/release_gate.py", text, msg=relative)
+            self.assertNotIn("`shell/`", text, msg=relative)
+
+    def test_active_plan_docs_do_not_reference_retired_bats_lane_or_shell_release_gate(self) -> None:
+        plans_root = REPO_ROOT / "todo" / "plans"
+        bats_pattern = "".join(("tests", "/", "bats")) + "|" + "B" + "ATS"
+        for path in plans_root.rglob("*.md"):
+            relative = path.relative_to(REPO_ROOT)
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, bats_pattern, msg=str(relative))
+            self.assertNotIn("python/envctl_engine/shell/release_gate.py", text, msg=str(relative))
+            self.assertNotIn("shell/release_gate.py", text, msg=str(relative))
+
+    def test_active_runtime_code_and_tests_do_not_reference_legacy_bats_env_guards(self) -> None:
+        env_markers = ("BATS" + "_TEST" + "_FILENAME", "BATS" + "_RUN" + "_TMPDIR")
+        for relative in (
+            "python/envctl_engine/ui/terminal_session.py",
+            "tests/python/runtime/test_engine_runtime_real_startup.py",
+        ):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            for marker in env_markers:
+                self.assertNotIn(marker, text, msg=relative)
 
     def test_python_cleanup_bootstrap_hint_matches_dev_extra_contract(self) -> None:
         script = (REPO_ROOT / "scripts" / "python_cleanup.py").read_text(encoding="utf-8")

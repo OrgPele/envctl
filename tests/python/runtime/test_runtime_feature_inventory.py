@@ -20,7 +20,7 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
     _MATRIX_PATH = REPO_ROOT / "contracts" / "runtime_feature_matrix.json"
     _GAP_REPORT_PATH = REPO_ROOT / "contracts" / "python_runtime_gap_report.json"
     _PLAN_PATH = REPO_ROOT / "todo" / "plans" / "refactoring" / "python-runtime-gap-closure.md"
-    _RETIREMENT_PLAN_PATH = REPO_ROOT / "todo" / "plans" / "refactoring" / "shell-runtime-retirement.md"
+    _ARCHIVE_ROOT = REPO_ROOT / "todo" / "done" / "refactoring"
 
     def test_repository_runtime_feature_matrix_matches_generator(self) -> None:
         payload = json.loads(self._MATRIX_PATH.read_text(encoding="utf-8"))
@@ -107,9 +107,7 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["gap_count"], 0)
         self.assertEqual(payload["summary"]["high_or_medium_gap_count"], 0)
         self.assertEqual(payload["gaps"], [])
-        blockers = payload["shell_retirement_blockers"]
-        self.assertTrue(blockers["ready_for_shell_retirement"])
-        self.assertTrue(all(bool(check["passed"]) for check in blockers["checks"].values()))
+        self.assertNotIn("shell_retirement_blockers", payload)
 
     def test_repository_gap_plan_matches_generator(self) -> None:
         expected = self._PLAN_PATH.read_text(encoding="utf-8")
@@ -133,12 +131,16 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
             self.assertIn(f"### {wave}", rendered)
             self.assertIn("No currently reported gaps in this wave.", rendered)
 
-    def test_shell_runtime_retirement_plan_exists_and_is_mechanical(self) -> None:
-        rendered = self._RETIREMENT_PLAN_PATH.read_text(encoding="utf-8")
-        self.assertIn("# Shell Runtime Retirement", rendered)
-        self.assertIn("## Preconditions", rendered)
-        self.assertIn("## Deletion Steps", rendered)
-        self.assertIn("## Validation", rendered)
+    def test_stale_shell_retirement_refactoring_plans_are_archived(self) -> None:
+        active_root = REPO_ROOT / "todo" / "plans" / "refactoring"
+        for relative in (
+            "envctl-bash-deletion-ledger-and-prune-plan.md",
+            "envctl-python-engine-final-100-percent-cutover-plan.md",
+            "envctl-python-engine-ideal-state-finalization-plan.md",
+            "shell-runtime-retirement.md",
+        ):
+            self.assertFalse((active_root / relative).exists(), relative)
+            self.assertTrue((self._ARCHIVE_ROOT / relative).exists(), relative)
 
 
 if __name__ == "__main__":

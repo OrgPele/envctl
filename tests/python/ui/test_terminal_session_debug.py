@@ -116,6 +116,22 @@ class TerminalSessionDebugTests(unittest.TestCase):
         self.assertEqual(second, "xh")
         terminal_session_module._PUSHBACK_BYTES.clear()
 
+    def test_can_interactive_tty_returns_false_for_dumb_term(self) -> None:
+        with (
+            patch("sys.stdin.isatty", return_value=True),
+            patch("sys.stdout.isatty", return_value=True),
+            patch.dict(os.environ, {"TERM": "dumb"}, clear=False),
+        ):
+            self.assertFalse(terminal_session_module.can_interactive_tty())
+
+    def test_can_interactive_tty_returns_true_for_real_tty(self) -> None:
+        with (
+            patch("sys.stdin.isatty", return_value=True),
+            patch("sys.stdout.isatty", return_value=True),
+            patch.dict(os.environ, {"TERM": "xterm-256color"}, clear=False),
+        ):
+            self.assertTrue(terminal_session_module.can_interactive_tty())
+
     def test_basic_input_reader_preserves_immediate_arrow_burst_for_next_consumer(self) -> None:
         terminal_session_module._PUSHBACK_BYTES.clear()
         script = textwrap.dedent(
