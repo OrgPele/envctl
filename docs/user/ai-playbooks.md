@@ -48,6 +48,14 @@ Current built-in presets:
 
 Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
+Dashboard review follow-up:
+
+- after a successful interactive `envctl dashboard` -> `review` run against exactly one non-`Main` worktree, envctl can offer to open one origin-side AI review tab
+- the opened tab starts in the current repo root, not the target worktree
+- Codex receives `/prompts:review_worktree_imp <worktree>` and OpenCode receives `/review_worktree_imp <worktree>`
+- declining the prompt, reviewing `Main`, or reviewing multiple targets keeps the existing markdown bundle-only behavior
+- this optional review-tab launch reuses the same `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` transport settings as the post-`--plan` launcher, but it does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`
+
 ## Parallel Implementation Loop
 
 ```bash
@@ -76,6 +84,8 @@ CYCLES=3
 ```
 
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
+
+The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it stays in the current workspace instead of switching to the sibling implementation workspace.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 

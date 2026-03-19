@@ -82,6 +82,7 @@ Behavior:
 - `--json` and non-interactive TTY-less runs fail cleanly when overwrite approval is required but not pre-approved
 - this command is available from the normal CLI, but not from dashboard interactive mode
 - `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
+- interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
 
 ## Main Runtime Commands
 
@@ -166,6 +167,13 @@ Single-mode `review` resolves its base branch in this order:
 4. the repo default branch
 
 The generated markdown now reports the resolved base branch, base ref, resolution source, merge-base, and the full diff from that merge-base through the current worktree state.
+
+Interactive dashboard follow-up:
+
+- after a successful dashboard `review` against exactly one non-`Main` worktree, envctl can ask whether to open one origin-side AI review tab
+- accepting the prompt opens one cmux surface, starts the configured AI CLI from the repo root, and submits `review_worktree_imp` with the selected worktree name as an explicit override
+- declining the prompt, reviewing `Main`, or reviewing multiple targets keeps the current markdown bundle-only flow
+- direct `envctl review ...`, `python -m envctl_engine.actions.actions_cli review`, and other non-dashboard review paths never prompt for or launch this tab in v1
 
 Run tests:
 
@@ -253,6 +261,12 @@ Optional plan-agent launch config for `--plan`:
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
 - by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues `/prompts:finalize_task` in the same Codex tab
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
+
+Optional dashboard review-tab launch:
+
+- reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
+- does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
+- when no explicit workspace override is set, the review tab uses the current cmux workspace instead of the sibling `"<current workspace> implementation"` workspace
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `/prompts:finalize_task` for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow

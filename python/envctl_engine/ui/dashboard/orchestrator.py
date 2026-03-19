@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
+from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from envctl_engine.state.models import RunState
@@ -184,6 +185,9 @@ class DashboardOrchestrator:
             refreshed = state
         if code not in {0, 2, 130}:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
+        next_state = refreshed if refreshed is not None else state
+        if code == 0 and route.command == "review":
+            self._maybe_offer_review_tab_launch(route, next_state, rt)
         if route.command == "test":
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
                 self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
@@ -707,6 +711,84 @@ class DashboardOrchestrator:
             if str(project_name).strip().casefold() == "main":
                 project_roots[project_name] = repo_root
         return project_roots
+
+    def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
+        runtime_any = cast(Any, rt)
+        target = self._review_tab_target(route, state, runtime_any)
+        runtime_any._emit(
+            "dashboard.review_tab.evaluate",
+            command="review",
+            project_count=len(route.projects or []),
+            eligible=target is not None,
+        )
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return
+        project_name, project_root = target
+        readiness = review_agent_launch_readiness(runtime_any)
+        if not readiness.ready:
+            runtime_any._emit(
+                "dashboard.review_tab.skipped",
+                command="review",
+                reason=readiness.reason,
+                project=project_name,
+                cli=readiness.cli,
+                missing=list(readiness.missing),
+            )
+            message = self._review_tab_unavailable_message(readiness.reason, readiness.missing)
+            if message:
+                print(message)
+            return
+        runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
+        decision = self._prompt_yes_no_dialog(
+            runtime_any,
+            title="Open origin review tab?",
+            prompt=f"Open an origin-side AI review tab for {project_name}?",
+        )
+        if decision != "commit":
+            runtime_any._emit("dashboard.review_tab.declined", command="review", project=project_name, cli=readiness.cli)
+            return
+        runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
+        launch_review_agent_terminal(
+            runtime_any,
+            repo_root=self._repo_root(runtime_any),
+            project_name=project_name,
+            project_root=project_root,
+        )
+
+    def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
+        repo_root = self._repo_root(runtime)
+        project_roots = self._project_roots_for_route(route, state, runtime)
+        distinct_targets: list[tuple[str, Path]] = []
+        seen_git_roots: set[str] = set()
+        for project_name in route.projects or []:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                continue
+            git_root = resolve_git_root(project_root, repo_root)
+            if git_root == repo_root and project_root != repo_root and not (project_root / ".git").exists():
+                git_root = project_root
+            git_root_key = str(git_root.resolve())
+            if git_root_key in seen_git_roots:
+                continue
+            seen_git_roots.add(git_root_key)
+            distinct_targets.append((project_name, project_root))
+        if len(distinct_targets) != 1:
+            return None
+        project_name, project_root = distinct_targets[0]
+        if str(project_name).strip().casefold() == "main":
+            return None
+        if project_root.resolve() == repo_root:
+            return None
+        return project_name, project_root
+
+    @staticmethod
+    def _review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
+        if reason == "missing_executables" and missing:
+            return f"Origin review tab unavailable: missing required executables: {', '.join(missing)}."
+        if reason in {"missing_cmux_context", "workspace_unavailable"}:
+            return "Origin review tab unavailable: current cmux workspace context is unavailable."
+        return ""
 
     @staticmethod
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:

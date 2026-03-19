@@ -2214,6 +2214,308 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         self.assertNotIn("Command failed (exit 1).", rendered)
 
+    def test_successful_single_worktree_review_prompts_and_launches_origin_tab_after_dispatch(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.confirm_responses = [True]
+        orchestrator = DashboardOrchestrator(runtime)
+        order: list[str] = []
+        state = RunState(
+            run_id="run-review",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            metadata={"project_roots": {"feature-a-1": "trees/feature-a/1"}},
+        )
+        runtime._latest_state = state
+
+        def dispatch(route: Route) -> int:
+            order.append("dispatch")
+            runtime.last_dispatched_route = route
+            runtime.dispatched_routes.append(route)
+            return 0
+
+        runtime.dispatch = dispatch  # type: ignore[assignment]
+
+        with (
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness",
+                return_value=SimpleNamespace(ready=True, reason="ready", cli="codex"),
+            ),
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal",
+                side_effect=lambda *args, **kwargs: (
+                    order.append("launch") or SimpleNamespace(status="launched", reason="launched")
+                ),
+            ) as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(order, ["dispatch", "launch"])
+        self.assertEqual(runtime.confirm_prompts, [{"title": "Open origin review tab?", "prompt": "Open an origin-side AI review tab for feature-a-1?"}])
+        launch_mock.assert_called_once_with(
+            runtime,
+            repo_root=runtime.config.base_dir,
+            project_name="feature-a-1",
+            project_root=(runtime.config.base_dir / "trees" / "feature-a" / "1").resolve(),
+        )
+
+    def test_successful_single_worktree_review_decline_keeps_existing_behavior(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.confirm_responses = [False]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-decline",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            metadata={"project_roots": {"feature-a-1": "trees/feature-a/1"}},
+        )
+        runtime._latest_state = state
+
+        with (
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness",
+                return_value=SimpleNamespace(ready=True, reason="ready", cli="codex"),
+            ),
+            patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(len(runtime.confirm_prompts), 1)
+        launch_mock.assert_not_called()
+
+    def test_failed_review_does_not_prompt_or_launch_origin_tab(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.dispatch_code = 1
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-fail",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            metadata={"project_roots": {"feature-a-1": "trees/feature-a/1"}},
+        )
+        runtime._latest_state = state
+
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness") as readiness_mock,
+            patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.confirm_prompts, [])
+        readiness_mock.assert_not_called()
+        launch_mock.assert_not_called()
+
+    def test_main_review_does_not_prompt_for_origin_tab(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-main",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            metadata={"project_roots": {"Main": "."}},
+        )
+        runtime._latest_state = state
+
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness") as readiness_mock,
+            patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.confirm_prompts, [])
+        readiness_mock.assert_not_called()
+        launch_mock.assert_not_called()
+
+    def test_multi_target_review_does_not_prompt_for_origin_tab(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["feature-a-1", "feature-b-1"])
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-multi",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "feature-b-1 Backend": ServiceRecord(
+                    name="feature-b-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8001,
+                    actual_port=8001,
+                    status="running",
+                ),
+            },
+            metadata={
+                "project_roots": {
+                    "feature-a-1": "trees/feature-a/1",
+                    "feature-b-1": "trees/feature-b/1",
+                }
+            },
+        )
+        runtime._latest_state = state
+
+        with (
+            patch("envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness") as readiness_mock,
+            patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.confirm_prompts, [])
+        readiness_mock.assert_not_called()
+        launch_mock.assert_not_called()
+
+    def test_typed_review_with_explicit_project_still_prompts_when_eligible(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.confirm_responses = [False]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-explicit",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            metadata={"project_roots": {"feature-a-1": "trees/feature-a/1"}},
+        )
+        runtime._latest_state = state
+
+        with (
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness",
+                return_value=SimpleNamespace(ready=True, reason="ready", cli="codex"),
+            ),
+            patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command(
+                "review --project feature-a-1",
+                state,
+                runtime,
+            )
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(len(runtime.confirm_prompts), 1)
+        launch_mock.assert_not_called()
+
+    def test_duplicate_review_targets_collapsing_to_one_git_root_prompt_once(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["feature-a-1", "feature-b-1"])
+        runtime.confirm_responses = [True]
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-review-duplicate-root",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "feature-b-1 Backend": ServiceRecord(
+                    name="feature-b-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8001,
+                    actual_port=8001,
+                    status="running",
+                ),
+            },
+            metadata={
+                "project_roots": {
+                    "feature-a-1": "trees/shared/1",
+                    "feature-b-1": "trees/shared/1",
+                }
+            },
+        )
+        runtime._latest_state = state
+
+        with (
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.review_agent_launch_readiness",
+                return_value=SimpleNamespace(ready=True, reason="ready", cli="codex"),
+            ) as readiness_mock,
+            patch(
+                "envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal",
+                return_value=SimpleNamespace(status="launched", reason="launched"),
+            ) as launch_mock,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("a", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(len(runtime.confirm_prompts), 1)
+        readiness_mock.assert_called_once()
+        launch_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

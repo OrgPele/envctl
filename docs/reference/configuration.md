@@ -182,6 +182,12 @@ There is no simple/advanced split in the current UI.
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
 
+Dashboard review-tab note:
+
+- the optional post-review origin tab in `envctl dashboard` reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
+- it does not read `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; the dashboard yes/no prompt is the opt-in
+- when no explicit cmux workspace override is set, the review-tab flow targets the current workspace rather than the sibling `"<current workspace> implementation"` workspace
+
 Alias env vars:
 
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
