@@ -177,6 +177,14 @@ When `.envctl` is missing:
 - inspect-only commands proceed with defaults
 - operational commands call `ensure_local_config()`
 - non-interactive environments fail with a clear error instead of guessing
+- source-checkout runtime dependency fixes use `python -m pip install -r python/requirements.txt`
+- contributor validation bootstrap still uses `.venv/bin/python -m pip install -e '.[dev]'`
+
+Current runtime dependency prereq boundary:
+
+- the full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`
+- launcher-safe commands such as `--version`, `--help`, launcher `doctor`, `install`, and `uninstall` stay outside that gate
+- inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate
 
 That policy is part of the runtime contract. Do not weaken it casually.
 

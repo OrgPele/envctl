@@ -8,8 +8,8 @@ from envctl_engine.ui.terminal_session import prompt_toolkit_available as termin
 
 
 class UiDependencyContractTests(unittest.TestCase):
-    def test_textual_importable_returns_false_when_import_fails(self) -> None:
-        with patch("builtins.__import__", side_effect=ModuleNotFoundError("textual")):
+    def test_textual_importable_returns_false_when_dependency_probe_fails(self) -> None:
+        with patch("importlib.util.find_spec", return_value=None):
             self.assertFalse(textual_importable())
 
     def test_prompt_toolkit_availability_checks_are_consistent(self) -> None:

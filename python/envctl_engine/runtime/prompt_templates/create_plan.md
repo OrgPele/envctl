@@ -79,11 +79,32 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
+## Optional envctl follow-up
+- After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
+- Do not run `envctl` unless the user explicitly says yes.
+- When you refer to that follow-up, ground it in the real supported flow:
+  - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
+  - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
+  - derive the cmux workspace name dynamically from the current repo root directory name as `"<repo-name> implementation"` and use that as `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
+  - do not rely on inherited `CMUX_WORKSPACE_ID` or any current-workspace detection for this follow-up
+  - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
+  - do not separately surface or require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; setting `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is sufficient to enable the launcher for this flow
+  - default the launch preset to `implement_task`
+  - if you mention Codex behavior, be accurate: envctl launches the CLI and sends `/prompts:implement_task` (and optional queued follow-up messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
+  - the final question must mention only the launch settings that should be surfaced to the user
+  - do not ask the user to provide or confirm cmux workspace, cmux context, shell, custom CLI command override, or launcher-enable flags; derive or use those internally
+  - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
+    - AI CLI: `codex`
+    - Codex cycles: `2`
+  - do not mention any other launch settings, defaults, or override knobs in the user-facing question
+  - if the selected CLI is not Codex, say that the Codex cycle count setting is ignored
+
 ## Final response format
 1. Path of the plan file created.
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
 4. Risk register (only if non-empty).
+5. One final approval question asking whether you should run the envctl worktree-and-prompt follow-up now, with all launch defaults listed inline and overrides invited.
 
 ## Self-check (before responding)
 - Plan matches existing todo/plans/ quality and depth.

@@ -68,6 +68,12 @@ envctl --plan
 
 That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven worktrees.
 
+If you are running `envctl` from a source checkout instead of an installed `pipx` command, install the runtime dependencies into that interpreter first:
+
+```bash
+python -m pip install -r python/requirements.txt
+```
+
 ## What envctl Is For
 
 `envctl` is built to:
@@ -129,6 +135,12 @@ Project docs:
   - `bun`, `pnpm`, `yarn`, or `npm`, depending on the repo
 
 `envctl` bootstraps target-repo dependencies from the repo itself, so tools such as `pytest` are usually installed as part of the backend project rather than separately for `envctl`.
+
+Install-path summary:
+
+- `pipx install ...`: package metadata installs the `envctl` runtime Python dependencies for you
+- source checkout / `./bin/envctl`: install `python/requirements.txt` into the interpreter that runs `envctl`
+- contributor workflow: use the editable `.[dev]` bootstrap in [Contributing](docs/developer/contributing.md)
 
 ## Configuration
 

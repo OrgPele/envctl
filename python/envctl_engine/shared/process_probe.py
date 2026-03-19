@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
-import importlib.util
 import re
 import time
 from typing import Callable, Protocol
+
+from envctl_engine.runtime.runtime_dependency_contract import python_dependency_available
 
 
 class ProbeBackend(Protocol):
@@ -61,7 +62,7 @@ class ShellProbeBackend:
 
 
 def psutil_available() -> bool:
-    return importlib.util.find_spec("psutil") is not None
+    return python_dependency_available("psutil")
 
 
 def _load_psutil() -> object | None:

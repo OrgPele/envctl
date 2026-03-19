@@ -122,6 +122,11 @@ python3.12 -m venv .venv
 .venv/bin/python scripts/release_shipability_gate.py --repo .
 ```
 
+Install-path reminder:
+
+- source-checkout operator bootstrap: `python -m pip install -r python/requirements.txt`
+- contributor validation lane: `.venv/bin/python -m pip install -e '.[dev]'`
+
 To confirm the release gate runs the same test lane:
 
 ```bash
