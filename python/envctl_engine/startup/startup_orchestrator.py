@@ -1027,8 +1027,17 @@ class StartupOrchestrator:
             for line in warning_lines:
                 rt._emit("ui.status", message=line)  # type: ignore[attr-defined]
             return
+        link_mode = str(rt.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
         for line in warning_lines:
-            print(line)
+            print(
+                render_paths_in_terminal_text(
+                    line,
+                    paths=local_paths_in_text(line),
+                    env=rt.env,
+                    stream=sys.stdout,
+                    interactive_tty=(True if link_mode == "on" else None),
+                )
+            )
 
     def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
         return trees_start_selection_required_impl(self, route=route, runtime_mode=runtime_mode)

@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 
 
 class BaseProjectSpinnerGroup:
@@ -199,15 +200,22 @@ class BaseProjectSpinnerGroup:
         if not project_name or not detail:
             return
         self._emit_lifecycle("detail", detail, project=project_name)
+        rendered_detail = render_paths_in_terminal_text(
+            detail,
+            paths=local_paths_in_text(detail),
+            env=self._env,
+            stream=self._stream,
+            interactive_tty=(True if self._enabled else None),
+        )
         with self._lock:
             console = self._console
         if console is not None:
             try:
-                console.print(f"  {detail}")
+                console.print(f"  {rendered_detail}")
                 return
             except Exception:
                 pass
         try:
-            print(f"  {detail}", file=self._stream)
+            print(f"  {rendered_detail}", file=self._stream)
         except Exception:
             return

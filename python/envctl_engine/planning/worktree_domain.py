@@ -63,7 +63,7 @@ def _worktree_spinner_update(
     terminal_message: str | None = None,
 ) -> None:
     if enabled:
-        active_spinner.update(message)
+        active_spinner.update(terminal_message or message)
         self._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
             component="worktree_planning",
@@ -75,12 +75,19 @@ def _worktree_spinner_update(
     print(terminal_message or message)
 
 
-def _render_planning_path(self: Any, *, absolute_path: Path, display_text: str) -> str:
+def _render_planning_path(
+    self: Any,
+    *,
+    absolute_path: Path,
+    display_text: str,
+    interactive_tty: bool | None = None,
+) -> str:
     return render_path_fragment_for_terminal(
         absolute_path,
         display_text=display_text,
         env=getattr(self, "env", {}),
         stream=sys.stdout,
+        interactive_tty=interactive_tty,
     )
 
 
@@ -1050,7 +1057,7 @@ def _sync_single_plan_worktree_target(
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
             terminal_message=(
                 f"Setting up {create_count} worktree(s) for "
-                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file)}"
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}"
                 f" -> {feature}..."
             ),
         )
@@ -1080,7 +1087,7 @@ def _sync_single_plan_worktree_target(
             ),
             terminal_message=(
                 f"Selected count for "
-                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file)} "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))} "
                 f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
             ),
         )
@@ -1093,7 +1100,7 @@ def _sync_single_plan_worktree_target(
             return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
         print(
             f"Blasted and deleted {remove_count} worktree(s) for "
-            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file)}."
+            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}."
         )
         removed_worktrees = tuple(name for name, _root in sorted(
             candidates,

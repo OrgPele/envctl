@@ -1386,6 +1386,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
+            engine.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             out = StringIO()
@@ -1395,8 +1396,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             output = out.getvalue()
             self.assertIn("Warning: backend migration step failed", output)
-            self.assertIn("backend log:", output)
-            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", output)
+            self.assertIn("\x1b]8;;file://", output)
+            visible = strip_ansi(output)
+            self.assertIn("backend log:", visible)
+            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", visible)
 
     def test_backend_alembic_failure_is_hard_when_bootstrap_strict_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
