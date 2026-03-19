@@ -253,6 +253,49 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
 
             self.assertEqual(resolved, override_file.resolve())
 
+    def test_resolve_frontend_env_file_rejects_ambiguous_relative_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            frontend_dir = tree_root / "frontend"
+            repo_override = repo / "config" / "frontend.override.env"
+            tree_override = tree_root / "config" / "frontend.override.env"
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            repo_override.parent.mkdir(parents=True, exist_ok=True)
+            tree_override.parent.mkdir(parents=True, exist_ok=True)
+            repo_override.write_text("CUSTOM=repo\n", encoding="utf-8")
+            tree_override.write_text("CUSTOM=tree\n", encoding="utf-8")
+
+            runtime = _FakeRuntime(repo_root=repo, env={"FRONTEND_ENV_FILE_OVERRIDE": "config/frontend.override.env"})
+            context = SimpleNamespace(name="feature-a-1", root=tree_root)
+
+            with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                _resolve_frontend_env_file(
+                    runtime,
+                    context=context,
+                    frontend_cwd=frontend_dir,
+                )
+
+    def test_resolve_frontend_env_file_falls_back_to_default_frontend_dot_env_when_override_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            frontend_dir = tree_root / "frontend"
+            default_env = frontend_dir / ".env"
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            default_env.write_text("DEFAULT=1\n", encoding="utf-8")
+
+            runtime = _FakeRuntime(repo_root=repo, env={"FRONTEND_ENV_FILE_OVERRIDE": "config/missing.env"})
+            context = SimpleNamespace(name="feature-a-1", root=tree_root)
+
+            resolved = _resolve_frontend_env_file(
+                runtime,
+                context=context,
+                frontend_cwd=frontend_dir,
+            )
+
+            self.assertEqual(resolved, default_env.resolve())
+
     def test_resolve_backend_env_contract_scrubs_inherited_backend_keys_and_reapplies_projection_for_default_env(
         self,
     ) -> None:

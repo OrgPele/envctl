@@ -117,6 +117,31 @@ Relevant keys:
 | `APP_ENV_FILE` | set by envctl when a backend env file is resolved | Exported into backend startup/migrate subprocesses for apps that discover env files from process env. |
 | `SKIP_LOCAL_DB_ENV` | `false` | Compatibility toggle for preserving explicit backend env-file database URLs instead of replacing them with envctl-projected local DB URLs. |
 
+## Frontend Service Env Resolution
+
+Frontend service startup uses the same env-file override contract as backend startup/bootstrap, but it only affects frontend service launch env and does not participate in backend-only `migrate` diagnostics.
+
+Frontend env resolution order is:
+
+1. `FRONTEND_ENV_FILE_OVERRIDE`
+2. `MAIN_FRONTEND_ENV_FILE_PATH` when the target project is `Main`
+3. default `frontend/.env`
+
+Override path resolution is shared with backend env-file discovery:
+
+- absolute paths are used as-is
+- relative paths are checked against both the target project root and the repo root
+- if exactly one relative candidate exists, envctl uses it
+- if both candidates exist and differ, envctl fails and requires an absolute path
+- if neither candidate exists, envctl falls back to the default `frontend/.env` contract when present
+
+Relevant keys:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FRONTEND_ENV_FILE_OVERRIDE` | unset | Explicit frontend env file path for worktree/tree targets and other non-Main projects. Relative paths can resolve from the target root or repo root. |
+| `MAIN_FRONTEND_ENV_FILE_PATH` | unset | Explicit frontend env file path for Main mode. Relative paths can resolve from the target root or repo root. |
+
 ## Managed vs Compatibility Keys
 
 The Python config layer now has canonical managed keys such as:

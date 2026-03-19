@@ -1115,6 +1115,37 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("CUSTOM_FRONTEND_FLAG") == "enabled" for env in frontend_start_envs))
 
+    def test_frontend_relative_env_override_file_is_loaded_for_service_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            frontend_dir = repo / "trees" / "feature-a" / "1" / "frontend"
+            frontend_override = repo / "config" / "frontend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_override.parent.mkdir(parents=True, exist_ok=True)
+            frontend_override.write_text("CUSTOM_FRONTEND_FLAG=relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"FRONTEND_ENV_FILE_OVERRIDE": "config/frontend.override.env"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
+            self.assertTrue(frontend_start_envs)
+            self.assertTrue(any(env.get("CUSTOM_FRONTEND_FLAG") == "relative" for env in frontend_start_envs))
+
     def test_startup_uses_configured_backend_and_frontend_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1183,6 +1214,37 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "active" for env in frontend_start_envs))
+
+    def test_main_frontend_relative_env_file_path_is_loaded_in_main_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            frontend_dir = repo / "frontend"
+            main_frontend_env = repo / "config" / "main.frontend.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            main_frontend_env.parent.mkdir(parents=True, exist_ok=True)
+            main_frontend_env.write_text("MAIN_FRONTEND_FLAG=relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"MAIN_FRONTEND_ENV_FILE_PATH": "config/main.frontend.env"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
+            self.assertTrue(frontend_start_envs)
+            self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "relative" for env in frontend_start_envs))
 
     def test_startup_scrubs_inherited_shell_backend_env_keys_before_backend_prep(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
