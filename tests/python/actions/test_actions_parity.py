@@ -1736,6 +1736,220 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("DATABASE_URL", report_text)
             self.assertNotIn("hint: envctl migrate loads backend env", report_text)
 
+    def test_direct_cli_migrate_failure_prints_compact_summary_instead_of_raw_wall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-failure",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                ),
+            )
+            engine.process_runner = _FakeRunner(  # type: ignore[assignment]
+                returncode=1,
+                stderr=(
+                    "Traceback (most recent call last):\n"
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>\n'
+                    "    from app.core.config import settings\n"
+                    "alembic.util.exc.CommandError: migration failed\n"
+                    "details: revision mismatch\n"
+                ),
+            )
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            visible = strip_ansi(rendered)
+            self.assertIn("✗ migrate failed for feature-a-1: alembic.util.exc.CommandError: migration failed", visible)
+            self.assertIn("migrate failure log for feature-a-1:", visible)
+            self.assertIn("\x1b]8;;file://", rendered)
+            self.assertNotIn("migrate action failed for feature-a-1:", visible)
+            self.assertNotIn("✗ migrate failed for feature-a-1: Traceback (most recent call last):", visible)
+            self.assertNotIn("Traceback (most recent call last):", visible.splitlines()[0])
+
+    def test_direct_cli_migrate_mixed_results_prints_successes_and_failures_in_route_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-mixed",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+
+            class _SequencedRunner:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cmd, cwd, env, timeout
+                    self.calls += 1
+                    if self.calls == 1:
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            '  File "/tmp/project/backend/alembic/env.py", line 22, in <module>\n'
+                            "alembic.util.exc.CommandError: feature-b failed\n"
+                        ),
+                    )
+
+                def start(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                    _ = cmd, cwd, env
+                    return SimpleNamespace(pid=10001, poll=lambda: None)
+
+                def wait_for_port(self, _port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+                    _ = host, timeout
+                    return True
+
+                def is_pid_running(self, _pid: int) -> bool:
+                    return False
+
+            engine.process_runner = _SequencedRunner()  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            visible = strip_ansi(out.getvalue())
+            self.assertLess(
+                visible.index("✓ migrate succeeded for feature-a-1"),
+                visible.index("✗ migrate failed for feature-b-1: alembic.util.exc.CommandError: feature-b failed"),
+            )
+            self.assertIn("migrate failure log for feature-b-1:", visible)
+            self.assertNotIn("migrate action succeeded for feature-a-1.", visible)
+            self.assertNotIn("migrate action failed for feature-b-1:", visible)
+
+    def test_direct_cli_migrate_all_success_prints_visible_result_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-success",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+            engine.process_runner = _FakeRunner(returncode=0)  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("✓ migrate succeeded for feature-a-1", rendered)
+            self.assertIn("✓ migrate succeeded for feature-b-1", rendered)
+            self.assertNotIn("migrate action succeeded for feature-a-1.", rendered)
+
     def test_action_env_includes_pythonpath_for_native_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

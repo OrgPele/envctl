@@ -316,7 +316,9 @@ class DashboardOrchestrator:
         metadata = state.metadata.get("project_action_reports")
         if not isinstance(metadata, dict):
             return False
-        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        project_names = route.projects or self._project_name_list(
+            self._project_names_from_state(state, cast(Any, self.runtime))
+        )
         printed = False
         for project_name_raw in project_names:
             project_name = str(project_name_raw).strip()
@@ -370,45 +372,32 @@ class DashboardOrchestrator:
         metadata = state.metadata.get("project_action_reports")
         if not isinstance(metadata, dict):
             return False
-        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        project_names = route.projects or self._project_name_list(
+            self._project_names_from_state(state, cast(Any, self.runtime))
+        )
         printed = False
         for project_name_raw in project_names:
             project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
-            if not isinstance(project_entry, dict):
+            action_entry = project_entry.get("migrate") if isinstance(project_entry, dict) else None
+            record = ActionCommandOrchestrator._migrate_result_record(project_name=project_name, action_entry=action_entry)
+            if record is None:
                 continue
-            action_entry = project_entry.get("migrate")
-            if not isinstance(action_entry, dict):
-                continue
-            status = str(action_entry.get("status", "")).strip().lower()
-            if status == "success":
+            if record.status == "success":
                 print(f"✓ migrate succeeded for {project_name}")
                 printed = True
                 continue
-            if status != "failed":
-                continue
-            summary = str(action_entry.get("summary", "")).strip()
-            headline = str(action_entry.get("headline", "")).strip()
-            if not headline and summary:
-                headline = ActionCommandOrchestrator._migrate_failure_headline(summary)
-            if headline:
-                print(f"✗ migrate failed for {project_name}: {headline}")
+            if record.headline:
+                print(f"✗ migrate failed for {project_name}: {record.headline}")
             else:
                 print(f"✗ migrate failed for {project_name}")
-            seen_hints: set[str] = set()
-            for line in [item.strip() for item in summary.splitlines() if item.strip()]:
-                if not line.lower().startswith("hint:"):
-                    continue
-                if line in seen_hints:
-                    continue
-                seen_hints.add(line)
-                print(line)
-            report_path = str(action_entry.get("report_path", "")).strip()
-            if report_path:
+            for hint in record.hint_lines:
+                print(hint)
+            if record.report_path:
                 print(f"migrate failure log for {project_name}:")
                 print(
                     render_path_for_terminal(
-                        report_path,
+                        record.report_path,
                         env=getattr(self.runtime, "env", {}),
                         stream=sys.stdout,
                         interactive_tty=True,

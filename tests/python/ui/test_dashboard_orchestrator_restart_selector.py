@@ -2348,6 +2348,73 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             rendered,
         )
 
+    def test_project_action_failure_details_print_migrate_results_for_all_selection_using_state_projects(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-migrate-all-selection",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "feature-b-1 Backend": ServiceRecord(
+                    name="feature-b-1 Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8001,
+                    actual_port=8001,
+                    status="running",
+                ),
+            },
+            metadata={
+                "project_action_reports": {
+                    "feature-a-1": {"migrate": {"status": "success"}},
+                    "feature-b-1": {
+                        "migrate": {
+                            "status": "failed",
+                            "headline": "pydantic_core._pydantic_core.ValidationError: missing env",
+                            "summary": (
+                                "pydantic_core._pydantic_core.ValidationError: missing env\n"
+                                "hint: envctl migrate loads backend env from backend/.env by default.\n"
+                            ),
+                            "report_path": "/tmp/runtime/feature-b-1_migrate.txt",
+                        }
+                    },
+                }
+            },
+        )
+
+        out = StringIO()
+        with redirect_stdout(out):
+            printed = orchestrator._print_project_action_failure_details(
+                Route(
+                    command="migrate",
+                    mode="trees",
+                    raw_args=["migrate", "--all"],
+                    passthrough_args=[],
+                    projects=[],
+                    flags={"all": True},
+                ),
+                state,
+            )
+
+        rendered = strip_ansi(out.getvalue())
+        self.assertTrue(printed)
+        self.assertIn("✓ migrate succeeded for feature-a-1", rendered)
+        self.assertIn(
+            "✗ migrate failed for feature-b-1: pydantic_core._pydantic_core.ValidationError: missing env",
+            rendered,
+        )
+        self.assertIn("migrate failure log for feature-b-1:\n/tmp/runtime/feature-b-1_migrate.txt", rendered)
+
     def test_interactive_migrate_success_prints_result_summary_for_all_targets(self) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(project_names=["feature-a-1", "feature-b-1"])

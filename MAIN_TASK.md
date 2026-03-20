@@ -1,88 +1,131 @@
-# Env Override Documentation And Verification Closure
+# Envctl Migrate Direct CLI Summary And Verification Closure
 
 ## Context and objective
-The prior iteration landed the backend env-isolation fix in code and tests: startup/bootstrap and native `envctl migrate` now share backend env resolution, scrub inherited backend-sensitive shell keys, reconcile the DB URL family, and emit env-source diagnostics. The remaining work is to close the documented contract and verification gap so operator-facing guidance matches the shipped behavior and the original manual multi-worktree verification requirement is completed explicitly.
+The previous iteration completed the dashboard-interactive migrate UX improvements: interactive migrate status lines are now bounded, failed migrate entries persist an additive `headline`, dashboard-interactive migrate prints per-target results including successes, and the action-level spinner updates from `ui.status` events. Those changes landed in commit `9f7f38e fix(migrate): improve output summaries`.
 
-This iteration must fully implement the remaining scope end-to-end. Do not reopen already-complete backend logic unless a fresh audit proves the docs still disagree with the runtime.
+The delivery is still incomplete against the prior task goal because the direct non-interactive CLI migrate path continues to print the old raw action failure wall instead of the compact per-target result summary described in the task, and there is no repo evidence that the required real-TTY verification was performed and recorded. This iteration must close those remaining gaps fully, end to end.
 
 ## Remaining requirements (complete and exhaustive)
-1. Document the shared relative override-path contract for all env-file override variables in the authoritative docs:
-   - `BACKEND_ENV_FILE_OVERRIDE`
-   - `MAIN_ENV_FILE_PATH`
-   - `FRONTEND_ENV_FILE_OVERRIDE`
-   - `MAIN_FRONTEND_ENV_FILE_PATH`
-2. Update operator guidance so it is explicit which fallback applies when an override path does not resolve:
-   - backend falls back to `backend/.env` when present
-   - frontend falls back to `frontend/.env` when present
-   - absolute paths remain authoritative when they exist
-   - ambiguous relative paths that exist under both the target root and repo root must fail and require an absolute path
-3. Document that frontend service start env uses the same dual-resolution contract as backend env-file overrides, while backend-only migrate diagnostics remain backend-scoped.
-4. Perform the previously required manual multi-worktree verification and capture concrete evidence in the implementation pass:
-   - startup verification with `ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP=true`
-   - native `envctl migrate --project <target>` verification for each target
-   - verification that conflicting parent-shell `DATABASE_URL` / `APP_ENV_FILE` do not leak into target-scoped backend migration env
-   - verification that a relative frontend override path resolves correctly under the documented contract
-5. If the manual verification exposes a real runtime mismatch with the documented contract, fix the code and tests in the same iteration instead of narrowing the docs around a broken behavior.
+1. Fully implement a compact post-run migrate result summary for direct non-interactive CLI execution.
+   - This remaining scope applies to action-owned migrate execution where `interactive_command=False`.
+   - After `envctl migrate ...` finishes, envctl must print one concise result block covering every selected target in route order.
+   - The result block must use the same practical contract already implemented for dashboard-interactive rendering:
+     - `✓ migrate succeeded for <target>` for successes
+     - `✗ migrate failed for <target>: <headline>` for failures
+     - bounded `hint:` lines only for failed targets
+     - exactly one failure-log path block per failed target when `report_path` exists
+   - Do not rely on transient spinner updates alone to communicate the final result.
+2. Remove raw multiline migrate failure walls from the direct non-interactive CLI path.
+   - During direct CLI execution, operators should not be forced to read `migrate action failed for <target>: Traceback...` with the full raw subprocess payload inline.
+   - The operator-facing terminal output must lead with the actionable failure headline, not `Traceback (most recent call last):`.
+   - Preserve the full raw subprocess output only in the persisted failure report file; do not discard or truncate the artifact.
+3. Keep direct CLI progress and final summary aligned with persisted action metadata.
+   - The implementation may reuse `RunState.metadata["project_action_reports"]`, return structured per-target results from `execute_targeted_action(...)`, or use another repo-consistent mechanism, but the final printed summary must stay consistent with persisted `status`, `summary`, `headline`, `report_path`, and `backend_env` metadata.
+   - Mixed-result and all-success runs must both be handled without duplication.
+   - Missing persisted entries must not crash output rendering; fall back gracefully and print only what envctl can verify.
+4. Add automated coverage for the remaining direct CLI migrate UX gap.
+   - Add or extend tests proving that direct non-interactive migrate output:
+     - prints concise actionable failure headlines instead of traceback-led walls
+     - prints per-target success and failure summary lines in route order
+     - prints one report-path block per failed target
+     - preserves persisted `report_path`, `headline`, and backend env metadata
+     - still updates the action spinner meaningfully while the command is running
+   - Match the existing test style and keep the tests as narrow as possible.
+5. Complete and record the required real-TTY verification for the shipped migrate UX.
+   - Run dashboard-interactive migrate with at least one forced failure across multiple targets and confirm:
+     - one spinner owner
+     - bounded per-target progress during execution
+     - final output includes every target, including successes
+     - failures lead with the actionable exception headline
+     - each failed target prints exactly one failure-log path block
+   - Run direct CLI `envctl migrate --all` in a real TTY and confirm:
+     - the action-level spinner updates per target while execution is in progress
+     - the final direct CLI output uses the new compact per-target result summary
+     - raw traceback payloads remain available only through the persisted failure report file
+   - Inspect `envctl show-state --json` after a failed migrate and confirm `report_path`, `backend_env`, and additive `headline` metadata remain intact.
+   - Record the exact commands executed and the observed outcomes in the implementation pass artifacts, including `.envctl-commit-message.md`.
 
 ## Gaps from prior iteration (mapped to evidence)
-- Frontend override behavior is implemented and tested, but not covered in the authoritative docs:
-  - code evidence: `python/envctl_engine/startup/service_bootstrap_domain.py:_resolve_frontend_env_file_resolution`
-  - test evidence: `tests/python/startup/test_service_bootstrap_domain.py::test_resolve_frontend_env_file_uses_shared_repo_relative_contract`
-  - test evidence: `tests/python/runtime/test_engine_runtime_real_startup.py::test_frontend_env_override_file_is_loaded_for_service_start`
-  - test evidence: `tests/python/runtime/test_engine_runtime_real_startup.py::test_main_frontend_env_file_path_is_loaded_in_main_mode`
-  - missing-doc evidence: `docs/reference/configuration.md` and `docs/operations/troubleshooting.md` currently describe backend override variables and backend diagnostics but do not mention `FRONTEND_ENV_FILE_OVERRIDE` or `MAIN_FRONTEND_ENV_FILE_PATH`
-- The previous task explicitly required manual multi-worktree verification after automated tests, but the anchored git history contains only the implementation commit `1ecc478 fix(backend-env): isolate target env resolution`; there is no follow-up repo evidence that the manual verification step was completed or recorded.
+- Direct non-interactive migrate still prints raw action failure text instead of a curated summary.
+  - Code evidence: [`python/envctl_engine/actions/action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/actions/action_target_support.py) still prints `"{command_name} action failed for {context.name}: {error}"` whenever `interactive_command` is false.
+  - Code evidence: [`python/envctl_engine/actions/action_command_orchestrator.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/actions/action_command_orchestrator.py) adds concise migrate failure status formatting only for interactive `ui.status` emission; it does not add a direct CLI final summary renderer.
+  - Audit note evidence: [.envctl-commit-message.md](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/.envctl-commit-message.md) explicitly states that direct non-interactive `migrate` still uses the existing action-level printed lines outside the new concise summary flow.
+- The compact migrate result summary is implemented only for dashboard-interactive rendering.
+  - Code evidence: [`python/envctl_engine/ui/dashboard/orchestrator.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/ui/dashboard/orchestrator.py) contains `_print_migrate_result_details(...)`, but there is no corresponding direct CLI result-summary printer in the action path.
+  - Git evidence: branch divergence from `origin/main` contains only commit `9f7f38e`, which touched action helpers, dashboard rendering, and tests, but no docs or manual verification artifact proving closure of the remaining direct CLI summary gap.
+- Automated coverage added in the previous iteration does not lock the remaining direct CLI result-summary behavior.
+  - Test evidence: [`tests/python/actions/test_action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_target_support.py) covers interactive bounded migrate failure statuses, not direct CLI final output.
+  - Test evidence: [`tests/python/actions/test_action_spinner_integration.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_spinner_integration.py) covers spinner updates, but not the non-interactive final result block.
+  - Test evidence: [`tests/python/ui/test_dashboard_orchestrator_restart_selector.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/ui/test_dashboard_orchestrator_restart_selector.py) covers dashboard-interactive mixed-result and all-success rendering, not direct CLI output.
+- The required real-TTY verification from the prior task has no implementation-pass record in git.
+  - Git evidence: `git log --oneline --decorate ace3821..HEAD` shows only `9f7f38e fix(migrate): improve output summaries`.
+  - Git evidence: `git diff --name-status ace3821..HEAD` shows no manual-verification notes, docs updates, or additional artifacts recording the mandated TTY commands and outcomes.
 
 ## Acceptance criteria (requirement-by-requirement)
-1. `docs/reference/configuration.md` explicitly documents all four override variables and states the exact shared resolution contract:
-   - absolute path
-   - target-root relative path
-   - repo-root relative path
-   - ambiguity failure
-   - fallback to service-local default `.env`
-2. `docs/operations/troubleshooting.md` tells operators how to diagnose both backend and frontend env-file selection without implying incorrect repo-only relative-path semantics.
-3. Manual verification is actually run against at least two worktrees with distinct backend env files, and the implementation pass records:
-   - the exact commands used
-   - which env file/source each target resolved
-   - the observed proof that parent-shell backend env leakage was ignored
-   - the observed proof that frontend override resolution matched the documented contract
-4. If manual verification uncovers a defect, the same iteration lands the required code and test updates before completion.
-5. No completed backend-isolation requirements from `OLD_TASK_2.md` are duplicated here unless they must change to satisfy verified runtime evidence.
+1. Direct non-interactive CLI migrate prints one compact per-target result block after execution completes.
+   - Success and failure lines appear in route order.
+   - Mixed-result runs show both successes and failures.
+   - All-success multi-target runs still print visible success lines.
+2. Direct non-interactive CLI migrate failures no longer lead with `Traceback (most recent call last):`.
+   - The first visible failure line uses the actionable exception headline.
+   - The raw traceback is preserved only in the persisted failure report artifact.
+3. Each failed target prints exactly one failure-log path block in the direct CLI summary when `report_path` exists.
+4. Persisted migrate metadata remains aligned and intact.
+   - `status`, `updated_at`, `report_path`, `backend_env`, and additive `headline` remain available.
+   - No data migration or backfill is required.
+5. Focused automated tests prove the direct CLI summary behavior and remain green.
+6. Real-TTY verification is actually run and recorded with exact commands and observed outcomes for:
+   - dashboard-interactive migrate
+   - direct CLI migrate
+   - `show-state --json` metadata inspection
 
 ## Required implementation scope (frontend/backend/data/integration)
-- Frontend:
-  - update docs for `FRONTEND_ENV_FILE_OVERRIDE` and `MAIN_FRONTEND_ENV_FILE_PATH`
-  - document fallback to `frontend/.env` and the shared dual-resolution behavior
-- Backend:
-  - update backend docs only where needed to keep the shared contract accurate
-  - make code/test changes only if manual verification reveals a real mismatch
-- Data/state:
-  - no schema or migration-file changes are expected
-  - if verification depends on persisted migrate failure metadata or startup events, confirm the existing metadata matches the documented contract
+- Frontend / terminal UX:
+  - implement the remaining direct CLI migrate result-summary rendering using the repo’s existing terminal output conventions
+  - keep dashboard-interactive behavior unchanged except for any regression fixes required to share summary helpers safely
+- Backend / action execution:
+  - adjust the non-interactive migrate action path so raw multiline failure payloads are no longer printed inline to the terminal
+  - reuse or centralize migrate headline/hint/report-path formatting so dashboard and direct CLI outputs cannot drift
+- Data / state:
+  - preserve current persisted migrate metadata semantics
+  - do not change raw failure report contents or locations
+  - keep `headline` additive and backward-compatible for older state entries without it
 - Integration:
-  - run multi-worktree startup and native migrate verification against real repo targets or faithful local fixtures
-  - verify both backend env isolation and frontend override resolution in the same iteration
+  - perform the real-TTY dashboard and direct CLI verification described above
+  - verify `show-state --json` after failure to confirm metadata continuity
 
 ## Required tests and quality gates
-- Re-run the focused automated suites that already lock the current contract before or alongside manual verification:
-  - `PYTHONPATH=python python3 -m unittest tests.python.startup.test_service_bootstrap_domain`
+- Add or extend focused tests in the smallest appropriate suites, likely including:
+  - [`tests/python/actions/test_actions_parity.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_actions_parity.py)
+    - direct non-interactive migrate failure output prefers the actionable headline over traceback chrome
+    - direct non-interactive mixed-result migrate run prints both successes and failures
+    - direct non-interactive all-success migrate run prints visible success lines
+    - failed targets still persist `report_path`, `headline`, and backend env metadata
+  - [`tests/python/actions/test_action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_target_support.py)
+    - if the final design changes how non-interactive migrate output is emitted, add narrow coverage there
+  - [`tests/python/actions/test_action_spinner_integration.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_spinner_integration.py)
+    - keep proving live spinner updates while the direct CLI action spinner is the visible owner
+- Re-run at minimum:
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_target_support`
+  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_spinner_integration`
   - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_parity`
-  - `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_engine_runtime_real_startup`
-- Manual verification is required and is not optional:
-  - run startup verification across at least two worktrees with distinct backend `.env` contents
-  - run `envctl migrate --project <target>` for each verified worktree
-  - repeat with conflicting parent-shell backend env vars exported
-  - run at least one frontend override-path verification using a relative path that resolves through the documented contract
-- If code changes are needed after manual verification, add or extend the narrowest tests that prove the newly discovered behavior.
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_orchestrator_restart_selector`
+  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_terminal_ui_dashboard_loop`
+- If implementation introduces a new helper shared by dashboard and action output, add the narrowest unit-style test coverage for that helper.
 
 ## Edge cases and failure handling
-- Relative override paths that exist under both the target root and repo root must be documented and observed as hard failures requiring an absolute path.
-- Missing override files must be documented and observed as falling back to the service-local default `.env` only when that default file exists.
-- Documentation and verification output must not expose secret env values; record file paths, source classifications, and key names only.
-- Main-mode frontend override behavior and tree/worktree frontend override behavior must both remain explicit in the docs.
+- Targets missing from persisted action metadata must not crash direct CLI result rendering.
+- Multiple failures must produce one report-path block per failed target, not one merged dump.
+- If a migrate command fails before a report path is written, print the concise failure line and any available hints without crashing.
+- Keep hints deduplicated.
+- Preserve one spinner owner per visible command path.
+- Do not emit raw traceback payloads into bounded status/spinner messages.
+- Older persisted migrate entries without `headline` must still render correctly by reparsing `summary`.
 
 ## Definition of done
-- The authoritative docs describe the same override-path contract that the runtime currently implements for both backend and frontend env-file overrides.
-- The manual multi-worktree verification required by the previous task has been completed and recorded with concrete commands and outcomes.
-- Any defect discovered during that verification has been fixed with matching tests in the same iteration.
-- No remaining undocumented or unverified scope from `OLD_TASK_2.md` is left open at the end of the pass.
+- The direct non-interactive CLI migrate path prints a compact per-target result summary instead of raw multiline failure walls.
+- Direct CLI migrate failures lead with actionable exception headlines, not `Traceback (most recent call last):`.
+- Dashboard-interactive migrate behavior remains correct and regression-free.
+- Persisted migrate report paths, backend env metadata, and additive `headline` metadata remain intact and backward-compatible.
+- Focused automated coverage locks the remaining direct CLI summary behavior and all relevant suites pass.
+- Real-TTY verification is completed and recorded with exact commands and outcomes.
