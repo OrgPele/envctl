@@ -487,6 +487,35 @@ class CommandExitCodeTests(unittest.TestCase):
             bootstrap.assert_not_called()
             self.assertEqual(seen.get("base_dir"), repo.resolve())
 
+    def test_explicit_repo_overrides_inherited_run_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inherited_repo = Path(tmpdir) / "inherited-repo"
+            explicit_repo = Path(tmpdir) / "explicit-repo"
+            runtime = Path(tmpdir) / "runtime"
+            nested = explicit_repo / "sub" / "dir"
+            (inherited_repo / ".git").mkdir(parents=True, exist_ok=True)
+            (explicit_repo / ".git").mkdir(parents=True, exist_ok=True)
+            nested.mkdir(parents=True, exist_ok=True)
+            seen: dict[str, object] = {}
+
+            def dispatcher(_route, config):  # noqa: ANN001
+                seen["base_dir"] = config.base_dir
+                return 0
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["doctor", "--repo", str(nested)],
+                    env={
+                        "RUN_REPO_ROOT": str(inherited_repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            self.assertEqual(seen.get("base_dir"), explicit_repo.resolve())
+
     def test_cwd_inside_repo_resolves_repo_root_for_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
