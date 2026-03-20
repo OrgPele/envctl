@@ -54,7 +54,7 @@ from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
-from envctl_engine.ui.path_links import render_path_for_terminal
+from envctl_engine.ui.path_links import render_path_for_terminal, render_path_fragment_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -1172,27 +1172,7 @@ class ActionCommandOrchestrator:
         )
         if not records:
             return
-        for record in records:
-            if record.status == "success":
-                print(f"✓ migrate succeeded for {record.project_name}")
-                continue
-            if record.status != "failed":
-                continue
-            if record.headline:
-                print(f"✗ migrate failed for {record.project_name}: {record.headline}")
-            else:
-                print(f"✗ migrate failed for {record.project_name}")
-            for hint in record.hint_lines:
-                print(hint)
-            if record.report_path:
-                print(f"migrate failure log for {record.project_name}:")
-                print(
-                    render_path_for_terminal(
-                        record.report_path,
-                        env=getattr(self.runtime, "env", {}),
-                        stream=sys.stdout,
-                    )
-                )
+        self._print_migrate_result_records(records=records, env=getattr(self.runtime, "env", {}))
 
     def _migrate_result_records(
         self,
@@ -1252,6 +1232,147 @@ class ActionCommandOrchestrator:
             hint_lines=tuple(hint_lines),
             report_path=report_path,
         )
+
+    @staticmethod
+    def _print_migrate_result_records(
+        *,
+        records: list[_MigrateResultRecord],
+        env: Mapping[str, str],
+        interactive_tty: bool | None = None,
+    ) -> None:
+        failed_records = [record for record in records if record.status == "failed"]
+        compact_failures = len(failed_records) > 1
+        shared_hints = ActionCommandOrchestrator._shared_migrate_hint_lines(failed_records) if compact_failures else ()
+        for record in records:
+            if record.status == "success":
+                print(f"✓ migrate succeeded for {record.project_name}")
+                continue
+            if record.status != "failed":
+                continue
+            if record.headline:
+                print(f"✗ migrate failed for {record.project_name}: {record.headline}")
+            else:
+                print(f"✗ migrate failed for {record.project_name}")
+            if compact_failures:
+                continue
+            for hint in ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines):
+                print(hint)
+        for hint in shared_hints:
+            print(hint)
+        ActionCommandOrchestrator._print_migrate_failure_logs(
+            failed_records,
+            env=env,
+            interactive_tty=interactive_tty,
+            compact=compact_failures,
+        )
+
+    @staticmethod
+    def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
+        if len(records) <= 1:
+            return ()
+        visible_hint_lists = [ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records]
+        if not visible_hint_lists:
+            return ()
+        shared = set(visible_hint_lists[0])
+        for hint_lines in visible_hint_lists[1:]:
+            shared.intersection_update(hint_lines)
+        if not shared:
+            return ()
+        ordered_shared = [hint for hint in visible_hint_lists[0] if hint in shared]
+        return tuple(ordered_shared[:1])
+
+    @staticmethod
+    def _visible_migrate_hint_lines(hint_lines: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            hint for hint in hint_lines if not ActionCommandOrchestrator._is_migrate_env_source_hint(hint)
+        )
+
+    @staticmethod
+    def _is_migrate_env_source_hint(hint_line: str) -> bool:
+        return hint_line.lower().startswith("hint: backend env source:")
+
+    @staticmethod
+    def _print_migrate_failure_logs(
+        records: list[_MigrateResultRecord],
+        *,
+        env: Mapping[str, str],
+        interactive_tty: bool | None,
+        compact: bool,
+    ) -> None:
+        report_records = [record for record in records if record.report_path]
+        if not report_records:
+            return
+        if compact:
+            ActionCommandOrchestrator._print_compact_migrate_failure_logs(
+                report_records,
+                env=env,
+                interactive_tty=interactive_tty,
+            )
+            return
+        for record in report_records:
+            print(f"migrate failure log for {record.project_name}:")
+            print(
+                render_path_for_terminal(
+                    record.report_path,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+            )
+
+    @staticmethod
+    def _print_compact_migrate_failure_logs(
+        records: list[_MigrateResultRecord],
+        *,
+        env: Mapping[str, str],
+        interactive_tty: bool | None,
+    ) -> None:
+        print("migrate failure logs:")
+        shared_parent = ActionCommandOrchestrator._shared_report_parent(records)
+        if shared_parent:
+            print(
+                render_path_for_terminal(
+                    shared_parent,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+            )
+            for record in records:
+                display_name = Path(record.report_path).name
+                rendered_path = render_path_fragment_for_terminal(
+                    record.report_path,
+                    display_text=display_name,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+                print(f"- {record.project_name}: {rendered_path}")
+            return
+        for record in records:
+            rendered_path = render_path_for_terminal(
+                record.report_path,
+                env=env,
+                stream=sys.stdout,
+                interactive_tty=interactive_tty,
+            )
+            print(f"- {record.project_name}: {rendered_path}")
+
+    @staticmethod
+    def _shared_report_parent(records: list[_MigrateResultRecord]) -> str:
+        parents: list[str] = []
+        for record in records:
+            try:
+                parent = str(Path(record.report_path).parent)
+            except (OSError, RuntimeError, ValueError):
+                return ""
+            if not parent:
+                return ""
+            if parent not in parents:
+                parents.append(parent)
+        if len(parents) != 1:
+            return ""
+        return parents[0]
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:

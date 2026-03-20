@@ -2415,6 +2415,69 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         self.assertIn("migrate failure log for feature-b-1:\n/tmp/runtime/feature-b-1_migrate.txt", rendered)
 
+    def test_project_action_failure_details_compact_multi_failure_logs_and_hints(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-migrate-compact-failures",
+            mode="trees",
+            metadata={
+                "project_action_reports": {
+                    "feature-a-1": {
+                        "migrate": {
+                            "status": "failed",
+                            "headline": "ConnectionResetError: [Errno 54] Connection reset by peer",
+                            "summary": (
+                                "ConnectionResetError: [Errno 54] Connection reset by peer\n"
+                                "hint: backend env source: default | /tmp/runtime/backend-a.env\n"
+                                "hint: backend connection was reset while applying migrations.\n"
+                            ),
+                            "report_path": "/tmp/runtime/run-compact/feature-a-1_migrate.txt",
+                        }
+                    },
+                    "feature-b-1": {
+                        "migrate": {
+                            "status": "failed",
+                            "headline": "ConnectionResetError: [Errno 54] Connection reset by peer",
+                            "summary": (
+                                "ConnectionResetError: [Errno 54] Connection reset by peer\n"
+                                "hint: backend env source: default | /tmp/runtime/backend-b.env\n"
+                                "hint: backend connection was reset while applying migrations.\n"
+                            ),
+                            "report_path": "/tmp/runtime/run-compact/feature-b-1_migrate.txt",
+                        }
+                    },
+                }
+            },
+        )
+
+        out = _TtyStringIO()
+        with redirect_stdout(out):
+            printed = orchestrator._print_project_action_failure_details(
+                Route(
+                    command="migrate",
+                    mode="trees",
+                    raw_args=["migrate"],
+                    passthrough_args=[],
+                    projects=["feature-a-1", "feature-b-1"],
+                    flags={},
+                ),
+                state,
+            )
+
+        rendered = strip_ansi(out.getvalue())
+        self.assertTrue(printed)
+        self.assertIn("✗ migrate failed for feature-a-1: ConnectionResetError: [Errno 54] Connection reset by peer", rendered)
+        self.assertIn("✗ migrate failed for feature-b-1: ConnectionResetError: [Errno 54] Connection reset by peer", rendered)
+        self.assertEqual(rendered.count("hint: backend connection was reset while applying migrations."), 1)
+        self.assertNotIn("hint: backend env source:", rendered)
+        self.assertIn("migrate failure logs:", rendered)
+        self.assertIn("/tmp/runtime/run-compact", rendered)
+        self.assertIn("- feature-a-1: feature-a-1_migrate.txt", rendered)
+        self.assertIn("- feature-b-1: feature-b-1_migrate.txt", rendered)
+        self.assertNotIn("migrate failure log for feature-a-1:", rendered)
+        self.assertNotIn("migrate failure log for feature-b-1:", rendered)
+
     def test_interactive_migrate_success_prints_result_summary_for_all_targets(self) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(project_names=["feature-a-1", "feature-b-1"])

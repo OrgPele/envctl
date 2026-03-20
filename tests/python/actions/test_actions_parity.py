@@ -1889,6 +1889,140 @@ class ActionsParityTests(unittest.TestCase):
             self.assertNotIn("migrate action succeeded for feature-a-1.", visible)
             self.assertNotIn("migrate action failed for feature-b-1:", visible)
 
+    def test_direct_cli_migrate_multiple_failures_compact_shared_hints_and_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-failure-batch",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+
+            class _SequencedRunner:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cmd, cwd, env, timeout
+                    self.calls += 1
+                    project = "feature-a" if self.calls == 1 else "feature-b"
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            f'  File "/tmp/project/{project}/backend/alembic/env.py", line 19, in <module>\n'
+                            "    from app.core.config import settings\n"
+                            "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings\n"
+                            "DATABASE_URL\n"
+                            "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                            "REDIS_URL\n"
+                            "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                        ),
+                    )
+
+                def start(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                    _ = cmd, cwd, env
+                    return SimpleNamespace(pid=10001, poll=lambda: None)
+
+                def wait_for_port(self, _port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+                    _ = host, timeout
+                    return True
+
+                def is_pid_running(self, _pid: int) -> bool:
+                    return False
+
+            engine.process_runner = _SequencedRunner()  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            saved_state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(saved_state)
+            assert saved_state is not None
+            reports = saved_state.metadata.get("project_action_reports")
+            self.assertIsInstance(reports, dict)
+            assert isinstance(reports, dict)
+            project_a_reports = reports.get("feature-a-1")
+            self.assertIsInstance(project_a_reports, dict)
+            assert isinstance(project_a_reports, dict)
+            project_b_reports = reports.get("feature-b-1")
+            self.assertIsInstance(project_b_reports, dict)
+            assert isinstance(project_b_reports, dict)
+            migrate_a = project_a_reports.get("migrate")
+            self.assertIsInstance(migrate_a, dict)
+            assert isinstance(migrate_a, dict)
+            migrate_b = project_b_reports.get("migrate")
+            self.assertIsInstance(migrate_b, dict)
+            assert isinstance(migrate_b, dict)
+            report_a = Path(str(migrate_a.get("report_path", "")))
+            report_b = Path(str(migrate_b.get("report_path", "")))
+            visible = strip_ansi(out.getvalue())
+            self.assertIn(
+                "✗ migrate failed for feature-a-1: pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+                visible,
+            )
+            self.assertIn(
+                "✗ migrate failed for feature-b-1: pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+                visible,
+            )
+            self.assertEqual(
+                visible.count(
+                    "hint: migrate failed before Alembic reached revisions because required env vars were missing (DATABASE_URL, REDIS_URL)."
+                ),
+                1,
+            )
+            self.assertNotIn("hint: backend env source:", visible)
+            self.assertIn("migrate failure logs:", visible)
+            self.assertIn(str(report_a.parent), visible)
+            self.assertIn(f"- feature-a-1: {report_a.name}", visible)
+            self.assertIn(f"- feature-b-1: {report_b.name}", visible)
+            self.assertNotIn("migrate failure log for feature-a-1:", visible)
+            self.assertNotIn("migrate failure log for feature-b-1:", visible)
+
     def test_direct_cli_migrate_all_success_prints_visible_result_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

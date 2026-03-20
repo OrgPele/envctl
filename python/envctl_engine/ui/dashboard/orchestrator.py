@@ -375,7 +375,7 @@ class DashboardOrchestrator:
         project_names = route.projects or self._project_name_list(
             self._project_names_from_state(state, cast(Any, self.runtime))
         )
-        printed = False
+        records = []
         for project_name_raw in project_names:
             project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
@@ -383,28 +383,15 @@ class DashboardOrchestrator:
             record = ActionCommandOrchestrator._migrate_result_record(project_name=project_name, action_entry=action_entry)
             if record is None:
                 continue
-            if record.status == "success":
-                print(f"✓ migrate succeeded for {project_name}")
-                printed = True
-                continue
-            if record.headline:
-                print(f"✗ migrate failed for {project_name}: {record.headline}")
-            else:
-                print(f"✗ migrate failed for {project_name}")
-            for hint in record.hint_lines:
-                print(hint)
-            if record.report_path:
-                print(f"migrate failure log for {project_name}:")
-                print(
-                    render_path_for_terminal(
-                        record.report_path,
-                        env=getattr(self.runtime, "env", {}),
-                        stream=sys.stdout,
-                        interactive_tty=True,
-                    )
-                )
-            printed = True
-        return printed
+            records.append(record)
+        if not records:
+            return False
+        ActionCommandOrchestrator._print_migrate_result_records(
+            records=records,
+            env=getattr(self.runtime, "env", {}),
+            interactive_tty=True,
+        )
+        return True
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         if route.command == "restart":
