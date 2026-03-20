@@ -175,7 +175,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
             self.assertTrue(any(event == "config.ignore.global.skipped" for event, _payload in events))
 
-    def test_save_message_reports_global_ignore_bootstrap(self) -> None:
+    def test_save_message_reports_updated_global_ignore_target(self) -> None:
         result = ConfigWizardResult(
             values=ManagedConfigValues(
                 default_mode="main",
@@ -188,7 +188,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
                 ignore_updated=True,
                 ignore_warning=None,
                 ignore_status=GlobalIgnoreStatus(
-                    code="configured_global_excludes",
+                    code="updated_existing_global_excludes",
                     updated=True,
                     scope="git_global_excludes",
                     target_path=Path("/tmp/home/.gitignore_global"),
@@ -201,7 +201,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
         message = _save_message(result)
 
         self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
-        self.assertIn("Configured Git global excludes", message)
+        self.assertIn("Updated Git global excludes at /tmp/home/.gitignore_global.", message)
 
     def test_save_message_hyperlinks_embedded_global_ignore_paths_when_enabled(self) -> None:
         excludes_path = Path("/tmp/home/.gitignore_global")
@@ -218,7 +218,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
                 ignore_updated=True,
                 ignore_warning=warning,
                 ignore_status=GlobalIgnoreStatus(
-                    code="configured_global_excludes",
+                    code="updated_existing_global_excludes",
                     updated=True,
                     scope="git_global_excludes",
                     target_path=excludes_path,
@@ -235,7 +235,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
         self.assertIn("\x1b]8;;file://", message)
         plain = strip_ansi(message)
         self.assertIn("Saved startup config: /tmp/repo/.envctl", plain)
-        self.assertIn(f"Configured Git global excludes at {excludes_path}.", plain)
+        self.assertIn(f"Updated Git global excludes at {excludes_path}.", plain)
         self.assertIn(warning, plain)
 
     def test_ensure_local_config_emits_updated_event_for_bootstrap(self) -> None:

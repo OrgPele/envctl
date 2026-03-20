@@ -1357,7 +1357,7 @@ def run_config_wizard_textual(
                 save_result = save_local_config_with_ignore_policy(
                     local_state=local_state,
                     values=self.values,
-                    update_global_ignores=True,
+                    update_global_ignores=False,
                 )
                 self._save_result = save_result
                 self.exit(ConfigWizardResult(values=self.values, save_result=save_result))

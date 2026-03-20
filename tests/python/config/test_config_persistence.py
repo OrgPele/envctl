@@ -33,6 +33,7 @@ from envctl_engine.config.persistence import (
     merge_managed_block,
     render_managed_block,
     save_local_config,
+    save_local_config_with_ignore_policy,
 )
 
 
@@ -585,6 +586,50 @@ class ConfigPersistenceTests(unittest.TestCase):
                 save_result = save_local_config(local_state=local_state, values=values)
 
             self.assertTrue((repo / ".envctl").is_file())
+            self.assertFalse(save_result.ignore_updated)
+            self.assertIsNotNone(save_result.ignore_warning)
+            assert save_result.ignore_status is not None
+            self.assertEqual(save_result.ignore_status.code, "missing_global_excludes_configuration")
+
+    def test_save_local_config_with_ignore_policy_does_not_bootstrap_missing_global_excludes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            env = self._isolated_git_env(tmpdir)
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+
+            with patch.dict(os.environ, env, clear=True):
+                save_result = save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=values,
+                    update_global_ignores=True,
+                )
+                global_excludes = subprocess.run(
+                    ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+            self.assertEqual(global_excludes.returncode, 1)
+            self.assertEqual(global_excludes.stdout.strip(), "")
             self.assertFalse(save_result.ignore_updated)
             self.assertIsNotNone(save_result.ignore_warning)
             assert save_result.ignore_status is not None
