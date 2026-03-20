@@ -467,6 +467,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Prefer `envctl commit --headless` first", codex)
         self.assertIn("fall back to the git CLI", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
+        self.assertIn("Prefer `envctl commit --headless --main` first", codex)
+        self.assertIn("fall back to the git CLI", codex)
         self.assertEqual(claude, codex)
         self.assertEqual(opencode, codex)
 
