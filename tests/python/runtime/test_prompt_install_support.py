@@ -464,6 +464,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", codex)
         self.assertIn("boundary after the last successful commit", codex)
         self.assertIn("one complete next commit message", codex)
+        self.assertIn("Prefer `envctl commit --headless` first", codex)
+        self.assertIn("fall back to the git CLI", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertIn("Prefer `envctl commit --headless --main` first", codex)
         self.assertIn("fall back to the git CLI", codex)
