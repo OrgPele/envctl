@@ -2265,20 +2265,21 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             should_continue, next_state = orchestrator._run_interactive_command("m", state, runtime)
 
         rendered = out.getvalue()
+        visible = strip_ansi(rendered)
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
-        self.assertIn("migrate failed for Main: alembic.util.exc.CommandError: migration failed", rendered)
+        self.assertIn("migrate failed for Main: alembic.util.exc.CommandError: migration failed", visible)
         self.assertEqual(
-            rendered.count("hint: envctl migrate loads backend env from backend/.env by default."),
+            visible.count("hint: envctl migrate loads backend env from backend/.env by default."),
             1,
         )
         self.assertIn(
             "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
-            strip_ansi(rendered),
+            visible,
         )
         self.assertIn(
             "migrate failure log for Main:\n/tmp/runtime/Main_migrate.txt",
-            strip_ansi(rendered),
+            visible,
         )
         self.assertIn("\x1b]8;;file://", rendered)
         self.assertNotIn("Command failed (exit 1).", rendered)
@@ -2417,6 +2418,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
     def test_project_action_failure_details_compact_multi_failure_logs_and_hints(self) -> None:
         runtime = _RuntimeStub()
+        runtime.env["ENVCTL_UI_COLOR_MODE"] = "on"
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-migrate-compact-failures",
@@ -2465,7 +2467,11 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                 state,
             )
 
-        rendered = strip_ansi(out.getvalue())
+        raw_rendered = out.getvalue()
+        self.assertIn("\x1b[1;31m✗\x1b[0m", raw_rendered)
+        self.assertIn("\x1b[1;34mfeature-a-1\x1b[0m", raw_rendered)
+        self.assertIn("\x1b[1;35mfeature-b-1\x1b[0m", raw_rendered)
+        rendered = strip_ansi(raw_rendered)
         self.assertTrue(printed)
         self.assertIn("✗ migrate failed for feature-a-1: ConnectionResetError: [Errno 54] Connection reset by peer", rendered)
         self.assertIn("✗ migrate failed for feature-b-1: ConnectionResetError: [Errno 54] Connection reset by peer", rendered)
@@ -2530,10 +2536,11 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             should_continue, next_state = orchestrator._run_interactive_command("m", state, runtime)
 
         rendered = out.getvalue()
+        visible = strip_ansi(rendered)
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-migrate-success")
-        self.assertIn("✓ migrate succeeded for feature-a-1", rendered)
-        self.assertIn("✓ migrate succeeded for feature-b-1", rendered)
+        self.assertIn("✓ migrate succeeded for feature-a-1", visible)
+        self.assertIn("✓ migrate succeeded for feature-b-1", visible)
 
     def test_successful_single_worktree_review_selects_origin_tab_before_dispatch_and_launches_after_success(self) -> None:
         runtime = _RuntimeStub()

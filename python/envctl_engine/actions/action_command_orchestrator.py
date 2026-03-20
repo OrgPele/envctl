@@ -1243,16 +1243,32 @@ class ActionCommandOrchestrator:
         failed_records = [record for record in records if record.status == "failed"]
         compact_failures = len(failed_records) > 1
         shared_hints = ActionCommandOrchestrator._shared_migrate_hint_lines(failed_records) if compact_failures else ()
-        for record in records:
+        use_color = colors_enabled(
+            env,
+            stream=sys.stdout,
+            interactive_tty=bool(interactive_tty) if interactive_tty is not None else False,
+        )
+        for index, record in enumerate(records):
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=index,
+                use_color=use_color,
+            )
             if record.status == "success":
-                print(f"✓ migrate succeeded for {record.project_name}")
+                print(f"{ActionCommandOrchestrator._render_migrate_symbol('✓', status='success', use_color=use_color)} migrate succeeded for {project_name}")
                 continue
             if record.status != "failed":
                 continue
             if record.headline:
-                print(f"✗ migrate failed for {record.project_name}: {record.headline}")
+                print(
+                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
+                    f"migrate failed for {project_name}: {record.headline}"
+                )
             else:
-                print(f"✗ migrate failed for {record.project_name}")
+                print(
+                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
+                    f"migrate failed for {project_name}"
+                )
             if compact_failures:
                 continue
             for hint in ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines):
@@ -1264,6 +1280,8 @@ class ActionCommandOrchestrator:
             env=env,
             interactive_tty=interactive_tty,
             compact=compact_failures,
+            use_color=use_color,
+            ordered_records=records,
         )
 
     @staticmethod
@@ -1298,6 +1316,8 @@ class ActionCommandOrchestrator:
         env: Mapping[str, str],
         interactive_tty: bool | None,
         compact: bool,
+        use_color: bool,
+        ordered_records: list[_MigrateResultRecord],
     ) -> None:
         report_records = [record for record in records if record.report_path]
         if not report_records:
@@ -1307,10 +1327,17 @@ class ActionCommandOrchestrator:
                 report_records,
                 env=env,
                 interactive_tty=interactive_tty,
+                use_color=use_color,
+                ordered_records=ordered_records,
             )
             return
         for record in report_records:
-            print(f"migrate failure log for {record.project_name}:")
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                use_color=use_color,
+            )
+            print(f"migrate failure log for {project_name}:")
             print(
                 render_path_for_terminal(
                     record.report_path,
@@ -1326,6 +1353,8 @@ class ActionCommandOrchestrator:
         *,
         env: Mapping[str, str],
         interactive_tty: bool | None,
+        use_color: bool,
+        ordered_records: list[_MigrateResultRecord],
     ) -> None:
         print("migrate failure logs:")
         shared_parent = ActionCommandOrchestrator._shared_report_parent(records)
@@ -1347,7 +1376,12 @@ class ActionCommandOrchestrator:
                     stream=sys.stdout,
                     interactive_tty=interactive_tty,
                 )
-                print(f"- {record.project_name}: {rendered_path}")
+                project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                    record.project_name,
+                    index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                    use_color=use_color,
+                )
+                print(f"- {project_name}: {rendered_path}")
             return
         for record in records:
             rendered_path = render_path_for_terminal(
@@ -1356,7 +1390,12 @@ class ActionCommandOrchestrator:
                 stream=sys.stdout,
                 interactive_tty=interactive_tty,
             )
-            print(f"- {record.project_name}: {rendered_path}")
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                use_color=use_color,
+            )
+            print(f"- {project_name}: {rendered_path}")
 
     @staticmethod
     def _shared_report_parent(records: list[_MigrateResultRecord]) -> str:
@@ -1373,6 +1412,28 @@ class ActionCommandOrchestrator:
         if len(parents) != 1:
             return ""
         return parents[0]
+
+    @staticmethod
+    def _record_index(records: list[_MigrateResultRecord], project_name: str) -> int:
+        for index, record in enumerate(records):
+            if record.project_name == project_name:
+                return index
+        return 0
+
+    @staticmethod
+    def _render_migrate_symbol(symbol: str, *, status: str, use_color: bool) -> str:
+        if not use_color:
+            return symbol
+        color = "32" if status == "success" else "31"
+        return f"\033[1;{color}m{symbol}\033[0m"
+
+    @staticmethod
+    def _render_migrate_project_name(project_name: str, *, index: int, use_color: bool) -> str:
+        if not use_color:
+            return project_name
+        palette = ("34", "35", "36", "32", "33")
+        color = palette[index % len(palette)]
+        return f"\033[1;{color}m{project_name}\033[0m"
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:

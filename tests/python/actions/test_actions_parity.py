@@ -154,7 +154,10 @@ class ActionsParityTests(unittest.TestCase):
             tree_root.mkdir(parents=True, exist_ok=True)
             (tree_root / "tests").mkdir(parents=True, exist_ok=True)
 
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
             fake_runner = _FakeRunner(
                 returncode=0,
                 stdout="..\n----------------------------------------------------------------------\nRan 2 tests in 0.003s\n\nOK\n",
@@ -1747,7 +1750,10 @@ class ActionsParityTests(unittest.TestCase):
             (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
             (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
 
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
             self._save_state(
                 engine,
                 RunState(
@@ -1809,7 +1815,10 @@ class ActionsParityTests(unittest.TestCase):
             (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
             (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
 
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
             self._save_state(
                 engine,
                 RunState(
@@ -1880,7 +1889,12 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
-            visible = strip_ansi(out.getvalue())
+            rendered = out.getvalue()
+            self.assertIn("\x1b[1;32m✓\x1b[0m", rendered)
+            self.assertIn("\x1b[1;31m✗\x1b[0m", rendered)
+            self.assertIn("\x1b[1;34mfeature-a-1\x1b[0m", rendered)
+            self.assertIn("\x1b[1;35mfeature-b-1\x1b[0m", rendered)
+            visible = strip_ansi(rendered)
             self.assertLess(
                 visible.index("✓ migrate succeeded for feature-a-1"),
                 visible.index("✗ migrate failed for feature-b-1: alembic.util.exc.CommandError: feature-b failed"),
