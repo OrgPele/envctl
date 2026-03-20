@@ -264,8 +264,18 @@ class ActionCommandOrchestrator:
                     state="start",
                     message=start_status,
                 )
+            restore_spinner_bridge = self._noop_restore
+            if action_spinner_enabled:
+                restore_spinner_bridge = self._install_action_spinner_status_bridge(
+                    command=route.command,
+                    op_id=op_id,
+                    active_spinner=active_spinner,
+                )
             try:
-                code = handler(route, targets)
+                try:
+                    code = handler(route, targets)
+                finally:
+                    restore_spinner_bridge()
             except KeyboardInterrupt:
                 if action_spinner_enabled:
                     interrupted = f"{route.command} interrupted"
@@ -512,6 +522,9 @@ class ActionCommandOrchestrator:
             interactive_print_failures=False,
             on_success=self._project_action_success_handler("migrate", route.mode, interactive_command),
             on_failure=self._project_action_failure_handler("migrate", route.mode),
+            failure_status_formatter=lambda context, error: (
+                f"migrate failed for {context.name}: {self._migrate_failure_headline(error)}"
+            ),
         )
 
     def _no_target_selected_message(self, route: Route) -> str:
@@ -931,6 +944,64 @@ class ActionCommandOrchestrator:
             return
         rt.emit("ui.status", message=text)
 
+    def _install_action_spinner_status_bridge(
+        self,
+        *,
+        command: str,
+        op_id: str,
+        active_spinner: Any,
+    ) -> Callable[[], None]:
+        rt = self.runtime.raw_runtime
+
+        def update_spinner(message: object) -> None:
+            text = str(message).strip()
+            if not text:
+                return
+            active_spinner.update(text)
+            self.runtime.emit(
+                "ui.spinner.lifecycle",
+                component="action.command",
+                command=command,
+                op_id=op_id,
+                state="update",
+                message=text,
+            )
+
+        add_listener = getattr(rt, "add_emit_listener", None)
+        if callable(add_listener):
+
+            def listener(event_name: str, payload: Mapping[str, object]) -> None:
+                if event_name != "ui.status":
+                    return
+                update_spinner(payload.get("message", ""))
+
+            remove = add_listener(listener)
+            if callable(remove):
+                return remove
+            return self._noop_restore
+
+        emit = getattr(rt, "_emit", None)
+        if not callable(emit):
+            return self._noop_restore
+
+        def bridged_emit(event_name: str, **payload: object) -> None:
+            emit(event_name, **payload)
+            if event_name == "ui.status":
+                update_spinner(payload.get("message", ""))
+
+        try:
+            setattr(rt, "_emit", bridged_emit)
+        except Exception:
+            return self._noop_restore
+
+        def restore() -> None:
+            try:
+                setattr(rt, "_emit", emit)
+            except Exception:
+                return
+
+        return restore
+
     def _project_action_success_handler(
         self,
         command_name: str,
@@ -1021,6 +1092,10 @@ class ActionCommandOrchestrator:
                 command_name=command_name,
                 output=clean_output,
             )
+            if command_name == "migrate":
+                headline = self._migrate_failure_headline(clean_output)
+                if headline:
+                    entry["headline"] = headline
             entry["summary"] = summary_text
             entry["report_path"] = str(report_path)
         project_metadata[command_name] = entry
@@ -1641,16 +1716,50 @@ class ActionCommandOrchestrator:
         lines = self._format_summary_error_lines(error_output)
         if command_name != "migrate":
             return lines
+        headline = self._migrate_failure_headline_from_lines(lines)
         hint_lines = self._migrate_failure_hint_lines(error_output)
         env_lines = self._migrate_env_source_hint_lines(migrate_env_metadata)
-        merged = list(lines)
+        merged: list[str] = []
+        if headline:
+            merged.append(headline)
         seen = set(merged)
+        for line in lines:
+            if line in seen:
+                continue
+            merged.append(line)
+            seen.add(line)
         for hint in [*hint_lines, *env_lines]:
             if hint in seen:
                 continue
             merged.append(hint)
             seen.add(hint)
         return merged
+
+    @staticmethod
+    def _migrate_failure_headline(error_output: str) -> str:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(error_output)
+        headline = ActionCommandOrchestrator._migrate_failure_headline_from_lines(lines)
+        return headline or "Command failed."
+
+    @staticmethod
+    def _migrate_failure_headline_from_lines(lines: list[str]) -> str:
+        if not lines:
+            return ""
+        has_exception = any(ActionCommandOrchestrator._is_exception_start(line) for line in lines)
+        for line in lines:
+            if ActionCommandOrchestrator._is_exception_start(line):
+                return line
+        for line in lines:
+            if line == "Traceback (most recent call last):":
+                continue
+            if has_exception and line.startswith('File "'):
+                continue
+            if ActionCommandOrchestrator._is_captured_output_header(line):
+                continue
+            if ActionCommandOrchestrator._is_exception_context_marker(line):
+                continue
+            return line
+        return lines[0]
 
     @staticmethod
     def _migrate_failure_hint_lines(error_output: str) -> list[str]:
@@ -1975,6 +2084,10 @@ class ActionCommandOrchestrator:
         if len(line) >= 40 and sum(1 for char in line if char == " ") > len(line) * 0.55 and box_count >= 1:
             return True
         return False
+
+    @staticmethod
+    def _noop_restore() -> None:
+        return None
 
     def _print_test_suite_overview(
         self,

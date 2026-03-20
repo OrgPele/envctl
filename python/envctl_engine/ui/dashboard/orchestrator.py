@@ -7,6 +7,7 @@ import subprocess
 import sys
 from typing import Any, Literal, cast
 
+from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
 from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
@@ -188,7 +189,13 @@ class DashboardOrchestrator:
         refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
         if code in {2, 130} and refreshed is None:
             refreshed = state
-        if code not in {0, 2, 130}:
+        printed_interactive_result = False
+        if route.command == "migrate":
+            printed_interactive_result = self._print_project_action_failure_details(
+                route,
+                state if refreshed is None else refreshed,
+            )
+        if code not in {0, 2, 130} and not printed_interactive_result:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
         next_state = refreshed if refreshed is not None else state
         if code == 0 and route.command == "review":
@@ -304,6 +311,8 @@ class DashboardOrchestrator:
         return str(short_path) if short_path.exists() else summary_path
 
     def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
+        if route.command == "migrate":
+            return self._print_migrate_result_details(route, state)
         metadata = state.metadata.get("project_action_reports")
         if not isinstance(metadata, dict):
             return False
@@ -355,6 +364,57 @@ class DashboardOrchestrator:
                     )
                 )
                 printed = True
+        return printed
+
+    def _print_migrate_result_details(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_action_reports")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        printed = False
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
+            project_entry = metadata.get(project_name)
+            if not isinstance(project_entry, dict):
+                continue
+            action_entry = project_entry.get("migrate")
+            if not isinstance(action_entry, dict):
+                continue
+            status = str(action_entry.get("status", "")).strip().lower()
+            if status == "success":
+                print(f"✓ migrate succeeded for {project_name}")
+                printed = True
+                continue
+            if status != "failed":
+                continue
+            summary = str(action_entry.get("summary", "")).strip()
+            headline = str(action_entry.get("headline", "")).strip()
+            if not headline and summary:
+                headline = ActionCommandOrchestrator._migrate_failure_headline(summary)
+            if headline:
+                print(f"✗ migrate failed for {project_name}: {headline}")
+            else:
+                print(f"✗ migrate failed for {project_name}")
+            seen_hints: set[str] = set()
+            for line in [item.strip() for item in summary.splitlines() if item.strip()]:
+                if not line.lower().startswith("hint:"):
+                    continue
+                if line in seen_hints:
+                    continue
+                seen_hints.add(line)
+                print(line)
+            report_path = str(action_entry.get("report_path", "")).strip()
+            if report_path:
+                print(f"migrate failure log for {project_name}:")
+                print(
+                    render_path_for_terminal(
+                        report_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
+            printed = True
         return printed
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:

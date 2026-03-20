@@ -68,6 +68,7 @@ def execute_targeted_action(
     emit_success_output: bool = True,
     on_success: Callable[[ActionTargetContext, Any], None] | None = None,
     on_failure: Callable[[ActionTargetContext, str], None] | None = None,
+    failure_status_formatter: Callable[[ActionTargetContext, str], str] | None = None,
 ) -> int:
     failures = 0
     for context in build_action_target_contexts(targets):
@@ -81,7 +82,10 @@ def execute_targeted_action(
             if not interactive_command or interactive_print_failures:
                 printer(message)
             if interactive_command:
-                emit_status(f"{command_name} failed for {context.name}: {raw_error}")
+                if failure_status_formatter is not None:
+                    emit_status(failure_status_formatter(context, raw_error))
+                else:
+                    emit_status(f"{command_name} failed for {context.name}: {raw_error}")
             failures += 1
             continue
 
@@ -99,7 +103,10 @@ def execute_targeted_action(
             if not interactive_command or interactive_print_failures:
                 printer(message)
             if interactive_command:
-                emit_status(f"{command_name} failed for {context.name}: {error}")
+                if failure_status_formatter is not None:
+                    emit_status(failure_status_formatter(context, error))
+                else:
+                    emit_status(f"{command_name} failed for {context.name}: {error}")
             failures += 1
             continue
 

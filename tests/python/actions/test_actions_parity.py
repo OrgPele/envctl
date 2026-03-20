@@ -1711,6 +1711,13 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIsInstance(migrate_entry, dict)
             assert isinstance(migrate_entry, dict)
             summary = str(migrate_entry.get("summary", ""))
+            self.assertEqual(
+                str(migrate_entry.get("headline", "")),
+                "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+            )
+            self.assertTrue(
+                summary.startswith("pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings")
+            )
             self.assertIn("ValidationError", summary)
             self.assertIn("hint: envctl migrate loads backend env from backend/.env by default.", summary)
             self.assertIn("BACKEND_ENV_FILE_OVERRIDE", summary)
@@ -3778,6 +3785,24 @@ class ActionsParityTests(unittest.TestCase):
         )
         self.assertIn("During handling of the above exception, another exception occurred:", rendered)
         self.assertIn("RuntimeError: wrapper failed", rendered)
+
+    def test_migrate_failure_summary_prefers_actionable_exception_headline(self) -> None:
+        orchestrator = ActionCommandOrchestrator(SimpleNamespace())
+
+        lines = orchestrator._project_action_failure_summary_lines(  # noqa: SLF001
+            command_name="migrate",
+            error_output="\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>',
+                    "    from app.core.config import settings",
+                    "alembic.util.exc.CommandError: migration failed",
+                ]
+            ),
+        )
+
+        self.assertEqual(lines[0], "alembic.util.exc.CommandError: migration failed")
+        self.assertIn("Traceback (most recent call last):", lines[1:])
 
     def test_test_action_writes_passed_summary_with_no_failed_tests_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
