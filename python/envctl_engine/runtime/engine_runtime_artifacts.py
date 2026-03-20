@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.runtime.runtime_readiness import (
+    FEATURE_MATRIX_RELATIVE_PATH,
     GAP_REPORT_RELATIVE_PATH,
     build_runtime_readiness_report,
     evaluate_runtime_readiness,
@@ -110,6 +112,9 @@ def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> 
     report = {
         "passed": None,
         "pending": True,
+        "feature_matrix": {
+            "path": str(runtime.config.base_dir / FEATURE_MATRIX_RELATIVE_PATH),
+        },
         "gap_report": {
             "path": str(runtime.config.base_dir / GAP_REPORT_RELATIVE_PATH),
         },
@@ -156,23 +161,35 @@ def _start_background_runtime_readiness_report(runtime: Any, *, run_dir: Path) -
 def _cached_runtime_readiness_payload(runtime: Any) -> str | None:
     report_path = runtime.runtime_root / "runtime_readiness_report.json"
     gap_report_path = runtime.config.base_dir / GAP_REPORT_RELATIVE_PATH
-    if not report_path.is_file() or not gap_report_path.is_file():
+    matrix_path = runtime.config.base_dir / FEATURE_MATRIX_RELATIVE_PATH
+    if not report_path.is_file() or not gap_report_path.is_file() or not matrix_path.is_file():
         return None
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         gap_payload = json.loads(gap_report_path.read_text(encoding="utf-8"))
+        matrix_payload = json.loads(matrix_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(report, dict) or not isinstance(gap_payload, dict):
+    if not isinstance(report, dict) or not isinstance(gap_payload, dict) or not isinstance(matrix_payload, dict):
         return None
     if bool(report.get("pending")):
         return None
     report_gap = report.get("gap_report", {})
+    report_matrix = report.get("feature_matrix", {})
     if not isinstance(report_gap, dict):
+        return None
+    if not isinstance(report_matrix, dict):
         return None
     if str(report_gap.get("path", "")).strip() != str(gap_report_path):
         return None
     if str(report_gap.get("generated_at", "")).strip() != str(gap_payload.get("generated_at", "")).strip():
+        return None
+    if str(report_matrix.get("path", "")).strip() != str(matrix_path):
+        return None
+    if str(report_matrix.get("generated_at", "")).strip() != str(matrix_payload.get("generated_at", "")).strip():
+        return None
+    matrix_text = json.dumps(matrix_payload, indent=2, sort_keys=True) + "\n"
+    if str(report_matrix.get("sha256", "")).strip() != hashlib.sha256(matrix_text.encode("utf-8")).hexdigest():
         return None
     return json.dumps(report, indent=2, sort_keys=True)
 

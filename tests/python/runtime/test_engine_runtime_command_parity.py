@@ -92,6 +92,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("synthetic_state_detected:", output)
         self.assertIn("runtime_readiness_status:", output)
         self.assertIn("runtime_gap_report_path:", output)
+        self.assertIn("runtime_feature_matrix_path:", output)
         self.assertIn("runtime_gap_blocking_count:", output)
         events_path = runtime.runtime_root / "events.jsonl"
         self.assertTrue(events_path.is_file())
@@ -134,6 +135,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(doctor_code, 0)
         self.assertIn("\x1b]8;;file://", doctor_out.getvalue())
         self.assertIn("runtime_gap_report_path:", strip_ansi(doctor_out.getvalue()))
+        self.assertIn("runtime_feature_matrix_path:", strip_ansi(doctor_out.getvalue()))
 
     def test_doctor_supports_json_output(self) -> None:
         runtime = self._runtime()

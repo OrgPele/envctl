@@ -283,7 +283,7 @@ The runtime also persists:
 
 These are part of the migration/cutover governance layer.
 
-Even if you are working on pure Python behavior, these artifacts may still need to stay consistent because doctor and release gates read them.
+Even if you are working on pure Python behavior, these artifacts may still need to stay consistent because doctor and release gates read them, including the embedded runtime feature matrix provenance used to prove the gap report is still current.
 
 ## Adding a New Artifact
 

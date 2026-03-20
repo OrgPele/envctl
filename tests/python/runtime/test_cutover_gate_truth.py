@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -55,11 +56,22 @@ class CutoverGateTruthTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        matrix_payload = {
+            "version": 1,
+            "generated_at": self._fresh_timestamp(),
+            "summary": {"feature_count": 0},
+            "features": [],
+        }
+        matrix_rendered = json.dumps(matrix_payload, indent=2, sort_keys=True) + "\n"
+        matrix_path = repo / "contracts" / "runtime_feature_matrix.json"
+        matrix_path.write_text(matrix_rendered, encoding="utf-8")
         gap_report = repo / "contracts" / "python_runtime_gap_report.json"
         gap_report.write_text(
             json.dumps(
                 {
                     "generated_at": self._fresh_timestamp(z_suffix=True),
+                    "matrix_generated_at": matrix_payload["generated_at"],
+                    "matrix_sha256": hashlib.sha256(matrix_rendered.encode("utf-8")).hexdigest(),
                     "summary": {
                         "gap_count": blocking_gaps,
                         "high_or_medium_gap_count": blocking_gaps,
@@ -79,6 +91,7 @@ class CutoverGateTruthTests(unittest.TestCase):
                 "add",
                 "python/envctl_engine/__init__.py",
                 "tests/python/test_stub.py",
+                "contracts/runtime_feature_matrix.json",
                 "contracts/python_engine_parity_manifest.json",
                 "contracts/python_runtime_gap_report.json",
             ],

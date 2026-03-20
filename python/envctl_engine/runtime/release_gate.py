@@ -20,6 +20,7 @@ DEFAULT_REQUIRED_PATHS: tuple[str, ...] = (
     "python/envctl_engine",
     "tests/python",
     "contracts/python_engine_parity_manifest.json",
+    "contracts/runtime_feature_matrix.json",
     "contracts/python_runtime_gap_report.json",
 )
 
