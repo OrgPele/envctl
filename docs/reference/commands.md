@@ -268,6 +268,7 @@ Optional dashboard review-tab launch:
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- in that queued PR follow-up and in `finalize_task`, the intended PR behavior is open/edit the PR title/body, not post a PR comment or PR review comment unless the user explicitly asks for one
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `/prompts:finalize_task` for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell

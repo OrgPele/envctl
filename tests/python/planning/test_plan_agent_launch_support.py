@@ -462,6 +462,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _finalization_instruction_text()),
             ],
         )
+        self.assertIn("Do not post a PR comment or PR review comment", _first_cycle_completion_instruction_text())
+        self.assertIn("update the PR title/body instead", _first_cycle_completion_instruction_text())
 
     def test_build_plan_agent_workflow_for_three_cycles_uses_commit_push_middle_round(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)

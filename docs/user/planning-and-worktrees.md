@@ -89,6 +89,7 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` keeps the current one-shot launch behavior
 - `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- that PR step is intended to open the PR or edit its title/body, not to post a PR comment or PR review comment unless the user explicitly asks for one
 - `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `/prompts:finalize_task` for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`

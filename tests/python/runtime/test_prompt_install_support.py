@@ -464,7 +464,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", codex)
         self.assertIn("boundary after the last successful commit", codex)
         self.assertIn("one complete next commit message", codex)
-        self.assertIn("Prefer `envctl commit --headless` first", codex)
+        self.assertIn("Prefer `envctl commit --headless --main` first", codex)
         self.assertIn("fall back to the git CLI", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertIn("Prefer `envctl commit --headless --main` first", codex)
@@ -485,6 +485,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Push the branch.", finalize_prompt.body)
         self.assertIn("Open the PR if none exists yet, or update the existing PR.", finalize_prompt.body)
         self.assertIn("PR title and body/message are finalized to a high standard", finalize_prompt.body)
+        self.assertIn("Do not add a PR comment or PR review comment", finalize_prompt.body)
+        self.assertIn("Do not post PR comments or PR review comments unless the user explicitly asks for them.", finalize_prompt.body)
 
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)

@@ -46,6 +46,8 @@ Current built-in presets:
 
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
+`finalize_task` is the PR-finalization preset in the queued Codex workflow. Its intended PR behavior is to open the PR or edit its title/body; it should not post a PR comment or PR review comment unless the user explicitly asks for that.
+
 Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.
 
 Dashboard review follow-up:
@@ -97,6 +99,7 @@ Codex-only cycle mode:
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `/prompts:finalize_task`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- the queued PR follow-up is intended to open the PR or edit its title/body, not to post a PR comment or PR review comment unless the user explicitly asks for one
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR follow-up, use commit/push-only follow-ups in the middle, and reserve `/prompts:finalize_task` for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set

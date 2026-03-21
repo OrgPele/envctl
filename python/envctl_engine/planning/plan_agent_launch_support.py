@@ -165,7 +165,11 @@ def _finalization_instruction_text() -> str:
 
 
 def _first_cycle_completion_instruction_text() -> str:
-    return "When the current implementation pass finishes, commit the work, push the branch, and open or update the PR."
+    return (
+        "When the current implementation pass finishes, commit the work, push the branch, and open "
+        "or update the PR. Do not post a PR comment or PR review comment unless the user explicitly "
+        "asks for that; update the PR title/body instead."
+    )
 
 
 def _intermediate_cycle_completion_instruction_text() -> str:

@@ -16,12 +16,13 @@ $ARGUMENTS
 4. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
 5. Commit the work.
 6. Push the branch.
-7. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks.
+7. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks. Do not add a PR comment or PR review comment as part of this flow unless the user explicitly asks for that; update the PR title/body instead.
 
 ## Non-negotiables
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.
 - Do not claim success without actually running `envctl test --project <current-worktree-name>`.
 - If validation fails and you cannot resolve it safely, stop before commit/push/PR and report the blocker clearly.
+- Do not post PR comments or PR review comments unless the user explicitly asks for them.
 - Keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message.
 - Preserve repo conventions and avoid unrelated cleanup.
 
