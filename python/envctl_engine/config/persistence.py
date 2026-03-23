@@ -18,7 +18,6 @@ from envctl_engine.config import (
 from envctl_engine.config.git_global_ignore import (
     GlobalIgnoreStatus,
     _configured_global_excludes_path,
-    configure_envctl_global_ignores,
     ensure_envctl_global_ignores,
 )
 from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
@@ -596,13 +595,26 @@ def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) 
                 warning=lookup_warning,
             )
         if current_path is None:
-            return configure_envctl_global_ignores(base_dir)
+            return ensure_envctl_global_ignores(base_dir)
     return ensure_envctl_global_ignores(base_dir)
 
 
 def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
     status = ensure_global_ignore_status(base_dir)
     return status.updated, status.warning
+
+
+def ignore_status_summary(status: GlobalIgnoreStatus | None) -> str | None:
+    if status is None:
+        return None
+    target = f" at {status.target_path}" if status.target_path is not None else ""
+    if status.code == "updated_existing_global_excludes":
+        return f"Updated Git global excludes{target}."
+    if status.code == "already_present":
+        return f"Git global excludes already include envctl local artifacts{target}."
+    if status.code == "configured_global_excludes":
+        return f"Configured Git global excludes{target}."
+    return None
 
 
 def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:

@@ -193,6 +193,27 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("global excludes", output.lower())
             self.assertNotIn(".gitignore on save", output)
 
+    def test_config_plain_output_reports_updated_global_ignore_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
+            runtime = self._runtime(repo, runtime_root)
+            runtime.env.update(env)
+
+            buffer = io.StringIO()
+            with patch.dict(os.environ, env, clear=True):
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(parse_route(["config", "--set", "ENVCTL_DEFAULT_MODE=trees"], env={}))
+
+            self.assertEqual(code, 0)
+            output = buffer.getvalue()
+            self.assertIn("Saved startup config:", output)
+            self.assertIn(f"Updated Git global excludes at {excludes_path}.", output)
+
     def test_config_plain_output_hyperlinks_saved_path_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

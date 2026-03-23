@@ -7,6 +7,7 @@ from typing import Any
 
 from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import (
+    ignore_status_summary,
     managed_values_from_local_state,
     managed_values_from_payload,
     managed_values_to_payload,
@@ -88,6 +89,16 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
         print("Saved startup config:")
         print(render_path_for_terminal(save_result.path, env=getattr(runtime, "env", {}), stream=sys.stdout))
         print("Config saved. Restart required for running services to adopt changes.")
+        status_message = ignore_status_summary(save_result.ignore_status)
+        if status_message:
+            print(
+                render_paths_in_terminal_text(
+                    status_message,
+                    paths=local_paths_in_text(status_message),
+                    env=getattr(runtime, "env", {}),
+                    stream=sys.stdout,
+                )
+            )
         if save_result.ignore_warning:
             print(
                 render_paths_in_terminal_text(
