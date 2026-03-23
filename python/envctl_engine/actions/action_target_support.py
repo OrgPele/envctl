@@ -68,6 +68,9 @@ def execute_targeted_action(
     emit_success_output: bool = True,
     on_success: Callable[[ActionTargetContext, Any], None] | None = None,
     on_failure: Callable[[ActionTargetContext, str], None] | None = None,
+    failure_status_formatter: Callable[[ActionTargetContext, str], str] | None = None,
+    print_noninteractive_failures: bool = True,
+    print_noninteractive_successes: bool = True,
 ) -> int:
     failures = 0
     for context in build_action_target_contexts(targets):
@@ -78,10 +81,13 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {raw_error}"
             if on_failure is not None:
                 on_failure(context, raw_error)
-            if not interactive_command or interactive_print_failures:
+            if (not interactive_command and print_noninteractive_failures) or (interactive_command and interactive_print_failures):
                 printer(message)
             if interactive_command:
-                emit_status(f"{command_name} failed for {context.name}: {raw_error}")
+                if failure_status_formatter is not None:
+                    emit_status(failure_status_formatter(context, raw_error))
+                else:
+                    emit_status(f"{command_name} failed for {context.name}: {raw_error}")
             failures += 1
             continue
 
@@ -96,10 +102,13 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {error}"
             if on_failure is not None:
                 on_failure(context, error)
-            if not interactive_command or interactive_print_failures:
+            if (not interactive_command and print_noninteractive_failures) or (interactive_command and interactive_print_failures):
                 printer(message)
             if interactive_command:
-                emit_status(f"{command_name} failed for {context.name}: {error}")
+                if failure_status_formatter is not None:
+                    emit_status(failure_status_formatter(context, error))
+                else:
+                    emit_status(f"{command_name} failed for {context.name}: {error}")
             failures += 1
             continue
 
@@ -107,7 +116,7 @@ def execute_targeted_action(
             emit_action_output(completed.stdout, emit_status=emit_status, printer=printer)
         if on_success is not None:
             on_success(context, completed)
-        if not interactive_command:
+        if not interactive_command and print_noninteractive_successes:
             printer(f"{command_name} action succeeded for {context.name}.")
         emit_status(f"{command_name} succeeded for {context.name}")
 

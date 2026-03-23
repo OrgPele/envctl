@@ -64,6 +64,40 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertEqual(printed, [])
         self.assertIn("migrate failed for Main: boom", emitted)
 
+    def test_execute_targeted_action_uses_bounded_interactive_failure_status_formatter_for_migrate(self) -> None:
+        target = _Target(name="Main", root="/tmp/main")
+        printed: list[str] = []
+        emitted: list[str] = []
+        raw_error = (
+            "Traceback (most recent call last):\n"
+            '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>\n'
+            "    from app.core.config import settings\n"
+            "alembic.util.exc.CommandError: migration failed"
+        )
+
+        code = execute_targeted_action(
+            targets=[target],
+            command_name="migrate",
+            interactive_command=True,
+            resolve_command=lambda _context: ActionCommandResolution(command=["sh", "-lc", "exit 1"], cwd=Path("/tmp")),
+            build_env=lambda _context: {},
+            process_run=lambda _command, _cwd, _env: _Completed(returncode=1, stderr=raw_error),
+            emit_status=emitted.append,
+            printer=printed.append,
+            interactive_print_failures=False,
+            failure_status_formatter=lambda context, _error: (
+                f"migrate failed for {context.name}: alembic.util.exc.CommandError: migration failed"
+            ),
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(printed, [])
+        self.assertIn(
+            "migrate failed for Main: alembic.util.exc.CommandError: migration failed",
+            emitted,
+        )
+        self.assertFalse(any("Traceback (most recent call last):" in item for item in emitted))
+
     def test_execute_targeted_action_prints_interactive_failure_for_project_actions(self) -> None:
         target = _Target(name="Main", root="/tmp/main")
         printed: list[str] = []

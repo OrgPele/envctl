@@ -25,6 +25,23 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class CliPackagingTests(unittest.TestCase):
+    _ISOLATED_RUNTIME_ENV_VARS = (
+        "ENVCTL_CONFIG_FILE",
+        "ENVCTL_DEFAULT_MODE",
+        "ENVCTL_FORCE_BATCH",
+        "ENVCTL_ROOT_DIR",
+        "ENVCTL_USE_REPO_WRAPPER",
+        "ENVCTL_WRAPPER_ORIGINAL_ARGV0",
+        "ENVCTL_WRAPPER_PYTHON_REEXEC",
+        "PYTHONPATH",
+        "RUN_ENGINE_PATH",
+        "RUN_LAUNCHER_CONTEXT",
+        "RUN_LAUNCHER_NAME",
+        "RUN_REPO_ROOT",
+        "RUN_SH_RUNTIME_DIR",
+        "VIRTUAL_ENV",
+    )
+
     @staticmethod
     def _package_version() -> str:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -60,6 +77,13 @@ class CliPackagingTests(unittest.TestCase):
             if cls._interpreter_can_import(candidate, "setuptools") and cls._interpreter_can_import(candidate, "build"):
                 return candidate
         raise unittest.SkipTest("No available interpreter exposes both setuptools and build for packaging smoke")
+
+    @classmethod
+    def _isolated_runtime_env(cls) -> dict[str, str]:
+        env = dict(os.environ)
+        for key in cls._ISOLATED_RUNTIME_ENV_VARS:
+            env.pop(key, None)
+        return env
 
     def test_repo_wrapper_detects_shadowed_installed_envctl(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -561,6 +585,40 @@ class CliPackagingTests(unittest.TestCase):
         self.assertIn("pipx reinstall envctl", result.stderr)
         self.assertNotIn("python/requirements.txt", result.stderr)
 
+    def test_regular_install_repo_arg_overrides_inherited_run_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            requested_repo = tmp_path / "requested-repo"
+            inherited_repo = tmp_path / "inherited-repo"
+            for repo in (requested_repo, inherited_repo):
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (requested_repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self._installed_env(editable=False) as env:
+                env_map = dict(env["env"])
+                env_map["RUN_REPO_ROOT"] = str(inherited_repo)
+                result = subprocess.run(
+                    [str(env["script"]), "--repo", str(requested_repo), "start"],
+                    capture_output=True,
+                    text=True,
+                    env=env_map,
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertNotIn("Missing repo-local .envctl", result.stderr)
+
     def test_regular_install_without_dependencies_ignores_inherited_source_checkout_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -786,19 +844,7 @@ class CliPackagingTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            env = dict(os.environ)
-            for key in (
-                "ENVCTL_ROOT_DIR",
-                "ENVCTL_USE_REPO_WRAPPER",
-                "ENVCTL_WRAPPER_ORIGINAL_ARGV0",
-                "PYTHONPATH",
-                "RUN_ENGINE_PATH",
-                "RUN_LAUNCHER_CONTEXT",
-                "RUN_LAUNCHER_NAME",
-                "RUN_REPO_ROOT",
-                "VIRTUAL_ENV",
-            ):
-                env.pop(key, None)
+            env = self._isolated_runtime_env()
             install_cmd = [
                 str(python_bin),
                 "-m",
@@ -834,13 +880,10 @@ class CliPackagingTests(unittest.TestCase):
             subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, capture_output=True, text=True)
             python_bin = venv_dir / "bin" / "python"
             env = {
-                **os.environ,
+                **self._isolated_runtime_env(),
                 "PATH": os.environ.get("PATH", ""),
                 "HOME": str(tmp_root / "home"),
             }
-            env.pop("ENVCTL_ROOT_DIR", None)
-            env.pop("PYTHONPATH", None)
-            env.pop("VIRTUAL_ENV", None)
             yield {
                 "tmpdir": tmpdir,
                 "env": env,

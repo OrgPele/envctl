@@ -31,7 +31,7 @@ The objective of this iteration is explicit confirmation that no implementation 
 - Generated contract evidence confirms the task is complete:
   - `contracts/runtime_feature_matrix.json` reports `47` features, all `verified_python`
   - `contracts/python_runtime_gap_report.json` reports `gap_count: 0` and `high_or_medium_gap_count: 0`
-  - `todo/plans/refactoring/python-runtime-gap-closure.md` renders “No currently reported gaps” for Waves A through E
+  - `todo/plans/refactoring/python-runtime-gap-closure.md` renders "No currently reported gaps" for Waves A through E
 
 ## Acceptance criteria (requirement-by-requirement)
 1. The repository continues to show no remaining Python runtime gaps:

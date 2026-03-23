@@ -186,6 +186,39 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("command"), "start")
             self.assertTrue(seen.get("config_exists"))
 
+    def test_explicit_repo_arg_overrides_inherited_run_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            requested_repo = tmp_path / "requested-repo"
+            inherited_repo = tmp_path / "inherited-repo"
+            runtime = tmp_path / "runtime"
+            for repo in (requested_repo, inherited_repo):
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (requested_repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, config):  # noqa: ANN001
+                seen["mode"] = route.mode
+                seen["base_dir"] = config.base_dir
+                seen["config_exists"] = config.config_file_exists
+                return 0
+
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)):
+                code = cli.run(
+                    ["--repo", str(requested_repo), "start"],
+                    env={
+                        "RUN_REPO_ROOT": str(inherited_repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("mode"), "trees")
+            self.assertEqual(seen.get("base_dir"), requested_repo.resolve())
+            self.assertTrue(seen.get("config_exists"))
+
     def test_missing_envctl_allows_headless_config_set_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

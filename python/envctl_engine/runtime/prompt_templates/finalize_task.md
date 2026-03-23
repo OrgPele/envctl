@@ -16,7 +16,7 @@ $ARGUMENTS
 4. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
 5. Commit the work.
 6. Push the branch.
-7. Open the PR if none exists yet, or update the existing PR.
+7. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks.
 
 ## Non-negotiables
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.

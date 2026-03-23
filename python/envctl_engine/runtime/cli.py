@@ -111,7 +111,9 @@ def run(
                     print(rendered, end="")
                 return 0
             base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
-            if repo_arg is not None or _is_repo_root(base_dir):
+            if repo_arg is not None and _is_repo_root(base_dir):
+                env_map["RUN_REPO_ROOT"] = str(base_dir)
+            elif "RUN_REPO_ROOT" not in env_map and _is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
             route = _parse_initial_route(argv, env_map)
         except RouteError as exc:
@@ -267,8 +269,8 @@ def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
 
 
 def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Path:
-    cwd = Path.cwd().resolve()
     if repo_arg is not None:
+        cwd = Path.cwd().resolve()
         candidate = Path(repo_arg).expanduser()
         if not candidate.is_absolute():
             candidate = cwd / candidate
@@ -279,6 +281,7 @@ def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Pa
         return repo_root
     if env_map.get("RUN_REPO_ROOT"):
         return Path(str(env_map["RUN_REPO_ROOT"])).expanduser().resolve()
+    cwd = Path.cwd().resolve()
     repo_root = _find_repo_root(cwd)
     if repo_root is not None:
         return repo_root
