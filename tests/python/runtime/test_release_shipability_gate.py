@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 import json
@@ -24,6 +25,7 @@ from envctl_engine.runtime.release_gate import (
 class ReleaseShipabilityGateTests(unittest.TestCase):
     _PARITY_MANIFEST_PATH = "contracts/python_engine_parity_manifest.json"
     _GAP_REPORT_PATH = "contracts/python_runtime_gap_report.json"
+    _MATRIX_PATH = "contracts/runtime_feature_matrix.json"
 
     @staticmethod
     def _iso_timestamp(*, days_ago: int = 0, utc_suffix: str = "+00:00") -> str:
@@ -104,6 +106,25 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_runtime_feature_matrix(
+        self,
+        repo: Path,
+        *,
+        generated_at: str | None = None,
+        features: list[dict[str, object]] | None = None,
+    ) -> tuple[str, str]:
+        matrix_path = repo / self._MATRIX_PATH
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "generated_at": generated_at or self._iso_timestamp(),
+            "summary": {"feature_count": len(features or [])},
+            "features": list(features or []),
+        }
+        rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        matrix_path.write_text(rendered, encoding="utf-8")
+        return str(payload["generated_at"]), rendered
+
     def _write_gap_report(
         self,
         repo: Path,
@@ -112,6 +133,8 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         medium: int = 0,
         low: int = 0,
         generated_at: str | None = None,
+        matrix_generated_at: str | None = None,
+        matrix_sha256: str | None = None,
     ) -> None:
         gap_report = repo / self._GAP_REPORT_PATH
         gap_report.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +143,8 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             json.dumps(
                 {
                     "generated_at": generated_at or self._iso_timestamp(utc_suffix="Z"),
+                    "matrix_generated_at": matrix_generated_at or "",
+                    "matrix_sha256": matrix_sha256 or "",
                     "summary": {
                         "gap_count": total,
                         "high_or_medium_gap_count": high + medium,
@@ -149,13 +174,23 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         self._write_required_engine_init(repo)
         self._write_required_test_files(repo)
         self._write_parity_manifest(repo, complete=complete_manifest, generated_at=manifest_generated_at)
-        self._write_gap_report(repo, high=high, medium=medium, low=low, generated_at=gap_generated_at)
+        matrix_generated_at, matrix_rendered = self._write_runtime_feature_matrix(repo)
+        self._write_gap_report(
+            repo,
+            high=high,
+            medium=medium,
+            low=low,
+            generated_at=gap_generated_at,
+            matrix_generated_at=matrix_generated_at,
+            matrix_sha256=hashlib.sha256(matrix_rendered.encode("utf-8")).hexdigest(),
+        )
         self._commit_paths(
             repo,
             "python/envctl_engine/__init__.py",
             "tests/python/test_stub.py",
             self._PARITY_MANIFEST_PATH,
             self._GAP_REPORT_PATH,
+            self._MATRIX_PATH,
         )
 
     def _write_repo_local_python(self, repo: Path) -> Path:
@@ -215,8 +250,31 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
                 enforce_runtime_readiness_contract=True,
             )
 
+        self.assertFalse(result.passed)
+        self.assertTrue(any("blocking gaps" in error for error in result.errors))
+
+    def test_gate_fails_when_runtime_feature_matrix_drifts_from_gap_report_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._init_repo(repo)
+            self._prepare_repo(repo)
+
+            self._write_runtime_feature_matrix(
+                repo,
+                generated_at="2026-03-10T00:00:00+00:00",
+                features=[{"id": "feature-1", "feature": "drift"}],
+            )
+
+            result = evaluate_shipability(
+                repo_root=repo,
+                check_tests=False,
+                enforce_parity_sync=False,
+                enforce_runtime_readiness_contract=True,
+            )
+
             self.assertFalse(result.passed)
-            self.assertTrue(any("blocking gaps" in error for error in result.errors))
+            self.assertTrue(any("runtime feature matrix sha256 mismatch" in error for error in result.errors))
 
     def test_gate_fails_when_gap_report_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -462,13 +462,14 @@ Main files:
 
 - `runtime/release_gate.py`
 - `runtime/runtime_readiness.py`
+- `contracts/runtime_feature_matrix.json`
 - `contracts/python_runtime_gap_report.json`
 - `contracts/python_engine_parity_manifest.json`
 
 Practical meaning:
 
 - release/shipability checks validate Python readiness, not shell migration budgets
-- doctor and release gates use the runtime gap report plus parity manifest
+- doctor and release gates verify the runtime feature matrix, the derived gap report, and the parity manifest together
 - compatibility surfaces are removed only when the generated readiness contract says they are no longer blockers
 
 ## Process and Truth Model

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import UTC, datetime
 import json
@@ -62,6 +63,14 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
         (repo / "tests" / "python" / "test_stub.py").write_text("x = 1\n", encoding="utf-8")
         contracts_dir = repo / "contracts"
         contracts_dir.mkdir(parents=True, exist_ok=True)
+        matrix_payload = {
+            "version": 1,
+            "generated_at": self._fresh_timestamp(),
+            "summary": {"feature_count": 0},
+            "features": [],
+        }
+        matrix_rendered = json.dumps(matrix_payload, indent=2, sort_keys=True) + "\n"
+        (contracts_dir / "runtime_feature_matrix.json").write_text(matrix_rendered, encoding="utf-8")
         (contracts_dir / "python_engine_parity_manifest.json").write_text(
             json.dumps(
                 {
@@ -76,6 +85,8 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             json.dumps(
                 {
                     "generated_at": self._fresh_timestamp().replace("+00:00", "Z"),
+                    "matrix_generated_at": matrix_payload["generated_at"],
+                    "matrix_sha256": hashlib.sha256(matrix_rendered.encode("utf-8")).hexdigest(),
                     "summary": {
                         "gap_count": blocking_gaps,
                         "high_or_medium_gap_count": blocking_gaps,
@@ -94,6 +105,7 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
                 "add",
                 "python/envctl_engine/__init__.py",
                 "tests/python/test_stub.py",
+                "contracts/runtime_feature_matrix.json",
                 "contracts/python_engine_parity_manifest.json",
                 "contracts/python_runtime_gap_report.json",
             ],

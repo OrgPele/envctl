@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
 from envctl_engine.runtime.launcher_support import (
     ORIGINAL_WRAPPER_ARGV0_ENVVAR,
@@ -617,6 +618,48 @@ class CliPackagingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Missing required envctl runtime Python packages", result.stderr)
         self.assertNotIn("Missing repo-local .envctl", result.stderr)
+
+    def test_regular_install_without_dependencies_ignores_inherited_source_checkout_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ENVCTL_ROOT_DIR": str(REPO_ROOT),
+                    "RUN_REPO_ROOT": str(REPO_ROOT),
+                    "RUN_LAUNCHER_NAME": "envctl",
+                    "RUN_LAUNCHER_CONTEXT": "envctl",
+                    "RUN_ENGINE_PATH": "python:envctl_engine.runtime.cli",
+                    "PYTHONPATH": str(REPO_ROOT / "python"),
+                },
+                clear=False,
+            ):
+                with self._installed_env(editable=False) as env:
+                    result = subprocess.run(
+                        [str(env["script"]), "--repo", str(repo), "start"],
+                        capture_output=True,
+                        text=True,
+                        env=env["env"],
+                        check=False,
+                    )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertIn("pipx reinstall envctl", result.stderr)
+        self.assertNotIn("python/requirements.txt", result.stderr)
 
     def test_source_checkout_wrapper_without_dependencies_fails_before_operational_dispatch(self) -> None:
         with self._source_checkout_env() as env:

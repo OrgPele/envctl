@@ -205,6 +205,9 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
                 report_path=Path(tmpdir) / "contracts/python_runtime_gap_report.json",
                 report_generated_at="2026-03-06T10:00:00Z",
                 report_sha256="gap123",
+                matrix_path=Path(tmpdir) / "contracts/runtime_feature_matrix.json",
+                matrix_generated_at="2026-03-06T10:00:00Z",
+                matrix_sha256="matrix123",
                 parity_manifest_path=Path(tmpdir) / "contracts/python_engine_parity_manifest.json",
                 parity_manifest_generated_at="2026-03-06T10:00:00Z",
                 parity_manifest_sha256="manifest123",
@@ -230,6 +233,7 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(run_report["summary"]["blocking_gap_count"], 0)
         self.assertEqual(run_report["gap_report"]["sha256"], "gap123")
+        self.assertEqual(run_report["feature_matrix"]["sha256"], "matrix123")
 
     def test_write_runtime_readiness_report_reuses_cached_payload_when_report_hash_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -238,13 +242,17 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             legacy_root = Path(tmpdir) / "legacy"
             run_dir = Path(tmpdir) / "run"
             gap_report_path = repo_root / "contracts" / "python_runtime_gap_report.json"
+            matrix_path = repo_root / "contracts" / "runtime_feature_matrix.json"
             manifest_path = repo_root / "contracts" / "python_engine_parity_manifest.json"
             gap_report_path.parent.mkdir(parents=True, exist_ok=True)
             runtime_root.mkdir()
             run_dir.mkdir()
             report_text = json.dumps({"generated_at": "now", "summary": {"total_gap_count": 0}}, sort_keys=True)
             report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
+            matrix_text = json.dumps({"generated_at": "now", "features": [], "summary": {"feature_count": 0}}, sort_keys=True)
+            matrix_hash = hashlib.sha256((json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n").encode("utf-8")).hexdigest()
             gap_report_path.write_text(report_text, encoding="utf-8")
+            matrix_path.write_text(json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n", encoding="utf-8")
             manifest_path.write_text(
                 json.dumps({"generated_at": "now", "commands": {}, "modes": {}}, sort_keys=True), encoding="utf-8"
             )
@@ -256,6 +264,11 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
                     "path": str(gap_report_path),
                     "generated_at": "now",
                     "sha256": report_hash,
+                },
+                "feature_matrix": {
+                    "path": str(matrix_path),
+                    "generated_at": "now",
+                    "sha256": matrix_hash,
                 },
                 "parity_manifest": {
                     "path": str(manifest_path),

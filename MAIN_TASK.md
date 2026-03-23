@@ -1,131 +1,70 @@
-# Envctl Migrate Direct CLI Summary And Verification Closure
+# Python Runtime Gap Closure Completion Confirmation
 
 ## Context and objective
-The previous iteration completed the dashboard-interactive migrate UX improvements: interactive migrate status lines are now bounded, failed migrate entries persist an additive `headline`, dashboard-interactive migrate prints per-target results including successes, and the action-level spinner updates from `ui.status` events. Those changes landed in commit `9f7f38e fix(migrate): improve output summaries`.
+The previous task tracked the final retained-behavior gaps that had to close before shell-runtime retirement could be considered complete. Current repo evidence shows that the remaining readiness drift was implemented, the generated contracts report zero open gaps, the generated plan matches the committed task-plan output, and full Python unittest discovery is green.
 
-The delivery is still incomplete against the prior task goal because the direct non-interactive CLI migrate path continues to print the old raw action failure wall instead of the compact per-target result summary described in the task, and there is no repo evidence that the required real-TTY verification was performed and recorded. This iteration must close those remaining gaps fully, end to end.
+The objective of this iteration is explicit confirmation that no implementation work remains for the Python runtime gap-closure effort in the current repo state. Do not invent new work under this task. Treat any future regression or newly discovered parity gap as a separate new task driven by fresh repo evidence.
 
 ## Remaining requirements (complete and exhaustive)
-1. Fully implement a compact post-run migrate result summary for direct non-interactive CLI execution.
-   - This remaining scope applies to action-owned migrate execution where `interactive_command=False`.
-   - After `envctl migrate ...` finishes, envctl must print one concise result block covering every selected target in route order.
-   - The result block must use the same practical contract already implemented for dashboard-interactive rendering:
-     - `✓ migrate succeeded for <target>` for successes
-     - `✗ migrate failed for <target>: <headline>` for failures
-     - bounded `hint:` lines only for failed targets
-     - exactly one failure-log path block per failed target when `report_path` exists
-   - Do not rely on transient spinner updates alone to communicate the final result.
-2. Remove raw multiline migrate failure walls from the direct non-interactive CLI path.
-   - During direct CLI execution, operators should not be forced to read `migrate action failed for <target>: Traceback...` with the full raw subprocess payload inline.
-   - The operator-facing terminal output must lead with the actionable failure headline, not `Traceback (most recent call last):`.
-   - Preserve the full raw subprocess output only in the persisted failure report file; do not discard or truncate the artifact.
-3. Keep direct CLI progress and final summary aligned with persisted action metadata.
-   - The implementation may reuse `RunState.metadata["project_action_reports"]`, return structured per-target results from `execute_targeted_action(...)`, or use another repo-consistent mechanism, but the final printed summary must stay consistent with persisted `status`, `summary`, `headline`, `report_path`, and `backend_env` metadata.
-   - Mixed-result and all-success runs must both be handled without duplication.
-   - Missing persisted entries must not crash output rendering; fall back gracefully and print only what envctl can verify.
-4. Add automated coverage for the remaining direct CLI migrate UX gap.
-   - Add or extend tests proving that direct non-interactive migrate output:
-     - prints concise actionable failure headlines instead of traceback-led walls
-     - prints per-target success and failure summary lines in route order
-     - prints one report-path block per failed target
-     - preserves persisted `report_path`, `headline`, and backend env metadata
-     - still updates the action spinner meaningfully while the command is running
-   - Match the existing test style and keep the tests as narrow as possible.
-5. Complete and record the required real-TTY verification for the shipped migrate UX.
-   - Run dashboard-interactive migrate with at least one forced failure across multiple targets and confirm:
-     - one spinner owner
-     - bounded per-target progress during execution
-     - final output includes every target, including successes
-     - failures lead with the actionable exception headline
-     - each failed target prints exactly one failure-log path block
-   - Run direct CLI `envctl migrate --all` in a real TTY and confirm:
-     - the action-level spinner updates per target while execution is in progress
-     - the final direct CLI output uses the new compact per-target result summary
-     - raw traceback payloads remain available only through the persisted failure report file
-   - Inspect `envctl show-state --json` after a failed migrate and confirm `report_path`, `backend_env`, and additive `headline` metadata remain intact.
-   - Record the exact commands executed and the observed outcomes in the implementation pass artifacts, including `.envctl-commit-message.md`.
+1. There is no remaining Python runtime gap-closure implementation work in the current repository state.
+2. Preserve the completed state without reopening scope:
+   - `contracts/runtime_feature_matrix.json` remains fully `verified_python`
+   - `contracts/python_runtime_gap_report.json` remains at zero gaps
+   - `todo/plans/refactoring/python-runtime-gap-closure.md` remains generator-synchronized and gap-free
+   - full Python unittest discovery remains green
+3. Do not reintroduce shell-runtime governance, stale shell-retirement plans, or new task scope unless a fresh code/test/contract regression creates a concrete gap.
 
 ## Gaps from prior iteration (mapped to evidence)
-- Direct non-interactive migrate still prints raw action failure text instead of a curated summary.
-  - Code evidence: [`python/envctl_engine/actions/action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/actions/action_target_support.py) still prints `"{command_name} action failed for {context.name}: {error}"` whenever `interactive_command` is false.
-  - Code evidence: [`python/envctl_engine/actions/action_command_orchestrator.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/actions/action_command_orchestrator.py) adds concise migrate failure status formatting only for interactive `ui.status` emission; it does not add a direct CLI final summary renderer.
-  - Audit note evidence: [.envctl-commit-message.md](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/.envctl-commit-message.md) explicitly states that direct non-interactive `migrate` still uses the existing action-level printed lines outside the new concise summary flow.
-- The compact migrate result summary is implemented only for dashboard-interactive rendering.
-  - Code evidence: [`python/envctl_engine/ui/dashboard/orchestrator.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/python/envctl_engine/ui/dashboard/orchestrator.py) contains `_print_migrate_result_details(...)`, but there is no corresponding direct CLI result-summary printer in the action path.
-  - Git evidence: branch divergence from `origin/main` contains only commit `9f7f38e`, which touched action helpers, dashboard rendering, and tests, but no docs or manual verification artifact proving closure of the remaining direct CLI summary gap.
-- Automated coverage added in the previous iteration does not lock the remaining direct CLI result-summary behavior.
-  - Test evidence: [`tests/python/actions/test_action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_target_support.py) covers interactive bounded migrate failure statuses, not direct CLI final output.
-  - Test evidence: [`tests/python/actions/test_action_spinner_integration.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_spinner_integration.py) covers spinner updates, but not the non-interactive final result block.
-  - Test evidence: [`tests/python/ui/test_dashboard_orchestrator_restart_selector.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/ui/test_dashboard_orchestrator_restart_selector.py) covers dashboard-interactive mixed-result and all-success rendering, not direct CLI output.
-- The required real-TTY verification from the prior task has no implementation-pass record in git.
-  - Git evidence: `git log --oneline --decorate ace3821..HEAD` shows only `9f7f38e fix(migrate): improve output summaries`.
-  - Git evidence: `git diff --name-status ace3821..HEAD` shows no manual-verification notes, docs updates, or additional artifacts recording the mandated TTY commands and outcomes.
+- No remaining gap from the prior iteration is open.
+- The last concrete readiness gap was matrix/report drift enforcement, and it is implemented in:
+  - `python/envctl_engine/runtime/runtime_readiness.py`
+  - `python/envctl_engine/runtime/engine_runtime_artifacts.py`
+  - `python/envctl_engine/debug/doctor_orchestrator.py`
+  - `python/envctl_engine/runtime/release_gate.py`
+- The retained contract is covered by:
+  - `tests/python/runtime/test_release_shipability_gate.py`
+  - `tests/python/runtime/test_release_shipability_gate_cli.py`
+  - `tests/python/runtime/test_cutover_gate_truth.py`
+  - `tests/python/runtime/test_engine_runtime_command_parity.py`
+  - `tests/python/runtime/test_engine_runtime_artifacts.py`
+  - `tests/python/runtime/test_runtime_feature_inventory.py`
+- Generated contract evidence confirms the task is complete:
+  - `contracts/runtime_feature_matrix.json` reports `47` features, all `verified_python`
+  - `contracts/python_runtime_gap_report.json` reports `gap_count: 0` and `high_or_medium_gap_count: 0`
+  - `todo/plans/refactoring/python-runtime-gap-closure.md` renders "No currently reported gaps" for Waves A through E
 
 ## Acceptance criteria (requirement-by-requirement)
-1. Direct non-interactive CLI migrate prints one compact per-target result block after execution completes.
-   - Success and failure lines appear in route order.
-   - Mixed-result runs show both successes and failures.
-   - All-success multi-target runs still print visible success lines.
-2. Direct non-interactive CLI migrate failures no longer lead with `Traceback (most recent call last):`.
-   - The first visible failure line uses the actionable exception headline.
-   - The raw traceback is preserved only in the persisted failure report artifact.
-3. Each failed target prints exactly one failure-log path block in the direct CLI summary when `report_path` exists.
-4. Persisted migrate metadata remains aligned and intact.
-   - `status`, `updated_at`, `report_path`, `backend_env`, and additive `headline` remain available.
-   - No data migration or backfill is required.
-5. Focused automated tests prove the direct CLI summary behavior and remain green.
-6. Real-TTY verification is actually run and recorded with exact commands and observed outcomes for:
-   - dashboard-interactive migrate
-   - direct CLI migrate
-   - `show-state --json` metadata inspection
+1. The repository continues to show no remaining Python runtime gaps:
+   - `contracts/runtime_feature_matrix.json` stays fully `verified_python`
+   - `contracts/python_runtime_gap_report.json` stays at zero gaps
+2. The generated gap-closure plan remains synchronized with the committed plan document and contains no active wave items.
+3. Runtime readiness, doctor output, and release-gate behavior continue to enforce the completed contract, including feature-matrix/gap-report synchronization.
+4. Full Python unittest discovery passes in the repo root without introducing new task-specific fixes.
+5. No additional implementation, documentation, or test changes are required to satisfy this task in the current repo state.
 
 ## Required implementation scope (frontend/backend/data/integration)
-- Frontend / terminal UX:
-  - implement the remaining direct CLI migrate result-summary rendering using the repo’s existing terminal output conventions
-  - keep dashboard-interactive behavior unchanged except for any regression fixes required to share summary helpers safely
-- Backend / action execution:
-  - adjust the non-interactive migrate action path so raw multiline failure payloads are no longer printed inline to the terminal
-  - reuse or centralize migrate headline/hint/report-path formatting so dashboard and direct CLI outputs cannot drift
-- Data / state:
-  - preserve current persisted migrate metadata semantics
-  - do not change raw failure report contents or locations
-  - keep `headline` additive and backward-compatible for older state entries without it
+- Frontend:
+  - no remaining work under this task
+- Backend:
+  - no remaining work under this task
+- Data/state:
+  - no remaining schema, contract, or artifact work under this task
 - Integration:
-  - perform the real-TTY dashboard and direct CLI verification described above
-  - verify `show-state --json` after failure to confirm metadata continuity
+  - no remaining integration implementation work under this task beyond preserving the existing passing contract surface
 
 ## Required tests and quality gates
-- Add or extend focused tests in the smallest appropriate suites, likely including:
-  - [`tests/python/actions/test_actions_parity.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_actions_parity.py)
-    - direct non-interactive migrate failure output prefers the actionable headline over traceback chrome
-    - direct non-interactive mixed-result migrate run prints both successes and failures
-    - direct non-interactive all-success migrate run prints visible success lines
-    - failed targets still persist `report_path`, `headline`, and backend env metadata
-  - [`tests/python/actions/test_action_target_support.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_target_support.py)
-    - if the final design changes how non-interactive migrate output is emitted, add narrow coverage there
-  - [`tests/python/actions/test_action_spinner_integration.py`](/Users/kfiramar/projects/current/envctl/trees/broken_envctl_migrate_output_1dedup_success_visibility_and_spinner_parity/1/tests/python/actions/test_action_spinner_integration.py)
-    - keep proving live spinner updates while the direct CLI action spinner is the visible owner
-- Re-run at minimum:
-  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_target_support`
-  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_action_spinner_integration`
-  - `PYTHONPATH=python python3 -m unittest tests.python.actions.test_actions_parity`
-  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_dashboard_orchestrator_restart_selector`
-  - `PYTHONPATH=python python3 -m unittest tests.python.ui.test_terminal_ui_dashboard_loop`
-- If implementation introduces a new helper shared by dashboard and action output, add the narrowest unit-style test coverage for that helper.
+- Keep these gates green as the completion proof for this task:
+  - `python3 -m unittest tests.python.runtime.test_runtime_feature_inventory`
+  - `python3 -m unittest tests.python.runtime.test_release_shipability_gate tests.python.runtime.test_release_shipability_gate_cli tests.python.runtime.test_cutover_gate_truth tests.python.runtime.test_engine_runtime_command_parity tests.python.runtime.test_engine_runtime_artifacts`
+  - `python3 -m unittest discover -s tests/python -p 'test_*.py'`
+- If any future change causes one of these gates to fail, that failure is new evidence for a separate follow-up task rather than unfinished scope from this one.
 
 ## Edge cases and failure handling
-- Targets missing from persisted action metadata must not crash direct CLI result rendering.
-- Multiple failures must produce one report-path block per failed target, not one merged dump.
-- If a migrate command fails before a report path is written, print the concise failure line and any available hints without crashing.
-- Keep hints deduplicated.
-- Preserve one spinner owner per visible command path.
-- Do not emit raw traceback payloads into bounded status/spinner messages.
-- Older persisted migrate entries without `headline` must still render correctly by reparsing `summary`.
+- If `contracts/runtime_feature_matrix.json` and `contracts/python_runtime_gap_report.json` drift, treat that as a new regression against the completed state, not as missing work from this archived task.
+- If a future feature changes runtime behavior and introduces a new parity gap, update the generated contracts and open a new implementation task instead of expanding this completed one retroactively.
+- If a future refactor touches doctor, release-gate, or readiness artifacts, preserve the existing feature-matrix/gap-report/parity-manifest contract unless fresh product requirements explicitly change it.
 
 ## Definition of done
-- The direct non-interactive CLI migrate path prints a compact per-target result summary instead of raw multiline failure walls.
-- Direct CLI migrate failures lead with actionable exception headlines, not `Traceback (most recent call last):`.
-- Dashboard-interactive migrate behavior remains correct and regression-free.
-- Persisted migrate report paths, backend env metadata, and additive `headline` metadata remain intact and backward-compatible.
-- Focused automated coverage locks the remaining direct CLI summary behavior and all relevant suites pass.
-- Real-TTY verification is completed and recorded with exact commands and outcomes.
+- This task is already fully done in the current repository state.
+- There is no remaining implementation work to carry forward from the archived runtime-gap closure task.
+- The only valid next step under this task is to leave the completed contract green; any newly discovered regression should start a new task rather than reopening this one.
