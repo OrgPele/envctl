@@ -6,7 +6,7 @@ import sys
 from typing import Callable, Mapping
 
 from envctl_engine.config import LocalConfigState, discover_local_config_state
-from envctl_engine.config.persistence import managed_values_from_local_state
+from envctl_engine.config.persistence import ignore_status_summary, managed_values_from_local_state
 from envctl_engine.runtime.runtime_dependency_contract import (
     missing_runtime_dependency_modules,
     runtime_dependency_failure_message,
@@ -112,13 +112,15 @@ def _missing_interactive_runtime_modules() -> list[str]:
 def _save_message(result: ConfigWizardResult, *, env: Mapping[str, str] | None = None) -> str:
     message = f"Saved startup config: {render_path_for_terminal(result.save_result.path, env=env, stream=sys.stdout)}"
     status = result.save_result.ignore_status
-    if status is not None and status.code == "configured_global_excludes":
-        target = (
-            f" at {render_path_for_terminal(status.target_path, env=env, stream=sys.stdout)}"
-            if status.target_path is not None
-            else ""
+    status_message = ignore_status_summary(status)
+    if status_message:
+        rendered_status = render_paths_in_terminal_text(
+            status_message,
+            paths=local_paths_in_text(status_message),
+            env=env,
+            stream=sys.stdout,
         )
-        message += f" (Configured Git global excludes{target}.)"
+        message += f" ({rendered_status})"
     if result.save_result.ignore_warning:
         warning = render_paths_in_terminal_text(
             result.save_result.ignore_warning,
