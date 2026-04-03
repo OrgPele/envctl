@@ -22,6 +22,7 @@ _finalization_instruction_text = getattr(launch_support, "_finalization_instruct
 _first_cycle_completion_instruction_text = getattr(launch_support, "_first_cycle_completion_instruction_text", None)
 _intermediate_cycle_completion_instruction_text = getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None)
 _wait_for_codex_queue_ready = getattr(launch_support, "_wait_for_codex_queue_ready", None)
+_workflow_step_prompt_text = getattr(launch_support, "_workflow_step_prompt_text", None)
 _WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
 
 
@@ -431,6 +432,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [("submit_prompt", "/prompts:implement_task")],
         )
 
+    def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="ship_release", codex_cycles=0)
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [("submit_direct_prompt", "ship_release")],
+        )
+
     def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_message(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
@@ -494,6 +505,29 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [("submit_prompt", "/implement_task")],
         )
+
+    def test_workflow_step_prompt_text_loads_direct_codex_prompt_body(self) -> None:
+        self.assertIsNotNone(_workflow_step_prompt_text)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "ship_release.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Ship this release carefully.\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
+
+            prompt_text, error = _workflow_step_prompt_text(runtime, cli="codex", step=step)
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "Ship this release carefully.\n")
 
     def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)

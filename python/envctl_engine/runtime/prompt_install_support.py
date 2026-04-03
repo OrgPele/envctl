@@ -13,6 +13,7 @@ _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
+_CODEX_DIRECT_SUBMISSION_PRESETS: Final[frozenset[str]] = frozenset({"ship_release"})
 
 
 @dataclass(slots=True)
@@ -102,7 +103,12 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             )
         )
     results: list[PromptInstallResult] = list(invalid_results)
-    plans, planning_failures = _build_install_plans(selected_clis=selected_clis, presets=presets, home=home)
+    plans, planning_failures = _build_install_plans(
+        selected_clis=selected_clis,
+        presets=presets,
+        home=home,
+        env=getattr(runtime, "env", {}),
+    )
     if planning_failures:
         results.extend(planning_failures)
         return _print_install_results(
@@ -195,12 +201,13 @@ def _build_install_plans(
     selected_clis: list[str],
     presets: list[str],
     home: Path,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[list[PromptInstallPlan], list[PromptInstallResult]]:
     plans: list[PromptInstallPlan] = []
     failures: list[PromptInstallResult] = []
     for cli_name in selected_clis:
         for preset in presets:
-            target_path = _target_path(cli_name=cli_name, preset=preset, home=home)
+            target_path = _target_path(cli_name=cli_name, preset=preset, home=home, env=env)
             try:
                 template = _load_template(preset)
                 rendered = _render_preset(cli_name=cli_name, template=template)
@@ -305,8 +312,16 @@ def _install_prompt(*, plan: PromptInstallPlan, dry_run: bool) -> PromptInstallR
     )
 
 
-def _target_path(*, cli_name: str, preset: str, home: Path) -> Path:
+def _target_path(
+    *,
+    cli_name: str,
+    preset: str,
+    home: Path,
+    env: Mapping[str, str] | None = None,
+) -> Path:
     if cli_name == "codex":
+        if codex_preset_uses_direct_submission(preset):
+            return _codex_envctl_prompt_root(home=home, env=env) / f"{preset}.md"
         return home / ".codex" / "prompts" / f"{preset}.md"
     if cli_name == "claude":
         return home / ".claude" / "commands" / f"{preset}.md"
@@ -315,9 +330,39 @@ def _target_path(*, cli_name: str, preset: str, home: Path) -> Path:
     raise RuntimeError(f"Unsupported CLI target: {cli_name}")
 
 
+def codex_preset_uses_direct_submission(preset: str) -> bool:
+    return str(preset).strip() in _CODEX_DIRECT_SUBMISSION_PRESETS
+
+
+def resolve_codex_direct_prompt_body(
+    *,
+    preset: str,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    normalized_preset = str(preset).strip()
+    if not codex_preset_uses_direct_submission(normalized_preset):
+        raise LookupError(f"Preset is not configured for direct Codex submission: {normalized_preset}")
+    home = _user_home_from_env(env)
+    target_path = _target_path(cli_name="codex", preset=normalized_preset, home=home, env=env)
+    if target_path.is_file():
+        raw = target_path.read_text(encoding="utf-8")
+        return _parse_template(name=normalized_preset, raw=raw).body
+    return _load_template(normalized_preset).body
+
+
+def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = None) -> Path:
+    raw_xdg = str((env or {}).get("XDG_CONFIG_HOME", "")).strip()
+    config_home = Path(raw_xdg).expanduser() if raw_xdg else home / ".config"
+    return config_home / "envctl" / "codex" / "prompts"
+
+
 def _user_home(runtime: Any) -> Path:
     env = getattr(runtime, "env", {})
-    raw_home = str(env.get("HOME", "")).strip() if isinstance(env, dict) else ""
+    return _user_home_from_env(env if isinstance(env, dict) else {})
+
+
+def _user_home_from_env(env: Mapping[str, str] | None) -> Path:
+    raw_home = str((env or {}).get("HOME", "")).strip()
     if raw_home:
         return Path(raw_home).expanduser()
     return Path.home()

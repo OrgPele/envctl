@@ -81,7 +81,7 @@ Behavior:
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
-Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode keeps using `/<preset>`. Codex now depends on the preset's configured submission mode: envctl's legacy presets still use the old slash-command path until migrated, while direct-submission presets such as `ship_release` send the prompt body from the envctl-managed Codex prompt file. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 

@@ -11,6 +11,10 @@ from typing import Any, Literal
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
+from envctl_engine.runtime.prompt_install_support import (
+    codex_preset_uses_direct_submission,
+    resolve_codex_direct_prompt_body,
+)
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
@@ -193,14 +197,18 @@ def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> st
 
 
 def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _PlanAgentWorkflow:
-    initial_prompt = _slash_command(cli, preset)
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
-    if normalized_cli != "codex" or bounded_cycles <= 0:
+    use_direct_codex_submission = normalized_cli == "codex" and codex_preset_uses_direct_submission(preset)
+    initial_step = _PlanAgentWorkflowStep(
+        kind="submit_direct_prompt" if use_direct_codex_submission else "submit_prompt",
+        text=str(preset).strip() if use_direct_codex_submission else _slash_command(cli, preset),
+    )
+    if normalized_cli != "codex" or bounded_cycles <= 0 or use_direct_codex_submission:
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
             codex_cycles=bounded_cycles,
-            steps=(_PlanAgentWorkflowStep(kind="submit_prompt", text=initial_prompt),),
+            steps=(initial_step,),
         )
     steps = [_PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command("codex", "implement_task"))]
     for cycle in range(1, bounded_cycles + 1):
@@ -772,12 +780,19 @@ def _run_surface_bootstrap(
         cli=launch_config.cli,
     )
     initial_step = workflow.steps[0]
+    prompt_text, resolution_error = _workflow_step_prompt_text(
+        runtime,
+        cli=launch_config.cli,
+        step=initial_step,
+    )
+    if resolution_error is not None:
+        return resolution_error
     submit_error = _submit_prompt_workflow_step(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=launch_config.cli,
-        prompt_text=initial_step.text,
+        prompt_text=prompt_text,
     )
     if submit_error is not None:
         return submit_error
@@ -872,6 +887,25 @@ def _run_review_surface_bootstrap(
         ),
         failure_event="dashboard.review_tab.failed",
     )
+
+
+def _workflow_step_prompt_text(
+    runtime: Any,
+    *,
+    cli: str,
+    step: _PlanAgentWorkflowStep,
+) -> tuple[str, str | None]:
+    if step.kind != "submit_direct_prompt":
+        return step.text, None
+    if str(cli).strip().lower() != "codex":
+        return step.text, None
+    try:
+        return resolve_codex_direct_prompt_body(
+            preset=step.text,
+            env=getattr(runtime, "env", {}),
+        ), None
+    except (LookupError, OSError, ValueError) as exc:
+        return "", f"prompt_resolution_failed: {exc}"
 
 
 def _prepare_surface(

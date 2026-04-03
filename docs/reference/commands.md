@@ -73,8 +73,10 @@ Behavior:
   - `finalize_task`
   - `merge_trees_into_dev`
   - `create_plan`
+  - `ship_release`
 - target roots:
-  - Codex: `~/.codex/prompts`
+  - Codex legacy slash presets: `~/.codex/prompts`
+  - Codex direct-submission presets such as `ship_release`: `~/.config/envctl/codex/prompts`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
 - existing files are overwritten in place after one confirmation prompt for the command
@@ -83,6 +85,7 @@ Behavior:
 - this command is available from the normal CLI, but not from dashboard interactive mode
 - `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 - interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
+- direct-submission Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
 
 ## Main Runtime Commands
 
@@ -246,7 +249,8 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `1`
-- Codex launches send `/prompts:<preset>` while OpenCode launches send `/<preset>`
+- OpenCode launches send `/<preset>`
+- Codex uses the preset's configured submission mode: envctl's legacy presets still use the old slash-command path until migrated, while direct-submission presets such as `ship_release` send the prompt body from the envctl-managed Codex prompt file
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text

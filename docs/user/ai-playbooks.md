@@ -18,7 +18,8 @@ Use this when you want `envctl` to install built-in prompt presets into your use
 
 Current targets:
 
-- Codex: `~/.codex/prompts`
+- Codex legacy slash presets: `~/.codex/prompts`
+- Codex direct-submission presets such as `ship_release`: `~/.config/envctl/codex/prompts`
 - Claude Code: `~/.claude/commands`
 - OpenCode: `~/.config/opencode/commands`
 
@@ -41,8 +42,11 @@ Current built-in presets:
 - `finalize_task`
 - `merge_trees_into_dev`
 - `create_plan`
+- `ship_release`
 
-`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as a backward-compatible preset.
+`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Envctl's legacy Codex presets still use the old slash-command launch path until they are migrated, while direct-submission presets such as `ship_release` are stored in the envctl-owned Codex prompt directory and their full body is submitted directly. `implement_plan` remains available as a backward-compatible preset.
+
+`ship_release` is the first Codex preset migrated away from the removed `/prompts:<name>` registry. Install it with `envctl install-prompts --cli codex --preset ship_release`, then edit the generated file in `~/.config/envctl/codex/prompts/ship_release.md` before launching it through envctl.
 
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
