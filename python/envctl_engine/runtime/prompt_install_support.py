@@ -7,12 +7,14 @@ from pathlib import Path
 import sys
 from typing import Any, Final, Mapping
 
+from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.path_links import render_path_for_terminal
 
 _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
+_CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
 
 
 @dataclass(slots=True)
@@ -22,6 +24,8 @@ class PromptInstallResult:
     status: str
     backup_path: str | None
     message: str
+    kind: str = "prompt"
+    link_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -39,6 +43,27 @@ class PromptInstallPlan:
     existed: bool
 
 
+@dataclass(slots=True)
+class CodexSkillInstallPlan:
+    cli: str
+    preset: str
+    skill_name: str
+    skill_dir: Path
+    target_path: Path
+    agents_path: Path
+    rendered: str
+    rendered_openai_yaml: str
+    existed: bool
+
+
+@dataclass(slots=True, frozen=True)
+class CodexSkillMetadata:
+    skill_name: str
+    display_name: str
+    short_description: str
+    description: str
+
+
 def dispatch_utility_command(runtime: Any, route: object) -> int:
     command = str(getattr(route, "command", "")).strip()
     if command == "install-prompts":
@@ -52,15 +77,17 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
     overwrite_approved = bool(flags.get("yes")) or bool(flags.get("force"))
+    with_codex_skills = bool(flags.get("with_codex_skills"))
     raw_cli = str(flags.get("cli") or "").strip()
     preset_label, presets, preset_error = _resolve_presets(flags=flags, passthrough_args=passthrough_args)
+    env = getattr(runtime, "env", {})
 
     if preset_error is not None:
         return _print_install_results(
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
-            env=getattr(runtime, "env", {}),
+            env=env,
             results=[
                 PromptInstallResult(
                     cli="*",
@@ -77,7 +104,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
-            env=getattr(runtime, "env", {}),
+            env=env,
             results=[
                 PromptInstallResult(
                     cli="",
@@ -85,6 +112,27 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                     status="failed",
                     backup_path=None,
                     message="Missing required --cli",
+                )
+            ],
+        )
+
+    if with_codex_skills and not _codex_skill_feature_enabled(env):
+        return _print_install_results(
+            preset=preset_label,
+            dry_run=dry_run,
+            json_output=json_output,
+            env=env,
+            results=[
+                PromptInstallResult(
+                    cli="codex",
+                    path="",
+                    status="failed",
+                    backup_path=None,
+                    message=(
+                        f"Codex skill installation is experimental; set {_CODEX_SKILL_FEATURE_FLAG}=true to use "
+                        "--with-codex-skills."
+                    ),
+                    kind="skill",
                 )
             ],
         )
@@ -101,12 +149,24 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                 message="No valid CLI targets were provided",
             )
         )
+    if with_codex_skills and "codex" not in selected_clis:
+        invalid_results.append(
+            PromptInstallResult(
+                cli="codex",
+                path="",
+                status="failed",
+                backup_path=None,
+                message="Codex skill installation requires --cli codex or --cli all.",
+                kind="skill",
+            )
+        )
     results: list[PromptInstallResult] = list(invalid_results)
+    skill_results: list[PromptInstallResult] = []
     plans, planning_failures = _build_install_plans(
         selected_clis=selected_clis,
         presets=presets,
         home=home,
-        env=getattr(runtime, "env", {}),
+        env=env,
     )
     if planning_failures:
         results.extend(planning_failures)
@@ -114,15 +174,28 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
-            env=getattr(runtime, "env", {}),
+            env=env,
             results=results,
         )
-    overwrite_candidates = [plan for plan in plans if plan.existed]
+    skill_plans: list[CodexSkillInstallPlan] = []
+    if with_codex_skills and "codex" in selected_clis:
+        skill_plans, skill_failures = _build_codex_skill_install_plans(presets=presets, home=home, env=env)
+        if skill_failures:
+            skill_results.extend(skill_failures)
+            return _print_install_results(
+                preset=preset_label,
+                dry_run=dry_run,
+                json_output=json_output,
+                env=env,
+                results=results,
+                skill_results=skill_results,
+            )
+    overwrite_candidates = [plan for plan in plans if plan.existed] + [plan for plan in skill_plans if plan.existed]
     if overwrite_candidates and not dry_run and not overwrite_approved:
         overwrite_error = _require_overwrite_approval(
             overwrite_candidates=overwrite_candidates,
             json_output=json_output,
-            env=getattr(runtime, "env", {}),
+            env=env,
         )
         if overwrite_error is not None:
             results.append(overwrite_error)
@@ -130,17 +203,21 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                 preset=preset_label,
                 dry_run=dry_run,
                 json_output=json_output,
-                env=getattr(runtime, "env", {}),
+                env=env,
                 results=results,
+                skill_results=skill_results,
             )
     for plan in plans:
         results.append(_install_prompt(plan=plan, dry_run=dry_run))
+    for plan in skill_plans:
+        skill_results.append(_install_codex_skill(plan=plan, dry_run=dry_run))
     return _print_install_results(
         preset=preset_label,
         dry_run=dry_run,
         json_output=json_output,
-        env=getattr(runtime, "env", {}),
+        env=env,
         results=results,
+        skill_results=skill_results,
     )
 
 
@@ -434,6 +511,219 @@ def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
     return str(body).replace("$ARGUMENTS", str(arguments or ""))
 
 
+def _codex_skill_feature_enabled(env: Mapping[str, str] | None) -> bool:
+    return parse_bool((env or {}).get(_CODEX_SKILL_FEATURE_FLAG), False)
+
+
+def _build_codex_skill_install_plans(
+    *,
+    presets: list[str],
+    home: Path,
+    env: Mapping[str, str] | None = None,
+) -> tuple[list[CodexSkillInstallPlan], list[PromptInstallResult]]:
+    plans: list[CodexSkillInstallPlan] = []
+    failures: list[PromptInstallResult] = []
+    skill_root = _codex_skill_root(home=home)
+    for preset in presets:
+        try:
+            template = _load_template(preset)
+            metadata = _codex_skill_metadata(preset)
+            skill_dir = skill_root / metadata.skill_name
+            target_path = skill_dir / "SKILL.md"
+            agents_path = skill_dir / "agents" / "openai.yaml"
+            plans.append(
+                CodexSkillInstallPlan(
+                    cli="codex",
+                    preset=preset,
+                    skill_name=metadata.skill_name,
+                    skill_dir=skill_dir,
+                    target_path=target_path,
+                    agents_path=agents_path,
+                    rendered=_render_codex_skill_markdown(template=template, metadata=metadata),
+                    rendered_openai_yaml=_render_codex_skill_openai_yaml(metadata=metadata),
+                    existed=skill_dir.exists(),
+                )
+            )
+        except (LookupError, OSError, ValueError) as exc:
+            failures.append(
+                PromptInstallResult(
+                    cli="codex",
+                    path=str(skill_root / preset),
+                    status="failed",
+                    backup_path=None,
+                    message=str(exc),
+                    kind="skill",
+                )
+            )
+    return plans, failures
+
+
+def _install_codex_skill(*, plan: CodexSkillInstallPlan, dry_run: bool) -> PromptInstallResult:
+    if dry_run:
+        return PromptInstallResult(
+            cli=plan.cli,
+            path=str(plan.target_path),
+            status="planned",
+            backup_path=None,
+            message=f"Would install {plan.skill_name} for codex from preset {plan.preset}",
+            kind="skill",
+        )
+    try:
+        if plan.skill_dir.exists() and not plan.skill_dir.is_dir():
+            if plan.skill_dir.is_symlink() or plan.skill_dir.is_file():
+                plan.skill_dir.unlink()
+            else:
+                raise OSError(f"Unsupported existing skill path: {plan.skill_dir}")
+        plan.agents_path.parent.mkdir(parents=True, exist_ok=True)
+        plan.target_path.write_text(plan.rendered, encoding="utf-8")
+        plan.agents_path.write_text(plan.rendered_openai_yaml, encoding="utf-8")
+    except OSError as exc:
+        return PromptInstallResult(
+            cli=plan.cli,
+            path=str(plan.target_path),
+            status="failed",
+            backup_path=None,
+            message=str(exc),
+            kind="skill",
+        )
+    status = "overwritten" if plan.existed else "written"
+    return PromptInstallResult(
+        cli=plan.cli,
+        path=str(plan.target_path),
+        status=status,
+        backup_path=None,
+        message=f"Installed {plan.skill_name} for codex from preset {plan.preset}",
+        kind="skill",
+    )
+
+
+def _codex_skill_root(*, home: Path) -> Path:
+    return home / ".agents" / "skills"
+
+
+def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
+    mapping = {
+        "implement_plan": CodexSkillMetadata(
+            skill_name="envctl-implement-plan",
+            display_name="Envctl Implement Plan",
+            short_description="MAIN_TASK-driven implementation workflow",
+            description=(
+                "Use when you explicitly want the envctl implement_plan workflow for a MAIN_TASK-driven "
+                "implementation pass. Invoke it explicitly as $envctl-implement-plan."
+            ),
+        ),
+        "implement_task": CodexSkillMetadata(
+            skill_name="envctl-implement-task",
+            display_name="Envctl Implement Task",
+            short_description="MAIN_TASK-driven implementation workflow",
+            description=(
+                "Use when you explicitly want the envctl implement_task workflow for a MAIN_TASK-driven "
+                "implementation pass. Invoke it explicitly as $envctl-implement-task."
+            ),
+        ),
+        "continue_task": CodexSkillMetadata(
+            skill_name="envctl-continue-task",
+            display_name="Envctl Continue Task",
+            short_description="Resume an incomplete envctl implementation pass",
+            description=(
+                "Use when you explicitly want the envctl continue_task workflow to audit the current implementation "
+                "state and continue work. Invoke it explicitly as $envctl-continue-task."
+            ),
+        ),
+        "finalize_task": CodexSkillMetadata(
+            skill_name="envctl-finalize-task",
+            display_name="Envctl Finalize Task",
+            short_description="Finalize an envctl implementation branch for handoff",
+            description=(
+                "Use when you explicitly want the envctl finalize_task workflow to validate, commit, push, and "
+                "prepare the branch for PR handoff. Invoke it explicitly as $envctl-finalize-task."
+            ),
+        ),
+        "review_task_imp": CodexSkillMetadata(
+            skill_name="envctl-review-task",
+            display_name="Envctl Review Task",
+            short_description="Review an implementation against its original plan",
+            description=(
+                "Use when you explicitly want the envctl review_task_imp workflow to review a worktree "
+                "implementation against its originating plan. Invoke it explicitly as $envctl-review-task."
+            ),
+        ),
+        "review_worktree_imp": CodexSkillMetadata(
+            skill_name="envctl-review-worktree",
+            display_name="Envctl Review Worktree",
+            short_description="Read-only origin-side review of an envctl worktree",
+            description=(
+                "Use when you explicitly want the envctl review_worktree_imp workflow for read-only origin-side "
+                "review of a generated implementation worktree. Invoke it explicitly as $envctl-review-worktree."
+            ),
+        ),
+        "merge_trees_into_dev": CodexSkillMetadata(
+            skill_name="envctl-merge-trees-into-dev",
+            display_name="Envctl Merge Trees Into Dev",
+            short_description="Merge two implementation branches into dev",
+            description=(
+                "Use when you explicitly want the envctl merge_trees_into_dev workflow to reconcile two "
+                "implementation branches into dev. Invoke it explicitly as $envctl-merge-trees-into-dev."
+            ),
+        ),
+        "create_plan": CodexSkillMetadata(
+            skill_name="envctl-create-plan",
+            display_name="Envctl Create Plan",
+            short_description="Create an envctl implementation plan",
+            description=(
+                "Use when you explicitly want the envctl create_plan workflow to produce a plan artifact for "
+                "implementation work. Invoke it explicitly as $envctl-create-plan."
+            ),
+        ),
+        "ship_release": CodexSkillMetadata(
+            skill_name="envctl-ship-release",
+            display_name="Envctl Ship Release",
+            short_description="Prepare and ship a production release",
+            description=(
+                "Use when you explicitly want the envctl ship_release workflow to prepare and ship a production "
+                "release end-to-end. Invoke it explicitly as $envctl-ship-release."
+            ),
+        ),
+    }
+    try:
+        return mapping[str(preset).strip()]
+    except KeyError as exc:
+        raise LookupError(f"No Codex skill metadata is defined for preset: {preset}") from exc
+
+
+def _render_codex_skill_markdown(*, template: PromptTemplate, metadata: CodexSkillMetadata) -> str:
+    invocation = f"${metadata.skill_name}"
+    invocation_note = (
+        "Treat any extra text in the invoking user message as the optional additional instructions "
+        "that the prompt version would have received through `$ARGUMENTS`."
+    )
+    body = _render_direct_prompt_arguments(
+        template.body,
+        arguments="additional user instructions supplied with the invoking prompt",
+    )
+    return (
+        f"---\n"
+        f"name: {json.dumps(metadata.skill_name)}\n"
+        f"description: {json.dumps(metadata.description)}\n"
+        f"---\n\n"
+        f"# {metadata.display_name}\n\n"
+        f"Use this skill explicitly with `{invocation}`.\n\n"
+        f"{invocation_note}\n\n"
+        f"{body}"
+    )
+
+
+def _render_codex_skill_openai_yaml(*, metadata: CodexSkillMetadata) -> str:
+    return (
+        "interface:\n"
+        f"  display_name: {json.dumps(metadata.display_name)}\n"
+        f"  short_description: {json.dumps(metadata.short_description)}\n"
+        f"  default_prompt: {json.dumps(f'Use {metadata.skill_name} explicitly for this envctl workflow.')}\n"
+        "policy:\n"
+        "  allow_implicit_invocation: false\n"
+    )
+
+
 def _print_install_results(
     *,
     preset: str,
@@ -441,22 +731,28 @@ def _print_install_results(
     json_output: bool,
     env: dict[str, str] | Mapping[str, str] | None = None,
     results: list[PromptInstallResult],
+    skill_results: list[PromptInstallResult] | None = None,
 ) -> int:
+    combined_results = [*results, *(skill_results or [])]
     payload = {
         "command": "install-prompts",
         "preset": preset,
         "dry_run": dry_run,
         "results": [asdict(result) for result in results],
     }
+    if skill_results is not None:
+        payload["skill_results"] = [asdict(result) for result in skill_results]
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        for result in results:
+        for result in combined_results:
             rendered_path = render_path_for_terminal(result.path, env=env, stream=sys.stdout) if result.path else ""
             line = f"{result.cli or 'install-prompts'}: {result.status} {rendered_path}".rstrip()
             if result.backup_path:
                 line += f" (backup: {render_path_for_terminal(result.backup_path, env=env, stream=sys.stdout)})"
+            if result.link_path:
+                line += f" (link: {render_path_for_terminal(result.link_path, env=env, stream=sys.stdout)})"
             if result.message:
                 line += f" - {result.message}"
             print(line)
-    return 0 if all(result.status not in {"failed"} for result in results) else 1
+    return 0 if all(result.status not in {"failed"} for result in combined_results) else 1

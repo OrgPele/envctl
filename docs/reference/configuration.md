@@ -265,6 +265,11 @@ Cycle mode notes:
 | `ENVCTL_UI_RICH` | `true` | Compatibility toggle for rich-backed UI rendering when mode is `auto`. |
 | `ENVCTL_UI_HYPERLINK_MODE` | `auto` | Local-path hyperlink policy for human-facing CLI output (`auto`, `on`, `off`). `auto` only emits OSC-8 links on supported interactive terminals; JSON output stays raw. |
 
+## Experimental
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_EXPERIMENTAL_CODEX_SKILLS` | `false` | Enable the experimental `install-prompts --with-codex-skills` path that mirrors envctl Codex presets as explicit-only skills under `~/.agents/skills/envctl-*`. |
+
 Selector implementation is controlled separately from dashboard backend policy:
 
 - default selector implementation is the Textual plan-style selector

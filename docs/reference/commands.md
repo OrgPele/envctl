@@ -58,6 +58,7 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Behavior:
@@ -85,6 +86,8 @@ Behavior:
 - `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 - interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
 - Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
+- experimental Codex skill mirrors are available only when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true` and you pass `--with-codex-skills`
+- when enabled, envctl also installs explicit-only Codex skills under `~/.agents/skills/envctl-*`
 
 ## Main Runtime Commands
 

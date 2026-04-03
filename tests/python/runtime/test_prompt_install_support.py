@@ -37,6 +37,14 @@ class PromptInstallSupportTests(unittest.TestCase):
     def _target(self, *, cli: str, preset: str, home: Path) -> Path:
         return _target_path(cli_name=cli, preset=preset, home=home, env={"HOME": str(home)})
 
+    def _skill_target(self, *, home: Path, preset: str) -> Path:
+        skill_name = f"envctl-{preset.replace('_', '-')}"
+        if preset == "review_task_imp":
+            skill_name = "envctl-review-task"
+        if preset == "review_worktree_imp":
+            skill_name = "envctl-review-worktree"
+        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+
     def test_install_prompts_dry_run_json_reports_all_targets_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -428,6 +436,57 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(payload["results"][0]["status"], "failed")
             self.assertIn("Unsupported preset", payload["results"][0]["message"])
             self.assertIn("implement_task", payload["results"][0]["message"])
+
+    def test_install_prompts_rejects_codex_skills_without_feature_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--with-codex-skills", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["results"][0]["kind"], "skill")
+            self.assertIn("ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true", payload["results"][0]["message"])
+
+    def test_install_prompts_can_install_feature_gated_codex_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(
+                env={
+                    "HOME": tmpdir,
+                    "ENVCTL_EXPERIMENTAL_CODEX_SKILLS": "true",
+                }
+            )
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "implement_task", "--with-codex-skills", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertIn("skill_results", payload)
+            self.assertEqual(len(payload["skill_results"]), 1)
+            skill_result = payload["skill_results"][0]
+            self.assertEqual(skill_result["kind"], "skill")
+            target = self._skill_target(home=Path(tmpdir), preset="implement_task")
+            self.assertEqual(skill_result["path"], str(target))
+            written = target.read_text(encoding="utf-8")
+            self.assertIn('name: "envctl-implement-task"', written)
+            self.assertIn("Use this skill explicitly with `$envctl-implement-task`.", written)
+            self.assertIn("You are implementing real code, end-to-end.", written)
+            openai_yaml = target.parent / "agents" / "openai.yaml"
+            self.assertTrue(openai_yaml.exists())
+            rendered_yaml = openai_yaml.read_text(encoding="utf-8")
+            self.assertIn("allow_implicit_invocation: false", rendered_yaml)
 
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
         self.assertIn("implement_task", _available_presets())

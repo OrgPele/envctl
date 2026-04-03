@@ -12,6 +12,7 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Use this when you want `envctl` to install built-in prompt presets into your user-local AI CLI directories.
@@ -30,6 +31,8 @@ Notes:
 - `--dry-run` shows what would be written without mutating anything
 - this command is intentionally unavailable inside dashboard interactive mode
 - the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
+- `--with-codex-skills` is experimental and only works when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true`
+- the experimental Codex skill mirrors install as explicit-only skills under `~/.agents/skills/envctl-*`
 
 Current built-in presets:
 
@@ -46,6 +49,21 @@ Current built-in presets:
 `implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. For Codex, envctl resolves the preset from the envctl-owned Codex prompt directory and submits the prompt body directly. `implement_plan` remains available as a backward-compatible preset.
 
 All Codex presets now use the same direct-submission path. Install them with `envctl install-prompts --cli codex`, then edit the generated files in `~/.config/envctl/codex/prompts/` before launching them through envctl.
+
+If you want to compare the same workflows as Codex skills, enable the experimental flag and install the skill mirrors:
+
+```bash
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
+```
+
+The installed skill mirrors are explicit-only and use names such as:
+
+- `$envctl-implement-task`
+- `$envctl-continue-task`
+- `$envctl-finalize-task`
+- `$envctl-review-task`
+- `$envctl-review-worktree`
+- `$envctl-ship-release`
 
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
