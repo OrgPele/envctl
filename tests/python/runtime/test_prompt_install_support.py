@@ -70,7 +70,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 + ["opencode"] * len(expected_presets),
             )
             self.assertTrue(all(item["status"] == "planned" for item in payload["results"]))
-            self.assertFalse((Path(tmpdir) / ".codex" / "prompts" / "implement_task.md").exists())
+            self.assertFalse(self._target(cli="codex", preset="implement_task", home=Path(tmpdir)).exists())
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
@@ -157,7 +157,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_prompts_once_and_overwrites_all_existing_targets_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            codex_target = self._target(cli="codex", preset="implement_task", home=home)
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             claude_target.parent.mkdir(parents=True, exist_ok=True)
@@ -193,7 +193,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old codex prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir, "ENVCTL_UI_HYPERLINK_MODE": "on"})
@@ -218,7 +218,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            codex_target = self._target(cli="codex", preset="implement_task", home=home)
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             codex_target.write_text("old codex prompt\n", encoding="utf-8")
@@ -243,7 +243,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_yes_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -266,7 +266,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -288,7 +288,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_json_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -335,7 +335,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -358,7 +358,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_dry_run_existing_target_does_not_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})

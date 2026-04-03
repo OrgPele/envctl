@@ -199,29 +199,28 @@ def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> st
 def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
-    use_direct_codex_submission = normalized_cli == "codex" and codex_preset_uses_direct_submission(preset)
-    initial_step = _PlanAgentWorkflowStep(
-        kind="submit_direct_prompt" if use_direct_codex_submission else "submit_prompt",
-        text=str(preset).strip() if use_direct_codex_submission else _slash_command(cli, preset),
-    )
-    if normalized_cli != "codex" or bounded_cycles <= 0 or use_direct_codex_submission:
+    if normalized_cli == "codex":
+        initial_step = _PlanAgentWorkflowStep(kind="submit_direct_prompt", text=str(preset).strip())
+    else:
+        initial_step = _PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command(cli, preset))
+    if normalized_cli != "codex" or bounded_cycles <= 0:
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
             codex_cycles=bounded_cycles,
             steps=(initial_step,),
         )
-    steps = [_PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command("codex", "implement_task"))]
+    steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")]
     for cycle in range(1, bounded_cycles + 1):
         if cycle == bounded_cycles:
-            completion_text = _finalization_instruction_text()
-        elif cycle == 1:
+            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task"))
+            continue
+        if cycle == 1:
             completion_text = _first_cycle_completion_instruction_text()
         else:
             completion_text = _intermediate_cycle_completion_instruction_text()
         steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=completion_text))
-        if cycle < bounded_cycles:
-            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "continue_task")))
-            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_slash_command("codex", "implement_task")))
+        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task"))
+        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task"))
     return _PlanAgentWorkflow(
         mode=_PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
         codex_cycles=bounded_cycles,
@@ -787,13 +786,21 @@ def _run_surface_bootstrap(
     )
     if resolution_error is not None:
         return resolution_error
-    submit_error = _submit_prompt_workflow_step(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-        prompt_text=prompt_text,
-    )
+    if initial_step.kind == "submit_direct_prompt":
+        submit_error = _submit_direct_prompt_workflow_step(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            prompt_text=prompt_text,
+        )
+    else:
+        submit_error = _submit_prompt_workflow_step(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            cli=launch_config.cli,
+            prompt_text=prompt_text,
+        )
     if submit_error is not None:
         return submit_error
     queued_steps = workflow.steps[1:]
@@ -870,21 +877,34 @@ def _run_review_surface_bootstrap(
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    review_arguments = _review_prompt_arguments(
+        project_name=project_name,
+        project_root=project_root,
+        review_bundle_path=review_bundle_path,
+        original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
+    )
+    prompt_text, resolution_error = _resolve_preset_submission_text(
+        runtime,
+        cli=launch_config.cli,
+        preset=_REVIEW_WORKTREE_PRESET,
+        arguments=review_arguments,
+    )
+    if resolution_error is not None:
+        return resolution_error
+    if str(launch_config.cli).strip().lower() == "codex":
+        return _submit_direct_prompt_workflow_step(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            prompt_text=prompt_text,
+            failure_event="dashboard.review_tab.failed",
+        )
     return _submit_prompt_workflow_step(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=launch_config.cli,
-        prompt_text=_slash_command(
-            launch_config.cli,
-            _REVIEW_WORKTREE_PRESET,
-            arguments=_review_prompt_arguments(
-                project_name=project_name,
-                project_root=project_root,
-                review_bundle_path=review_bundle_path,
-                original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
-            ),
-        ),
+        prompt_text=prompt_text,
         failure_event="dashboard.review_tab.failed",
     )
 
@@ -895,14 +915,25 @@ def _workflow_step_prompt_text(
     cli: str,
     step: _PlanAgentWorkflowStep,
 ) -> tuple[str, str | None]:
-    if step.kind != "submit_direct_prompt":
+    if step.kind not in {"submit_direct_prompt", "queue_direct_prompt"}:
         return step.text, None
+    return _resolve_preset_submission_text(runtime, cli=cli, preset=step.text)
+
+
+def _resolve_preset_submission_text(
+    runtime: Any,
+    *,
+    cli: str,
+    preset: str,
+    arguments: str = "",
+) -> tuple[str, str | None]:
     if str(cli).strip().lower() != "codex":
-        return step.text, None
+        return _slash_command(cli, preset, arguments=arguments), None
     try:
         return resolve_codex_direct_prompt_body(
-            preset=step.text,
+            preset=preset,
             env=getattr(runtime, "env", {}),
+            arguments=arguments,
         ), None
     except (LookupError, OSError, ValueError) as exc:
         return "", f"prompt_resolution_failed: {exc}"
@@ -991,6 +1022,32 @@ def _submit_prompt_workflow_step(
     )
 
 
+def _submit_direct_prompt_workflow_step(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    prompt_text: str,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    paste_error = _paste_surface_text(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        text=prompt_text,
+        failure_event=failure_event,
+    )
+    if paste_error is not None:
+        return paste_error
+    return _send_surface_key(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        key="enter",
+        failure_event=failure_event,
+    )
+
+
 def _queue_codex_workflow_steps(
     runtime: Any,
     *,
@@ -1002,16 +1059,34 @@ def _queue_codex_workflow_steps(
     cli: str,
 ) -> str | None:
     for step in queued_steps:
-        send_error = _send_surface_text(
+        queued_text, resolution_error = _workflow_step_prompt_text(runtime, cli=cli, step=step)
+        if resolution_error is not None:
+            return "queue_prompt_resolution_failed"
+        if step.kind == "queue_direct_prompt":
+            send_error = _paste_surface_text(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                text=queued_text,
+                emit_failure_event=False,
+            )
+        else:
+            send_error = _send_surface_text(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                text=queued_text,
+                emit_failure_event=False,
+            )
+        if send_error is not None:
+            return "queue_send_failed"
+        if not _queue_codex_message(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            text=step.text,
-            emit_failure_event=False,
-        )
-        if send_error is not None:
-            return "queue_send_failed"
-        if not _queue_codex_message(runtime, workspace_id=workspace_id, surface_id=surface_id, text=step.text):
+            text=queued_text,
+            require_text_match=step.kind != "queue_direct_prompt",
+        ):
             return "queue_not_ready"
     runtime._emit(
         "planning.agent_launch.workflow_queued",
@@ -1043,7 +1118,14 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     return _screen_looks_ready("codex", cleaned)
 
 
-def _queue_codex_message(runtime: Any, *, workspace_id: str, surface_id: str, text: str) -> bool:
+def _queue_codex_message(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    text: str,
+    require_text_match: bool = True,
+) -> bool:
     deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
     normalized_text = str(text).strip()
     picker_submitted = False
@@ -1067,7 +1149,7 @@ def _queue_codex_message(runtime: Any, *, workspace_id: str, surface_id: str, te
             picker_submitted = True
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
-        if _codex_queue_message_needs_tab(screen, text):
+        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
             tab_error = _send_surface_key(
                 runtime,
                 workspace_id=workspace_id,
@@ -1086,12 +1168,18 @@ def _queue_codex_message(runtime: Any, *, workspace_id: str, surface_id: str, te
     return False
 
 
-def _codex_queue_message_needs_tab(screen: str, text: str) -> bool:
+def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match: bool = True) -> bool:
     normalized_screen = _normalized_screen_text(screen)
-    normalized_text = _normalized_screen_text(text)
-    if not normalized_screen or not normalized_text:
+    if not normalized_screen:
         return False
-    return normalized_text in normalized_screen and _CODEX_QUEUE_READY_HINT in normalized_screen
+    if _CODEX_QUEUE_READY_HINT not in normalized_screen:
+        return False
+    if not require_text_match:
+        return True
+    normalized_text = _normalized_screen_text(text)
+    if not normalized_text:
+        return False
+    return normalized_text in normalized_screen
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
@@ -1601,6 +1689,32 @@ def _send_surface_text(
     return _run_cmux_command(
         runtime,
         ["cmux", "send", "--workspace", workspace_id, "--surface", surface_id, text],
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+
+
+def _paste_surface_text(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    text: str,
+    emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    buffer_name = f"envctl-{str(surface_id).replace(':', '-')}"
+    set_error = _run_cmux_command(
+        runtime,
+        ["cmux", "set-buffer", "--name", buffer_name, text],
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+    if set_error is not None:
+        return set_error
+    return _run_cmux_command(
+        runtime,
+        ["cmux", "paste-buffer", "--name", buffer_name, "--workspace", workspace_id, "--surface", surface_id],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )

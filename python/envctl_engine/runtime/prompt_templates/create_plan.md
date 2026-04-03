@@ -90,7 +90,7 @@ Use this structure (adapt section names only if truly necessary):
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
   - do not separately surface or require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; setting `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is sufficient to enable the launcher for this flow
   - default the launch preset to `implement_task`
-  - if you mention Codex behavior, be accurate: envctl launches the CLI and sends `/prompts:implement_task` (and optional queued follow-up messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
+  - if you mention Codex behavior, be accurate: envctl launches the CLI and submits the rendered `implement_task` prompt body (and optional rendered follow-up prompts/messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
   - the final question must mention only the launch settings that should be surfaced to the user
   - do not ask the user to provide or confirm cmux workspace, cmux context, shell, custom CLI command override, or launcher-enable flags; derive or use those internally
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:

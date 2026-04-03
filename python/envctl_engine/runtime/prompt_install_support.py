@@ -13,7 +13,6 @@ _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
-_CODEX_DIRECT_SUBMISSION_PRESETS: Final[frozenset[str]] = frozenset({"ship_release"})
 
 
 @dataclass(slots=True)
@@ -320,9 +319,7 @@ def _target_path(
     env: Mapping[str, str] | None = None,
 ) -> Path:
     if cli_name == "codex":
-        if codex_preset_uses_direct_submission(preset):
-            return _codex_envctl_prompt_root(home=home, env=env) / f"{preset}.md"
-        return home / ".codex" / "prompts" / f"{preset}.md"
+        return _codex_envctl_prompt_root(home=home, env=env) / f"{preset}.md"
     if cli_name == "claude":
         return home / ".claude" / "commands" / f"{preset}.md"
     if cli_name == "opencode":
@@ -331,13 +328,14 @@ def _target_path(
 
 
 def codex_preset_uses_direct_submission(preset: str) -> bool:
-    return str(preset).strip() in _CODEX_DIRECT_SUBMISSION_PRESETS
+    return bool(str(preset).strip())
 
 
 def resolve_codex_direct_prompt_body(
     *,
     preset: str,
     env: Mapping[str, str] | None = None,
+    arguments: str = "",
 ) -> str:
     normalized_preset = str(preset).strip()
     if not codex_preset_uses_direct_submission(normalized_preset):
@@ -346,8 +344,10 @@ def resolve_codex_direct_prompt_body(
     target_path = _target_path(cli_name="codex", preset=normalized_preset, home=home, env=env)
     if target_path.is_file():
         raw = target_path.read_text(encoding="utf-8")
-        return _parse_template(name=normalized_preset, raw=raw).body
-    return _load_template(normalized_preset).body
+        template = _parse_template(name=normalized_preset, raw=raw)
+    else:
+        template = _load_template(normalized_preset)
+    return _render_direct_prompt_arguments(template.body, arguments=arguments)
 
 
 def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = None) -> Path:
@@ -428,6 +428,10 @@ def _render_claude_template(template: PromptTemplate) -> str:
 
 def _render_opencode_template(template: PromptTemplate) -> str:
     return template.body
+
+
+def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
+    return str(body).replace("$ARGUMENTS", str(arguments or ""))
 
 
 def _print_install_results(
