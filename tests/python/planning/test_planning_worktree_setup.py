@@ -344,6 +344,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             repo = root / "repo"
             runtime = root / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "venv").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / ".env").write_text("ENVIRONMENT=development\n", encoding="utf-8")
+            (repo / "frontend" / "node_modules").mkdir(parents=True, exist_ok=True)
 
             engine = self._runtime(repo, runtime)
 
@@ -368,6 +371,13 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
 
             self.assertIsNone(error)
+            self.assertTrue((repo / "trees" / "feature-a" / "1" / "backend" / "venv").is_symlink())
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / "backend" / "venv").resolve(),
+                (repo / "backend" / "venv").resolve(),
+            )
+            self.assertTrue((repo / "trees" / "feature-a" / "1" / "backend" / ".env").is_symlink())
+            self.assertTrue((repo / "trees" / "feature-a" / "1" / "frontend" / "node_modules").is_symlink())
             provenance = self._read_provenance(repo / "trees" / "feature-a" / "1")
             self.assertEqual(provenance.get("source_branch"), "dev")
             self.assertEqual(provenance.get("source_ref"), "origin/dev")
@@ -612,6 +622,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             runtime = root / "runtime"
             target_root = repo / "trees" / "feature-a" / "1"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "venv").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / ".env").write_text("ENVIRONMENT=development\n", encoding="utf-8")
+            (repo / "frontend" / "node_modules").mkdir(parents=True, exist_ok=True)
 
             engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
 
@@ -635,6 +648,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertTrue((target_root / ".envctl_worktree_placeholder").is_file())
             self.assertFalse((target_root / ".envctl-state" / "worktree-provenance.json").exists())
+            self.assertTrue((target_root / "backend" / "venv").is_symlink())
+            self.assertTrue((target_root / "backend" / ".env").is_symlink())
+            self.assertTrue((target_root / "frontend" / "node_modules").is_symlink())
 
     def test_setup_worktrees_emits_spinner_policy_and_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
