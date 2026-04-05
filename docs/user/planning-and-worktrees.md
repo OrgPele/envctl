@@ -164,6 +164,14 @@ New worktrees created by `envctl` now persist their origin branch in:
 <worktree>/.envctl-state/worktree-provenance.json
 ```
 
+When the source repo already has common local dependency/runtime artifacts, envctl-created worktrees also try to link a small compatibility set into the new worktree:
+
+- `backend/venv`
+- `backend/.env`
+- `frontend/node_modules`
+
+This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory.
+
 Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
 
 ## Typical Loop

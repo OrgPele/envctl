@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportUnusedFunction=false
 
 import json
+import os
 import re
 import sys
 from collections.abc import Mapping
@@ -205,6 +206,7 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
         if error:
             return error
     else:
+        _link_repo_local_shared_artifacts(self, target=target)
         _write_worktree_provenance(self, target=target)
     return None
 
@@ -1180,6 +1182,7 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
             ),
             encoding="utf-8",
         )
+        _link_repo_local_shared_artifacts(self, target=target)
         self._emit(
             "setup.worktree.placeholder_fallback",
             feature=feature,
@@ -1253,6 +1256,39 @@ def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None
         path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     except OSError:
         return
+
+
+def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
+    if not target.is_dir():
+        return
+    repo_root = self.config.base_dir
+    link_specs = (
+        ("backend/venv", repo_root / "backend" / "venv"),
+        ("backend/.env", repo_root / "backend" / ".env"),
+        ("frontend/node_modules", repo_root / "frontend" / "node_modules"),
+    )
+    for relative_target, source_path in link_specs:
+        if not source_path.exists():
+            continue
+        worktree_path = target / relative_target
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(worktree_path):
+            try:
+                if worktree_path.is_symlink() and worktree_path.resolve() == source_path.resolve():
+                    continue
+            except OSError:
+                pass
+            if worktree_path.is_symlink():
+                try:
+                    worktree_path.unlink()
+                except OSError:
+                    continue
+            else:
+                continue
+        try:
+            worktree_path.symlink_to(source_path)
+        except OSError:
+            continue
 
 
 def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> dict[str, object] | None:
