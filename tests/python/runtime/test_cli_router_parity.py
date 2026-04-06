@@ -48,7 +48,7 @@ class CliRouterParityTests(unittest.TestCase):
             "show-config": "show-config",
             "show-state": "show-state",
             "explain-startup": "explain-startup",
-            "preflight": "explain-startup",
+            "preflight": "preflight",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})

@@ -51,7 +51,7 @@ envctl preflight --json
 Compatibility note:
 
 - `list-commands`, `list-targets`, and `list-trees` also accept `--list-commands`, `--list-targets`, and `--list-trees`
-- `preflight` and `--preflight` are aliases for `explain-startup`
+- `preflight` and `--preflight` expose the same startup inspection logic through the versioned `envctl.preflight.v1` JSON contract
 
 ## AI CLI Presets
 
@@ -123,6 +123,7 @@ Current supported command surface:
 - `doctor`
 - `errors`
 - `explain-startup`
+- `preflight`
 - `health`
 - `help`
 - `install-prompts`

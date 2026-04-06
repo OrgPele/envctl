@@ -408,6 +408,19 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Explain-startup is Python-owned and verified through env/runtime tests.",
     ),
+    "preflight": FeatureDefinition(
+        area="inspection",
+        feature="Command: emit a versioned startup-preflight contract without starting services",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/command_router.py",
+        ),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
+        parity_status="verified_python",
+        notes="Preflight is Python-owned and wraps explain-startup in a versioned JSON contract for automation clients.",
+    ),
     "dashboard": FeatureDefinition(
         area="inspection",
         feature="Command: render the interactive dashboard and command loop",
