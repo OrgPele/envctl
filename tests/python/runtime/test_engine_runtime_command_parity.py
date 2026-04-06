@@ -831,6 +831,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "show-config",
             "show-state",
             "explain-startup",
+            "ensure-worktree",
             "preflight",
             "help",
             "debug-pack",
@@ -838,7 +839,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 35, "Should have exactly 35 commands")
+        self.assertEqual(len(lines), 36, "Should have exactly 36 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -850,6 +851,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "dashboard",
                 "config",
                 "doctor",
+                "ensure-worktree",
                 "migrate-hooks",
                 "install-prompts",
                 "codex-tmux",

@@ -121,6 +121,7 @@ Current supported command surface:
 - `debug-report`
 - `delete-worktree`
 - `doctor`
+- `ensure-worktree`
 - `errors`
 - `explain-startup`
 - `preflight`
@@ -236,7 +237,14 @@ envctl list-trees --json
 envctl --plan
 envctl --parallel-plan
 envctl --sequential-plan
+envctl ensure-worktree feature-a --json
 ```
+
+`ensure-worktree` is the cheap automation-oriented worktree surface:
+
+- creates or reuses exactly one envctl-managed worktree
+- does not imply runtime/service startup
+- returns `envctl.ensure_worktree.v1` in `--json` mode
 
 Commit defaults:
 
