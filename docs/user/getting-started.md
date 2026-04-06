@@ -114,6 +114,7 @@ Useful inspection commands before that first run:
 ```bash
 envctl show-config --json
 envctl explain-startup --json
+envctl preflight --json
 ```
 
 Those commands tell you:
@@ -169,6 +170,7 @@ After config exists, this is the safest normal loop:
 ```bash
 envctl show-config --json
 envctl explain-startup --json
+envctl preflight --json
 envctl
 envctl dashboard
 envctl logs --all --logs-follow
