@@ -831,13 +831,14 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "show-config",
             "show-state",
             "explain-startup",
+            "preflight",
             "help",
             "debug-pack",
             "debug-report",
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 34, "Should have exactly 34 commands")
+        self.assertEqual(len(lines), 35, "Should have exactly 35 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -862,6 +863,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "show-config",
                 "show-state",
                 "explain-startup",
+                "preflight",
                 "test",
                 "pr",
                 "commit",
@@ -1148,6 +1150,34 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["headless"])
         self.assertEqual(payload["selection"]["reason"], "headless_tree_start_requires_explicit_selection")
+
+    def test_preflight_json_wraps_startup_explanation_in_versioned_contract(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "MAIN_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["preflight", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["contract_version"], "envctl.preflight.v1")
+        self.assertEqual(payload["surface"], "preflight")
+        self.assertEqual(payload["mode"], "main")
+        self.assertEqual(payload["command"], "start")
+        self.assertFalse(payload["startup_enabled"])
+        self.assertIn("startup", payload)
+        self.assertEqual(payload["startup"]["reason"], "config_startup_disabled")
 
     def test_explain_startup_json_reports_disabled_startup(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()

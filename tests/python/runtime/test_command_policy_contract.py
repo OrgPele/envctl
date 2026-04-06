@@ -80,6 +80,7 @@ class CommandPolicyContractTests(unittest.TestCase):
     def test_dispatch_family_mapping_groups_commands_consistently(self) -> None:
         expected = {
             "list-commands": "direct_inspection",
+            "preflight": "direct_inspection",
             "install-prompts": "utility",
             "codex-tmux": "utility",
             "debug-pack": "debug",

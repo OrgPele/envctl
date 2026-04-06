@@ -41,6 +41,8 @@ def dispatch_direct_inspection(runtime: Any, route: object) -> int:
         return _print_state(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
     if command == "explain-startup":
         return _print_startup_explanation(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
+    if command == "preflight":
+        return _print_preflight(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
     raise RuntimeError(f"Unsupported direct inspection command: {command}")
 
 
@@ -209,7 +211,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     return 0
 
 
-def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool) -> int:
+def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str, object]:
     startup_route = _startup_route_for_explanation(runtime, route)
     runtime_mode = effective_start_mode(runtime, route)
     batch = runtime._batch_mode_requested(startup_route)
@@ -386,6 +388,14 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     }
     if not startup_enabled:
         payload["reason"] = "config_startup_disabled"
+    return payload
+
+
+def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool) -> int:
+    payload = _build_startup_explanation_payload(runtime, route)
+    selection_info = payload["selection"]
+    auto_resume = payload["auto_resume"]
+    enabled_dependencies = payload["dependencies"]
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -409,11 +419,37 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     return 0
 
 
+def _print_preflight(runtime: Any, route: object, *, json_output: bool) -> int:
+    payload = _build_startup_explanation_payload(runtime, route)
+    selection = payload.get("selection")
+    selection_required = bool(selection.get("required", False)) if isinstance(selection, dict) else False
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "contract_version": "envctl.preflight.v1",
+                    "surface": "preflight",
+                    "mode": payload["mode"],
+                    "command": payload["command"],
+                    "startup_enabled": payload["startup_enabled"],
+                    "selection_required": selection_required,
+                    "startup": payload,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    print("surface: preflight")
+    return _print_startup_explanation(runtime, route, json_output=False)
+
+
 def _startup_route_for_explanation(runtime: Any, route: object) -> object:
     raw_args = [
         str(token)
         for token in list(getattr(route, "raw_args", []) or [])
-        if str(token).strip() not in {"--explain-startup", "explain-startup"}
+        if str(token).strip() not in {"--explain-startup", "explain-startup", "--preflight", "preflight"}
     ]
     env = {**getattr(getattr(runtime, "config", None), "raw", {}), **getattr(runtime, "env", {})}
     try:

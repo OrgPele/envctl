@@ -241,8 +241,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("show-state", "show-state"),
     ("--explain-startup", "explain-startup"),
     ("explain-startup", "explain-startup"),
-    ("--preflight", "explain-startup"),
-    ("preflight", "explain-startup"),
+    ("--preflight", "preflight"),
+    ("preflight", "preflight"),
     ("--help", "help"),
     ("-h", "help"),
     ("help", "help"),
@@ -330,6 +330,7 @@ _COMMAND_ALIAS_PAIRS = (
     ("r", "restart"),
 )
 COMMAND_ALIASES = _unique_mapping(registry_name="COMMAND_ALIASES", pairs=_COMMAND_ALIAS_PAIRS)
+_INSPECTION_OVERRIDE_COMMANDS = {"explain-startup", "preflight"}
 
 SUPPORTED_COMMANDS = sorted(
     {
@@ -366,6 +367,7 @@ SUPPORTED_COMMANDS = sorted(
         "show-config",
         "show-state",
         "explain-startup",
+        "preflight",
         "help",
     }
 )
@@ -545,9 +547,9 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
-                if mapped == "explain-startup":
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
                     state.explain_startup_requested = True
-                if mapped == "explain-startup" or not state.explain_startup_requested:
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
                     state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
@@ -600,9 +602,9 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 mapped = COMMAND_ALIASES.get(command_token)
                 if mapped is None:
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
-                if mapped == "explain-startup":
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
                     state.explain_startup_requested = True
-                if mapped == "explain-startup" or not state.explain_startup_requested:
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
                     state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)

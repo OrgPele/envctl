@@ -123,7 +123,7 @@ Those commands are high-signal and low-risk because they inspect rather than sta
 
 ## When should I use `show-config`, `explain-startup`, and `preflight`?
 
-Use them before any run where predictability matters:
+Use them before any run where predictability matters. `preflight --json` is the stable machine-facing wrapper around startup inspection:
 
 - first use in a repo
 - after editing `.envctl`

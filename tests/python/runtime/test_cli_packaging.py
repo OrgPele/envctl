@@ -760,15 +760,26 @@ class CliPackagingTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             with self._installed_env(editable=False) as env:
-                result = subprocess.run(
+                list_result = subprocess.run(
                     [str(env["script"]), "--repo", str(repo), "list-commands"],
                     capture_output=True,
                     text=True,
                     env=env["env"],
                     check=False,
                 )
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
-            self.assertIn("list-commands", result.stdout)
+                preflight_result = subprocess.run(
+                    [str(env["script"]), "--repo", str(repo), "preflight", "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+            self.assertEqual(list_result.returncode, 0, msg=list_result.stderr)
+            self.assertIn("list-commands", list_result.stdout)
+            self.assertEqual(preflight_result.returncode, 0, msg=preflight_result.stderr)
+            payload = json.loads(preflight_result.stdout)
+            self.assertEqual(payload["contract_version"], "envctl.preflight.v1")
+            self.assertEqual(payload["surface"], "preflight")
 
     def test_regular_install_supports_install_and_uninstall_shell_path_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
