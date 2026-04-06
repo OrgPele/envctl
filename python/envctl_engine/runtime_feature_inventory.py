@@ -623,6 +623,24 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Codex tmux session launch and reuse are Python-owned utility flows with dedicated routing and subprocess coverage.",
     ),
+    "ensure-worktree": FeatureDefinition(
+        area="cli",
+        feature="Command: create or reuse a single envctl-managed worktree without runtime startup",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/command_router.py",
+            "python/envctl_engine/runtime/ensure_worktree_support.py",
+            "python/envctl_engine/runtime/utility_command_support.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_ensure_worktree_command.py",
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_command_dispatch_matrix.py",
+        ),
+        parity_status="verified_python",
+        notes="Ensure-worktree is Python-owned and intentionally reuses existing planning/worktree creation mechanics without starting runtime services.",
+    ),
     "list-targets": FeatureDefinition(
         area="cli",
         feature="Command: print available project and service targets",
