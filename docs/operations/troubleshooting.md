@@ -12,6 +12,7 @@ Run these before changing config or retrying random fixes:
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
+envctl preflight --json
 envctl --doctor --json
 ```
 
@@ -215,6 +216,7 @@ A good bug report bundle for maintainers usually includes:
 
 - `envctl show-config --json`
 - `envctl explain-startup --json`
+- `envctl preflight --json`
 - `envctl --doctor --json`
 - `envctl --debug-report` for interactive or timing issues
 - the bundle path from `envctl --debug-last`

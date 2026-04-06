@@ -14,7 +14,7 @@ class LauncherError(RuntimeError):
 
 USAGE_TEXT = """Usage:
   envctl [--repo <path>] [engine args...]
-  envctl doctor [--repo <path>]
+  envctl doctor [--repo <path>] [--json]
   envctl install [--shell-file <path>] [--dry-run]
   envctl uninstall [--shell-file <path>] [--dry-run]
   envctl [--repo <path>] --version
@@ -26,6 +26,7 @@ Examples:
   envctl --repo /path/to/your/repo --resume
   envctl --version
   envctl doctor --repo /path/to/your/repo
+  envctl doctor --repo /path/to/your/repo --json
 """
 
 _BLOCK_START = "# >>> envctl PATH >>>"
@@ -219,14 +220,30 @@ def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
     return detected
 
 
+def launcher_doctor_payload(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> dict[str, str]:
+    return {
+        "launcher": "envctl",
+        "binary_path": str(binary_path),
+        "launcher_root": str(launcher_root),
+        "repo_root": str(repo_root),
+        "runtime_entrypoint": str(runtime_entrypoint),
+    }
+
+
 def launcher_doctor_text(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> str:
+    payload = launcher_doctor_payload(
+        binary_path=binary_path,
+        repo_root=repo_root,
+        runtime_entrypoint=runtime_entrypoint,
+        launcher_root=launcher_root,
+    )
     return "\n".join(
         (
-            "Launcher: envctl",
-            f"Binary Path: {binary_path}",
-            f"Launcher Root: {launcher_root}",
-            f"Repo Root: {repo_root}",
-            f"Runtime Entry: {runtime_entrypoint}",
+            f"Launcher: {payload['launcher']}",
+            f"Binary Path: {payload['binary_path']}",
+            f"Launcher Root: {payload['launcher_root']}",
+            f"Repo Root: {payload['repo_root']}",
+            f"Runtime Entry: {payload['runtime_entrypoint']}",
         )
     )
 

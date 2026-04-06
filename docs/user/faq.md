@@ -33,6 +33,7 @@ If `.envctl` is missing:
 ## What is the difference between `envctl doctor` and `envctl --doctor`?
 
 - `envctl doctor --repo /path` is the launcher-level diagnostic and checks repo and engine resolution
+- `envctl doctor --repo /path --json` gives the same launcher-level check in structured form
 - `envctl --doctor` is the Python runtime diagnostic for the current repo and runtime scope
 
 If you are troubleshooting a real run, you almost always want `envctl --doctor`.
@@ -114,12 +115,13 @@ Start with:
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
+envctl preflight --json
 envctl --list-targets --json
 ```
 
 Those commands are high-signal and low-risk because they inspect rather than start.
 
-## When should I use `show-config` and `explain-startup`?
+## When should I use `show-config`, `explain-startup`, and `preflight`?
 
 Use them before any run where predictability matters:
 

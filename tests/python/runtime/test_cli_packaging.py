@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import re
@@ -555,6 +556,26 @@ class CliPackagingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(result.stdout.strip())
 
+    def test_regular_install_supports_launcher_doctor_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            with self._installed_env(editable=False, install_deps=True) as env:
+                self._assert_runtime_dependencies_available(env)
+                result = subprocess.run(
+                    [str(env["script"]), "doctor", "--repo", str(repo), "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["launcher"], "envctl")
+            self.assertEqual(Path(payload["repo_root"]), repo.resolve())
+            self.assertTrue(str(payload["binary_path"]).strip())
+            self.assertEqual(payload["runtime_entrypoint"], "envctl_engine.runtime.cli")
+
     def test_regular_install_without_dependencies_fails_before_operational_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -712,6 +733,26 @@ class CliPackagingTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Launcher: envctl", result.stdout)
+        self.assertNotIn("Missing required envctl runtime Python packages", result.stderr)
+
+    def test_source_checkout_wrapper_without_dependencies_supports_launcher_doctor_json(self) -> None:
+        with self._source_checkout_env() as env:
+            target_repo = Path(env["tmpdir"]) / "target-repo"
+            target_repo.mkdir(parents=True, exist_ok=True)
+            (target_repo / ".git").mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                [str(env["python"]), str(env["script"]), "doctor", "--repo", str(target_repo), "--json"],
+                capture_output=True,
+                text=True,
+                env=env["env"],
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["launcher"], "envctl")
+        self.assertEqual(Path(payload["repo_root"]), target_repo.resolve())
+        self.assertEqual(payload["runtime_entrypoint"], "envctl_engine.runtime.cli")
         self.assertNotIn("Missing required envctl runtime Python packages", result.stderr)
 
     def test_regular_install_supports_direct_inspection_command_spelling(self) -> None:

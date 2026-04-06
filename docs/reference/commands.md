@@ -6,7 +6,7 @@ If you are intentionally running from a clone of the `envctl` repo and want the 
 
 ```text
 ./bin/envctl [--repo <path>] [engine args...]
-./bin/envctl doctor [--repo <path>]
+./bin/envctl doctor [--repo <path>] [--json]
 ./bin/envctl install [--shell-file <path>] [--dry-run]
 ./bin/envctl uninstall [--shell-file <path>] [--dry-run]
 ./bin/envctl [--repo <path>] --version
@@ -28,6 +28,7 @@ Use these when you want to verify the installed command or an explicit repo wrap
 ```bash
 envctl --version
 ./bin/envctl --version
+envctl doctor --repo /absolute/path/to/repo --json
 ```
 
 `--version` does not add a runtime command and does not appear in `list-commands`.
@@ -44,11 +45,13 @@ envctl list-trees --json
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
+envctl preflight --json
 ```
 
 Compatibility note:
 
 - `list-commands`, `list-targets`, and `list-trees` also accept `--list-commands`, `--list-targets`, and `--list-trees`
+- `preflight` and `--preflight` are aliases for `explain-startup`
 
 ## AI CLI Presets
 

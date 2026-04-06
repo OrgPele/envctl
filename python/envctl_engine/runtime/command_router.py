@@ -241,6 +241,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("show-state", "show-state"),
     ("--explain-startup", "explain-startup"),
     ("explain-startup", "explain-startup"),
+    ("--preflight", "explain-startup"),
+    ("preflight", "explain-startup"),
     ("--help", "help"),
     ("-h", "help"),
     ("help", "help"),

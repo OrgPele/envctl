@@ -66,6 +66,15 @@ class CliRouterTests(unittest.TestCase):
             self.assertEqual(route.passthrough_args, ["feature-a"])
             self.assertTrue(bool(route.flags.get("json")))
 
+    def test_preflight_alias_routes_to_explain_startup(self) -> None:
+        for argv in (
+            ["preflight", "--json"],
+            ["--preflight", "--plan", "feature-a", "--json"],
+        ):
+            route = parse_route(argv, env={})
+            self.assertEqual(route.command, "explain-startup")
+            self.assertTrue(bool(route.flags.get("json")))
+
 
 if __name__ == "__main__":
     unittest.main()
