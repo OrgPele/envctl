@@ -539,6 +539,39 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(prompt_text, "Ship this release carefully.\n")
 
+    def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
+        self.assertIsNotNone(_workflow_step_prompt_text)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "review_worktree_imp.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="review_worktree_imp")
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                runtime,
+                cli="codex",
+                preset="review_worktree_imp",
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", prompt_text)
+        self.assertIn("Keep `$ARGUMENTS` literal in prose.", prompt_text)
+        self.assertEqual(prompt_text.count("$ARGUMENTS"), 1)
+
     def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
@@ -743,6 +776,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     gpt-5.4 high   fast   /model to change │\n"
             "│ directory: ~/repo                                 │\n"
+            "  You are finalizing an implementation that should already be substantially complete in the current worktree.\n"
             "  tab to queue message\n"
         )
         state = {"typed": False}
@@ -803,6 +837,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     gpt-5.4 high   fast   /model to change │\n"
             "│ directory: ~/repo                                 │\n"
+            "  Direct queued prompt body\n"
             "  tab to queue message\n"
         )
         committed_screen = (
@@ -851,6 +886,92 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertTrue(queued)
         self.assertEqual(sent_keys, ["tab"])
+
+    def test_codex_cycle_queue_direct_prompt_requires_visible_message_text_before_tab(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body"
+        queue_hint_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "  tab to queue message\n"
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            return None
+
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=queue_hint_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_codex_message(
+                runtime,
+                workspace_id="workspace:7",
+                surface_id="surface:9",
+                text=queued_text,
+                require_text_match=False,
+            )
+
+        self.assertFalse(queued)
+        self.assertEqual(sent_keys, [])
+
+    def test_review_prompt_arguments_preserve_newlines_for_direct_codex_submission(self) -> None:
+        rendered = launch_support._review_prompt_arguments(
+            project_name="feature-a-1",
+            project_root=Path("/tmp/worktree path"),
+            review_bundle_path=Path("/tmp/review bundle.md"),
+            original_plan_path=Path("/tmp/original plan.md"),
+        )
+
+        self.assertEqual(
+            rendered,
+            'Project: feature-a-1\n'
+            'Review bundle: "/tmp/review bundle.md"\n'
+            'Worktree directory: "/tmp/worktree path"\n'
+            'Original plan file: "/tmp/original plan.md"',
+        )
+
+    def test_prompt_submit_screen_accepts_multiline_direct_prompt_once_each_line_is_visible(self) -> None:
+        screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "Review bundle: /tmp/review.md\n"
+            "Worktree directory: /tmp/tree\n"
+            "Original plan file: /tmp/plan.md\n"
+        )
+        prompt_text = "Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree\nOriginal plan file: /tmp/plan.md"
+
+        self.assertTrue(_prompt_submit_screen_looks_ready("codex", screen, prompt_text))
+
+    def test_prompt_submit_screen_rejects_multiline_direct_prompt_when_line_missing(self) -> None:
+        screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "Review bundle: /tmp/review.md\n"
+            "Worktree directory: /tmp/tree\n"
+        )
+        prompt_text = "Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree\nOriginal plan file: /tmp/plan.md"
+
+        self.assertFalse(_prompt_submit_screen_looks_ready("codex", screen, prompt_text))
 
     def test_codex_cycle_queue_failure_falls_back_to_initial_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1965,9 +2086,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ]
             self.assertEqual(len(review_prompt_calls), 1)
             self.assertIn("current local repo directory is the unedited baseline", str(review_prompt_calls[0][-1]))
-            self.assertIn(f"Review bundle: {review_bundle}", str(review_prompt_calls[0][-1]))
-            self.assertIn(f"Worktree directory: {project_root}", str(review_prompt_calls[0][-1]))
-            self.assertIn(f"Original plan file: {original_plan.resolve()}", str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Review bundle: "{review_bundle}"', str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Worktree directory: "{project_root}"', str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}"', str(review_prompt_calls[0][-1]))
             self.assertIn(
                 ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:10", "--surface", "surface:12"],
                 rt.process_runner.calls,
@@ -2031,7 +2152,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "workspace:9",
                     "--surface",
                     "surface:15",
-                    f"/review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original plan file: {original_plan.resolve()}",
+                    "/review_worktree_imp Project: feature-a-1\n"
+                    f'Review bundle: "{review_bundle}"\n'
+                    f'Worktree directory: "{project_root}"\n'
+                    f'Original plan file: "{original_plan.resolve()}"',
                 ],
                 rt.process_runner.calls,
             )

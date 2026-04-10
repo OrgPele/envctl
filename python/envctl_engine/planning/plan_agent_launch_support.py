@@ -984,7 +984,7 @@ def _submit_prompt_workflow_step(
             workspace_id=workspace_id,
             surface_id=surface_id,
             key="ctrl+e",
-            **failure_kwargs,
+            failure_event=failure_event,
         ),
     ]
     for error in final_errors:
@@ -1002,7 +1002,7 @@ def _submit_prompt_workflow_step(
         workspace_id=workspace_id,
         surface_id=surface_id,
         key="enter",
-        **failure_kwargs,
+        failure_event=failure_event,
     )
     if submit_error is not None:
         return submit_error
@@ -1018,7 +1018,7 @@ def _submit_prompt_workflow_step(
         workspace_id=workspace_id,
         surface_id=surface_id,
         key="enter",
-        **failure_kwargs,
+        failure_event=failure_event,
     )
 
 
@@ -1085,7 +1085,7 @@ def _queue_codex_workflow_steps(
             workspace_id=workspace_id,
             surface_id=surface_id,
             text=queued_text,
-            require_text_match=step.kind != "queue_direct_prompt",
+            require_text_match=True,
         ):
             return "queue_not_ready"
     runtime._emit(
@@ -1174,12 +1174,17 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
         return False
     if _CODEX_QUEUE_READY_HINT not in normalized_screen:
         return False
-    if not require_text_match:
-        return True
     normalized_text = _normalized_screen_text(text)
     if not normalized_text:
         return False
-    return normalized_text in normalized_screen
+    if normalized_text in normalized_screen:
+        return True
+    if not require_text_match:
+        return False
+    first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not first_visible_line:
+        return False
+    return _normalized_screen_text(first_visible_line) in normalized_screen
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
@@ -1227,28 +1232,28 @@ def _launch_cli_bootstrap_commands(
             workspace_id=workspace_id,
             surface_id=surface_id,
             text=f"cd {typed_root}",
-            **failure_kwargs,
+            failure_event=failure_event,
         ),
         _send_surface_key(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
             key="enter",
-            **failure_kwargs,
+            failure_event=failure_event,
         ),
         _send_surface_text(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
             text=cli_command,
-            **failure_kwargs,
+            failure_event=failure_event,
         ),
         _send_surface_key(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
             key="enter",
-            **failure_kwargs,
+            failure_event=failure_event,
         ),
     ]
 
@@ -1338,13 +1343,13 @@ def _review_prompt_arguments(
     review_bundle_path: Path | None,
     original_plan_path: Path | None,
 ) -> str:
-    parts = [project_name]
+    parts = [f'Project: {project_name}']
     if review_bundle_path is not None:
-        parts.append(f"Review bundle: {review_bundle_path}")
-    parts.append(f"Worktree directory: {project_root}")
+        parts.append(f'Review bundle: "{review_bundle_path}"')
+    parts.append(f'Worktree directory: "{project_root}"')
     if original_plan_path is not None:
-        parts.append(f"Original plan file: {original_plan_path}")
-    return " ".join(str(part).strip() for part in parts if str(part).strip())
+        parts.append(f'Original plan file: "{original_plan_path}"')
+    return "\n".join(str(part).strip() for part in parts if str(part).strip())
 
 
 def _review_original_plan_path(project_name: str, project_root: Path, *, repo_root: Path) -> Path | None:
@@ -1931,8 +1936,14 @@ def _prompt_submit_screen_looks_ready(cli: str, screen: str, prompt_text: str) -
     normalized_prompt = str(prompt_text).strip().lower()
     if not normalized_prompt:
         return True
-    if lower_text.count(normalized_prompt) != 1:
+    prompt_lines = [line.strip().lower() for line in str(prompt_text).splitlines() if line.strip()]
+    if not prompt_lines:
+        return True
+    matched_lines = sum(1 for line in prompt_lines if line in lower_text)
+    if matched_lines != len(prompt_lines):
         return False
+    if len(prompt_lines) == 1:
+        return lower_text.count(prompt_lines[0]) == 1
     return True
 
 
