@@ -23,6 +23,7 @@ from envctl_engine.runtime.prompt_install_support import (  # noqa: E402
     _target_path,
     PromptInstallResult,
     resolve_codex_direct_prompt_body,
+    resolve_opencode_direct_prompt_body,
     run_install_prompts_command,
 )
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -655,6 +656,37 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
             resolved = resolve_codex_direct_prompt_body(
+                preset="review_worktree_imp",
+                env={"HOME": tmpdir},
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+            self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", resolved)
+            self.assertIn("Keep `$ARGUMENTS` literal in prose.", resolved)
+            self.assertEqual(resolved.count("$ARGUMENTS"), 1)
+
+    def test_resolve_opencode_direct_prompt_body_prefers_user_installed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="opencode", preset="implement_task", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Direct OpenCode prompt body\n", encoding="utf-8")
+
+            resolved = resolve_opencode_direct_prompt_body(preset="implement_task", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Direct OpenCode prompt body\n")
+
+    def test_resolve_opencode_direct_prompt_body_renders_arguments_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="opencode", preset="review_worktree_imp", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+
+            resolved = resolve_opencode_direct_prompt_body(
                 preset="review_worktree_imp",
                 env={"HOME": tmpdir},
                 arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",

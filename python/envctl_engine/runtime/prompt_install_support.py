@@ -449,6 +449,25 @@ def resolve_codex_direct_prompt_body(
     return _render_direct_prompt_arguments(template.body, arguments=arguments)
 
 
+def resolve_opencode_direct_prompt_body(
+    *,
+    preset: str,
+    env: Mapping[str, str] | None = None,
+    arguments: str = "",
+) -> str:
+    normalized_preset = str(preset).strip()
+    if not normalized_preset:
+        raise LookupError("Preset is required for direct OpenCode submission")
+    home = _user_home_from_env(env)
+    target_path = _target_path(cli_name="opencode", preset=normalized_preset, home=home, env=env)
+    if target_path.is_file():
+        raw = target_path.read_text(encoding="utf-8")
+        template = _parse_template(name=normalized_preset, raw=raw)
+    else:
+        template = _load_template(normalized_preset)
+    return _render_direct_prompt_arguments(template.body, arguments=arguments)
+
+
 def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = None) -> Path:
     raw_xdg = str((env or {}).get("XDG_CONFIG_HOME", "")).strip()
     config_home = Path(raw_xdg).expanduser() if raw_xdg else home / ".config"
