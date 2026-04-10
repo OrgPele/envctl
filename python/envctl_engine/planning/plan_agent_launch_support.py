@@ -19,6 +19,7 @@ from envctl_engine.runtime.prompt_install_support import (
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
+_PROMPT_SHAPING_COMMAND_TOKEN_RE = re.compile(r"^/[A-Za-z][A-Za-z0-9:_-]*$")
 _DEFAULT_PRESET = "implement_task"
 _DEFAULT_SHELL = "zsh"
 _SURFACE_READY_DELAY_SECONDS = 0.15
@@ -970,7 +971,12 @@ def _shape_prompt_text(
     if ulw_loop_prefix:
         if not direct_prompt:
             return "", "prompt_resolution_failed: ulw_loop_prefix_requires_direct_prompt"
-        if stripped.startswith("/") and not stripped.startswith("/ulw_loop"):
+        slash_command_tokens = [
+            token
+            for token in str(stripped).split()
+            if _PROMPT_SHAPING_COMMAND_TOKEN_RE.fullmatch(token)
+        ]
+        if any(token != "/ulw_loop" for token in slash_command_tokens):
             return "", "prompt_resolution_failed: multiple_slash_commands_not_allowed"
         if not stripped.startswith("/ulw_loop"):
             shaped = f"/ulw_loop {stripped}" if stripped else "/ulw_loop"

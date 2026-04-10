@@ -838,6 +838,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(shaped, "")
         self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
 
+    def test_shape_prompt_text_rejects_embedded_second_slash_command_for_direct_prompts(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            "Implement this directly.\n/implement_task",
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        self.assertEqual(shaped, "")
+        self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
+
+    def test_shape_prompt_text_preserves_existing_ulw_loop_prefix_and_allows_suffix(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            "/ulw_loop Implement this directly.",
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=True,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(shaped, "/ulw_loop Implement this directly. ulw")
+
+    def test_shape_prompt_text_allows_absolute_path_literals_in_direct_prompts(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            'Review bundle: "/tmp/review.md"\nWorktree directory: "/tmp/tree"',
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        self.assertIsNone(error)
+        self.assertTrue(shaped.startswith("/ulw_loop "))
+        self.assertIn('Review bundle: "/tmp/review.md"', shaped)
+
     def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
