@@ -2522,6 +2522,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(len(direct_prompt_calls), 1)
             self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw_loop Review prompt body"))
             self.assertIn(f'Review bundle: "{review_bundle}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}" ulw', str(direct_prompt_calls[0][-1]))
             self.assertTrue(str(direct_prompt_calls[0][-1]).rstrip().endswith("ulw"))
             self.assertIn(
                 ["cmux", "paste-buffer", "--name", "envctl-surface-15", "--workspace", "workspace:9", "--surface", "surface:15"],
