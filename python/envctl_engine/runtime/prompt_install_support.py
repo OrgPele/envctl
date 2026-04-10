@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 import sys
-from typing import Any, Final, Mapping
+from typing import Any, Final, Mapping, Sequence
 
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -15,6 +16,7 @@ _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
 _CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
+_PROMPT_ARGUMENT_PLACEHOLDER = "$ARGUMENTS"
 
 
 @dataclass(slots=True)
@@ -285,7 +287,7 @@ def _build_install_plans(
         for preset in presets:
             target_path = _target_path(cli_name=cli_name, preset=preset, home=home, env=env)
             try:
-                template = _load_template(preset)
+                template = _install_template(cli_name=cli_name, preset=preset, home=home, env=env)
                 rendered = _render_preset(cli_name=cli_name, template=template)
             except (LookupError, OSError, ValueError) as exc:
                 failures.append(
@@ -310,9 +312,25 @@ def _build_install_plans(
     return plans, failures
 
 
+def _install_template(
+    *,
+    cli_name: str,
+    preset: str,
+    home: Path,
+    env: Mapping[str, str] | None = None,
+) -> PromptTemplate:
+    if cli_name != "codex":
+        return _load_template(preset)
+    target_path = _target_path(cli_name=cli_name, preset=preset, home=home, env=env)
+    legacy_path = _legacy_codex_prompt_path(preset=preset, home=home)
+    if not target_path.exists() and legacy_path.is_file():
+        return _parse_template(name=preset, raw=legacy_path.read_text(encoding="utf-8"))
+    return _load_template(preset)
+
+
 def _require_overwrite_approval(
     *,
-    overwrite_candidates: list[PromptInstallPlan],
+    overwrite_candidates: Sequence[PromptInstallPlan | CodexSkillInstallPlan],
     json_output: bool,
     env: Mapping[str, str] | None = None,
 ) -> PromptInstallResult | None:
@@ -347,7 +365,7 @@ def _interactive_stdio() -> bool:
 
 
 def _overwrite_prompt(
-    overwrite_candidates: list[PromptInstallPlan],
+    overwrite_candidates: Sequence[PromptInstallPlan | CodexSkillInstallPlan],
     *,
     env: Mapping[str, str] | None = None,
 ) -> str:
@@ -419,8 +437,12 @@ def resolve_codex_direct_prompt_body(
         raise LookupError(f"Preset is not configured for direct Codex submission: {normalized_preset}")
     home = _user_home_from_env(env)
     target_path = _target_path(cli_name="codex", preset=normalized_preset, home=home, env=env)
+    legacy_path = _legacy_codex_prompt_path(preset=normalized_preset, home=home)
     if target_path.is_file():
         raw = target_path.read_text(encoding="utf-8")
+        template = _parse_template(name=normalized_preset, raw=raw)
+    elif legacy_path.is_file():
+        raw = legacy_path.read_text(encoding="utf-8")
         template = _parse_template(name=normalized_preset, raw=raw)
     else:
         template = _load_template(normalized_preset)
@@ -431,6 +453,10 @@ def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = Non
     raw_xdg = str((env or {}).get("XDG_CONFIG_HOME", "")).strip()
     config_home = Path(raw_xdg).expanduser() if raw_xdg else home / ".config"
     return config_home / "envctl" / "codex" / "prompts"
+
+
+def _legacy_codex_prompt_path(*, preset: str, home: Path) -> Path:
+    return home / ".codex" / "prompts" / f"{preset}.md"
 
 
 def _user_home(runtime: Any) -> Path:
@@ -446,7 +472,7 @@ def _user_home_from_env(env: Mapping[str, str] | None) -> Path:
 
 
 def _available_presets() -> frozenset[str]:
-    return frozenset(path.stem for path in _template_files())
+    return frozenset(path.name.rsplit(_PROMPT_TEMPLATE_SUFFIX, 1)[0] for path in _template_files())
 
 
 def _unsupported_preset_message(preset: str) -> str:
@@ -456,9 +482,9 @@ def _unsupported_preset_message(preset: str) -> str:
     return f"Unsupported preset: {preset}. Available presets: {available}"
 
 
-def _template_files() -> tuple[resources.abc.Traversable, ...]:
+def _template_files() -> tuple[Traversable, ...]:
     template_root = resources.files(_PROMPT_TEMPLATE_PACKAGE)
-    files: list[resources.abc.Traversable] = []
+    files: list[Traversable] = []
     for entry in template_root.iterdir():
         if not entry.is_file() or not entry.name.endswith(_PROMPT_TEMPLATE_SUFFIX):
             continue
@@ -508,7 +534,8 @@ def _render_opencode_template(template: PromptTemplate) -> str:
 
 
 def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
-    return str(body).replace("$ARGUMENTS", str(arguments or ""))
+    replacement = str(arguments or "")
+    return str(body).replace(_PROMPT_ARGUMENT_PLACEHOLDER, replacement, 1)
 
 
 def _codex_skill_feature_enabled(env: Mapping[str, str] | None) -> bool:

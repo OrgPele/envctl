@@ -619,6 +619,51 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(resolved, "Custom release instructions\n")
 
+    def test_resolve_codex_direct_prompt_body_uses_legacy_codex_prompt_when_new_target_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
+            legacy_target.parent.mkdir(parents=True, exist_ok=True)
+            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
+
+            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Legacy release instructions\n")
+
+    def test_resolve_codex_direct_prompt_body_prefers_new_target_over_legacy_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="codex", preset="ship_release", home=home)
+            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            legacy_target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("New envctl prompt\n", encoding="utf-8")
+            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
+
+            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "New envctl prompt\n")
+
+    def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="codex", preset="review_worktree_imp", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+
+            resolved = resolve_codex_direct_prompt_body(
+                preset="review_worktree_imp",
+                env={"HOME": tmpdir},
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+            self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", resolved)
+            self.assertIn("Keep `$ARGUMENTS` literal in prose.", resolved)
+            self.assertEqual(resolved.count("$ARGUMENTS"), 1)
+
     def test_prompt_templates_no_longer_reference_changelog_backed_commit_defaults(self) -> None:
         implement_prompt = _load_template("implement_task")
         continue_prompt = _load_template("continue_task")
