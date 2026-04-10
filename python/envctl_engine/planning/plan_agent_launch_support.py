@@ -14,6 +14,7 @@ from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.runtime.prompt_install_support import (
     codex_preset_uses_direct_submission,
     resolve_codex_direct_prompt_body,
+    resolve_opencode_direct_prompt_body,
 )
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
@@ -110,6 +111,9 @@ class PlanAgentLaunchConfig:
     shell: str
     require_cmux_context: bool
     cmux_workspace: str
+    direct_prompt_enabled: bool
+    ulw_loop_prefix: bool
+    ulw_suffix: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -196,10 +200,17 @@ def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> st
     return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
 
 
-def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int) -> _PlanAgentWorkflow:
+def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli == "codex":
+        return True
+    return normalized_cli == "opencode" and direct_prompt_enabled
+
+
+def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int, direct_prompt_enabled: bool = False) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
-    if normalized_cli == "codex":
+    if _uses_direct_submission(cli=normalized_cli, direct_prompt_enabled=direct_prompt_enabled):
         initial_step = _PlanAgentWorkflowStep(kind="submit_direct_prompt", text=str(preset).strip())
     else:
         initial_step = _PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command(cli, preset))
@@ -266,6 +277,21 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
     ) or bool(cmux_workspace)
+    direct_prompt_enabled = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
+        False,
+    )
+    ulw_loop_prefix = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
+        or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
+        False,
+    )
+    ulw_suffix = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
+        or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
+        False,
+    )
     return PlanAgentLaunchConfig(
         enabled=enabled,
         cli=cli,
@@ -280,6 +306,9 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
             True,
         ),
         cmux_workspace=cmux_workspace,
+        direct_prompt_enabled=direct_prompt_enabled,
+        ulw_loop_prefix=ulw_loop_prefix,
+        ulw_suffix=ulw_suffix,
     )
 
 
@@ -302,6 +331,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     workspace_id = _resolve_workspace_id(runtime, launch_config)
     target_workspace = launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config)
@@ -313,6 +343,9 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "codex_cycles": launch_config.codex_cycles,
         "workflow_warning": launch_config.codex_cycles_warning,
         "shell": launch_config.shell,
+        "direct_prompt_enabled": launch_config.direct_prompt_enabled,
+        "ulw_loop_prefix": launch_config.ulw_loop_prefix,
+        "ulw_suffix": launch_config.ulw_suffix,
         "require_cmux_context": launch_config.require_cmux_context,
         "workspace_id": workspace_id,
         "configured_workspace": target_workspace or None,
@@ -436,6 +469,7 @@ def launch_plan_agent_terminals(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     base_payload = {
         "enabled": launch_config.enabled,
@@ -781,6 +815,7 @@ def _run_surface_bootstrap(
     initial_step = workflow.steps[0]
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
+        launch_config=launch_config,
         cli=launch_config.cli,
         step=initial_step,
     )
@@ -812,6 +847,7 @@ def _run_surface_bootstrap(
             worktree=worktree,
             workflow=workflow,
             queued_steps=queued_steps,
+            launch_config=launch_config,
             cli=launch_config.cli,
         )
         if queue_error_reason is not None:
@@ -885,13 +921,14 @@ def _run_review_surface_bootstrap(
     )
     prompt_text, resolution_error = _resolve_preset_submission_text(
         runtime,
+        launch_config=launch_config,
         cli=launch_config.cli,
         preset=_REVIEW_WORKTREE_PRESET,
         arguments=review_arguments,
     )
     if resolution_error is not None:
         return resolution_error
-    if str(launch_config.cli).strip().lower() == "codex":
+    if _uses_direct_submission(cli=launch_config.cli, direct_prompt_enabled=launch_config.direct_prompt_enabled):
         return _submit_direct_prompt_workflow_step(
             runtime,
             workspace_id=workspace_id,
@@ -912,31 +949,72 @@ def _run_review_surface_bootstrap(
 def _workflow_step_prompt_text(
     runtime: Any,
     *,
+    launch_config: PlanAgentLaunchConfig,
     cli: str,
     step: _PlanAgentWorkflowStep,
 ) -> tuple[str, str | None]:
     if step.kind not in {"submit_direct_prompt", "queue_direct_prompt"}:
         return step.text, None
-    return _resolve_preset_submission_text(runtime, cli=cli, preset=step.text)
+    return _resolve_preset_submission_text(runtime, launch_config=launch_config, cli=cli, preset=step.text)
+
+
+def _shape_prompt_text(
+    text: str,
+    *,
+    direct_prompt: bool,
+    ulw_loop_prefix: bool,
+    ulw_suffix: bool,
+) -> tuple[str, str | None]:
+    shaped = str(text)
+    stripped = shaped.strip()
+    if ulw_loop_prefix:
+        if not direct_prompt:
+            return "", "prompt_resolution_failed: ulw_loop_prefix_requires_direct_prompt"
+        if stripped.startswith("/") and not stripped.startswith("/ulw_loop"):
+            return "", "prompt_resolution_failed: multiple_slash_commands_not_allowed"
+        if not stripped.startswith("/ulw_loop"):
+            shaped = f"/ulw_loop {stripped}" if stripped else "/ulw_loop"
+            stripped = shaped.strip()
+    if ulw_suffix and not stripped.endswith(" ulw") and stripped != "ulw":
+        shaped = f"{shaped.rstrip()} ulw" if shaped.rstrip() else "ulw"
+    return shaped, None
 
 
 def _resolve_preset_submission_text(
     runtime: Any,
     *,
+    launch_config: PlanAgentLaunchConfig,
     cli: str,
     preset: str,
     arguments: str = "",
 ) -> tuple[str, str | None]:
-    if str(cli).strip().lower() != "codex":
-        return _slash_command(cli, preset, arguments=arguments), None
+    normalized_cli = str(cli).strip().lower()
+    direct_prompt = _uses_direct_submission(cli=normalized_cli, direct_prompt_enabled=launch_config.direct_prompt_enabled)
     try:
-        return resolve_codex_direct_prompt_body(
-            preset=preset,
-            env=getattr(runtime, "env", {}),
-            arguments=arguments,
-        ), None
+        if not direct_prompt:
+            resolved = _slash_command(cli, preset, arguments=arguments)
+        elif normalized_cli == "codex":
+            resolved = resolve_codex_direct_prompt_body(
+                preset=preset,
+                env=getattr(runtime, "env", {}),
+                arguments=arguments,
+            )
+        elif normalized_cli == "opencode":
+            resolved = resolve_opencode_direct_prompt_body(
+                preset=preset,
+                env=getattr(runtime, "env", {}),
+                arguments=arguments,
+            )
+        else:
+            resolved = _slash_command(cli, preset, arguments=arguments)
     except (LookupError, OSError, ValueError) as exc:
         return "", f"prompt_resolution_failed: {exc}"
+    return _shape_prompt_text(
+        resolved,
+        direct_prompt=direct_prompt,
+        ulw_loop_prefix=launch_config.ulw_loop_prefix,
+        ulw_suffix=launch_config.ulw_suffix,
+    )
 
 
 def _prepare_surface(
@@ -1056,10 +1134,16 @@ def _queue_codex_workflow_steps(
     worktree: CreatedPlanWorktree,
     workflow: _PlanAgentWorkflow,
     queued_steps: tuple[_PlanAgentWorkflowStep, ...],
+    launch_config: PlanAgentLaunchConfig,
     cli: str,
 ) -> str | None:
     for step in queued_steps:
-        queued_text, resolution_error = _workflow_step_prompt_text(runtime, cli=cli, step=step)
+        queued_text, resolution_error = _workflow_step_prompt_text(
+            runtime,
+            launch_config=launch_config,
+            cli=cli,
+            step=step,
+        )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"
         if step.kind == "queue_direct_prompt":
