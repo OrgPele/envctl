@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import redirect_stdout
 from io import StringIO
 import tempfile
@@ -398,6 +399,68 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(order, ["launch", "write_artifacts"])
+
+    def test_plain_plan_flow_prints_tmux_follow_up_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(repo, "feature-a-1", "feature a/1", backend_port=8100, frontend_port=9100)
+            state_dir = Path(context.root) / ".envctl-state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "worktree-provenance.json").write_text(
+                json.dumps({"plan_file": "features/feature a.md"}),
+                encoding="utf-8",
+            )
+            session = engine.startup_orchestrator._create_session(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            session.selected_contexts = [context]
+            out = StringIO()
+
+            with redirect_stdout(out):
+                engine.startup_orchestrator._print_plan_follow_up_command(session)
+
+            self.assertIn(
+                "Run this in a new terminal: envctl --headless --plan 'features/feature a.md' --tmux --opencode",
+                out.getvalue(),
+            )
+
+    def test_tmux_follow_up_run_uses_selected_existing_worktree_when_no_new_worktrees_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            state_dir = Path(context.root) / ".envctl-state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "worktree-provenance.json").write_text(
+                json.dumps({"plan_file": "features/feature-a.md"}),
+                encoding="utf-8",
+            )
+            engine.planning_worktree_orchestrator._last_plan_selection_result = PlanSelectionResult(
+                raw_projects=[(context.name, context.root)],
+                selected_contexts=[context],
+                created_worktrees=(),
+            )
+            session = engine.startup_orchestrator._create_session(
+                parse_route(["--plan", "feature-a", "--batch", "--tmux", "--opencode"], env={})
+            )
+            session.selected_contexts = [context]
+
+            with (
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                ) as launch_mock,
+            ):
+                engine.startup_orchestrator._select_contexts(session)
+
+            created_worktrees = launch_mock.call_args.kwargs["created_worktrees"]
+            self.assertEqual(len(created_worktrees), 1)
+            self.assertEqual(created_worktrees[0].name, "feature-a-1")
+            self.assertEqual(created_worktrees[0].root, Path(context.root))
+            self.assertEqual(created_worktrees[0].plan_file, "features/feature-a.md")
 
 
 if __name__ == "__main__":

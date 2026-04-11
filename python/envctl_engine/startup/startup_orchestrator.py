@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import concurrent.futures
 from contextlib import nullcontext
+import json
+from pathlib import Path
+import shlex
 import sys
 import threading
 import time
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
-from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    attach_plan_agent_terminal,
+    launch_plan_agent_terminals,
+)
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
@@ -266,6 +273,8 @@ class StartupOrchestrator:
         route = session.effective_route
         runtime_mode = session.runtime_mode
         selection_started = time.monotonic()
+        if route.command == "plan" and bool(route.flags.get("tmux")):
+            rt.env["ENVCTL_PLAN_AGENT_TRANSPORT"] = "tmux"
         project_contexts = rt._discover_projects(mode=runtime_mode)
         if route.command == "plan":
             project_contexts = rt._select_plan_projects(route, project_contexts)
@@ -318,7 +327,24 @@ class StartupOrchestrator:
                     for worktree in getattr(selection_result, "created_worktrees", ())
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
-                launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                if not created_worktrees and bool(route.flags.get("tmux")) and bool(route.flags.get("opencode")):
+                    created_worktrees = tuple(
+                        CreatedPlanWorktree(
+                            name=context.name,
+                            root=Path(context.root),
+                            plan_file=str(
+                                json.loads(
+                                    (Path(context.root) / ".envctl-state" / "worktree-provenance.json").read_text(
+                                        encoding="utf-8"
+                                    )
+                                ).get("plan_file", "")
+                            ).strip(),
+                        )
+                        for context in project_contexts
+                        if (Path(context.root) / ".envctl-state" / "worktree-provenance.json").is_file()
+                    )
+                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                session.plan_agent_attach_target = launch_result.attach_target
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
@@ -355,10 +381,14 @@ class StartupOrchestrator:
                 "Planning mode complete; skipping service startup because "
                 f"envctl runs are disabled for {session.runtime_mode}."
             )
+            self._print_plan_follow_up_command(session)
         elif not enter_interactive_dashboard:
             print(f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services.")
         if enter_interactive_dashboard:
             return rt._run_interactive_dashboard_loop(run_state)
+        attach_code = self._maybe_attach_plan_agent_terminal(session)
+        if attach_code is not None:
+            return attach_code
         return 0
 
     def _resolve_run_reuse(self, session: StartupSession) -> int | None:
@@ -576,12 +606,16 @@ class StartupOrchestrator:
                         "Planning mode complete; skipping service startup because "
                         f"envctl runs are disabled for {session.runtime_mode}."
                     )
+                    self._print_plan_follow_up_command(session)
                 elif not enter_interactive_dashboard:
                     print(
                         f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
                     )
                 if enter_interactive_dashboard:
                     return rt._run_interactive_dashboard_loop(candidate_state)
+                attach_code = self._maybe_attach_plan_agent_terminal(session)
+                if attach_code is not None:
+                    return attach_code
                 return 0
             else:
                 self._emit_phase(
@@ -913,6 +947,10 @@ class StartupOrchestrator:
         )
         if rt._should_enter_post_start_interactive(session.effective_route):
             return rt._run_interactive_dashboard_loop(run_state)
+        self._print_plan_follow_up_command(session)
+        attach_code = self._maybe_attach_plan_agent_terminal(session)
+        if attach_code is not None:
+            return attach_code
         return 0
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
@@ -967,6 +1005,36 @@ class StartupOrchestrator:
         session.requirements_by_project[context.name] = result.requirements
         session.services_by_project[context.name] = result.services
         session.started_context_names.append(context.name)
+
+    def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
+        attach_target = session.plan_agent_attach_target
+        if attach_target is None:
+            return None
+        session.plan_agent_attach_target = None
+        return attach_plan_agent_terminal(self.runtime, attach_target)
+
+    def _print_plan_follow_up_command(self, session: StartupSession) -> None:
+        route = session.effective_route
+        if route.command != "plan":
+            return
+        if session.plan_agent_attach_target is not None:
+            return
+        if len(session.selected_contexts) != 1:
+            return
+        context = session.selected_contexts[0]
+        root = Path(getattr(context, "root", ""))
+        provenance_path = root / ".envctl-state" / "worktree-provenance.json"
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        plan_file = str(provenance.get("plan_file", "")).strip()
+        if not plan_file:
+            return
+        print(
+            "Run this in a new terminal: "
+            f"envctl --headless --plan {shlex.quote(plan_file)} --tmux --opencode"
+        )
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
         self.runtime._emit(
