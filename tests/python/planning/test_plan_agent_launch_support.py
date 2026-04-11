@@ -29,6 +29,7 @@ _WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
 def _launch_config_for_tests(
     *,
     cli: str = "codex",
+    transport: str = "cmux",
     direct_prompt_enabled: bool = False,
     ulw_loop_prefix: bool = False,
     ulw_suffix: bool = False,
@@ -36,6 +37,7 @@ def _launch_config_for_tests(
 ) -> launch_support.PlanAgentLaunchConfig:
     return launch_support.PlanAgentLaunchConfig(
         enabled=True,
+        transport=transport,
         cli=cli,
         cli_command=cli,
         preset=preset,
@@ -655,6 +657,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             launch_config = launch_support.PlanAgentLaunchConfig(
                 enabled=True,
+                transport="cmux",
                 cli="opencode",
                 cli_command="opencode",
                 preset="implement_task",
@@ -691,6 +694,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
@@ -731,6 +735,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             launch_config = launch_support.PlanAgentLaunchConfig(
                 enabled=True,
+                transport="cmux",
                 cli="opencode",
                 cli_command="opencode",
                 preset="implement_task",
@@ -768,6 +773,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
@@ -804,6 +810,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
@@ -2549,6 +2556,27 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             self.assertEqual(original_plan_path, original_plan.resolve())
+
+    def test_review_launch_readiness_uses_configured_tmux_transport_without_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "tmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                },
+            )
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+
+            readiness = launch_support.review_agent_launch_readiness(rt)
+
+            self.assertTrue(readiness.ready)
+            self.assertEqual(readiness.reason, "ready")
+            self.assertEqual(readiness.cli, "opencode")
 
     def test_review_launch_returns_none_when_original_plan_file_cannot_be_resolved(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
