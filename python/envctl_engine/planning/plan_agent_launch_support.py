@@ -319,20 +319,21 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
     ) or bool(cmux_workspace) or transport == "tmux"
+    direct_prompt_default = True if (transport == "tmux" and cli == "opencode") else False
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        False,
+        direct_prompt_default,
     )
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        False,
+        True,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
         or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
-        False,
+        True,
     )
     return PlanAgentLaunchConfig(
         enabled=enabled,
@@ -767,6 +768,7 @@ def _complete_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     try:
         error = _run_surface_bootstrap(
@@ -856,6 +858,7 @@ def _run_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     error = _prepare_surface(
         runtime,
@@ -1099,7 +1102,13 @@ def _launch_plan_agent_tmux_terminals(
     base_payload: dict[str, object],
 ) -> PlanAgentLaunchResult:
     repo_root = Path(runtime.config.base_dir).resolve()
-    session_name = _session_name_for_repo(repo_root, env=getattr(runtime, "env", {}) or {})
+    env_map = dict(getattr(runtime, "env", {}) or {})
+    session_name = _session_name_for_repo(repo_root, env=env_map)
+    base_session_name = session_name
+    instance = 0
+    while _tmux_session_exists(runtime, session_name):
+        instance += 1
+        session_name = f"{base_session_name}-{instance}"
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     runtime._emit(
         "planning.agent_launch.evaluate",
@@ -2243,6 +2252,71 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
 
 
+def _wait_for_tmux_prompt_submit_ready(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    prompt_text: str,
+) -> None:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"codex", "opencode"}:
+        time.sleep(_PROMPT_SUBMIT_READY_DELAY_SECONDS)
+        return
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _prompt_submit_screen_looks_ready(normalized_cli, screen, prompt_text):
+            return
+        time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+
+
+def _tmux_prompt_loaded(screen: str, *, cli: str, prompt_text: str) -> bool:
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if "no matching items" in lower_text or "unrecognized command" in lower_text:
+        return False
+    if prompt_text.startswith("/"):
+        lines = [line for line in cleaned.splitlines() if line.strip()]
+        return len(lines) > 10
+    first_line = str(prompt_text).splitlines()[0].strip().lower()
+    if first_line:
+        return first_line in lower_text
+    return len(cleaned.splitlines()) > 10
+
+
+def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
+    target = _tmux_target(session_name, window_name)
+    load_result = subprocess.run(
+        ["tmux", "load-buffer", "-t", target, "-"],
+        input=text,
+        capture_output=True,
+        text=True,
+        cwd=Path(runtime.config.base_dir).resolve(),
+        env=dict(getattr(runtime, "env", {})),
+        timeout=10.0,
+    )
+    if load_result.returncode != 0:
+        error = (load_result.stderr or "").strip()[:200]
+        runtime._emit("planning.agent_launch.failed", reason="tmux_load_buffer_failed", error=error)
+        return f"tmux_load_buffer_failed: {error}"
+    paste_result = subprocess.run(
+        ["tmux", "paste-buffer", "-dpr", "-t", target],
+        capture_output=True,
+        text=True,
+        cwd=Path(runtime.config.base_dir).resolve(),
+        env=dict(getattr(runtime, "env", {})),
+        timeout=10.0,
+    )
+    if paste_result.returncode != 0:
+        error = (paste_result.stderr or "").strip()[:200]
+        runtime._emit("planning.agent_launch.failed", reason="tmux_paste_buffer_failed", error=error)
+        return f"tmux_paste_buffer_failed: {error}"
+    return None
+
+
 def _submit_tmux_prompt_workflow_step(
     runtime: Any,
     *,
@@ -2253,19 +2327,19 @@ def _submit_tmux_prompt_workflow_step(
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     emit_failure_event = failure_event == "planning.agent_launch.failed"
-    paste_error = _send_tmux_text(
+    paste_error = _send_tmux_prompt(
         runtime,
         session_name=session_name,
         window_name=window_name,
         text=prompt_text,
-        emit_failure_event=emit_failure_event,
-        failure_event=failure_event,
     )
     if paste_error is not None:
+        if emit_failure_event:
+            runtime._emit(failure_event, reason="paste_failed", cli=cli)
         return paste_error
     normalized_cli = str(cli).strip().lower()
     if normalized_cli == "opencode":
-        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        time.sleep(1.0)
     err = _send_tmux_key(
         runtime,
         session_name=session_name,
@@ -2277,7 +2351,13 @@ def _submit_tmux_prompt_workflow_step(
     if err is not None:
         return err
     if normalized_cli == "opencode":
-        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        _wait_for_tmux_prompt_submit_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=normalized_cli,
+            prompt_text=prompt_text,
+        )
         err = _send_tmux_key(
             runtime,
             session_name=session_name,
