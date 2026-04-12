@@ -3,6 +3,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -11,6 +12,14 @@ from typing import Any, Literal
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
+from envctl_engine.runtime.codex_tmux_support import (
+    _attach_interactive,
+    _completed_process_error_text as _tmux_completed_process_error_text,
+    _run_probe as _run_tmux_probe,
+    _sanitize_name as _sanitize_tmux_name,
+    _session_name_for_repo,
+    _tmux_session_exists,
+)
 from envctl_engine.runtime.prompt_install_support import (
     codex_preset_uses_direct_submission,
     resolve_codex_direct_prompt_body,
@@ -31,6 +40,7 @@ _CLI_READY_DELAY_SECONDS_BY_CLI = {
 _CLI_READY_POLL_INTERVAL_SECONDS = 0.1
 _READ_SCREEN_LINE_COUNT = 80
 _PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
+_OPENCODE_SUBMIT_DELAY_SECONDS = 0.5
 _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
@@ -104,6 +114,7 @@ class PlanSelectionResult:
 @dataclass(slots=True, frozen=True)
 class PlanAgentLaunchConfig:
     enabled: bool
+    transport: Literal["cmux", "tmux"]
     cli: str
     cli_command: str
     preset: str
@@ -131,6 +142,16 @@ class PlanAgentLaunchResult:
     status: str
     reason: str
     outcomes: tuple[PlanAgentLaunchOutcome, ...] = ()
+    attach_target: PlanAgentAttachTarget | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class PlanAgentAttachTarget:
+    repo_root: Path
+    session_name: str
+    window_name: str
+    attach_via: str
+    attach_command: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -240,13 +261,33 @@ def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int, dire
     )
 
 
-def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] | None = None) -> PlanAgentLaunchConfig:
+def resolve_plan_agent_launch_config(
+    config: EngineConfig,
+    env: dict[str, str] | None = None,
+    *,
+    route: object | None = None,
+) -> PlanAgentLaunchConfig:
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
+    route_flags = getattr(route, "flags", {}) or {}
+    configured_transport = str(
+        env_map.get("ENVCTL_PLAN_AGENT_TRANSPORT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_TRANSPORT")
+        or ""
+    ).strip().lower()
+    transport: Literal["cmux", "tmux"]
+    if bool(route_flags.get("tmux")) or configured_transport == "tmux":
+        transport = "tmux"
+    else:
+        transport = "cmux"
     cli = str(
-        env_map.get("ENVCTL_PLAN_AGENT_CLI")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-        or "codex"
+        "opencode"
+        if bool(route_flags.get("opencode"))
+        else (
+            env_map.get("ENVCTL_PLAN_AGENT_CLI")
+            or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
+            or "codex"
+        )
     ).strip().lower() or "codex"
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
@@ -277,7 +318,7 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace)
+    ) or bool(cmux_workspace) or transport == "tmux"
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
@@ -295,6 +336,7 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
     )
     return PlanAgentLaunchConfig(
         enabled=enabled,
+        transport=transport,
         cli=cli,
         cli_command=cli_command,
         preset=preset,
@@ -316,28 +358,36 @@ def resolve_plan_agent_launch_config(config: EngineConfig, env: dict[str, str] |
 def plan_agent_launch_prereq_commands(
     config: EngineConfig,
     env: dict[str, str] | None = None,
+    *,
+    route: object | None = None,
 ) -> tuple[str, ...]:
-    launch_config = resolve_plan_agent_launch_config(config, env)
+    launch_config = resolve_plan_agent_launch_config(config, env, route=route)
     if not launch_config.enabled:
         return ()
     cli_executable = _command_executable(launch_config.cli_command)
+    launcher = "tmux" if launch_config.transport == "tmux" else "cmux"
     if not cli_executable:
-        return ("cmux",)
-    return ("cmux", cli_executable)
+        return (launcher,)
+    return (launcher, cli_executable)
 
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
     workflow = _build_plan_agent_workflow(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
-    workspace_id = _resolve_workspace_id(runtime, launch_config)
-    target_workspace = launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config)
+    workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
+    target_workspace = (
+        None
+        if launch_config.transport == "tmux"
+        else launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config)
+    )
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
+        "transport": launch_config.transport,
         "cli": launch_config.cli,
         "preset": launch_config.preset,
         "workflow_mode": workflow.mode,
@@ -360,7 +410,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         return payload
     if not launch_config.enabled:
         return payload
-    if _missing_required_cmux_context(runtime, launch_config):
+    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
         payload["reason"] = "missing_cmux_context"
         return payload
     payload["reason"] = "awaiting_new_worktrees"
@@ -377,6 +427,8 @@ def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
             cli=launch_config.cli,
             missing=missing_commands,
         )
+    if launch_config.transport == "tmux":
+        return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     if launch_config.cmux_workspace:
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
@@ -404,6 +456,15 @@ def launch_review_agent_terminal(
             missing=missing_commands,
         )
         return AgentTerminalLaunchResult(status="failed", reason="missing_executables")
+    if launch_config.transport == "tmux":
+        return _launch_review_agent_tmux_terminal(
+            runtime,
+            repo_root=repo_root,
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=review_bundle_path,
+            launch_config=launch_config,
+        )
     workspace_target = _ensure_workspace_id(
         runtime,
         launch_config,
@@ -438,7 +499,7 @@ def launch_review_agent_terminal(
         surface_id=surface_id,
         cli=launch_config.cli,
     )
-    _start_background_review_surface_bootstrap(
+    _complete_review_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
@@ -465,7 +526,7 @@ def launch_plan_agent_terminals(
     route: object,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> PlanAgentLaunchResult:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
     workflow = _build_plan_agent_workflow(
         cli=launch_config.cli,
         preset=launch_config.preset,
@@ -489,7 +550,7 @@ def launch_plan_agent_terminals(
         _print_launch_summary("Plan agent launch skipped: no new worktrees were created.")
         runtime._emit("planning.agent_launch.skipped", reason="no_new_worktrees", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="no_new_worktrees")
-    if _missing_required_cmux_context(runtime, launch_config):
+    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
         _print_launch_summary("Plan agent launch skipped: current cmux workspace context is unavailable.")
         runtime._emit("planning.agent_launch.skipped", reason="missing_cmux_context", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="missing_cmux_context")
@@ -504,6 +565,14 @@ def launch_plan_agent_terminals(
             **base_payload,
         )
         return PlanAgentLaunchResult(status="failed", reason="missing_executables")
+    if launch_config.transport == "tmux":
+        return _launch_plan_agent_tmux_terminals(
+            runtime,
+            launch_config=launch_config,
+            workflow=workflow,
+            created_worktrees=created_worktrees,
+            base_payload=base_payload,
+        )
     workspace_target = _ensure_workspace_id(runtime, launch_config)
     target_workspace = launch_config.cmux_workspace
     if workspace_target is None and not target_workspace:
@@ -828,6 +897,7 @@ def _run_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
         )
     else:
         submit_error = _submit_prompt_workflow_step(
@@ -935,6 +1005,7 @@ def _run_review_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
             failure_event="dashboard.review_tab.failed",
         )
     return _submit_prompt_workflow_step(
@@ -944,6 +1015,230 @@ def _run_review_surface_bootstrap(
         cli=launch_config.cli,
         prompt_text=prompt_text,
         failure_event="dashboard.review_tab.failed",
+    )
+
+
+def _launch_review_agent_tmux_terminal(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+    launch_config: PlanAgentLaunchConfig,
+) -> AgentTerminalLaunchResult:
+    session_name = _session_name_for_repo(Path(repo_root).resolve(), env=getattr(runtime, "env", {}) or {})
+    window_name = _tmux_window_name_for_worktree(CreatedPlanWorktree(name=project_name, root=project_root, plan_file=""))
+    create_error = _ensure_tmux_window(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        worktree=CreatedPlanWorktree(name=project_name, root=project_root, plan_file=""),
+    )
+    if create_error is not None:
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="window_create_failed",
+            project=project_name,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            error=create_error,
+            transport="tmux",
+        )
+        return AgentTerminalLaunchResult(status="failed", reason=create_error)
+    runtime._emit(
+        "dashboard.review_tab.surface_created",
+        project=project_name,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+        transport="tmux",
+    )
+    error = _run_review_tmux_bootstrap(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        repo_root=repo_root,
+        project_name=project_name,
+        project_root=project_root,
+        review_bundle_path=review_bundle_path,
+    )
+    if error is not None:
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="bootstrap_failed",
+            project=project_name,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            error=error,
+            transport="tmux",
+        )
+        return AgentTerminalLaunchResult(status="failed", reason=error)
+    runtime._emit(
+        "dashboard.review_tab.launched",
+        project=project_name,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+        transport="tmux",
+    )
+    _print_launch_summary(f"Opened origin review tab for {project_name}.")
+    return AgentTerminalLaunchResult(status="launched", reason="launched", surface_id=None)
+
+
+def _launch_plan_agent_tmux_terminals(
+    runtime: Any,
+    *,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    created_worktrees: tuple[CreatedPlanWorktree, ...],
+    base_payload: dict[str, object],
+) -> PlanAgentLaunchResult:
+    repo_root = Path(runtime.config.base_dir).resolve()
+    session_name = _session_name_for_repo(repo_root, env=getattr(runtime, "env", {}) or {})
+    attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
+    runtime._emit(
+        "planning.agent_launch.evaluate",
+        reason="ready",
+        session_name=session_name,
+        preset=launch_config.preset,
+        **base_payload,
+    )
+    runtime._emit(
+        "planning.agent_launch.workflow_selected",
+        session_name=session_name,
+        warning=launch_config.codex_cycles_warning,
+        **base_payload,
+    )
+    outcomes: list[PlanAgentLaunchOutcome] = []
+    first_window_name: str | None = None
+    for worktree in created_worktrees:
+        window_name = _tmux_window_name_for_worktree(worktree)
+        if first_window_name is None:
+            first_window_name = window_name
+        outcome = _launch_single_tmux_worktree(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            launch_config=launch_config,
+            workflow=workflow,
+            worktree=worktree,
+        )
+        outcomes.append(outcome)
+    launched = [item for item in outcomes if item.status == "launched"]
+    failed = [item for item in outcomes if item.status == "failed"]
+    if failed and launched:
+        _print_launch_summary(
+            f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}."
+        )
+        return PlanAgentLaunchResult(status="partial", reason="partial_failure", outcomes=tuple(outcomes))
+    if failed:
+        _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
+        return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
+    attach_target = None
+    if first_window_name is not None:
+        attach_target = PlanAgentAttachTarget(
+            repo_root=repo_root,
+            session_name=session_name,
+            window_name=first_window_name,
+            attach_via=attach_via,
+            attach_command=("tmux", attach_via, "-t", _tmux_target(session_name, first_window_name)),
+        )
+    _print_launch_summary(f"Plan agent launch prepared {len(launched)} tmux window(s).")
+    return PlanAgentLaunchResult(
+        status="launched",
+        reason="launched",
+        outcomes=tuple(outcomes),
+        attach_target=attach_target,
+    )
+
+
+def _launch_single_tmux_worktree(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+) -> PlanAgentLaunchOutcome:
+    create_error = _ensure_tmux_window(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        worktree=worktree,
+    )
+    if create_error is not None:
+        runtime._emit(
+            "planning.agent_launch.failed",
+            reason="window_create_failed",
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree.name,
+            error=create_error,
+            transport="tmux",
+        )
+        return PlanAgentLaunchOutcome(
+            worktree_name=worktree.name,
+            worktree_root=worktree.root,
+            surface_id=None,
+            status="failed",
+            reason=create_error,
+        )
+    runtime._emit(
+        "planning.agent_launch.surface_created",
+        session_name=session_name,
+        window_name=window_name,
+        worktree=worktree.name,
+        source="tmux_window",
+        transport="tmux",
+    )
+    error = _run_tmux_worktree_bootstrap(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+    )
+    if error is not None:
+        runtime._emit(
+            "planning.agent_launch.failed",
+            reason="bootstrap_failed",
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree.name,
+            error=error,
+            transport="tmux",
+        )
+        return PlanAgentLaunchOutcome(
+            worktree_name=worktree.name,
+            worktree_root=worktree.root,
+            surface_id=None,
+            status="failed",
+            reason=error,
+        )
+    runtime._emit(
+        "planning.agent_launch.command_sent",
+        session_name=session_name,
+        window_name=window_name,
+        worktree=worktree.name,
+        preset=launch_config.preset,
+        workflow_mode=workflow.mode,
+        codex_cycles=workflow.codex_cycles,
+        transport="tmux",
+    )
+    _persist_runtime_events_snapshot(runtime)
+    return PlanAgentLaunchOutcome(
+        worktree_name=worktree.name,
+        worktree_root=worktree.root,
+        surface_id=None,
+        status="launched",
     )
 
 
@@ -1112,6 +1407,7 @@ def _submit_direct_prompt_workflow_step(
     workspace_id: str,
     surface_id: str,
     prompt_text: str,
+    cli: str = "",
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     paste_error = _paste_surface_text(
@@ -1123,13 +1419,28 @@ def _submit_direct_prompt_workflow_step(
     )
     if paste_error is not None:
         return paste_error
-    return _send_surface_key(
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+    err = _send_surface_key(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         key="enter",
         failure_event=failure_event,
     )
+    if err is not None:
+        return err
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        err = _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            failure_event=failure_event,
+        )
+    return err
 
 
 def _queue_codex_workflow_steps(
@@ -1789,6 +2100,281 @@ def _send_surface_text(
     )
 
 
+def _tmux_window_name_for_worktree(worktree: CreatedPlanWorktree) -> str:
+    return _sanitize_tmux_name(_tab_title_for_worktree(worktree.name), fallback="implementation")
+
+
+def _tmux_target(session_name: str, window_name: str) -> str:
+    return f"{session_name}:{window_name}"
+
+
+def _ensure_tmux_window(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    cwd = Path(worktree.root).resolve()
+    shell_command = _surface_respawn_command(launch_config, worktree)
+    if _tmux_session_exists(runtime, session_name):
+        command = (
+            "tmux",
+            "new-window",
+            "-d",
+            "-t",
+            session_name,
+            "-n",
+            window_name,
+            "-c",
+            str(cwd),
+            shell_command,
+        )
+    else:
+        command = (
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            "-n",
+            window_name,
+            "-c",
+            str(cwd),
+            shell_command,
+        )
+    result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
+    if result.returncode == 0:
+        return None
+    return _tmux_completed_process_error_text(result)
+
+
+def _run_tmux_command(
+    runtime: Any,
+    command: tuple[str, ...],
+    *,
+    emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
+    if result.returncode == 0:
+        return None
+    error = _tmux_completed_process_error_text(result)
+    if emit_failure_event:
+        runtime._emit(failure_event, reason="tmux_command_failed", command=command[1], error=error)
+    return error
+
+
+def _send_tmux_text(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    text: str,
+    emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    return _run_tmux_command(
+        runtime,
+        ("tmux", "send-keys", "-t", _tmux_target(session_name, window_name), "-l", text),
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+
+
+def _send_tmux_key(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    key: str,
+    emit_failure_event: bool = True,
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    key_name = {"enter": "Enter", "tab": "Tab", "ctrl+e": "C-e"}.get(str(key).strip().lower(), key)
+    return _run_tmux_command(
+        runtime,
+        ("tmux", "send-keys", "-t", _tmux_target(session_name, window_name), key_name),
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+
+
+def _read_tmux_screen(runtime: Any, *, session_name: str, window_name: str) -> str:
+    target = _tmux_target(session_name, window_name)
+    for command in (("tmux", "capture-pane", "-p", "-a", "-t", target), ("tmux", "capture-pane", "-p", "-t", target)):
+        result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
+        if result.returncode == 0:
+            return str(getattr(result, "stdout", ""))
+    return ""
+
+
+def _launch_tmux_cli_bootstrap_commands(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cwd: Path,
+    cli_command: str,
+    failure_event: str = "planning.agent_launch.failed",
+) -> list[str | None]:
+    typed_root = shlex.quote(str(cwd))
+    emit_failure_event = failure_event == "planning.agent_launch.failed"
+    return [
+        _send_tmux_text(runtime, session_name=session_name, window_name=window_name, text=f"cd {typed_root}", emit_failure_event=emit_failure_event, failure_event=failure_event),
+        _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter", emit_failure_event=emit_failure_event, failure_event=failure_event),
+        _send_tmux_text(runtime, session_name=session_name, window_name=window_name, text=cli_command, emit_failure_event=emit_failure_event, failure_event=failure_event),
+        _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter", emit_failure_event=emit_failure_event, failure_event=failure_event),
+    ]
+
+
+def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> None:
+    normalized_cli = str(cli).strip().lower()
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    if normalized_cli not in {"codex", "opencode"}:
+        time.sleep(timeout_seconds)
+        return
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _screen_looks_ready(normalized_cli, screen):
+            return
+        time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+
+
+def _submit_tmux_prompt_workflow_step(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    prompt_text: str,
+    cli: str = "",
+    failure_event: str = "planning.agent_launch.failed",
+) -> str | None:
+    emit_failure_event = failure_event == "planning.agent_launch.failed"
+    paste_error = _send_tmux_text(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        text=prompt_text,
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+    if paste_error is not None:
+        return paste_error
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+    err = _send_tmux_key(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        key="enter",
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
+    if err is not None:
+        return err
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        err = _send_tmux_key(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            key="enter",
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        )
+        if err is not None:
+            return err
+    return None
+
+
+def _run_tmux_worktree_bootstrap(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    send_errors = _launch_tmux_cli_bootstrap_commands(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cwd=worktree.root,
+        cli_command=launch_config.cli_command,
+    )
+    for error in send_errors:
+        if error is not None:
+            return error
+    _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    prompt_text, resolution_error = _workflow_step_prompt_text(
+        runtime,
+        launch_config=launch_config,
+        cli=launch_config.cli,
+        step=workflow.steps[0],
+    )
+    if resolution_error is not None:
+        return resolution_error
+    return _submit_tmux_prompt_workflow_step(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        prompt_text=prompt_text,
+        cli=launch_config.cli,
+    )
+
+
+def _run_review_tmux_bootstrap(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    repo_root: Path,
+    project_name: str,
+    project_root: Path,
+    review_bundle_path: Path | None,
+) -> str | None:
+    send_errors = _launch_tmux_cli_bootstrap_commands(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cwd=repo_root,
+        cli_command=launch_config.cli_command,
+        failure_event="dashboard.review_tab.failed",
+    )
+    for error in send_errors:
+        if error is not None:
+            return error
+    _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    prompt_text, resolution_error = _resolve_preset_submission_text(
+        runtime,
+        launch_config=launch_config,
+        cli=launch_config.cli,
+        preset=_REVIEW_WORKTREE_PRESET,
+        arguments=_review_prompt_arguments(
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=review_bundle_path,
+            original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
+        ),
+    )
+    if resolution_error is not None:
+        return resolution_error
+    return _submit_tmux_prompt_workflow_step(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        prompt_text=prompt_text,
+        cli=launch_config.cli,
+        failure_event="dashboard.review_tab.failed",
+    )
+
+
 def _paste_surface_text(
     runtime: Any,
     *,
@@ -1890,6 +2476,16 @@ def _completed_process_error_text(result: object) -> str:
     return f"exit:{getattr(result, 'returncode', 1)}"
 
 
+def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
+    if attach_target.attach_via == "switch-client":
+        result = _run_tmux_probe(runtime, attach_target.attach_command, cwd=attach_target.repo_root)
+        if result.returncode != 0:
+            print(_tmux_completed_process_error_text(result), file=sys.stderr)
+            return 1
+        return 0
+    return _attach_interactive(runtime, attach_target.attach_command, cwd=attach_target.repo_root)
+
+
 def _command_executable(raw_command: str) -> str | None:
     try:
         parsed = shlex.split(raw_command)
@@ -1901,7 +2497,7 @@ def _command_executable(raw_command: str) -> str | None:
 
 
 def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig) -> list[str]:
-    required = ["cmux"]
+    required = ["tmux" if launch_config.transport == "tmux" else "cmux"]
     cli_executable = _command_executable(launch_config.cli_command)
     shell_executable = _command_executable(launch_config.shell)
     if cli_executable:

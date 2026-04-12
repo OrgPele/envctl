@@ -8,6 +8,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
 if TYPE_CHECKING:
+    from envctl_engine.planning.plan_agent_launch_support import PlanAgentAttachTarget
     from envctl_engine.startup.protocols import ProjectContextLike
 
 
@@ -44,6 +45,7 @@ class StartupSession:
     debug_plan_snapshot: bool = False
     base_metadata: dict[str, Any] = field(default_factory=dict)
     identifiers_announced: bool = False
+    plan_agent_attach_target: PlanAgentAttachTarget | None = None
 
     @property
     def merged_services(self) -> dict[str, ServiceRecord]:

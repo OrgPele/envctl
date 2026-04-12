@@ -99,12 +99,19 @@ Use this structure (adapt section names only if truly necessary):
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
   - if the selected CLI is not Codex, say that the Codex cycle count setting is ignored
 
+  - **Tmux-based workflow (recommended for local development):** After presenting the plan, suggest the following two options for running it:
+    1. **Manual:** Print the command `envctl --headless --plan <plan_file> --tmux --opencode` so the user can copy it and run it themselves in a new terminal. This creates an isolated worktree environment, opens a tmux session, and launches OpenCode with the `implement_task` prompt pre-loaded.
+    2. **Auto-run:** If the user wants to start immediately, envctl can launch the tmux session and attach to it right away. Use `envctl --headless --plan <plan_file> --tmux --opencode` from a new terminal window, or if the current terminal supports tmux nesting, run `tmux new-session -d -s envctl "envctl --headless --plan <plan_file> --tmux --opencode" \; attach -t envctl` to create and attach in one step.
+
 ## Final response format
 1. Path of the plan file created.
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
 4. Risk register (only if non-empty).
 5. One final approval question asking whether you should run the envctl worktree-and-prompt follow-up now, with all launch defaults listed inline and overrides invited.
+6. After the approval question, suggest the tmux-based workflow with both options:
+   - **Option A (Manual):** "Run this in a new terminal: `envctl --headless --plan <plan_file> --tmux --opencode`"
+   - **Option B (Auto-run):** "Or to start immediately and attach to the tmux session now, run: `tmux new-session -d -s envctl "envctl --headless --plan <plan_file> --tmux --opencode" \; attach -t envctl`"
 
 ## Self-check (before responding)
 - Plan matches existing todo/plans/ quality and depth.
