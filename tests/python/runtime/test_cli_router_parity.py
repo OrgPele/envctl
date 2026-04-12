@@ -102,12 +102,22 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.command, "config")
 
         route = parse_route(
-            ["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={}
+            [
+                "install-prompts",
+                "--cli",
+                "codex,claude",
+                "--preset",
+                "implement_task",
+                "--dry-run",
+                "--with-codex-skills",
+            ],
+            env={},
         )
         self.assertEqual(route.command, "install-prompts")
         self.assertEqual(route.flags.get("cli"), "codex,claude")
         self.assertEqual(route.flags.get("preset"), "implement_task")
         self.assertTrue(route.flags.get("dry_run"))
+        self.assertTrue(route.flags.get("with_codex_skills"))
 
         route = parse_route(["codex-tmux", "workspace"], env={})
         self.assertEqual(route.command, "codex-tmux")

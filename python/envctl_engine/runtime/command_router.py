@@ -119,6 +119,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--copy-db-storage",
     "--no-resume",
     "--no-auto-resume",
+    "--with-codex-skills",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
 
@@ -937,6 +938,7 @@ def _boolean_flag_name(token: str) -> str:
         "--copy-db-storage": "seed_requirements_from_base",
         "--no-resume": "no_resume",
         "--no-auto-resume": "no_resume",
+        "--with-codex-skills": "with_codex_skills",
     }
     return mapping[token]
 

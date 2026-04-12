@@ -12,9 +12,21 @@ from contextlib import redirect_stderr, redirect_stdout
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime import cli
+from envctl_engine.runtime.prompt_install_support import _target_path
 
 
 class CommandExitCodeTests(unittest.TestCase):
+    def _codex_target(self, *, home: Path, preset: str) -> Path:
+        return _target_path(cli_name="codex", preset=preset, home=home, env={"HOME": str(home)})
+
+    def _codex_skill_target(self, *, home: Path, preset: str) -> Path:
+        skill_name = f"envctl-{preset.replace('_', '-')}"
+        if preset == "review_task_imp":
+            skill_name = "envctl-review-task"
+        if preset == "review_worktree_imp":
+            skill_name = "envctl-review-worktree"
+        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+
     def test_help_returns_zero(self) -> None:
         with (
             patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
@@ -340,7 +352,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._codex_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
@@ -371,7 +383,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._codex_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
@@ -395,7 +407,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._codex_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             first_stdout = StringIO()
             second_stdout = StringIO()
@@ -440,7 +452,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = home / ".codex" / "prompts" / "review_worktree_imp.md"
+            target = self._codex_target(home=home, preset="review_worktree_imp")
             repo.mkdir(parents=True, exist_ok=True)
 
             with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
@@ -493,6 +505,41 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertIn("If no original plan file can be resolved, stop and report exactly what was missing", written)
             self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
             self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
+
+    def test_install_prompts_cli_run_can_install_feature_gated_codex_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = self._codex_skill_target(home=home, preset="ship_release")
+            repo.mkdir(parents=True, exist_ok=True)
+            stdout = StringIO()
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap, redirect_stdout(stdout):
+                code = cli.run(
+                    [
+                        "install-prompts",
+                        "--cli",
+                        "codex",
+                        "--preset",
+                        "ship_release",
+                        "--with-codex-skills",
+                        "--json",
+                    ],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                        "ENVCTL_EXPERIMENTAL_CODEX_SKILLS": "true",
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            payload = json.loads(stdout.getvalue())
+            self.assertIn("skill_results", payload)
+            self.assertEqual(payload["skill_results"][0]["path"], str(target))
+            self.assertTrue(target.exists())
 
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

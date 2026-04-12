@@ -20,7 +20,10 @@ from envctl_engine.runtime.prompt_install_support import (  # noqa: E402
     _render_claude_template,
     _render_codex_template,
     _render_opencode_template,
+    _target_path,
     PromptInstallResult,
+    resolve_codex_direct_prompt_body,
+    resolve_opencode_direct_prompt_body,
     run_install_prompts_command,
 )
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -32,6 +35,17 @@ class _TtyStringIO(StringIO):
 
 
 class PromptInstallSupportTests(unittest.TestCase):
+    def _target(self, *, cli: str, preset: str, home: Path) -> Path:
+        return _target_path(cli_name=cli, preset=preset, home=home, env={"HOME": str(home)})
+
+    def _skill_target(self, *, home: Path, preset: str) -> Path:
+        skill_name = f"envctl-{preset.replace('_', '-')}"
+        if preset == "review_task_imp":
+            skill_name = "envctl-review-task"
+        if preset == "review_worktree_imp":
+            skill_name = "envctl-review-worktree"
+        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+
     def test_install_prompts_dry_run_json_reports_all_targets_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -51,11 +65,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(payload["dry_run"])
             expected_presets = sorted(_available_presets())
             expected_paths = [
-                str(Path(tmpdir) / ".codex" / "prompts" / f"{preset}.md") for preset in expected_presets
+                str(self._target(cli="codex", preset=preset, home=Path(tmpdir))) for preset in expected_presets
             ] + [
-                str(Path(tmpdir) / ".claude" / "commands" / f"{preset}.md") for preset in expected_presets
+                str(self._target(cli="claude", preset=preset, home=Path(tmpdir))) for preset in expected_presets
             ] + [
-                str(Path(tmpdir) / ".config" / "opencode" / "commands" / f"{preset}.md") for preset in expected_presets
+                str(self._target(cli="opencode", preset=preset, home=Path(tmpdir))) for preset in expected_presets
             ]
             self.assertEqual([item["path"] for item in payload["results"]], expected_paths)
             self.assertEqual(
@@ -65,7 +79,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 + ["opencode"] * len(expected_presets),
             )
             self.assertTrue(all(item["status"] == "planned" for item in payload["results"]))
-            self.assertFalse((Path(tmpdir) / ".codex" / "prompts" / "implement_task.md").exists())
+            self.assertFalse(self._target(cli="codex", preset="implement_task", home=Path(tmpdir)).exists())
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
@@ -87,7 +101,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(payload["preset"], "all")
             self.assertEqual(
                 [item["path"] for item in payload["results"]],
-                [str(Path(tmpdir) / ".codex" / "prompts" / f"{preset}.md") for preset in expected_presets],
+                [str(self._target(cli="codex", preset=preset, home=Path(tmpdir))) for preset in expected_presets],
             )
             self.assertEqual(
                 [item["message"] for item in payload["results"]],
@@ -116,7 +130,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Would install merge_trees_into_dev for codex", rendered)
             self.assertIn("Would install create_plan for codex", rendered)
             self.assertIn("Would install implement_plan for codex", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 8)
+            self.assertIn("Would install ship_release for codex", rendered)
+            self.assertEqual(rendered.count("codex: planned "), 9)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -136,21 +151,22 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(
                 [item["path"] for item in payload["results"]],
                 [
-                    str(Path(tmpdir) / ".codex" / "prompts" / "continue_task.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "create_plan.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "finalize_task.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "implement_plan.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "implement_task.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "merge_trees_into_dev.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "review_task_imp.md"),
-                    str(Path(tmpdir) / ".codex" / "prompts" / "review_worktree_imp.md"),
+                    str(self._target(cli="codex", preset="continue_task", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="create_plan", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="finalize_task", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="implement_plan", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="implement_task", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="merge_trees_into_dev", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="review_task_imp", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="review_worktree_imp", home=Path(tmpdir))),
+                    str(self._target(cli="codex", preset="ship_release", home=Path(tmpdir))),
                 ],
             )
 
     def test_install_prompts_prompts_once_and_overwrites_all_existing_targets_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            codex_target = self._target(cli="codex", preset="implement_task", home=home)
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             claude_target.parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +202,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old codex prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir, "ENVCTL_UI_HYPERLINK_MODE": "on"})
@@ -211,7 +227,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = home / ".codex" / "prompts" / "implement_task.md"
+            codex_target = self._target(cli="codex", preset="implement_task", home=home)
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             codex_target.write_text("old codex prompt\n", encoding="utf-8")
@@ -236,7 +252,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_yes_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -259,7 +275,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -281,7 +297,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_json_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -328,7 +344,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -351,7 +367,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_dry_run_existing_target_does_not_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = home / ".codex" / "prompts" / "implement_task.md"
+            target = self._target(cli="codex", preset="implement_task", home=home)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -422,6 +438,57 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Unsupported preset", payload["results"][0]["message"])
             self.assertIn("implement_task", payload["results"][0]["message"])
 
+    def test_install_prompts_rejects_codex_skills_without_feature_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--with-codex-skills", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 1)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["results"][0]["kind"], "skill")
+            self.assertIn("ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true", payload["results"][0]["message"])
+
+    def test_install_prompts_can_install_feature_gated_codex_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(
+                env={
+                    "HOME": tmpdir,
+                    "ENVCTL_EXPERIMENTAL_CODEX_SKILLS": "true",
+                }
+            )
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "implement_task", "--with-codex-skills", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertIn("skill_results", payload)
+            self.assertEqual(len(payload["skill_results"]), 1)
+            skill_result = payload["skill_results"][0]
+            self.assertEqual(skill_result["kind"], "skill")
+            target = self._skill_target(home=Path(tmpdir), preset="implement_task")
+            self.assertEqual(skill_result["path"], str(target))
+            written = target.read_text(encoding="utf-8")
+            self.assertIn('name: "envctl-implement-task"', written)
+            self.assertIn("Use this skill explicitly with `$envctl-implement-task`.", written)
+            self.assertIn("You are implementing real code, end-to-end.", written)
+            openai_yaml = target.parent / "agents" / "openai.yaml"
+            self.assertTrue(openai_yaml.exists())
+            rendered_yaml = openai_yaml.read_text(encoding="utf-8")
+            self.assertIn("allow_implicit_invocation: false", rendered_yaml)
+
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
         self.assertIn("implement_task", _available_presets())
         self.assertIn("review_task_imp", _available_presets())
@@ -431,7 +498,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("merge_trees_into_dev", _available_presets())
         self.assertIn("create_plan", _available_presets())
         self.assertIn("implement_plan", _available_presets())
-        self.assertEqual(len(_available_presets()), 8)
+        self.assertIn("ship_release", _available_presets())
+        self.assertEqual(len(_available_presets()), 9)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -513,8 +581,120 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("first merge branch A into `dev`", merge_prompt.body)
         self.assertIn(".envctl-commit-message.md", merge_prompt.body)
 
+        ship_release_prompt = _load_template("ship_release")
+        self.assertEqual(ship_release_prompt.name, "ship_release")
+        self.assertIn("shipping a production release end-to-end", ship_release_prompt.body)
+        self.assertIn("Create and publish the GitHub release", ship_release_prompt.body)
+        self.assertIn("Final output must include", ship_release_prompt.body)
+
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
+
+    def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "ship_release", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            expected = self._target(cli="codex", preset="ship_release", home=Path(tmpdir))
+            self.assertEqual(payload["results"][0]["path"], str(expected))
+            self.assertTrue(expected.exists())
+            self.assertIn("shipping a production release end-to-end", expected.read_text(encoding="utf-8"))
+
+    def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="codex", preset="ship_release", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Custom release instructions\n", encoding="utf-8")
+
+            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Custom release instructions\n")
+
+    def test_resolve_codex_direct_prompt_body_uses_legacy_codex_prompt_when_new_target_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
+            legacy_target.parent.mkdir(parents=True, exist_ok=True)
+            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
+
+            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Legacy release instructions\n")
+
+    def test_resolve_codex_direct_prompt_body_prefers_new_target_over_legacy_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="codex", preset="ship_release", home=home)
+            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            legacy_target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("New envctl prompt\n", encoding="utf-8")
+            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
+
+            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "New envctl prompt\n")
+
+    def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="codex", preset="review_worktree_imp", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+
+            resolved = resolve_codex_direct_prompt_body(
+                preset="review_worktree_imp",
+                env={"HOME": tmpdir},
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+            self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", resolved)
+            self.assertIn("Keep `$ARGUMENTS` literal in prose.", resolved)
+            self.assertEqual(resolved.count("$ARGUMENTS"), 1)
+
+    def test_resolve_opencode_direct_prompt_body_prefers_user_installed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="opencode", preset="implement_task", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Direct OpenCode prompt body\n", encoding="utf-8")
+
+            resolved = resolve_opencode_direct_prompt_body(preset="implement_task", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Direct OpenCode prompt body\n")
+
+    def test_resolve_opencode_direct_prompt_body_renders_arguments_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="opencode", preset="review_worktree_imp", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+
+            resolved = resolve_opencode_direct_prompt_body(
+                preset="review_worktree_imp",
+                env={"HOME": tmpdir},
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+            self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", resolved)
+            self.assertIn("Keep `$ARGUMENTS` literal in prose.", resolved)
+            self.assertEqual(resolved.count("$ARGUMENTS"), 1)
 
     def test_prompt_templates_no_longer_reference_changelog_backed_commit_defaults(self) -> None:
         implement_prompt = _load_template("implement_task")

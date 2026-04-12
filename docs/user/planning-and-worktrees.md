@@ -81,15 +81,15 @@ Behavior:
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
-Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode keeps using `/<preset>`. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus `/prompts:finalize_task`
+- default/unset is `1`, so Codex launches queue `implement_task` plus `finalize_task`
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` keeps the current one-shot launch behavior
-- `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `/prompts:finalize_task`
-- `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `/prompts:finalize_task` for the final round
+- `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `finalize_task`
+- `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself

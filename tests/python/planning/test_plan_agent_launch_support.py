@@ -22,7 +22,32 @@ _finalization_instruction_text = getattr(launch_support, "_finalization_instruct
 _first_cycle_completion_instruction_text = getattr(launch_support, "_first_cycle_completion_instruction_text", None)
 _intermediate_cycle_completion_instruction_text = getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None)
 _wait_for_codex_queue_ready = getattr(launch_support, "_wait_for_codex_queue_ready", None)
+_workflow_step_prompt_text = getattr(launch_support, "_workflow_step_prompt_text", None)
 _WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
+
+
+def _launch_config_for_tests(
+    *,
+    cli: str = "codex",
+    direct_prompt_enabled: bool = False,
+    ulw_loop_prefix: bool = False,
+    ulw_suffix: bool = False,
+    preset: str = "implement_task",
+) -> launch_support.PlanAgentLaunchConfig:
+    return launch_support.PlanAgentLaunchConfig(
+        enabled=True,
+        cli=cli,
+        cli_command=cli,
+        preset=preset,
+        codex_cycles=0,
+        codex_cycles_warning=None,
+        shell="zsh",
+        require_cmux_context=True,
+        cmux_workspace="",
+        direct_prompt_enabled=direct_prompt_enabled,
+        ulw_loop_prefix=ulw_loop_prefix,
+        ulw_suffix=ulw_suffix,
+    )
 
 
 class _RecordingRunner:
@@ -298,7 +323,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "codex"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"], rt.process_runner.calls)
+            self.assertTrue(
+                any(
+                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    for call in rt.process_runner.calls
+                )
+            )
+            self.assertIn(
+                ["cmux", "paste-buffer", "--name", "envctl-surface-9", "--workspace", "workspace:7", "--surface", "surface:9"],
+                rt.process_runner.calls,
+            )
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
             self.assertEqual(_ImmediateThread.created[0].daemon, False)
@@ -421,6 +456,27 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.codex_cycles, 0)
         self.assertEqual(launch_config.codex_cycles_warning, "invalid_codex_cycles")
 
+    def test_resolve_plan_agent_launch_config_parses_direct_prompt_and_ulw_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_DIRECT_PROMPT": "true",
+                    "ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX": "true",
+                    "ENVCTL_PLAN_AGENT_APPEND_ULW": "true",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertTrue(launch_config.ulw_loop_prefix)
+        self.assertTrue(launch_config.ulw_suffix)
+
     def test_build_plan_agent_workflow_uses_single_prompt_by_default(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
@@ -428,7 +484,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
-            [("submit_prompt", "/prompts:implement_task")],
+            [("submit_direct_prompt", "implement_task")],
+        )
+
+    def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="ship_release", codex_cycles=0)
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [("submit_direct_prompt", "ship_release")],
         )
 
     def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_message(self) -> None:
@@ -440,8 +506,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_prompt", "/prompts:implement_task"),
-                ("queue_message", _finalization_instruction_text()),
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_direct_prompt", "finalize_task"),
             ],
         )
 
@@ -455,11 +521,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_prompt", "/prompts:implement_task"),
+                ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _first_cycle_completion_instruction_text()),
-                ("queue_message", "/prompts:continue_task"),
-                ("queue_message", "/prompts:implement_task"),
-                ("queue_message", _finalization_instruction_text()),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
+                ("queue_direct_prompt", "finalize_task"),
             ],
         )
 
@@ -474,14 +540,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_prompt", "/prompts:implement_task"),
+                ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _first_cycle_completion_instruction_text()),
-                ("queue_message", "/prompts:continue_task"),
-                ("queue_message", "/prompts:implement_task"),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
                 ("queue_message", _intermediate_cycle_completion_instruction_text()),
-                ("queue_message", "/prompts:continue_task"),
-                ("queue_message", "/prompts:implement_task"),
-                ("queue_message", _finalization_instruction_text()),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
+                ("queue_direct_prompt", "finalize_task"),
             ],
         )
 
@@ -494,6 +560,317 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [("submit_prompt", "/implement_task")],
         )
+
+    def test_build_plan_agent_workflow_uses_direct_submission_for_opencode_when_enabled(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(
+            cli="opencode",
+            preset="implement_task",
+            codex_cycles=2,
+            direct_prompt_enabled=True,
+        )
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [("submit_direct_prompt", "implement_task")],
+        )
+
+    def test_workflow_step_prompt_text_loads_direct_codex_prompt_body(self) -> None:
+        self.assertIsNotNone(_workflow_step_prompt_text)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "ship_release.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Ship this release carefully.\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=step,
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "Ship this release carefully.\n")
+
+    def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
+        self.assertIsNotNone(_workflow_step_prompt_text)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "review_worktree_imp.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text(
+                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
+                encoding="utf-8",
+            )
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="review_worktree_imp")
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                preset="review_worktree_imp",
+                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", prompt_text)
+        self.assertIn("Keep `$ARGUMENTS` literal in prose.", prompt_text)
+        self.assertEqual(prompt_text.count("$ARGUMENTS"), 1)
+
+    def test_resolve_preset_submission_text_returns_opencode_direct_body_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                cli="opencode",
+                cli_command="opencode",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=True,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+            )
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                runtime,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "Implement this directly.\n")
+
+    def test_resolve_preset_submission_text_keeps_slash_mode_for_opencode_by_default(self) -> None:
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        launch_config = launch_support.PlanAgentLaunchConfig(
+            enabled=True,
+            cli="opencode",
+            cli_command="opencode",
+            preset="implement_task",
+            codex_cycles=0,
+            codex_cycles_warning=None,
+            shell="zsh",
+            require_cmux_context=True,
+            cmux_workspace="",
+            direct_prompt_enabled=False,
+            ulw_loop_prefix=False,
+            ulw_suffix=False,
+        )
+
+        prompt_text, error = launch_support._resolve_preset_submission_text(
+            runtime,
+            launch_config=launch_config,
+            cli="opencode",
+            preset="implement_task",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "/implement_task")
+
+    def test_resolve_preset_submission_text_prepends_ulw_loop_for_direct_prompts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                cli="opencode",
+                cli_command="opencode",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=True,
+                ulw_loop_prefix=True,
+                ulw_suffix=False,
+            )
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                runtime,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertIsNone(error)
+        self.assertTrue(prompt_text.startswith("/ulw_loop "))
+        self.assertIn("Implement this directly.", prompt_text)
+
+    def test_resolve_preset_submission_text_appends_ulw_suffix_in_slash_mode(self) -> None:
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        launch_config = launch_support.PlanAgentLaunchConfig(
+            enabled=True,
+            cli="opencode",
+            cli_command="opencode",
+            preset="implement_task",
+            codex_cycles=0,
+            codex_cycles_warning=None,
+            shell="zsh",
+            require_cmux_context=True,
+            cmux_workspace="",
+            direct_prompt_enabled=False,
+            ulw_loop_prefix=False,
+            ulw_suffix=True,
+        )
+
+        prompt_text, error = launch_support._resolve_preset_submission_text(
+            runtime,
+            launch_config=launch_config,
+            cli="opencode",
+            preset="implement_task",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "/implement_task ulw")
+
+    def test_resolve_preset_submission_text_rejects_ulw_loop_prefix_in_slash_mode(self) -> None:
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        launch_config = launch_support.PlanAgentLaunchConfig(
+            enabled=True,
+            cli="opencode",
+            cli_command="opencode",
+            preset="implement_task",
+            codex_cycles=0,
+            codex_cycles_warning=None,
+            shell="zsh",
+            require_cmux_context=True,
+            cmux_workspace="",
+            direct_prompt_enabled=False,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        prompt_text, error = launch_support._resolve_preset_submission_text(
+            runtime,
+            launch_config=launch_config,
+            cli="opencode",
+            preset="implement_task",
+        )
+
+        self.assertEqual(prompt_text, "")
+        self.assertEqual(error, "prompt_resolution_failed: ulw_loop_prefix_requires_direct_prompt")
+
+    def test_shape_prompt_text_rejects_multiple_slash_commands_for_direct_prompts(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            "/implement_task",
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        self.assertEqual(shaped, "")
+        self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
+
+    def test_shape_prompt_text_rejects_embedded_second_slash_command_for_direct_prompts(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            "Implement this directly.\n/implement_task",
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        self.assertEqual(shaped, "")
+        self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
+
+    def test_shape_prompt_text_preserves_existing_ulw_loop_prefix_and_allows_suffix(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            "/ulw_loop Implement this directly.",
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=True,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(shaped, "/ulw_loop Implement this directly. ulw")
+
+    def test_shape_prompt_text_allows_absolute_path_literals_in_direct_prompts(self) -> None:
+        shaped, error = launch_support._shape_prompt_text(
+            'Review bundle: "/tmp/review.md"\nWorktree directory: "/tmp/tree"',
+            direct_prompt=True,
+            ulw_loop_prefix=True,
+            ulw_suffix=False,
+        )
+
+        self.assertIsNone(error)
+        self.assertTrue(shaped.startswith("/ulw_loop "))
+        self.assertIn('Review bundle: "/tmp/review.md"', shaped)
 
     def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -617,10 +994,26 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:implement_task"], rt.process_runner.calls)
-            self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "/prompts:continue_task"],
-                rt.process_runner.calls,
+            self.assertTrue(
+                any(
+                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                    and "You are implementing real code, end-to-end." in str(call[-1])
+                    for call in rt.process_runner.calls
+                )
+            )
+            self.assertTrue(
+                any(
+                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                    and "You are preparing the next implementation iteration" in str(call[-1])
+                    for call in rt.process_runner.calls
+                )
+            )
+            self.assertTrue(
+                any(
+                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                    and "You are finalizing an implementation" in str(call[-1])
+                    for call in rt.process_runner.calls
+                )
             )
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
@@ -668,7 +1061,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
         queued_steps = workflow.steps[1:]
         self.assertEqual(len(queued_steps), 1)
-        sent_texts: list[str] = []
+        pasted_texts: list[str] = []
         sent_keys: list[str] = []
 
         busy_screen = (
@@ -683,13 +1076,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     gpt-5.4 high   fast   /model to change │\n"
             "│ directory: ~/repo                                 │\n"
-            f"› {queued_steps[0].text}\n"
+            "  You are finalizing an implementation that should already be substantially complete in the current worktree.\n"
             "  tab to queue message\n"
         )
         state = {"typed": False}
 
-        def fake_send_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
-            sent_texts.append(text)
+        def fake_paste_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
+            pasted_texts.append(text)
             state["typed"] = True
             return None
 
@@ -710,7 +1103,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_text", side_effect=fake_send_text),
+            patch("envctl_engine.planning.plan_agent_launch_support._paste_surface_text", side_effect=fake_paste_text),
             patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
             patch(
                 "envctl_engine.planning.plan_agent_launch_support._read_surface_screen",
@@ -726,33 +1119,26 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/tmp/repo"), plan_file="a.md"),
                 workflow=workflow,
                 queued_steps=queued_steps,
+                launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
             )
 
         self.assertIsNone(reason)
-        self.assertEqual(sent_texts, [queued_steps[0].text])
+        self.assertEqual(len(pasted_texts), 1)
+        self.assertIn("You are finalizing an implementation", pasted_texts[0])
         self.assertEqual(sent_keys, ["tab"])
 
-    def test_codex_cycle_queue_resolves_saved_prompt_before_tabbing(self) -> None:
-        sent_texts: list[str] = []
+    def test_codex_cycle_queue_direct_prompt_tabs_without_picker_resolution(self) -> None:
         sent_keys: list[str] = []
-        queued_text = "/prompts:continue_task"
+        queued_text = "Direct queued prompt body"
         state = {"stage": "typed"}
 
-        picker_screen = (
-            "╭───────────────────────────────────────────────────╮\n"
-            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-            "│ directory: ~/repo                                 │\n"
-            f"› {queued_text}\n"
-            f"  {queued_text}                      send saved prompt\n"
-        )
         queue_hint_screen = (
             "╭───────────────────────────────────────────────────╮\n"
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     gpt-5.4 high   fast   /model to change │\n"
             "│ directory: ~/repo                                 │\n"
-            f"› {queued_text}\n"
+            "  Direct queued prompt body\n"
             "  tab to queue message\n"
         )
         committed_screen = (
@@ -763,22 +1149,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "• Queued follow-up messages\n"
         )
 
-        def fake_send_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
-            sent_texts.append(text)
-            return None
-
         def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
             sent_keys.append(key)
-            if key == "enter":
-                state["stage"] = "hint"
-            elif key == "tab":
+            if key == "tab":
                 state["stage"] = "committed"
             return None
 
         def fake_read_screen(*_args, **_kwargs):  # noqa: ANN202, ANN001
             if state["stage"] == "typed":
-                return picker_screen
-            if state["stage"] == "hint":
                 return queue_hint_screen
             return committed_screen
 
@@ -794,7 +1172,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_text", side_effect=fake_send_text),
             patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
             patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", side_effect=fake_read_screen),
             patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
@@ -805,11 +1182,97 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 workspace_id="workspace:7",
                 surface_id="surface:9",
                 text=queued_text,
+                require_text_match=False,
             )
 
         self.assertTrue(queued)
-        self.assertEqual(sent_texts, [])
-        self.assertEqual(sent_keys, ["enter", "tab"])
+        self.assertEqual(sent_keys, ["tab"])
+
+    def test_codex_cycle_queue_direct_prompt_requires_visible_message_text_before_tab(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body"
+        queue_hint_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "  tab to queue message\n"
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            return None
+
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=queue_hint_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_codex_message(
+                runtime,
+                workspace_id="workspace:7",
+                surface_id="surface:9",
+                text=queued_text,
+                require_text_match=False,
+            )
+
+        self.assertFalse(queued)
+        self.assertEqual(sent_keys, [])
+
+    def test_review_prompt_arguments_preserve_newlines_for_direct_codex_submission(self) -> None:
+        rendered = launch_support._review_prompt_arguments(
+            project_name="feature-a-1",
+            project_root=Path("/tmp/worktree path"),
+            review_bundle_path=Path("/tmp/review bundle.md"),
+            original_plan_path=Path("/tmp/original plan.md"),
+        )
+
+        self.assertEqual(
+            rendered,
+            'Project: feature-a-1\n'
+            'Review bundle: "/tmp/review bundle.md"\n'
+            'Worktree directory: "/tmp/worktree path"\n'
+            'Original plan file: "/tmp/original plan.md"',
+        )
+
+    def test_prompt_submit_screen_accepts_multiline_direct_prompt_once_each_line_is_visible(self) -> None:
+        screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "Review bundle: /tmp/review.md\n"
+            "Worktree directory: /tmp/tree\n"
+            "Original plan file: /tmp/plan.md\n"
+        )
+        prompt_text = "Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree\nOriginal plan file: /tmp/plan.md"
+
+        self.assertTrue(_prompt_submit_screen_looks_ready("codex", screen, prompt_text))
+
+    def test_prompt_submit_screen_rejects_multiline_direct_prompt_when_line_missing(self) -> None:
+        screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "Review bundle: /tmp/review.md\n"
+            "Worktree directory: /tmp/tree\n"
+        )
+        prompt_text = "Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree\nOriginal plan file: /tmp/plan.md"
+
+        self.assertFalse(_prompt_submit_screen_looks_ready("codex", screen, prompt_text))
 
     def test_codex_cycle_queue_failure_falls_back_to_initial_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -864,10 +1327,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
                 patch("envctl_engine.planning.plan_agent_launch_support._wait_for_codex_queue_ready", return_value=True),
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._send_surface_text",
-                    side_effect=lambda runtime, *, workspace_id, surface_id, text, emit_failure_event=True: (
-                        "queue failed" if text.startswith("/prompts:finalize_task") else None
-                    ),
+                    "envctl_engine.planning.plan_agent_launch_support._paste_surface_text",
+                    side_effect=[None, "queue failed"],
                 ),
             ):
                 _ImmediateThread.created = []
@@ -1167,8 +1628,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", "codex"], rt.process_runner.calls)
+            self.assertTrue(
+                any(
+                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-77"]
+                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    for call in rt.process_runner.calls
+                )
+            )
             self.assertIn(
-                ["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", "/prompts:implement_task"],
+                ["cmux", "paste-buffer", "--name", "envctl-surface-77", "--workspace", "workspace:9", "--surface", "surface:77"],
                 rt.process_runner.calls,
             )
             self.assertEqual(len(_ImmediateThread.created), 1)
@@ -1912,16 +2380,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ["cmux", "send", "--workspace", "workspace:10", "--surface", "surface:12", f"cd {project_root}"],
                 rt.process_runner.calls,
             )
+            review_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-12"]
+            ]
+            self.assertEqual(len(review_prompt_calls), 1)
+            self.assertIn("current local repo directory is the unedited baseline", str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Review bundle: "{review_bundle}"', str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Worktree directory: "{project_root}"', str(review_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}"', str(review_prompt_calls[0][-1]))
             self.assertIn(
-                [
-                    "cmux",
-                    "send",
-                    "--workspace",
-                    "workspace:10",
-                    "--surface",
-                    "surface:12",
-                    f"/prompts:review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original plan file: {original_plan.resolve()}",
-                ],
+                ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:10", "--surface", "surface:12"],
                 rt.process_runner.calls,
             )
 
@@ -1983,8 +2453,79 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "workspace:9",
                     "--surface",
                     "surface:15",
-                    f"/review_worktree_imp feature-a-1 Review bundle: {review_bundle} Worktree directory: {project_root} Original plan file: {original_plan.resolve()}",
+                    "/review_worktree_imp Project: feature-a-1\n"
+                    f'Review bundle: "{review_bundle}"\n'
+                    f'Worktree directory: "{project_root}"\n'
+                    f'Original plan file: "{original_plan.resolve()}"',
                 ],
+                rt.process_runner.calls,
+            )
+
+    def test_review_launch_uses_direct_prompt_submission_for_opencode_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
+            installed_prompt = Path(tmpdir) / ".config" / "opencode" / "commands" / "review_worktree_imp.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            installed_prompt.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            original_plan.write_text("# Current plan\n", encoding="utf-8")
+            installed_prompt.write_text("Review prompt body\n$ARGUMENTS\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "HOME": tmpdir,
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_DIRECT_PROMPT": "true",
+                    "ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX": "true",
+                    "ENVCTL_PLAN_AGENT_APPEND_ULW": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:15\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
+            ):
+                _ImmediateThread.created = []
+                result = launch_support.launch_review_agent_terminal(
+                    rt,
+                    repo_root=repo,
+                    project_name="feature-a-1",
+                    project_root=project_root,
+                    review_bundle_path=review_bundle,
+                )
+
+            self.assertEqual(result.status, "launched")
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw_loop Review prompt body"))
+            self.assertIn(f'Review bundle: "{review_bundle}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}" ulw', str(direct_prompt_calls[0][-1]))
+            self.assertTrue(str(direct_prompt_calls[0][-1]).rstrip().endswith("ulw"))
+            self.assertIn(
+                ["cmux", "paste-buffer", "--name", "envctl-surface-15", "--workspace", "workspace:9", "--surface", "surface:15"],
                 rt.process_runner.calls,
             )
 
