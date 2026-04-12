@@ -2243,6 +2243,38 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
 
 
+def _wait_for_tmux_prompt_submit_ready(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    prompt_text: str,
+) -> None:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"codex", "opencode"}:
+        time.sleep(_PROMPT_SUBMIT_READY_DELAY_SECONDS)
+        return
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _prompt_submit_screen_looks_ready(normalized_cli, screen, prompt_text):
+            return
+        time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+
+
+def _tmux_prompt_loaded(screen: str, *, cli: str, prompt_text: str) -> bool:
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if "no matching items" in lower_text or "unrecognized command" in lower_text:
+        return False
+    if prompt_text.startswith("/"):
+        lines = [line for line in cleaned.splitlines() if line.strip()]
+        return len(lines) > 10
+    return _prompt_submit_screen_looks_ready(cli, screen, prompt_text)
+
+
 def _submit_tmux_prompt_workflow_step(
     runtime: Any,
     *,
@@ -2277,7 +2309,13 @@ def _submit_tmux_prompt_workflow_step(
     if err is not None:
         return err
     if normalized_cli == "opencode":
-        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        _wait_for_tmux_prompt_submit_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=normalized_cli,
+            prompt_text=prompt_text,
+        )
         err = _send_tmux_key(
             runtime,
             session_name=session_name,
