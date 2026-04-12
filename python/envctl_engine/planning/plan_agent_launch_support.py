@@ -319,10 +319,11 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
     ) or bool(cmux_workspace) or transport == "tmux"
+    direct_prompt_default = True if (transport == "tmux" and cli == "opencode") else False
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        False,
+        direct_prompt_default,
     )
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
@@ -2274,7 +2275,10 @@ def _tmux_prompt_loaded(screen: str, *, cli: str, prompt_text: str) -> bool:
     if prompt_text.startswith("/"):
         lines = [line for line in cleaned.splitlines() if line.strip()]
         return len(lines) > 10
-    return _prompt_submit_screen_looks_ready(cli, screen, prompt_text)
+    first_line = str(prompt_text).splitlines()[0].strip().lower()
+    if first_line:
+        return first_line in lower_text
+    return len(cleaned.splitlines()) > 10
 
 
 def _submit_tmux_prompt_workflow_step(
