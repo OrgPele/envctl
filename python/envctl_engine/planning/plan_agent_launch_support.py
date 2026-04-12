@@ -897,6 +897,7 @@ def _run_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
         )
     else:
         submit_error = _submit_prompt_workflow_step(
@@ -1004,6 +1005,7 @@ def _run_review_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
             failure_event="dashboard.review_tab.failed",
         )
     return _submit_prompt_workflow_step(
@@ -1405,6 +1407,7 @@ def _submit_direct_prompt_workflow_step(
     workspace_id: str,
     surface_id: str,
     prompt_text: str,
+    cli: str = "",
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     paste_error = _paste_surface_text(
@@ -1416,13 +1419,28 @@ def _submit_direct_prompt_workflow_step(
     )
     if paste_error is not None:
         return paste_error
-    return _send_surface_key(
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+    err = _send_surface_key(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         key="enter",
         failure_event=failure_event,
     )
+    if err is not None:
+        return err
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        err = _send_surface_key(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            failure_event=failure_event,
+        )
+    return err
 
 
 def _queue_codex_workflow_steps(
