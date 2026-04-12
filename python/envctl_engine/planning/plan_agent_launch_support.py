@@ -767,6 +767,7 @@ def _complete_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     try:
         error = _run_surface_bootstrap(
@@ -856,6 +857,7 @@ def _run_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     error = _prepare_surface(
         runtime,
