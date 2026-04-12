@@ -1102,7 +1102,13 @@ def _launch_plan_agent_tmux_terminals(
     base_payload: dict[str, object],
 ) -> PlanAgentLaunchResult:
     repo_root = Path(runtime.config.base_dir).resolve()
-    session_name = _session_name_for_repo(repo_root, env=getattr(runtime, "env", {}) or {})
+    env_map = dict(getattr(runtime, "env", {}) or {})
+    session_name = _session_name_for_repo(repo_root, env=env_map)
+    base_session_name = session_name
+    instance = 0
+    while _tmux_session_exists(runtime, session_name):
+        instance += 1
+        session_name = f"{base_session_name}-{instance}"
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     runtime._emit(
         "planning.agent_launch.evaluate",
