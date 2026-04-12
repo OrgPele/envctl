@@ -328,12 +328,12 @@ def resolve_plan_agent_launch_config(
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        False,
+        True,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
         or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
-        False,
+        True,
     )
     return PlanAgentLaunchConfig(
         enabled=enabled,
@@ -2281,6 +2281,36 @@ def _tmux_prompt_loaded(screen: str, *, cli: str, prompt_text: str) -> bool:
     return len(cleaned.splitlines()) > 10
 
 
+def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
+    target = _tmux_target(session_name, window_name)
+    load_result = subprocess.run(
+        ["tmux", "load-buffer", "-t", target, "-"],
+        input=text,
+        capture_output=True,
+        text=True,
+        cwd=Path(runtime.config.base_dir).resolve(),
+        env=dict(getattr(runtime, "env", {})),
+        timeout=10.0,
+    )
+    if load_result.returncode != 0:
+        error = (load_result.stderr or "").strip()[:200]
+        runtime._emit("planning.agent_launch.failed", reason="tmux_load_buffer_failed", error=error)
+        return f"tmux_load_buffer_failed: {error}"
+    paste_result = subprocess.run(
+        ["tmux", "paste-buffer", "-dpr", "-t", target],
+        capture_output=True,
+        text=True,
+        cwd=Path(runtime.config.base_dir).resolve(),
+        env=dict(getattr(runtime, "env", {})),
+        timeout=10.0,
+    )
+    if paste_result.returncode != 0:
+        error = (paste_result.stderr or "").strip()[:200]
+        runtime._emit("planning.agent_launch.failed", reason="tmux_paste_buffer_failed", error=error)
+        return f"tmux_paste_buffer_failed: {error}"
+    return None
+
+
 def _submit_tmux_prompt_workflow_step(
     runtime: Any,
     *,
@@ -2291,19 +2321,19 @@ def _submit_tmux_prompt_workflow_step(
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     emit_failure_event = failure_event == "planning.agent_launch.failed"
-    paste_error = _send_tmux_text(
+    paste_error = _send_tmux_prompt(
         runtime,
         session_name=session_name,
         window_name=window_name,
         text=prompt_text,
-        emit_failure_event=emit_failure_event,
-        failure_event=failure_event,
     )
     if paste_error is not None:
+        if emit_failure_event:
+            runtime._emit(failure_event, reason="paste_failed", cli=cli)
         return paste_error
     normalized_cli = str(cli).strip().lower()
     if normalized_cli == "opencode":
-        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        time.sleep(1.0)
     err = _send_tmux_key(
         runtime,
         session_name=session_name,
