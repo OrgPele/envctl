@@ -1011,7 +1011,11 @@ class StartupOrchestrator:
         if attach_target is None:
             return None
         session.plan_agent_attach_target = None
-        return attach_plan_agent_terminal(self.runtime, attach_target)
+        attach_code = attach_plan_agent_terminal(self.runtime, attach_target)
+        if attach_code != 0:
+            self._print_plan_follow_up_command_with_attach(session, attach_target)
+            return 0
+        return attach_code
 
     def _print_plan_follow_up_command(self, session: StartupSession) -> None:
         route = session.effective_route
@@ -1033,6 +1037,34 @@ class StartupOrchestrator:
             return
         print(
             "Run this in a new terminal: "
+            f"envctl --headless --plan {shlex.quote(plan_file)} --tmux --opencode"
+        )
+
+    def _print_plan_follow_up_command_with_attach(
+        self, session: StartupSession, attach_target: object
+    ) -> None:
+        route = session.effective_route
+        if route.command != "plan":
+            return
+        if len(session.selected_contexts) != 1:
+            return
+        context = session.selected_contexts[0]
+        root = Path(getattr(context, "root", ""))
+        provenance_path = root / ".envctl-state" / "worktree-provenance.json"
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        plan_file = str(provenance.get("plan_file", "")).strip()
+        if not plan_file:
+            return
+        attach_command_str = " ".join(getattr(attach_target, "attach_command", ()))
+        print(
+            f"Plan agent launch created tmux session. "
+            f"Attach to it with: {attach_command_str}"
+        )
+        print(
+            "Or run this in a new terminal: "
             f"envctl --headless --plan {shlex.quote(plan_file)} --tmux --opencode"
         )
 

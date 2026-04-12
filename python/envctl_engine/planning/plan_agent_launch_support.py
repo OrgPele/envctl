@@ -40,6 +40,7 @@ _CLI_READY_DELAY_SECONDS_BY_CLI = {
 _CLI_READY_POLL_INTERVAL_SECONDS = 0.1
 _READ_SCREEN_LINE_COUNT = 80
 _PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
+_OPENCODE_SUBMIT_DELAY_SECONDS = 0.5
 _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
@@ -2230,6 +2231,7 @@ def _submit_tmux_prompt_workflow_step(
     session_name: str,
     window_name: str,
     prompt_text: str,
+    cli: str = "",
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     emit_failure_event = failure_event == "planning.agent_launch.failed"
@@ -2243,7 +2245,10 @@ def _submit_tmux_prompt_workflow_step(
     )
     if paste_error is not None:
         return paste_error
-    return _send_tmux_key(
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+    err = _send_tmux_key(
         runtime,
         session_name=session_name,
         window_name=window_name,
@@ -2251,6 +2256,21 @@ def _submit_tmux_prompt_workflow_step(
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
+    if err is not None:
+        return err
+    if normalized_cli == "opencode":
+        time.sleep(_OPENCODE_SUBMIT_DELAY_SECONDS)
+        err = _send_tmux_key(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            key="enter",
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        )
+        if err is not None:
+            return err
+    return None
 
 
 def _run_tmux_worktree_bootstrap(
@@ -2286,6 +2306,7 @@ def _run_tmux_worktree_bootstrap(
         session_name=session_name,
         window_name=window_name,
         prompt_text=prompt_text,
+        cli=launch_config.cli,
     )
 
 
@@ -2331,6 +2352,7 @@ def _run_review_tmux_bootstrap(
         session_name=session_name,
         window_name=window_name,
         prompt_text=prompt_text,
+        cli=launch_config.cli,
         failure_event="dashboard.review_tab.failed",
     )
 
