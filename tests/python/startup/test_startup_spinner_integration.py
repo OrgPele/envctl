@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import shutil
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,13 +13,49 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.startup_progress import ProjectSpinnerGroup
+from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state.models import PortPlan
 
 
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class StartupSpinnerIntegrationTests(unittest.TestCase):
+    def test_project_spinner_detail_hyperlinks_local_paths_without_touching_lifecycle_payload(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        group = ProjectSpinnerGroup(
+            projects=["feature-a-1"],
+            enabled=True,
+            policy=type(
+                "_Policy",
+                (),
+                {
+                    "enabled": True,
+                    "backend": "rich",
+                    "style": "dots",
+                },
+            )(),
+            emit=lambda event, **payload: events.append((event, payload)),
+            component="startup_orchestrator",
+            op_id="startup.execute",
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+        )
+        buffer = _TtyStringIO()
+        group._stream = buffer  # type: ignore[attr-defined]
+        group.print_detail("feature-a-1", "backend log: /tmp/runtime/feature-a-1_backend.txt")
+
+        rendered = buffer.getvalue()
+        self.assertIn("\x1b]8;;file://", rendered)
+        self.assertIn("backend log: /tmp/runtime/feature-a-1_backend.txt", strip_ansi(rendered))
+        lifecycle_messages = [payload.get("message", "") for event, payload in events if event == "ui.spinner.lifecycle"]
+        self.assertEqual(lifecycle_messages, ["backend log: /tmp/runtime/feature-a-1_backend.txt"])
+
     def test_parallel_startup_uses_project_spinner_group_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -287,10 +325,12 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             detail_messages = [msg for kind, project, msg in calls if kind == "detail" and project == "feature-a-1"]
             self.assertTrue(detail_messages)
             self.assertIn("Warning: backend migration step failed; continuing without migration", detail_messages[0])
+            self.assertTrue(all("\x1b]8;;file://" not in msg for msg in detail_messages))
             self.assertTrue(any("backend log:" in msg for msg in detail_messages))
 
     def test_startup_emits_spinner_policy_and_lifecycle(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = tempfile.mkdtemp()
+        try:
             root = Path(tmpdir)
             repo = root / "repo"
             runtime = root / "runtime"
@@ -398,6 +438,8 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(spinner_calls[0][1], True)
             self.assertTrue(any(event.get("event") == "ui.spinner.policy" for event in engine.events))
             self.assertTrue(any(event.get("event") == "ui.spinner.lifecycle" for event in engine.events))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_restart_emits_spinner_for_prestop_and_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

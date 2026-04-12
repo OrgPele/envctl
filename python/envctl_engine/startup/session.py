@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
@@ -24,7 +24,7 @@ class StartupSession:
     effective_route: Route
     requested_command: str
     runtime_mode: str
-    run_id: str
+    run_id: str | None
     startup_started_at: float = field(default_factory=time.monotonic)
     startup_event_index: int = 0
     selected_contexts: list[ProjectContextLike] = field(default_factory=list)
@@ -42,6 +42,8 @@ class StartupSession:
     failure_message: str | None = None
     errors: list[str] = field(default_factory=list)
     debug_plan_snapshot: bool = False
+    base_metadata: dict[str, Any] = field(default_factory=dict)
+    identifiers_announced: bool = False
 
     @property
     def merged_services(self) -> dict[str, ServiceRecord]:

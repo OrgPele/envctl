@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
+import threading
 import unittest
 import importlib
 from contextlib import redirect_stdout
@@ -9,6 +11,7 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+from typing import Any
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,6 +32,8 @@ load_config = config_module.load_config
 PythonEngineRuntime = engine_runtime_module.PythonEngineRuntime
 RunState = engine_runtime_module.RunState
 ServiceRecord = engine_runtime_module.ServiceRecord
+RequirementsResult = engine_runtime_module.RequirementsResult
+strip_ansi = importlib.import_module("envctl_engine.test_output.parser_base").strip_ansi
 
 
 class _FakeRunner:
@@ -57,6 +62,11 @@ class _FakeRunner:
         return False
 
 
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class ActionsParityTests(unittest.TestCase):
     def _config(self, repo: Path, runtime: Path):
         return load_config(
@@ -65,6 +75,13 @@ class ActionsParityTests(unittest.TestCase):
                 "RUN_SH_RUNTIME_DIR": str(runtime),
                 "ENVCTL_DEFAULT_MODE": "trees",
             }
+        )
+
+    def _save_state(self, engine: PythonEngineRuntime, state: RunState) -> None:
+        engine.state_repository.save_resume_state(
+            state=state,
+            emit=engine._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
         )
 
     def test_action_commands_execute_with_configured_commands(self) -> None:
@@ -116,7 +133,7 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
@@ -137,7 +154,10 @@ class ActionsParityTests(unittest.TestCase):
             tree_root.mkdir(parents=True, exist_ok=True)
             (tree_root / "tests").mkdir(parents=True, exist_ok=True)
 
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
             fake_runner = _FakeRunner(
                 returncode=0,
                 stdout="..\n----------------------------------------------------------------------\nRan 2 tests in 0.003s\n\nOK\n",
@@ -151,17 +171,19 @@ class ActionsParityTests(unittest.TestCase):
                 "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
                 return_value=(False, "forced_unavailable"),
             ):
-                out = StringIO()
+                out = _TtyStringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             rendered = out.getvalue()
-            self.assertIn("command: ", rendered)
-            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", rendered)
-            self.assertIn(f"cwd: {tree_root.resolve()}", rendered)
-            self.assertIn("2 passed, 0 failed, 0 skipped", rendered)
-            self.assertIn("Repository tests (unittest)", rendered)
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("command: ", visible)
+            self.assertIn("-m unittest discover -s tests -t . -p test_*.py", visible)
+            self.assertIn(f"cwd: {tree_root.resolve()}", visible)
+            self.assertIn("2 passed, 0 failed, 0 skipped", visible)
+            self.assertIn("Repository tests (unittest)", visible)
 
     def test_interactive_test_action_emits_live_progress_status_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -293,7 +315,9 @@ class ActionsParityTests(unittest.TestCase):
                         progress_callback(12, 20)
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"}
+            )
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
             with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
@@ -305,9 +329,24 @@ class ActionsParityTests(unittest.TestCase):
             status_messages = [
                 str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
-            self.assertTrue(any("Collecting Frontend (package test) tests... 47 discovered" in message for message in status_messages))
-            self.assertTrue(any("Running Frontend (package test)... 5 tests complete • 5 passed, 0 failed" in message for message in status_messages))
-            self.assertTrue(any("Running Frontend (package test)... 12/20 tests complete • 12 passed, 0 failed" in message for message in status_messages))
+            self.assertTrue(
+                any(
+                    "Collecting Frontend (package test) tests... 47 discovered" in message
+                    for message in status_messages
+                )
+            )
+            self.assertTrue(
+                any(
+                    "Running Frontend (package test)... 5 tests complete • 5 passed, 0 failed" in message
+                    for message in status_messages
+                )
+            )
+            self.assertTrue(
+                any(
+                    "Running Frontend (package test)... 12/20 tests complete • 12 passed, 0 failed" in message
+                    for message in status_messages
+                )
+            )
 
     def test_interactive_test_action_ignores_late_collection_updates_after_running_starts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -345,7 +384,9 @@ class ActionsParityTests(unittest.TestCase):
                         progress_callback(7, 20)
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            route = parse_route(["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "backend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"}
+            )
             route.flags = {**route.flags, "interactive_command": True, "batch": True}
 
             with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _ProgressRunner):
@@ -362,10 +403,104 @@ class ActionsParityTests(unittest.TestCase):
             ]
             self.assertEqual(len(collecting_messages), 1, msg=status_messages)
             self.assertFalse(any("52 discovered" in message for message in collecting_messages), msg=status_messages)
-            self.assertTrue(any("Running Frontend (package test)... 5/20 tests complete" in message for message in status_messages), msg=status_messages)
-            self.assertTrue(any("Running Frontend (package test)... 7/20 tests complete" in message for message in status_messages), msg=status_messages)
+            self.assertTrue(
+                any("Running Frontend (package test)... 5/20 tests complete" in message for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertTrue(
+                any("Running Frontend (package test)... 7/20 tests complete" in message for message in status_messages),
+                msg=status_messages,
+            )
 
-    def test_interactive_test_action_prints_failure_excerpt(self) -> None:
+    def test_interactive_test_action_omits_inline_failure_excerpt_when_summary_artifact_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(
+                returncode=1,
+                stdout="E\nFAILED (errors=1)\n",
+                stderr="ImportError: cannot import name 'x' from 'y'\n",
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+            state = RunState(
+                run_id="run-interactive-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route.flags = {**route.flags, "interactive_command": True, "batch": True}
+
+            with patch(
+                "envctl_engine.actions.action_command_orchestrator._rich_progress_available",
+                return_value=(False, "forced_unavailable"),
+            ):
+                out = _TtyStringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            visible = strip_ansi(rendered)
+            self.assertNotIn("failure: ", visible)
+            self.assertIn("failure summary:", visible)
+            self.assertIn("ft_", visible)
+            self.assertIn("\x1b]8;;file://", rendered)
+            self.assertNotIn("Test command failed:", rendered)
+            self.assertNotIn("ImportError: cannot import name 'x' from 'y'", rendered)
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertFalse(
+                any(message.startswith("Test command failed:") for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertFalse(
+                any("ImportError: cannot import name 'x' from 'y'" in message for message in status_messages),
+                msg=status_messages,
+            )
+
+    def test_interactive_test_action_keeps_inline_failure_status_when_no_summary_artifact_is_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -394,9 +529,18 @@ class ActionsParityTests(unittest.TestCase):
                     code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
-            rendered = out.getvalue()
-            self.assertIn("failure: ", rendered)
-            self.assertIn("ImportError: cannot import name 'x' from 'y'", rendered)
+            self.assertNotIn("failure summary:", out.getvalue())
+            status_messages = [
+                str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
+            ]
+            self.assertTrue(
+                any(message.startswith("Test command failed:") for message in status_messages),
+                msg=status_messages,
+            )
+            self.assertTrue(
+                any("ImportError: cannot import name 'x' from 'y'" in message for message in status_messages),
+                msg=status_messages,
+            )
 
     def test_action_commands_require_explicit_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -595,6 +739,33 @@ class ActionsParityTests(unittest.TestCase):
             )
             self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
 
+    def test_action_env_keeps_interactive_pr_routes_interactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(
+                ["pr", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            route.flags = {**route.flags, "interactive_command": True, "batch": True, "pr_base": "main"}
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "pr",
+                [target],
+                route=route,
+                target=target,
+                extra=engine.action_command_orchestrator.action_extra_env(route),
+            )
+
+            self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "1")
+            self.assertEqual(env.get("ENVCTL_PR_BASE"), "main")
+
     def test_action_env_exposes_runtime_scoped_tree_diffs_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -773,6 +944,56 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("/tmp/review-output", rendered)
             self.assertIn("analyzer could not resolve docs path", rendered)
 
+    def test_review_dispatch_outside_dashboard_does_not_launch_origin_review_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Review summary written: /tmp/review.md'"},
+            )
+            fake_runner = _FakeRunner(returncode=0, stdout="Review summary written: /tmp/review.md\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
+    def test_headless_review_outside_dashboard_does_not_launch_origin_review_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_DEFAULT_MODE": "main",
+                    }
+                ),
+                env={"ENVCTL_ACTION_ANALYZE_CMD": "sh -lc 'echo Review summary written: /tmp/review.md'"},
+            )
+            fake_runner = _FakeRunner(returncode=0, stdout="Review summary written: /tmp/review.md\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"})
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
     def test_interactive_pr_reports_existing_pr_status_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -819,6 +1040,25 @@ class ActionsParityTests(unittest.TestCase):
 
             extra = engine.action_command_orchestrator.action_extra_env(route)
             self.assertEqual(extra.get("ENVCTL_ANALYZE_SCOPE"), "backend")
+
+    def test_review_action_extra_env_forwards_explicit_review_base_only_when_supplied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+            explicit_route = parse_route(
+                ["review", "--review-base", "release/2026.03"],
+                env={"ENVCTL_DEFAULT_MODE": "main"},
+            )
+            explicit_extra = engine.action_command_orchestrator.action_extra_env(explicit_route)
+            self.assertEqual(explicit_extra.get("ENVCTL_REVIEW_BASE"), "release/2026.03")
+
+            implicit_route = parse_route(["review"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            implicit_extra = engine.action_command_orchestrator.action_extra_env(implicit_route)
+            self.assertNotIn("ENVCTL_REVIEW_BASE", implicit_extra)
 
     def test_git_actions_fallback_to_system_python_when_repo_has_no_venv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -906,6 +1146,957 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
             self.assertEqual(fake_runner.run_calls[0][0][:3], ("/usr/bin/python3", "-m", "alembic"))
+
+    def test_migrate_action_loads_backend_env_file_and_exports_app_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "CUSTOM_BACKEND_FLAG=enabled\nREDIS_URL=redis://legacy:6379/0\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(fake_runner.run_calls)
+            self.assertEqual(Path(fake_runner.run_calls[0][1]).resolve(), backend_dir.resolve())
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "enabled")
+            self.assertEqual(env.get("REDIS_URL"), "redis://legacy:6379/0")
+
+    def test_migrate_action_honors_backend_env_file_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=default\n", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text("CUSTOM_BACKEND_FLAG=override-enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "override-enabled")
+
+    def test_migrate_action_honors_main_env_file_path_in_main_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            main_env_file = repo / "config" / "main.backend.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            main_env_file.parent.mkdir(parents=True, exist_ok=True)
+            main_env_file.write_text("CUSTOM_BACKEND_FLAG=main-enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_DEFAULT_MODE": "main",
+                    }
+                ),
+                env={"MAIN_ENV_FILE_PATH": str(main_env_file)},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--main"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), main_env_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "main-enabled")
+
+    def test_migrate_action_uses_current_requirements_projection_when_state_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "REDIS_URL=redis://legacy:6379/0\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-env",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+            )
+            self.assertEqual(env.get("REDIS_URL"), "redis://localhost:6399/0")
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+
+    def test_migrate_action_scrubs_inherited_shell_backend_env_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-shell-scrub",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "APP_ENV_FILE": "/tmp/leaked.env",
+                    "DATABASE_URL": "postgresql://shell-leak",
+                    "SQLALCHEMY_DATABASE_URL": "postgresql://shell-leak",
+                    "ASYNC_DATABASE_URL": "postgresql://shell-leak",
+                },
+                clear=False,
+            ):
+                route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("APP_ENV_FILE"), str(backend_env_file.resolve()))
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+            )
+            self.assertNotEqual(env.get("SQLALCHEMY_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertNotEqual(env.get("ASYNC_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "enabled")
+
+    def test_migrate_action_reconciles_full_db_url_family_for_default_backend_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            backend_env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            backend_env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "SQLALCHEMY_DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n"
+                "ASYNC_DATABASE_URL=postgresql+psycopg2://legacy:legacy@db.internal/legacy\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-db-family",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            expected_database_url = "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres"
+            self.assertEqual(env.get("DATABASE_URL"), expected_database_url)
+            self.assertEqual(env.get("SQLALCHEMY_DATABASE_URL"), expected_database_url)
+            self.assertEqual(env.get("ASYNC_DATABASE_URL"), expected_database_url)
+
+    def test_migrate_action_preserves_override_env_file_database_url_when_skip_local_db_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            override_database_url = "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text(
+                f"DATABASE_URL={override_database_url}\nCUSTOM_BACKEND_FLAG=override\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-override",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            db={"enabled": True, "success": True, "final": 5544},
+                            redis={"enabled": True, "success": True, "final": 6399},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "override")
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+
+    def test_migrate_action_preserves_override_db_url_family_when_explicit_override_is_authoritative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            override_database_url = "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text(
+                f"DATABASE_URL={override_database_url}\n"
+                f"SQLALCHEMY_DATABASE_URL={override_database_url}\n"
+                f"ASYNC_DATABASE_URL={override_database_url}\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-override-family",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(env.get("DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("SQLALCHEMY_DATABASE_URL"), override_database_url)
+            self.assertEqual(env.get("ASYNC_DATABASE_URL"), override_database_url)
+
+    def test_migrate_action_accepts_repo_root_relative_backend_env_override_for_tree_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text("CUSTOM_BACKEND_FLAG=repo-relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"BACKEND_ENV_FILE_OVERRIDE": "config/backend.override.env"},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            env = fake_runner.run_envs[0] or {}
+            self.assertEqual(Path(str(env.get("APP_ENV_FILE", ""))).resolve(), override_file.resolve())
+            self.assertEqual(env.get("CUSTOM_BACKEND_FLAG"), "repo-relative")
+
+    def test_migrate_action_uses_distinct_env_contracts_for_each_target_in_multi_target_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            first_target = repo / "trees" / "feature-a" / "1"
+            second_target = repo / "trees" / "feature-b" / "1"
+            first_backend = first_target / "backend"
+            second_backend = second_target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for backend_dir, marker in ((first_backend, "a"), (second_backend, "b")):
+                (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+                (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+                (backend_dir / ".env").write_text(f"PROJECT_MARKER={marker}\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-multi-target",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(first_backend),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(second_backend),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            supabase={"enabled": True, "success": True, "final": 5544},
+                            health="healthy",
+                            failures=[],
+                        ),
+                        "feature-b-1": RequirementsResult(
+                            project="feature-b-1",
+                            supabase={"enabled": True, "success": True, "final": 6644},
+                            health="healthy",
+                            failures=[],
+                        ),
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fake_runner.run_envs), 2)
+            first_env = fake_runner.run_envs[0] or {}
+            second_env = fake_runner.run_envs[1] or {}
+            self.assertEqual(first_env.get("APP_ENV_FILE"), str((first_backend / ".env").resolve()))
+            self.assertEqual(second_env.get("APP_ENV_FILE"), str((second_backend / ".env").resolve()))
+            self.assertEqual(first_env.get("PROJECT_MARKER"), "a")
+            self.assertEqual(second_env.get("PROJECT_MARKER"), "b")
+            self.assertEqual(
+                first_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres",
+            )
+            self.assertEqual(
+                second_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:6644/postgres",
+            )
+            self.assertEqual(first_env.get("SQLALCHEMY_DATABASE_URL"), first_env.get("DATABASE_URL"))
+            self.assertEqual(second_env.get("SQLALCHEMY_DATABASE_URL"), second_env.get("DATABASE_URL"))
+
+    def test_migrate_action_failure_summary_includes_env_hint_for_missing_settings_vars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-failure",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                ),
+            )
+            fake_runner = _FakeRunner(
+                returncode=1,
+                stderr=(
+                    "Traceback (most recent call last):\n"
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>\n'
+                    "    from app.core.config import settings\n"
+                    "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings\n"
+                    "DATABASE_URL\n"
+                    "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                    "REDIS_URL\n"
+                    "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                ),
+            )
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            saved_state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(saved_state)
+            assert saved_state is not None
+            reports = saved_state.metadata.get("project_action_reports")
+            self.assertIsInstance(reports, dict)
+            assert isinstance(reports, dict)
+            project_reports = reports.get("feature-a-1")
+            self.assertIsInstance(project_reports, dict)
+            assert isinstance(project_reports, dict)
+            migrate_entry = project_reports.get("migrate")
+            self.assertIsInstance(migrate_entry, dict)
+            assert isinstance(migrate_entry, dict)
+            summary = str(migrate_entry.get("summary", ""))
+            self.assertEqual(
+                str(migrate_entry.get("headline", "")),
+                "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+            )
+            self.assertTrue(
+                summary.startswith("pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings")
+            )
+            self.assertIn("ValidationError", summary)
+            self.assertIn("hint: envctl migrate loads backend env from backend/.env by default.", summary)
+            self.assertIn("BACKEND_ENV_FILE_OVERRIDE", summary)
+            self.assertIn("hint: backend env source: default", summary)
+            backend_env_metadata = migrate_entry.get("backend_env")
+            self.assertIsInstance(backend_env_metadata, dict)
+            assert isinstance(backend_env_metadata, dict)
+            self.assertEqual(backend_env_metadata.get("env_file_source"), "default")
+            self.assertEqual(
+                Path(str(backend_env_metadata.get("env_file_path", ""))).resolve(),
+                (backend_dir / ".env").resolve(),
+            )
+            report_path = Path(str(migrate_entry.get("report_path", "")))
+            self.assertTrue(report_path.is_file())
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertIn("DATABASE_URL", report_text)
+            self.assertNotIn("hint: envctl migrate loads backend env", report_text)
+
+    def test_direct_cli_migrate_failure_prints_compact_summary_instead_of_raw_wall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            backend_dir = target / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_dir / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_dir / ".env").write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-failure",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_dir),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                ),
+            )
+            engine.process_runner = _FakeRunner(  # type: ignore[assignment]
+                returncode=1,
+                stderr=(
+                    "Traceback (most recent call last):\n"
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>\n'
+                    "    from app.core.config import settings\n"
+                    "alembic.util.exc.CommandError: migration failed\n"
+                    "details: revision mismatch\n"
+                ),
+            )
+
+            route = parse_route(["migrate", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            visible = strip_ansi(rendered)
+            self.assertIn("✗ migrate failed for feature-a-1: alembic.util.exc.CommandError: migration failed", visible)
+            self.assertIn("migrate failure log for feature-a-1:", visible)
+            self.assertIn("\x1b]8;;file://", rendered)
+            self.assertNotIn("migrate action failed for feature-a-1:", visible)
+            self.assertNotIn("✗ migrate failed for feature-a-1: Traceback (most recent call last):", visible)
+            self.assertNotIn("Traceback (most recent call last):", visible.splitlines()[0])
+
+    def test_direct_cli_migrate_mixed_results_prints_successes_and_failures_in_route_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "ENVCTL_UI_COLOR_MODE": "on"},
+            )
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-mixed",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+
+            class _SequencedRunner:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cmd, cwd, env, timeout
+                    self.calls += 1
+                    if self.calls == 1:
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            '  File "/tmp/project/backend/alembic/env.py", line 22, in <module>\n'
+                            "alembic.util.exc.CommandError: feature-b failed\n"
+                        ),
+                    )
+
+                def start(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                    _ = cmd, cwd, env
+                    return SimpleNamespace(pid=10001, poll=lambda: None)
+
+                def wait_for_port(self, _port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+                    _ = host, timeout
+                    return True
+
+                def is_pid_running(self, _pid: int) -> bool:
+                    return False
+
+            engine.process_runner = _SequencedRunner()  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("\x1b[1;32m✓\x1b[0m", rendered)
+            self.assertIn("\x1b[1;31m✗\x1b[0m", rendered)
+            self.assertIn("\x1b[1;34mfeature-a-1\x1b[0m", rendered)
+            self.assertIn("\x1b[1;35mfeature-b-1\x1b[0m", rendered)
+            visible = strip_ansi(rendered)
+            self.assertLess(
+                visible.index("✓ migrate succeeded for feature-a-1"),
+                visible.index("✗ migrate failed for feature-b-1: alembic.util.exc.CommandError: feature-b failed"),
+            )
+            self.assertIn("migrate failure log for feature-b-1:", visible)
+            self.assertNotIn("migrate action succeeded for feature-a-1.", visible)
+            self.assertNotIn("migrate action failed for feature-b-1:", visible)
+
+    def test_direct_cli_migrate_multiple_failures_compact_shared_hints_and_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-failure-batch",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+
+            class _SequencedRunner:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cmd, cwd, env, timeout
+                    self.calls += 1
+                    project = "feature-a" if self.calls == 1 else "feature-b"
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            f'  File "/tmp/project/{project}/backend/alembic/env.py", line 19, in <module>\n'
+                            "    from app.core.config import settings\n"
+                            "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings\n"
+                            "DATABASE_URL\n"
+                            "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                            "REDIS_URL\n"
+                            "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                        ),
+                    )
+
+                def start(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                    _ = cmd, cwd, env
+                    return SimpleNamespace(pid=10001, poll=lambda: None)
+
+                def wait_for_port(self, _port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+                    _ = host, timeout
+                    return True
+
+                def is_pid_running(self, _pid: int) -> bool:
+                    return False
+
+            engine.process_runner = _SequencedRunner()  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = _TtyStringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            saved_state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(saved_state)
+            assert saved_state is not None
+            reports = saved_state.metadata.get("project_action_reports")
+            self.assertIsInstance(reports, dict)
+            assert isinstance(reports, dict)
+            project_a_reports = reports.get("feature-a-1")
+            self.assertIsInstance(project_a_reports, dict)
+            assert isinstance(project_a_reports, dict)
+            project_b_reports = reports.get("feature-b-1")
+            self.assertIsInstance(project_b_reports, dict)
+            assert isinstance(project_b_reports, dict)
+            migrate_a = project_a_reports.get("migrate")
+            self.assertIsInstance(migrate_a, dict)
+            assert isinstance(migrate_a, dict)
+            migrate_b = project_b_reports.get("migrate")
+            self.assertIsInstance(migrate_b, dict)
+            assert isinstance(migrate_b, dict)
+            report_a = Path(str(migrate_a.get("report_path", "")))
+            report_b = Path(str(migrate_b.get("report_path", "")))
+            visible = strip_ansi(out.getvalue())
+            self.assertIn(
+                "✗ migrate failed for feature-a-1: pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+                visible,
+            )
+            self.assertIn(
+                "✗ migrate failed for feature-b-1: pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+                visible,
+            )
+            self.assertEqual(
+                visible.count(
+                    "hint: migrate failed before Alembic reached revisions because required env vars were missing (DATABASE_URL, REDIS_URL)."
+                ),
+                1,
+            )
+            self.assertNotIn("hint: backend env source:", visible)
+            self.assertIn("migrate failure logs:", visible)
+            self.assertIn(str(report_a.parent), visible)
+            self.assertIn(f"- feature-a-1: {report_a.name}", visible)
+            self.assertIn(f"- feature-b-1: {report_b.name}", visible)
+            self.assertNotIn("migrate failure log for feature-a-1:", visible)
+            self.assertNotIn("migrate failure log for feature-b-1:", visible)
+
+    def test_direct_cli_migrate_all_success_prints_visible_result_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            tree_b = repo / "trees" / "feature-b" / "1"
+            backend_a = tree_a / "backend"
+            backend_b = tree_b / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_b / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend_a / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_b / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend_a / ".env").write_text("CUSTOM_BACKEND_FLAG=a\n", encoding="utf-8")
+            (backend_b / ".env").write_text("CUSTOM_BACKEND_FLAG=b\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            self._save_state(
+                engine,
+                RunState(
+                    run_id="run-migrate-cli-success",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(backend_a),
+                            pid=1001,
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        ),
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(backend_b),
+                            pid=1002,
+                            requested_port=8001,
+                            actual_port=8001,
+                            status="running",
+                        ),
+                    },
+                ),
+            )
+            engine.process_runner = _FakeRunner(returncode=0)  # type: ignore[assignment]
+
+            route = parse_route(
+                ["migrate", "--project", "feature-a-1", "--project", "feature-b-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("✓ migrate succeeded for feature-a-1", rendered)
+            self.assertIn("✓ migrate succeeded for feature-b-1", rendered)
+            self.assertNotIn("migrate action succeeded for feature-a-1.", rendered)
 
     def test_action_env_includes_pythonpath_for_native_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1002,7 +2193,11 @@ class ActionsParityTests(unittest.TestCase):
                     )
                     return SimpleNamespace(returncode=1, stdout="", stderr="suite failed")
 
-            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailingRunner):
+            dispatch_out = StringIO()
+            with (
+                redirect_stdout(dispatch_out),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _FailingRunner),
+            ):
                 route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
 
@@ -1049,18 +2244,336 @@ class ActionsParityTests(unittest.TestCase):
                 ["backend/tests/test_auth.py::test_signup_regression"],
             )
             self.assertEqual(project_entry.get("status"), "failed")
+            self.assertEqual(
+                project_entry.get("summary_excerpt"),
+                [
+                    "[Test command]",
+                    "backend/tests/test_auth.py::test_signup_regression",
+                    "AssertionError: expected 201, got 500",
+                ],
+            )
             results_root = refreshed.metadata.get("project_test_results_root")
             self.assertEqual(results_root, str(Path(summary_path).parent.parent))
             self.assertTrue(Path(str(results_root)).is_relative_to(expected_root))
             self.assertFalse((repo / "test-results").exists())
+            dispatch_rendered = dispatch_out.getvalue()
+            self.assertIn("failure summary:", dispatch_rendered)
+            self.assertIn(short_summary_path, dispatch_rendered)
+            self.assertNotIn("backend/tests/test_auth.py::test_signup_regression", dispatch_rendered)
+            self.assertNotIn("AssertionError: expected 201, got 500", dispatch_rendered)
 
             dashboard_out = StringIO()
             with redirect_stdout(dashboard_out):
                 engine._print_dashboard_snapshot(refreshed)
             rendered = dashboard_out.getvalue()
             self.assertIn("tests:", rendered)
+            self.assertIn("backend/tests/test_auth.py::test_signup_regression", rendered)
+            self.assertIn("AssertionError: expected 201, got 500", rendered)
             self.assertIn(short_summary_path, rendered)
             self.assertNotIn(summary_path, rendered)
+
+    def test_test_action_writes_generic_suite_failure_summary_with_combined_cleaned_streams(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            engine.process_runner = _FakeRunner(returncode=1)  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-generic-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _GenericFailureRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout=(
+                            "Collecting tests...\n"
+                            "RuntimeConfigError: frontend env is missing API_URL\n"
+                            "stdout unique detail\n"
+                        ),
+                        stderr=(
+                            "\x1b[31mImportError: cannot import name 'settings' from 'app.config'\x1b[0m\n"
+                            "stderr unique detail\n"
+                        ),
+                    )
+
+            dispatch_out = StringIO()
+            with (
+                redirect_stdout(dispatch_out),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _GenericFailureRunner),
+            ):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route.flags = {**route.flags, "interactive_command": True, "batch": True}
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            refreshed = engine._try_load_existing_state(mode="trees", strict_mode_match=False)
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            entry = refreshed.metadata["project_test_summaries"]["feature-a-1"]
+            assert isinstance(entry, dict)
+            summary_path = Path(str(entry["summary_path"]))
+            short_summary_path = Path(str(entry["short_summary_path"]))
+            summary_text = summary_path.read_text(encoding="utf-8")
+
+            self.assertEqual(summary_text, short_summary_path.read_text(encoding="utf-8"))
+            self.assertIn("- suite failed before envctl could extract failed tests", summary_text)
+            self.assertIn("stderr:", summary_text)
+            self.assertIn("stdout:", summary_text)
+            self.assertIn("ImportError: cannot import name 'settings' from 'app.config'", summary_text)
+            self.assertIn("stderr unique detail", summary_text)
+            self.assertIn("RuntimeConfigError: frontend env is missing API_URL", summary_text)
+            self.assertIn("stdout unique detail", summary_text)
+            self.assertNotIn("\x1b", summary_text)
+            self.assertIn("failure summary:", dispatch_out.getvalue())
+            self.assertNotIn("failure: ", dispatch_out.getvalue())
+
+    def test_test_action_writes_generic_suite_failure_summary_for_stderr_only_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            engine.process_runner = _FakeRunner(returncode=1)  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-stderr-only-failure-summary",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _StderrOnlyFailureRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=(
+                            "Traceback (most recent call last):\n"
+                            "  File \"/tmp/project/conftest.py\", line 4, in <module>\n"
+                            "ModuleNotFoundError: No module named 'missing_dependency'\n"
+                        ),
+                    )
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _StderrOnlyFailureRunner):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            refreshed = engine._try_load_existing_state(mode="trees", strict_mode_match=False)
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            entry = refreshed.metadata["project_test_summaries"]["feature-a-1"]
+            assert isinstance(entry, dict)
+            summary_text = Path(str(entry["summary_path"])).read_text(encoding="utf-8")
+
+            self.assertIn("Traceback (most recent call last):", summary_text)
+            self.assertIn("ModuleNotFoundError: No module named 'missing_dependency'", summary_text)
+            self.assertNotIn("stdout:", summary_text)
+
+    def test_envctl_repo_test_bootstrap_creates_repo_local_venv_and_installs_dev_deps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine" / "__init__.py").write_text('"""envctl"""\n', encoding="utf-8")
+            (repo / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl"',
+                        'version = "0.0.0"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            commands: list[tuple[str, ...]] = []
+            statuses: list[str] = []
+
+            def fake_run(command, *, cwd=None, capture_output=None, text=None, check=None):  # noqa: ANN001
+                _ = capture_output, text, check
+                commands.append(tuple(str(part) for part in command))
+                self.assertEqual(Path(str(cwd)).resolve(), repo.resolve())
+                rendered = tuple(str(part) for part in command)
+                if rendered[1:3] == ("-m", "venv"):
+                    python_bin = repo / ".venv" / "bin" / "python"
+                    python_bin.parent.mkdir(parents=True, exist_ok=True)
+                    python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    python_bin.chmod(0o755)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("envctl_engine.actions.actions_test.subprocess.run", side_effect=fake_run):
+                actions_test_module.ensure_repo_local_test_prereqs(repo, emit_status=statuses.append)
+
+            self.assertEqual(len(commands), 2)
+            self.assertEqual(commands[0][1:3], ("-m", "venv"))
+            self.assertEqual(Path(commands[0][3]).resolve(), (repo / ".venv").resolve())
+            self.assertEqual(
+                commands[1],
+                (str((repo / ".venv" / "bin" / "python").resolve()), "-m", "pip", "install", "-e", ".[dev]"),
+            )
+            self.assertTrue(
+                any("Creating repo-local .venv for envctl test actions" in message for message in statuses),
+                msg=statuses,
+            )
+            self.assertTrue(
+                any("Installing repo-local envctl test prerequisites" in message for message in statuses),
+                msg=statuses,
+            )
+
+    def test_envctl_repo_test_bootstrap_skips_when_repo_local_python_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine").mkdir(parents=True, exist_ok=True)
+            (repo / "python" / "envctl_engine" / "__init__.py").write_text('"""envctl"""\n', encoding="utf-8")
+            (repo / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl"',
+                        'version = "0.0.0"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            python_bin = repo / ".venv" / "bin" / "python"
+            python_bin.parent.mkdir(parents=True, exist_ok=True)
+            python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            python_bin.chmod(0o755)
+
+            def fake_run(command, *, cwd=None, capture_output=None, text=None, check=None):  # noqa: ANN001
+                _ = cwd, capture_output, text, check
+                rendered = tuple(str(part) for part in command)
+                if rendered == (
+                    str(python_bin.resolve()),
+                    "-c",
+                    "import build, prompt_toolkit, psutil, pytest, rich, textual",
+                ):
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                self.fail(f"Unexpected bootstrap command: {rendered}")
+
+            with patch("envctl_engine.actions.actions_test.subprocess.run", side_effect=fake_run):
+                actions_test_module.ensure_repo_local_test_prereqs(repo)
+
+    def test_test_action_summary_event_omits_fake_zero_counts_when_parsing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 1'", "NO_COLOR": "1"},
+            )
+            fake_runner = _FakeRunner(returncode=1)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            state = RunState(
+                run_id="run-tests-no-counts",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(tree_root),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    ),
+                },
+            )
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _UnparsedFailingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(self, _command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001, ARG002
+                    from envctl_engine.test_output.parser_base import TestResult
+
+                    self.last_result = TestResult()
+                    return SimpleNamespace(returncode=1, stdout="", stderr="startup import error")
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _UnparsedFailingRunner):
+                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            summary_events = [event for event in engine.events if event.get("event") == "test.suite.summary"]
+            self.assertEqual(len(summary_events), 1)
+            summary = summary_events[0]
+            self.assertFalse(bool(summary.get("counts_detected")))
+            self.assertIsNone(summary.get("passed"))
+            self.assertIsNone(summary.get("failed"))
+            self.assertIsNone(summary.get("skipped"))
+            self.assertIsNone(summary.get("errors"))
+            self.assertIsNone(summary.get("total_tests"))
 
     def test_failed_test_manifest_filters_invalid_pytest_error_lines(self) -> None:
         parser = importlib.import_module("envctl_engine.test_output.parser_pytest").PytestOutputParser()
@@ -1667,7 +3180,9 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 0)
-            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
+            self.assertEqual(
+                captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"]
+            )
 
     def test_failed_only_rerun_reports_extraction_failure_without_telling_user_to_rerun_full_suite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1901,7 +3416,9 @@ class ActionsParityTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 0)
-            self.assertEqual(captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"])
+            self.assertEqual(
+                captured_commands[0][1:], ["-m", "pytest", "backend/tests/test_auth.py::test_signup_regression"]
+            )
 
     def test_failed_only_rerun_allows_configured_shared_unittest_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2385,9 +3902,7 @@ class ActionsParityTests(unittest.TestCase):
                             {
                                 "suite": "Repository tests (unittest)",
                                 "source": "root_unittest",
-                                "failed_tests": [
-                                    "python.config.test_config_loader.ConfigLoaderTests.test_removed"
-                                ],
+                                "failed_tests": ["python.config.test_config_loader.ConfigLoaderTests.test_removed"],
                                 "failed_files": [],
                             }
                         ],
@@ -2526,7 +4041,7 @@ class ActionsParityTests(unittest.TestCase):
                     "  ╭────────────────────────────────────────────────────╮",
                     "  │  Run tests for                                    │",
                     "RESULT_SERVICES=Main Admin",
-                    "File \"/tmp/test.py\", line 10, in test_case",
+                    'File "/tmp/test.py", line 10, in test_case',
                 ]
             )
         )
@@ -2623,13 +4138,33 @@ class ActionsParityTests(unittest.TestCase):
             )
         )
         rendered = "\n".join(lines)
-        self.assertIn('File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered)
+        self.assertIn(
+            'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered
+        )
         self.assertIn(
             'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
             rendered,
         )
         self.assertIn("During handling of the above exception, another exception occurred:", rendered)
         self.assertIn("RuntimeError: wrapper failed", rendered)
+
+    def test_migrate_failure_summary_prefers_actionable_exception_headline(self) -> None:
+        orchestrator = ActionCommandOrchestrator(SimpleNamespace())
+
+        lines = orchestrator._project_action_failure_summary_lines(  # noqa: SLF001
+            command_name="migrate",
+            error_output="\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    '  File "/tmp/project/backend/alembic/env.py", line 19, in <module>',
+                    "    from app.core.config import settings",
+                    "alembic.util.exc.CommandError: migration failed",
+                ]
+            ),
+        )
+
+        self.assertEqual(lines[0], "alembic.util.exc.CommandError: migration failed")
+        self.assertIn("Traceback (most recent call last):", lines[1:])
 
     def test_test_action_writes_passed_summary_with_no_failed_tests_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2995,9 +4530,7 @@ class ActionsParityTests(unittest.TestCase):
             command_set = {call[0] for call in fake_runner.run_calls}
             cwd_set = {Path(call[1]).resolve() for call in fake_runner.run_calls}
             frontend_commands = [
-                command
-                for command in command_set
-                if len(command) >= 3 and command[:3] == ("pnpm", "run", "test")
+                command for command in command_set if len(command) >= 3 and command[:3] == ("pnpm", "run", "test")
             ]
             self.assertEqual(len(frontend_commands), 1)
             self.assertEqual(frontend_commands[0][-3], "--")
@@ -3160,9 +4693,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             commands = {call[0] for call in fake_runner.run_calls}
             backend_commands = [
-                command
-                for command in commands
-                if len(command) >= 4 and command[:3] == ("python", "-m", "pytest")
+                command for command in commands if len(command) >= 4 and command[:3] == ("python", "-m", "pytest")
             ]
             self.assertEqual(len(backend_commands), 1, msg=commands)
             self.assertIn("envctl_engine.test_output.pytest_progress_plugin", backend_commands[0])
@@ -3310,7 +4841,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3379,7 +4910,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3457,7 +4988,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3537,6 +5068,402 @@ class ActionsParityTests(unittest.TestCase):
                 any(" • running: " in message and " • done: " in message for message in status_messages),
                 msg=status_messages,
             )
+
+    def test_test_action_interrupt_terminates_started_sequential_suite_and_skips_summary_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / "tests").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            terminated_pids: list[int] = []
+            engine.process_runner = SimpleNamespace(  # type: ignore[assignment]
+                terminate_process_group=lambda pid, **_kwargs: terminated_pids.append(pid) or True,
+            )
+            state = RunState(run_id="run-test-interrupt-sequential", mode="trees", services={})
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+
+            class _InterruptingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(
+                    self,
+                    command,
+                    *,
+                    cwd=None,
+                    env=None,
+                    timeout=None,
+                    progress_callback=None,
+                    process_started_callback=None,
+                ):  # noqa: ANN001
+                    _ = command, cwd, env, timeout, progress_callback
+                    if callable(process_started_callback):
+                        process_started_callback(4321)
+                    raise KeyboardInterrupt
+
+            route = parse_route(
+                ["test", "--project", "feature-a-1", "--test-sequential"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _InterruptingRunner):
+                with self.assertRaises(KeyboardInterrupt):
+                    engine.dispatch(route)
+
+            self.assertEqual(terminated_pids, [4321])
+            self.assertFalse(any(event.get("event") == "test.summary.persisted" for event in engine.events))
+            self.assertTrue(
+                any(event.get("event") == "test.interrupt.cleanup" for event in engine.events),
+                msg=engine.events,
+            )
+
+    def test_test_action_interrupt_cancels_parallel_queue_and_terminates_started_suites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for feature_name in ("feature-a", "feature-b"):
+                tree_root = repo / "trees" / feature_name / "1"
+                tree_root.mkdir(parents=True, exist_ok=True)
+                (tree_root / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+                (tree_root / "backend" / "pyproject.toml").write_text(
+                    "[project]\nname='backend'\nversion='1.0.0'\n",
+                    encoding="utf-8",
+                )
+                (tree_root / "frontend").mkdir(parents=True, exist_ok=True)
+                (tree_root / "frontend" / "package.json").write_text(
+                    '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                    encoding="utf-8",
+                )
+                (tree_root / "frontend" / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            terminated_pids: list[int] = []
+            engine.process_runner = SimpleNamespace(  # type: ignore[assignment]
+                terminate_process_group=lambda pid, **_kwargs: terminated_pids.append(pid) or True,
+            )
+
+            class _InterruptingRunner:
+                call_count = 0
+                started_first_suite = threading.Event()
+                allow_first_suite_to_finish = threading.Event()
+
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(
+                    self,
+                    command,
+                    *,
+                    cwd=None,
+                    env=None,
+                    timeout=None,
+                    progress_callback=None,
+                    process_started_callback=None,
+                ):  # noqa: ANN001
+                    _ = command, cwd, env, timeout, progress_callback
+                    _InterruptingRunner.call_count += 1
+                    if _InterruptingRunner.call_count == 1:
+                        if callable(process_started_callback):
+                            process_started_callback(2001)
+                        _InterruptingRunner.started_first_suite.set()
+                        _InterruptingRunner.allow_first_suite_to_finish.wait(timeout=1.0)
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    if callable(process_started_callback):
+                        process_started_callback(2002)
+                    raise KeyboardInterrupt
+
+            executor_state: dict[str, object] = {"shutdown_calls": []}
+
+            class _FutureStub:
+                def __init__(self, *, callback) -> None:  # noqa: ANN001
+                    self._callback = callback
+                    self.cancelled_flag = False
+
+                def result(self):  # noqa: ANN201
+                    if self.cancelled_flag:
+                        raise AssertionError("cancelled future should not be awaited")
+                    return self._callback()
+
+                def cancel(self) -> bool:
+                    self.cancelled_flag = True
+                    return True
+
+                def cancelled(self) -> bool:
+                    return self.cancelled_flag
+
+            class _ExecutorStub:
+                def __init__(self, max_workers: int) -> None:
+                    _ = max_workers
+                    self.futures: list[_FutureStub] = []
+                    self.pending: list[_FutureStub] = []
+                    self.background_threads: list[threading.Thread] = []
+
+                def submit(self, fn, *args, **kwargs):  # noqa: ANN001
+                    submit_index = len(self.futures)
+                    if submit_index == 0:
+                        future = _FutureStub(callback=lambda: fn(*args, **kwargs))
+                    elif submit_index == 1:
+                        future = _FutureStub(callback=lambda: fn(*args, **kwargs))
+                        worker = threading.Thread(target=future.result, daemon=True)
+                        worker.start()
+                        self.background_threads.append(worker)
+                        _InterruptingRunner.started_first_suite.wait(timeout=1.0)
+                    else:
+                        future = _FutureStub(callback=lambda: fn(*args, **kwargs))
+                        self.pending.append(future)
+                    self.futures.append(future)
+                    return future
+
+                def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+                    shutdown_calls = executor_state["shutdown_calls"]
+                    assert isinstance(shutdown_calls, list)
+                    shutdown_calls.append((wait, cancel_futures))
+                    _InterruptingRunner.allow_first_suite_to_finish.set()
+                    if cancel_futures:
+                        for future in self.pending:
+                            future.cancel()
+                    if wait:
+                        for worker in self.background_threads:
+                            worker.join(timeout=1.0)
+
+            def _as_completed(futures):  # noqa: ANN001
+                future_list = list(futures)
+                if future_list:
+                    yield future_list[0]
+
+            futures_stub = SimpleNamespace(
+                ThreadPoolExecutor=lambda max_workers: _ExecutorStub(max_workers),
+                as_completed=_as_completed,
+            )
+
+            route = parse_route(["test", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+                patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _InterruptingRunner),
+                patch("envctl_engine.actions.action_command_orchestrator.concurrent.futures", futures_stub),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    engine.dispatch(route)
+
+            self.assertEqual(sorted(terminated_pids), [2001, 2002])
+            shutdown_calls = executor_state["shutdown_calls"]
+            assert isinstance(shutdown_calls, list)
+            self.assertIn((False, True), shutdown_calls)
+            cleanup_events = [event for event in engine.events if event.get("event") == "test.interrupt.cleanup"]
+            self.assertTrue(cleanup_events, msg=engine.events)
+            self.assertGreaterEqual(int(cleanup_events[-1].get("queued_cancelled", 0) or 0), 1)
+            self.assertFalse(any(event.get("event") == "test.summary.persisted" for event in engine.events))
+
+    def test_failed_only_interrupt_preserves_previous_summary_metadata_and_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_python = repo / "backend" / ".venv" / "bin" / "python"
+            backend_python.parent.mkdir(parents=True, exist_ok=True)
+            backend_python.write_text("", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"NO_COLOR": "1"})
+            state = RunState(
+                run_id="run-failed-only-interrupt",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+            )
+            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            previous_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260319_120000" / "Main"
+            previous_dir.mkdir(parents=True, exist_ok=True)
+            previous_manifest_path = previous_dir / "failed_tests_manifest.json"
+            previous_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-19T12:00:00+00:00",
+                        "project_name": "Main",
+                        "project_root": str(repo),
+                        "git_state": {
+                            "head": head,
+                            "status_hash": status_hash,
+                            "status_lines": status_lines,
+                        },
+                        "entries": [
+                            {
+                                "suite": "Backend (pytest)",
+                                "source": "backend_pytest",
+                                "failed_tests": ["backend/tests/test_auth.py::test_signup_regression"],
+                                "failed_files": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            previous_summary_path = previous_dir / "failed_tests_summary.txt"
+            previous_summary_path.write_text("previous summary", encoding="utf-8")
+            previous_short_summary_path = engine.runtime_root / "runs" / state.run_id / "ft_interrupt_preserved.txt"
+            previous_short_summary_path.write_text("previous summary", encoding="utf-8")
+            original_metadata = {
+                "Main": {
+                    "summary_path": str(previous_summary_path),
+                    "short_summary_path": str(previous_short_summary_path),
+                    "manifest_path": str(previous_manifest_path),
+                    "failed_tests": 1,
+                    "failed_manifest_entries": 1,
+                    "status": "failed",
+                }
+            }
+            state.metadata["project_test_summaries"] = dict(original_metadata)
+            engine.state_repository.save_resume_state(
+                state=state,
+                emit=engine._emit,
+                runtime_map_builder=engine_runtime_module.build_runtime_map,
+            )
+            terminated_pids: list[int] = []
+            engine.process_runner = SimpleNamespace(  # type: ignore[assignment]
+                terminate_process_group=lambda pid, **_kwargs: terminated_pids.append(pid) or True,
+            )
+
+            class _InterruptingRunner:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    self.last_result = None
+
+                def run_tests(
+                    self,
+                    command,
+                    *,
+                    cwd=None,
+                    env=None,
+                    timeout=None,
+                    process_started_callback=None,
+                ):  # noqa: ANN001
+                    _ = command, cwd, env, timeout
+                    if callable(process_started_callback):
+                        process_started_callback(7331)
+                    raise KeyboardInterrupt
+
+            with patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _InterruptingRunner):
+                with self.assertRaises(KeyboardInterrupt):
+                    engine.dispatch(parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            refreshed = engine._try_load_existing_state(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            self.assertEqual(refreshed.metadata.get("project_test_summaries"), original_metadata)
+            self.assertEqual(terminated_pids, [7331])
+            self.assertFalse(any(event.get("event") == "test.summary.persisted" for event in engine.events))
+
+    def test_interrupt_cleanup_uses_real_test_runner_process_started_callback_in_sequential_and_parallel_modes(self) -> None:
+        for sequential in (True, False):
+            with self.subTest(sequential=sequential):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    repo = Path(tmpdir) / "repo"
+                    runtime = Path(tmpdir) / "runtime"
+                    tree_root = repo / "trees" / "feature-a" / "1"
+                    (repo / ".git").mkdir(parents=True, exist_ok=True)
+                    tree_root.mkdir(parents=True, exist_ok=True)
+                    (tree_root / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+                    (tree_root / "backend" / "pyproject.toml").write_text(
+                        "[project]\nname='backend'\nversion='1.0.0'\n",
+                        encoding="utf-8",
+                    )
+                    frontend_dir = tree_root / "frontend"
+                    frontend_dir.mkdir(parents=True, exist_ok=True)
+                    (frontend_dir / "package.json").write_text(
+                        '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                        encoding="utf-8",
+                    )
+                    (frontend_dir / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+                    engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+
+                    class _InterruptingProcessRunner:
+                        def __init__(self) -> None:
+                            self.terminated_pids: list[int] = []
+                            self.backend_started = threading.Event()
+                            self.release_backend = threading.Event()
+
+                        def run_streaming(
+                            self,
+                            cmd,
+                            *,
+                            cwd=None,
+                            env=None,
+                            timeout=None,
+                            callback=None,
+                            process_started_callback=None,
+                            show_spinner=True,
+                            echo_output=True,
+                            stdin=None,
+                        ):  # noqa: ANN001
+                            _ = cwd, env, timeout, callback, show_spinner, echo_output, stdin
+                            rendered = " ".join(str(part) for part in cmd)
+                            if sequential:
+                                if callable(process_started_callback):
+                                    process_started_callback(8101)
+                                raise KeyboardInterrupt
+                            if "pytest" in rendered:
+                                if callable(process_started_callback):
+                                    process_started_callback(8101)
+                                self.backend_started.set()
+                                self.release_backend.wait(timeout=1.0)
+                                return subprocess.CompletedProcess(args=list(cmd), returncode=0, stdout="1 passed\n", stderr="")
+                            self.backend_started.wait(timeout=1.0)
+                            if callable(process_started_callback):
+                                process_started_callback(8102)
+                            raise KeyboardInterrupt
+
+                        def terminate_process_group(self, pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
+                            _ = term_timeout, kill_timeout
+                            self.terminated_pids.append(pid)
+                            if pid == 8101:
+                                self.release_backend.set()
+                            return True
+
+                    process_runner = _InterruptingProcessRunner()
+                    engine.process_runner = process_runner  # type: ignore[assignment]
+
+                    route_args = ["test", "--project", "feature-a-1"]
+                    if sequential:
+                        route_args.append("--test-sequential")
+                    route = parse_route(route_args, env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+                    with (
+                        patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                        patch(
+                            "envctl_engine.shared.node_tooling.shutil.which",
+                            side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                        ),
+                    ):
+                        with self.assertRaises(KeyboardInterrupt):
+                            engine.dispatch(route)
+
+                    expected_pids = [8101] if sequential else [8101, 8102]
+                    self.assertEqual(sorted(process_runner.terminated_pids), expected_pids)
+                    self.assertFalse(any(event.get("event") == "test.summary.persisted" for event in engine.events))
+                    cleanup_events = [event for event in engine.events if event.get("event") == "test.interrupt.cleanup"]
+                    self.assertTrue(cleanup_events, msg=engine.events)
 
     def test_test_action_uses_suite_spinner_group_and_suppresses_single_line_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3755,11 +5682,19 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("enter", suite_events)
             self.assertIn("exit", suite_events)
-            self.assertTrue(any(event == "progress:1:1/3 complete • 1 passed, 0 failed" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:1:3/3 complete • 3 passed, 0 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(
+                any(event == "progress:1:1/3 complete • 1 passed, 0 failed" for event in suite_events), msg=suite_events
+            )
+            self.assertTrue(
+                any(event == "progress:1:3/3 complete • 3 passed, 0 failed" for event in suite_events), msg=suite_events
+            )
             self.assertTrue(any(event == "progress:2:6 discovered" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:2:2 complete • 1 passed, 1 failed" for event in suite_events), msg=suite_events)
-            self.assertTrue(any(event == "progress:2:6/6 complete • 5 passed, 1 failed" for event in suite_events), msg=suite_events)
+            self.assertTrue(
+                any(event == "progress:2:2 complete • 1 passed, 1 failed" for event in suite_events), msg=suite_events
+            )
+            self.assertTrue(
+                any(event == "progress:2:6/6 complete • 5 passed, 1 failed" for event in suite_events), msg=suite_events
+            )
 
     def test_interactive_single_suite_uses_rich_suite_spinner_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4068,7 +6003,7 @@ class ActionsParityTests(unittest.TestCase):
                     executor_calls["submitted"] += 1
                     from concurrent.futures import Future
 
-                    future: Future = Future()
+                    future: Future[Any] = Future()
                     try:
                         future.set_result(fn(*args, **kwargs))
                     except Exception as exc:  # pragma: no cover - defensive

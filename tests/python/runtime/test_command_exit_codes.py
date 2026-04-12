@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import sys
 from io import StringIO
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -23,12 +24,15 @@ class CommandExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_invalid_typo_alias_is_actionable_failure(self) -> None:
+        stderr = StringIO()
         with (
+            redirect_stderr(stderr),
             patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
             patch("envctl_engine.runtime.cli.ensure_local_config", return_value=self._bootstrap_result()),
         ):
             code = cli.run(["tees=true"], env={})
         self.assertEqual(code, 1)
+        self.assertIn("Unknown option", stderr.getvalue())
 
     def test_shell_nonzero_is_mapped_to_actionable_failure(self) -> None:
         with (
@@ -90,7 +94,39 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("command"), "start")
             self.assertEqual(seen.get("mode"), "trees")
 
-    def test_start_command_fails_when_rich_dependency_missing(self) -> None:
+    def test_start_command_fails_with_source_checkout_runtime_bootstrap_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            launcher_root = Path(tmpdir) / "envctl-source"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (launcher_root / "python").mkdir(parents=True, exist_ok=True)
+            (launcher_root / "python" / "requirements.txt").write_text(
+                "prompt_toolkit>=3.0\npsutil>=5.9\nrich>=13.7\ntextual>=0.58\n",
+                encoding="utf-8",
+            )
+            env = {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime),
+                "ENVCTL_ROOT_DIR": str(launcher_root),
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "N8N_ENABLE": "false",
+            }
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            stderr = StringIO()
+            with (
+                redirect_stderr(stderr),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False),
+            ):
+                code = cli.run(["start"], env=env, dispatcher=lambda _route, _config: 0)
+            self.assertEqual(code, 1)
+            self.assertIn("Missing required envctl runtime Python packages", stderr.getvalue())
+            self.assertIn("python/requirements.txt", stderr.getvalue())
+            self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", stderr.getvalue())
+
+    def test_start_command_fails_with_installed_command_repair_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -104,9 +140,17 @@ class CommandExitCodeTests(unittest.TestCase):
                 "N8N_ENABLE": "false",
             }
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
-            with patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False):
+            stderr = StringIO()
+            with (
+                redirect_stderr(stderr),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=False),
+            ):
                 code = cli.run(["start"], env=env, dispatcher=lambda _route, _config: 0)
             self.assertEqual(code, 1)
+            self.assertIn("Missing required envctl runtime Python packages", stderr.getvalue())
+            self.assertIn("pipx reinstall envctl", stderr.getvalue())
+            self.assertNotIn("python/requirements.txt", stderr.getvalue())
+            self.assertNotIn(".venv/bin/python -m pip install -e '.[dev]'", stderr.getvalue())
 
     def test_missing_envctl_bootstraps_before_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -140,6 +184,39 @@ class CommandExitCodeTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(seen.get("command"), "start")
+            self.assertTrue(seen.get("config_exists"))
+
+    def test_explicit_repo_arg_overrides_inherited_run_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            requested_repo = tmp_path / "requested-repo"
+            inherited_repo = tmp_path / "inherited-repo"
+            runtime = tmp_path / "runtime"
+            for repo in (requested_repo, inherited_repo):
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (requested_repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, config):  # noqa: ANN001
+                seen["mode"] = route.mode
+                seen["base_dir"] = config.base_dir
+                seen["config_exists"] = config.config_file_exists
+                return 0
+
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)):
+                code = cli.run(
+                    ["--repo", str(requested_repo), "start"],
+                    env={
+                        "RUN_REPO_ROOT": str(inherited_repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("mode"), "trees")
+            self.assertEqual(seen.get("base_dir"), requested_repo.resolve())
             self.assertTrue(seen.get("config_exists"))
 
     def test_missing_envctl_allows_headless_config_set_without_bootstrap(self) -> None:
@@ -239,6 +316,184 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
 
+    def test_codex_tmux_skips_bootstrap_when_envctl_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["codex-tmux", "--dry-run"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=lambda _route, _config: 0,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+
+    def test_install_prompts_overwrite_without_approval_returns_failure_and_skips_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+            stdout = StringIO()
+
+            with (
+                patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap,
+                patch("sys.stdin.isatty", return_value=False),
+                patch("sys.stdout.isatty", return_value=False),
+                redirect_stdout(stdout),
+            ):
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 1)
+            bootstrap.assert_not_called()
+            self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
+            self.assertIn("Overwrite approval required", stdout.getvalue())
+
+    def test_install_prompts_yes_overwrite_returns_zero_and_skips_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("old prompt\n", encoding="utf-8")
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--yes"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
+
+    def test_install_prompts_cli_run_writes_then_overwrites_without_backup_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            first_stdout = StringIO()
+            second_stdout = StringIO()
+
+            with (
+                patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap,
+            ):
+                with redirect_stdout(first_stdout):
+                    first_code = cli.run(
+                        ["install-prompts", "--cli", "codex", "--json"],
+                        env={
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "HOME": str(home),
+                        },
+                    )
+                with redirect_stdout(second_stdout):
+                    second_code = cli.run(
+                        ["install-prompts", "--cli", "codex", "--yes", "--json"],
+                        env={
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "HOME": str(home),
+                        },
+                    )
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            bootstrap.assert_not_called()
+            first_payload = json.loads(first_stdout.getvalue())
+            second_payload = json.loads(second_stdout.getvalue())
+            self.assertEqual(first_payload["preset"], "all")
+            self.assertEqual(second_payload["preset"], "all")
+            self.assertTrue(all(item["status"] == "written" for item in first_payload["results"]))
+            self.assertTrue(all(item["status"] == "overwritten" for item in second_payload["results"]))
+            self.assertTrue(target.exists())
+            self.assertTrue((target.parent / "review_worktree_imp.md").exists())
+            self.assertEqual(list(home.rglob("*.bak-*")), [])
+
+    def test_install_prompts_cli_run_installs_review_worktree_prompt_with_origin_review_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".codex" / "prompts" / "review_worktree_imp.md"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--preset", "review_worktree_imp", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("current local repo directory is the unedited baseline", written)
+            self.assertIn("defaults to the worktree created from the current plan file", written)
+            self.assertIn("Launch arguments: `$ARGUMENTS`", written)
+            self.assertIn("Treat only the first path-like token as the explicit worktree override", written)
+            self.assertIn("use that bundle as the primary review guide", written)
+            self.assertIn("original plan file", written)
+            self.assertNotIn("MAIN_TASK.md", written)
+            self.assertNotIn("OLD_TASK_", written)
+            self.assertIn("read-only", written)
+            self.assertIn("findings-first", written)
+
+    def test_install_prompts_cli_run_installs_opencode_review_prompt_with_original_plan_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".config" / "opencode" / "commands" / "review_task_imp.md"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["install-prompts", "--cli", "opencode", "--preset", "review_task_imp", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("Authoritative source of truth: the original plan file that created this worktree.", written)
+            self.assertIn(".envctl-state/worktree-provenance.json", written)
+            self.assertIn("If no original plan file can be resolved, stop and report exactly what was missing", written)
+            self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
+            self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
+
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -264,6 +519,35 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
             self.assertEqual(seen.get("base_dir"), repo.resolve())
+
+    def test_explicit_repo_overrides_inherited_run_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inherited_repo = Path(tmpdir) / "inherited-repo"
+            explicit_repo = Path(tmpdir) / "explicit-repo"
+            runtime = Path(tmpdir) / "runtime"
+            nested = explicit_repo / "sub" / "dir"
+            (inherited_repo / ".git").mkdir(parents=True, exist_ok=True)
+            (explicit_repo / ".git").mkdir(parents=True, exist_ok=True)
+            nested.mkdir(parents=True, exist_ok=True)
+            seen: dict[str, object] = {}
+
+            def dispatcher(_route, config):  # noqa: ANN001
+                seen["base_dir"] = config.base_dir
+                return 0
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
+                code = cli.run(
+                    ["doctor", "--repo", str(nested)],
+                    env={
+                        "RUN_REPO_ROOT": str(inherited_repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                    dispatcher=dispatcher,
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            self.assertEqual(seen.get("base_dir"), explicit_repo.resolve())
 
     def test_cwd_inside_repo_resolves_repo_root_for_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,7 +635,10 @@ class CommandExitCodeTests(unittest.TestCase):
         restore_mock.assert_called_once()
 
     def test_run_restores_terminal_state_in_finally_on_route_error(self) -> None:
-        with patch("envctl_engine.runtime.cli._best_effort_restore_terminal_state") as restore_mock:
+        with (
+            redirect_stderr(StringIO()),
+            patch("envctl_engine.runtime.cli._best_effort_restore_terminal_state") as restore_mock,
+        ):
             code = cli.run(["tees=true"], env={})
         self.assertEqual(code, 1)
         restore_mock.assert_called_once()

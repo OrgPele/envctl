@@ -33,6 +33,18 @@ class LaunchedServiceRuntime:
     log_path: str
 
 
+def _resolve_command_env_builder(rt: object):
+    builder = getattr(rt, "_command_env", None)
+    if callable(builder):
+        return builder
+
+    def build_command_env(*, port: int, extra: dict[str, str] | None = None) -> dict[str, str]:
+        _ = port
+        return dict(extra or {})
+
+    return build_command_env
+
+
 def service_attach_parallel_enabled(
     orchestrator: StartupOrchestratorLike, *, route: Route | None, selected_service_types: set[str]
 ) -> bool:
@@ -65,6 +77,16 @@ def service_prep_parallel_enabled(
     if str(raw).strip():
         return parse_bool(raw, True)
     return attach_parallel
+
+
+def backend_listener_expected_for_mode(config: object, mode: str) -> bool:
+    helper = getattr(config, "backend_expects_listener_for_mode", None)
+    if callable(helper):
+        return bool(helper(mode))
+    normalized = str(mode).strip().lower()
+    if normalized == "trees":
+        return bool(getattr(config, "trees_backend_expect_listener", True))
+    return bool(getattr(config, "main_backend_expect_listener", True))
 
 
 def start_project_services(
@@ -155,6 +177,7 @@ def start_project_services(
         for service_name in ("backend", "frontend")
         if rt._service_enabled_for_mode(effective_mode, service_name)
     }
+    backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
     selected_service_types = orchestrator._restart_service_types_for_project(
         route=route,
         project_name=context.name,
@@ -261,9 +284,7 @@ def start_project_services(
         )
 
     prepared_launches: dict[str, PreparedServiceLaunch] = {}
-    command_env_builder = getattr(rt, "_command_env", None)
-    if not callable(command_env_builder):
-        command_env_builder = lambda *, port, extra=None: dict(extra or {})
+    command_env_builder = _resolve_command_env_builder(rt)
     if "backend" in selected_service_types:
         prepared_launches["backend"] = PreparedServiceLaunch(
             service_name="backend",
@@ -392,7 +413,15 @@ def start_project_services(
     backend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_BACKEND_ACTUAL_PORT"), 0)
     frontend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_FRONTEND_ACTUAL_PORT"), 0)
 
-    def detect_backend_actual(pid: int | None, requested: int) -> int:
+    def detect_backend_actual(pid: int | None, requested: int) -> int | None:
+        if not backend_listener_expected:
+            rt._emit(
+                "service.bind.skipped",
+                project=context.name,
+                service="backend",
+                reason="listener_not_expected",
+            )
+            return None
         rt._emit("service.bind.requested", project=context.name, service="backend", requested_port=requested)
         detect_started = time.monotonic()
         if backend_actual_override > 0:
@@ -440,7 +469,7 @@ def start_project_services(
         )
         return actual
 
-    def detect_frontend_actual(pid: int | None, requested: int) -> int:
+    def detect_frontend_actual(pid: int | None, requested: int) -> int | None:
         rt._emit("service.bind.requested", project=context.name, service="frontend", requested_port=requested)
         detect_started = time.monotonic()
         if frontend_actual_override > 0:
@@ -539,6 +568,8 @@ def start_project_services(
             reserve_next=reserve_next,
             detect_backend_actual=detect_backend_actual,
             detect_frontend_actual=detect_frontend_actual,
+            backend_listener_expected=backend_listener_expected,
+            frontend_listener_expected=True,
             on_retry=on_service_retry,
             parallel_start=attach_parallel,
         )
@@ -553,6 +584,7 @@ def start_project_services(
                 start=start_backend,
                 reserve_next=reserve_next,
                 detect_actual=detect_backend_actual,
+                listener_expected=backend_listener_expected,
                 on_retry=on_service_retry,
             )
             records[backend.name] = backend
@@ -565,6 +597,7 @@ def start_project_services(
                 start=start_frontend,
                 reserve_next=reserve_next,
                 detect_actual=detect_frontend_actual,
+                listener_expected=True,
                 on_retry=on_service_retry,
             )
             records[frontend.name] = frontend

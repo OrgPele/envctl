@@ -20,6 +20,7 @@ from envctl_engine.runtime.engine_runtime_service_truth import (  # noqa: E402
     tail_log_error_line,
     wait_for_service_listener,
 )
+from envctl_engine.shared.process_probe import ProcessProbe
 
 
 class _RunnerStub:
@@ -194,6 +195,29 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
             _rebind_stale_service_pid=lambda _service, previous_pid: False,
         )
         service = SimpleNamespace(name="Main Backend")
+
+        status = service_truth_status(runtime, service)
+
+        self.assertEqual(status, "running")
+        self.assertEqual(events[0][0], "service.truth.check")
+
+    def test_service_truth_status_treats_non_listener_services_as_running(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        runner = _RunnerStub()
+        runtime = SimpleNamespace(
+            process_probe=ProcessProbe(runner),
+            process_runner=runner,
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 0.5,
+            _service_within_startup_grace=lambda _service: False,
+            _service_truth_discovery=lambda _service, _port: None,
+            _clear_service_listener_pids=lambda _service: None,
+            _refresh_service_listener_pids=lambda _service, port: None,
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _service_truth_fallback_enabled=lambda: False,
+            _rebind_stale_service_pid=lambda _service, previous_pid: False,
+        )
+        service = SimpleNamespace(name="Main Backend", pid=101, listener_expected=False)
 
         status = service_truth_status(runtime, service)
 

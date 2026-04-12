@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 import sys
 from typing import Any
 
 from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import (
+    ignore_status_summary,
     managed_values_from_local_state,
     managed_values_from_payload,
     managed_values_to_payload,
     save_local_config,
 )
 from envctl_engine.config.wizard_domain import edit_local_config
+from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_terminal, render_paths_in_terminal_text
 
 
-def run_config_command(runtime: Any, route: object) -> int:
+def run_config_command(runtime: Any, route: Any) -> int:
     if bool(route.flags.get("stdin_json")) or bool(route.flags.get("set_values")) or bool(route.passthrough_args):
         return _run_headless_config_command(runtime, route)
 
@@ -30,7 +33,7 @@ def run_config_command(runtime: Any, route: object) -> int:
     return 0
 
 
-def _run_headless_config_command(runtime: Any, route: object) -> int:
+def _run_headless_config_command(runtime: Any, route: Any) -> int:
     local_state = discover_local_config_state(runtime.config.base_dir, runtime.env.get("ENVCTL_CONFIG_FILE"))
     values = managed_values_from_local_state(local_state)
 
@@ -67,14 +70,42 @@ def _run_headless_config_command(runtime: Any, route: object) -> int:
         "path": str(save_result.path),
         "ignore_updated": save_result.ignore_updated,
         "ignore_warning": save_result.ignore_warning,
+        "ignore_status": (
+            {
+                **asdict(save_result.ignore_status),
+                "target_path": (
+                    str(save_result.ignore_status.target_path) if save_result.ignore_status.target_path is not None else None
+                ),
+                "managed_patterns": list(save_result.ignore_status.managed_patterns),
+            }
+            if save_result.ignore_status is not None
+            else None
+        ),
         "config": managed_values_to_payload(values),
     }
     if bool(route.flags.get("json")):
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print("Saved startup config:")
-        print(str(save_result.path))
+        print(render_path_for_terminal(save_result.path, env=getattr(runtime, "env", {}), stream=sys.stdout))
         print("Config saved. Restart required for running services to adopt changes.")
+        status_message = ignore_status_summary(save_result.ignore_status)
+        if status_message:
+            print(
+                render_paths_in_terminal_text(
+                    status_message,
+                    paths=local_paths_in_text(status_message),
+                    env=getattr(runtime, "env", {}),
+                    stream=sys.stdout,
+                )
+            )
         if save_result.ignore_warning:
-            print(save_result.ignore_warning)
+            print(
+                render_paths_in_terminal_text(
+                    save_result.ignore_warning,
+                    paths=local_paths_in_text(save_result.ignore_warning),
+                    env=getattr(runtime, "env", {}),
+                    stream=sys.stdout,
+                )
+            )
     return 0

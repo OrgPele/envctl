@@ -220,7 +220,7 @@ from envctl_engine.shared.process_probe import (
 )
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
-from envctl_engine.shell.release_gate import evaluate_shipability
+from envctl_engine.runtime.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.runtime.runtime_context import RuntimeContext
@@ -1400,7 +1400,9 @@ class PythonEngineRuntime:
         route: Route | None = None,
         service_name: str | None = None,
     ) -> dict[str, str]:
-        return runtime_project_service_env(self, context, requirements=requirements, route=route, service_name=service_name)
+        return runtime_project_service_env(
+            self, context, requirements=requirements, route=route, service_name=service_name
+        )
 
     def _project_service_env_internal(
         self,

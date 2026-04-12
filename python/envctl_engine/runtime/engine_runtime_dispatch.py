@@ -4,7 +4,7 @@ from typing import Any
 
 from .command_policy import dispatch_family_for_command
 from envctl_engine.runtime.inspection_support import dispatch_direct_inspection
-from envctl_engine.runtime.prompt_install_support import dispatch_utility_command
+from envctl_engine.runtime.utility_command_support import dispatch_utility_command
 
 
 def dispatch_command(runtime: Any, route: object) -> int:

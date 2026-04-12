@@ -35,6 +35,7 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             synthetic=bool(svc.get("synthetic", False)),
             started_at=parse_float_or_none(svc.get("started_at")),
             listener_pids=_parse_listener_pids(svc.get("listener_pids")),
+            listener_expected=parse_bool(svc.get("listener_expected"), True),
         )
         for name, svc in data.get("services", {}).items()
     }
@@ -166,6 +167,7 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "synthetic": svc.synthetic,
                 "started_at": svc.started_at,
                 "listener_pids": svc.listener_pids,
+                "listener_expected": svc.listener_expected,
             }
             for name, svc in state.services.items()
         },
@@ -361,6 +363,7 @@ def _services_from_flat_legacy_assignments(key_values: dict[str, str]) -> dict[s
             actual_port=parse_int_or_none(row.get("actual_port")),
             log_path=row.get("log_path"),
             status=row.get("status", "unknown"),
+            listener_expected=parse_bool(row.get("listener_expected"), True),
         )
     return services
 
@@ -396,6 +399,7 @@ def _services_from_declare_payload(
             actual_port=actual_port,
             log_path=log_path,
             status="running" if pid is not None else "unknown",
+            listener_expected=True,
         )
 
     for name, info in service_info.items():
@@ -419,6 +423,7 @@ def _services_from_declare_payload(
             actual_port=actual_port,
             log_path=log_path,
             status="running" if pid is not None else "unknown",
+            listener_expected=True,
         )
 
     return services

@@ -8,7 +8,6 @@ import tempfile
 from envctl_engine.config import (
     CONFIG_MANAGED_BLOCK_END,
     CONFIG_MANAGED_BLOCK_START,
-    CONFIG_PRIMARY_FILENAME,
     LocalConfigState,
     PortDefaults,
     StartupProfile,
@@ -16,6 +15,12 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
+from envctl_engine.config.git_global_ignore import (
+    GlobalIgnoreStatus,
+    _configured_global_excludes_path,
+    ensure_envctl_global_ignores,
+)
+from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.actions.actions_test import (
@@ -35,6 +40,8 @@ class ManagedConfigValues:
     main_profile: StartupProfile
     trees_profile: StartupProfile
     port_defaults: PortDefaults
+    main_backend_expect_listener: bool = True
+    trees_backend_expect_listener: bool = True
     backend_dir_name: str = "backend"
     frontend_dir_name: str = "frontend"
     backend_start_cmd: str = ""
@@ -50,6 +57,7 @@ class ConfigSaveResult:
     path: Path
     ignore_updated: bool
     ignore_warning: str | None
+    ignore_status: GlobalIgnoreStatus | None = None
 
 
 @dataclass(slots=True)
@@ -61,9 +69,11 @@ class ValidationResult:
 _BOOLEAN_KEYS = {
     "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
+    "MAIN_BACKEND_EXPECT_LISTENER",
     "MAIN_FRONTEND_ENABLE",
     "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
+    "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
     *managed_enable_keys(),
 }
@@ -111,6 +121,8 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
     )
     return ManagedConfigValues(
         default_mode=default_mode,
+        main_backend_expect_listener=_parse_bool_value(values.get("MAIN_BACKEND_EXPECT_LISTENER"), True),
+        trees_backend_expect_listener=_parse_bool_value(values.get("TREES_BACKEND_EXPECT_LISTENER"), True),
         backend_dir_name=_resolved_backend_dir_name(values=values, base_dir=base_dir),
         frontend_dir_name=_resolved_frontend_dir_name(values=values, base_dir=base_dir),
         backend_start_cmd=_resolved_backend_start_cmd(values=values, base_dir=base_dir),
@@ -140,9 +152,11 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "PORT_SPACING": str(values.port_defaults.port_spacing),
         "MAIN_STARTUP_ENABLE": _bool_text(values.main_profile.startup_enable),
         "MAIN_BACKEND_ENABLE": _bool_text(values.main_profile.backend_enable),
+        "MAIN_BACKEND_EXPECT_LISTENER": _bool_text(values.main_backend_expect_listener),
         "MAIN_FRONTEND_ENABLE": _bool_text(values.main_profile.frontend_enable),
         "TREES_STARTUP_ENABLE": _bool_text(values.trees_profile.startup_enable),
         "TREES_BACKEND_ENABLE": _bool_text(values.trees_profile.backend_enable),
+        "TREES_BACKEND_EXPECT_LISTENER": _bool_text(values.trees_backend_expect_listener),
         "TREES_FRONTEND_ENABLE": _bool_text(values.trees_profile.frontend_enable),
     }
     for definition in dependency_definitions():
@@ -188,6 +202,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
             "main": {
                 "startup_enabled": values.main_profile.startup_enable,
                 "backend": values.main_profile.backend_enable,
+                "backend_expect_listener": values.main_backend_expect_listener,
                 "frontend": values.main_profile.frontend_enable,
                 "dependencies": {
                     definition.id: values.main_profile.dependency_enabled(definition.id)
@@ -197,6 +212,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
             "trees": {
                 "startup_enabled": values.trees_profile.startup_enable,
                 "backend": values.trees_profile.backend_enable,
+                "backend_expect_listener": values.trees_backend_expect_listener,
                 "frontend": values.trees_profile.frontend_enable,
                 "dependencies": {
                     definition.id: values.trees_profile.dependency_enabled(definition.id)
@@ -277,6 +293,10 @@ def managed_values_from_payload(
                 mapping[f"{mode.upper()}_STARTUP_ENABLE"] = _bool_text(bool(profile["startup_enabled"]))
             if profile.get("backend") is not None:
                 mapping[f"{mode.upper()}_BACKEND_ENABLE"] = _bool_text(bool(profile["backend"]))
+            if profile.get("backend_expect_listener") is not None:
+                mapping[f"{mode.upper()}_BACKEND_EXPECT_LISTENER"] = _bool_text(
+                    bool(profile["backend_expect_listener"])
+                )
             if profile.get("frontend") is not None:
                 mapping[f"{mode.upper()}_FRONTEND_ENABLE"] = _bool_text(bool(profile["frontend"]))
             dependencies = profile.get("dependencies")
@@ -360,25 +380,40 @@ def _managed_block_sections(
         append_once(directory_keys, "BACKEND_DIR")
     if _component_enabled_any(values, "frontend") and rendered["FRONTEND_DIR"] != defaults["FRONTEND_DIR"]:
         append_once(directory_keys, "FRONTEND_DIR")
-    if _component_runs_any(values, "backend") and rendered["ENVCTL_BACKEND_START_CMD"] != defaults["ENVCTL_BACKEND_START_CMD"]:
+    if (
+        _component_runs_any(values, "backend")
+        and rendered["ENVCTL_BACKEND_START_CMD"] != defaults["ENVCTL_BACKEND_START_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_BACKEND_START_CMD")
-    if _component_runs_any(values, "frontend") and rendered["ENVCTL_FRONTEND_START_CMD"] != defaults["ENVCTL_FRONTEND_START_CMD"]:
+    if (
+        _component_runs_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_START_CMD"] != defaults["ENVCTL_FRONTEND_START_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_START_CMD")
-    if _component_enabled_any(values, "backend") and rendered["ENVCTL_BACKEND_TEST_CMD"] != defaults["ENVCTL_BACKEND_TEST_CMD"]:
+    if (
+        _component_enabled_any(values, "backend")
+        and rendered["ENVCTL_BACKEND_TEST_CMD"] != defaults["ENVCTL_BACKEND_TEST_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_BACKEND_TEST_CMD")
-    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_CMD"] != defaults["ENVCTL_FRONTEND_TEST_CMD"]:
+    if (
+        _component_enabled_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_TEST_CMD"] != defaults["ENVCTL_FRONTEND_TEST_CMD"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_TEST_CMD")
-    if _component_enabled_any(values, "frontend") and rendered["ENVCTL_FRONTEND_TEST_PATH"] != defaults["ENVCTL_FRONTEND_TEST_PATH"]:
+    if (
+        _component_enabled_any(values, "frontend")
+        and rendered["ENVCTL_FRONTEND_TEST_PATH"] != defaults["ENVCTL_FRONTEND_TEST_PATH"]
+    ):
         append_once(directory_keys, "ENVCTL_FRONTEND_TEST_PATH")
     sections.append(directory_keys)
 
     port_keys: list[str] = []
-    if _component_enabled_any(values, "backend") and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
+    if _backend_uses_port_any(values) and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
         append_once(port_keys, "BACKEND_PORT_BASE")
-    if _component_enabled_any(values, "frontend") and rendered["FRONTEND_PORT_BASE"] != defaults["FRONTEND_PORT_BASE"]:
+    if _frontend_uses_port_any(values) and rendered["FRONTEND_PORT_BASE"] != defaults["FRONTEND_PORT_BASE"]:
         append_once(port_keys, "FRONTEND_PORT_BASE")
     for definition in dependency_definitions():
-        if not _dependency_enabled_any(values, definition.id):
+        if not _dependency_runs_any(values, definition.id):
             continue
         for resource in definition.resources:
             key = resource.config_port_keys[0]
@@ -407,6 +442,7 @@ def _profile_keys_for_mode(
     for key in (
         f"{prefix}_STARTUP_ENABLE",
         f"{prefix}_BACKEND_ENABLE",
+        f"{prefix}_BACKEND_EXPECT_LISTENER",
         f"{prefix}_FRONTEND_ENABLE",
     ):
         if rendered[key] != defaults[key]:
@@ -446,6 +482,32 @@ def _dependency_enabled_any(values: ManagedConfigValues, dependency_id: str) -> 
     )
 
 
+def _backend_uses_port_any(values: ManagedConfigValues) -> bool:
+    return bool(
+        (
+            values.main_profile.startup_enable
+            and values.main_profile.backend_enable
+            and values.main_backend_expect_listener
+        )
+        or (
+            values.trees_profile.startup_enable
+            and values.trees_profile.backend_enable
+            and values.trees_backend_expect_listener
+        )
+    )
+
+
+def _frontend_uses_port_any(values: ManagedConfigValues) -> bool:
+    return _component_runs_any(values, "frontend")
+
+
+def _dependency_runs_any(values: ManagedConfigValues, dependency_id: str) -> bool:
+    return bool(
+        (values.main_profile.startup_enable and values.main_profile.dependency_enabled(dependency_id))
+        or (values.trees_profile.startup_enable and values.trees_profile.dependency_enabled(dependency_id))
+    )
+
+
 def merge_managed_block(existing_text: str, block_text: str) -> str:
     text = existing_text or ""
     start = text.find(CONFIG_MANAGED_BLOCK_START)
@@ -465,10 +527,21 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
+    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=False)
+
+
+def save_local_config_with_ignore_policy(
+    *,
+    local_state: LocalConfigState,
+    values: ManagedConfigValues,
+    update_global_ignores: bool,
+) -> ConfigSaveResult:
     canonical_values = ManagedConfigValues(
         default_mode=values.default_mode,
         main_profile=values.main_profile,
         trees_profile=values.trees_profile,
+        main_backend_expect_listener=values.main_backend_expect_listener,
+        trees_backend_expect_listener=values.trees_backend_expect_listener,
         port_defaults=values.port_defaults,
         backend_dir_name=values.backend_dir_name,
         frontend_dir_name=values.frontend_dir_name,
@@ -500,34 +573,48 @@ def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigVal
     merged = merge_managed_block(existing_text, render_managed_block(canonical_values))
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
-    ignore_updated, ignore_warning = ensure_local_config_ignored(local_state.base_dir)
+    ignore_status = ensure_global_ignore_status(local_state.base_dir, update_config=update_global_ignores)
     return ConfigSaveResult(
         path=local_state.config_file_path,
-        ignore_updated=ignore_updated,
-        ignore_warning=ignore_warning,
+        ignore_updated=ignore_status.updated,
+        ignore_warning=ignore_status.warning,
+        ignore_status=ignore_status,
     )
 
 
-def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
-    warnings: list[str] = []
-    gitignore_updated = False
-    exclude_updated = False
-    try:
-        gitignore_updated = _ensure_ignore_patterns(
-            Path(base_dir) / ".gitignore",
-            (".envctl*", "trees/"),
-        )
-    except OSError as exc:
-        warnings.append(f"Could not update .gitignore: {exc}")
+def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) -> GlobalIgnoreStatus:
+    if update_config:
+        current_path, lookup_warning = _configured_global_excludes_path(base_dir)
+        if lookup_warning is not None:
+            return GlobalIgnoreStatus(
+                code="global_excludes_lookup_failed",
+                updated=False,
+                scope="git_global_excludes",
+                target_path=None,
+                managed_patterns=envctl_local_artifact_patterns(),
+                warning=lookup_warning,
+            )
+        if current_path is None:
+            return ensure_envctl_global_ignores(base_dir)
+    return ensure_envctl_global_ignores(base_dir)
 
-    exclude_path = Path(base_dir) / ".git" / "info" / "exclude"
-    try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        exclude_updated = _ensure_ignore_patterns(exclude_path, (".envctl*",))
-    except OSError as exc:
-        warnings.append(f"Could not update .git/info/exclude: {exc}")
-    warning_text = "; ".join(warnings) if warnings else None
-    return gitignore_updated or exclude_updated, warning_text
+
+def ensure_local_config_ignored(base_dir: Path) -> tuple[bool, str | None]:
+    status = ensure_global_ignore_status(base_dir)
+    return status.updated, status.warning
+
+
+def ignore_status_summary(status: GlobalIgnoreStatus | None) -> str | None:
+    if status is None:
+        return None
+    target = f" at {status.target_path}" if status.target_path is not None else ""
+    if status.code == "updated_existing_global_excludes":
+        return f"Updated Git global excludes{target}."
+    if status.code == "already_present":
+        return f"Git global excludes already include envctl local artifacts{target}."
+    if status.code == "configured_global_excludes":
+        return f"Configured Git global excludes{target}."
+    return None
 
 
 def _ensure_ignore_patterns(path: Path, patterns: tuple[str, ...]) -> bool:

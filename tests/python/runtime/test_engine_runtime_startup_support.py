@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route  # noqa: E402
 from envctl_engine.runtime.engine_runtime import ProjectContext  # noqa: E402
+import envctl_engine.runtime.engine_runtime_startup_support as startup_support  # noqa: E402
 from envctl_engine.runtime.engine_runtime_startup_support import (  # noqa: E402
     auto_resume_start_enabled,
     contexts_from_raw_projects,
@@ -27,6 +28,40 @@ from envctl_engine.state.models import PortPlan, RunState, ServiceRecord  # noqa
 
 
 class EngineRuntimeStartupSupportTests(unittest.TestCase):
+    def _reuse_runtime(
+        self,
+        *,
+        state: RunState | None,
+        startup_enabled: bool = True,
+        backend_enabled: bool = True,
+        frontend_enabled: bool = True,
+        backend_dir_name: str = "backend",
+        frontend_dir_name: str = "frontend",
+        enabled_dependencies: tuple[str, ...] = ("postgres", "redis"),
+    ) -> SimpleNamespace:
+        config = SimpleNamespace(
+            base_dir=Path("/repo"),
+            raw={},
+            backend_dir_name=backend_dir_name,
+            frontend_dir_name=frontend_dir_name,
+            startup_enabled_for_mode=lambda _mode: startup_enabled,
+            service_enabled_for_mode=lambda _mode, service_name: {
+                "backend": backend_enabled,
+                "frontend": frontend_enabled,
+            }.get(str(service_name).strip().lower(), False),
+            requirement_enabled_for_mode=lambda _mode, requirement_name: str(requirement_name).strip().lower()
+            in enabled_dependencies,
+        )
+        return SimpleNamespace(
+            env={},
+            config=config,
+            _try_load_existing_state=lambda **_kwargs: state,
+            _project_name_from_service=lambda name: str(name)
+            .replace(" Backend", "")
+            .replace(" Frontend", "")
+            .strip(),
+        )
+
     def test_effective_start_mode_switches_main_to_trees_for_setup_worktree(self) -> None:
         runtime = SimpleNamespace(_setup_worktree_requested=lambda route: True)
         route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
@@ -60,6 +95,202 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         )
         self.assertTrue(state_has_resumable_services(runtime, state))
         self.assertIs(load_auto_resume_state(runtime, "trees"), state)
+
+    def test_run_reuse_accepts_exact_project_roots_and_startup_identity_match(self) -> None:
+        self.assertTrue(hasattr(startup_support, "build_startup_identity_metadata"))
+        self.assertTrue(hasattr(startup_support, "evaluate_run_reuse"))
+        context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})
+        runtime = self._reuse_runtime(state=None)
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="trees",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "resume_exact")
+        self.assertEqual(decision.reason, "exact_match")
+        self.assertIs(decision.candidate_state, state)
+
+    def test_run_reuse_rejects_project_root_mismatch_even_when_names_match(self) -> None:
+        context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})
+        state_runtime = self._reuse_runtime(state=None)
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="trees",
+            project_contexts=[ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/99"), ports={})],
+        )
+        state = RunState(
+            run_id="run-root-mismatch",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd="/repo/trees/feature-a/99/backend",
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "project_root_mismatch")
+
+    def test_run_reuse_rejects_startup_fingerprint_mismatch(self) -> None:
+        context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})
+        state_runtime = self._reuse_runtime(state=None, frontend_enabled=False)
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="trees",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-fingerprint-mismatch",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state, frontend_enabled=True)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
+
+    def test_run_reuse_accepts_dashboard_only_state_for_exact_dashboard_resume(self) -> None:
+        context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})
+        runtime = self._reuse_runtime(state=None, startup_enabled=False, backend_enabled=False, frontend_enabled=False)
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="trees",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-dashboard",
+            mode="trees",
+            services={},
+            requirements={},
+            metadata={**metadata, "dashboard_runs_disabled": True},
+        )
+        runtime = self._reuse_runtime(
+            state=state,
+            startup_enabled=False,
+            backend_enabled=False,
+            frontend_enabled=False,
+        )
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "resume_dashboard_exact")
+        self.assertEqual(decision.reason, "exact_match")
+
+    def test_run_reuse_rejects_empty_startup_enabled_state_without_dashboard_marker(self) -> None:
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={})
+        route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
+        runtime = self._reuse_runtime(state=None, startup_enabled=True, backend_enabled=True, frontend_enabled=True)
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="main",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-empty",
+            mode="main",
+            services={},
+            requirements={},
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state, startup_enabled=True, backend_enabled=True, frontend_enabled=True)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="main",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "no_reusable_runtime")
+
+    def test_run_reuse_rejects_failed_state(self) -> None:
+        context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})
+        runtime = self._reuse_runtime(state=None)
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="trees",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-failed",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context.root / "backend"),
+                )
+            },
+            metadata={**metadata, "failed": True},
+        )
+        runtime = self._reuse_runtime(state=state)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "failed_state")
 
     def test_tree_parallel_startup_config_defaults_for_plan_and_env(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))

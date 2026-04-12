@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from envctl_engine.actions.actions_test import (
     canonicalize_frontend_test_path,
@@ -33,6 +33,7 @@ LEGACY_CONFIG_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl frontend dependency en
 CONFIG_PRIMARY_FILENAME = ".envctl"
 LEGACY_CONFIG_FILENAMES = (".envctl.sh", ".supportopia-config")
 
+
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
@@ -40,8 +41,8 @@ def _bool_text(value: bool) -> str:
 def _build_defaults() -> dict[str, str]:
     main_profile = default_profile_settings("main")
     trees_profile = default_profile_settings("trees")
-    main_dependencies = dict(main_profile["dependencies"])
-    trees_dependencies = dict(trees_profile["dependencies"])
+    main_dependencies = cast(Mapping[str, bool], main_profile["dependencies"])
+    trees_dependencies = cast(Mapping[str, bool], trees_profile["dependencies"])
     return {
         "ENVCTL_DEFAULT_MODE": "main",
         "BACKEND_DIR": "backend",
@@ -70,6 +71,14 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_STRICT_N8N_BOOTSTRAP": "false",
         "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
+        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
+        "ENVCTL_PLAN_AGENT_CLI": "codex",
+        "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
+        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+        "ENVCTL_PLAN_AGENT_SHELL": "zsh",
+        "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
+        "ENVCTL_PLAN_AGENT_CLI_CMD": "",
+        "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
         "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
         "ENVCTL_REQUIREMENTS_STRICT": "true",
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
@@ -77,6 +86,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
         "MAIN_STARTUP_ENABLE": _bool_text(bool(main_profile["startup_enable"])),
         "MAIN_BACKEND_ENABLE": _bool_text(bool(main_profile["backend_enable"])),
+        "MAIN_BACKEND_EXPECT_LISTENER": "true",
         "MAIN_FRONTEND_ENABLE": _bool_text(bool(main_profile["frontend_enable"])),
         "MAIN_POSTGRES_ENABLE": _bool_text(bool(main_dependencies["postgres"])),
         "MAIN_REDIS_ENABLE": _bool_text(bool(main_dependencies["redis"])),
@@ -84,6 +94,7 @@ def _build_defaults() -> dict[str, str]:
         "MAIN_N8N_ENABLE": _bool_text(bool(main_dependencies["n8n"])),
         "TREES_STARTUP_ENABLE": _bool_text(bool(trees_profile["startup_enable"])),
         "TREES_BACKEND_ENABLE": _bool_text(bool(trees_profile["backend_enable"])),
+        "TREES_BACKEND_EXPECT_LISTENER": "true",
         "TREES_FRONTEND_ENABLE": _bool_text(bool(trees_profile["frontend_enable"])),
         "TREES_POSTGRES_ENABLE": _bool_text(bool(trees_dependencies["postgres"])),
         "TREES_REDIS_ENABLE": _bool_text(bool(trees_dependencies["redis"])),
@@ -126,10 +137,12 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "PORT_SPACING",
     "MAIN_STARTUP_ENABLE",
     "MAIN_BACKEND_ENABLE",
+    "MAIN_BACKEND_EXPECT_LISTENER",
     "MAIN_FRONTEND_ENABLE",
     *_MANAGED_DEPENDENCY_ENABLE_KEYS,
     "TREES_STARTUP_ENABLE",
     "TREES_BACKEND_ENABLE",
+    "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
 )
 
@@ -307,10 +320,20 @@ class EngineConfig:
     strict_n8n_bootstrap: bool
     port_availability_mode: str
     plan_strict_selection: bool
+    plan_agent_terminals_enable: bool
+    plan_agent_cli: str
+    plan_agent_preset: str
+    plan_agent_codex_cycles: int
+    plan_agent_shell: str
+    plan_agent_require_cmux_context: bool
+    plan_agent_cli_cmd: str
+    plan_agent_cmux_workspace: str
     runtime_truth_mode: str
     requirements_strict: bool
     main_profile: StartupProfile
     trees_profile: StartupProfile
+    main_backend_expect_listener: bool
+    trees_backend_expect_listener: bool
     port_defaults: PortDefaults
     config_file_path: Path
     config_file_exists: bool
@@ -349,6 +372,12 @@ class EngineConfig:
         profile = self.profile_for_mode(mode)
         return profile.dependency_enabled(str(requirement_name).strip().lower())
 
+    def backend_expects_listener_for_mode(self, mode: str) -> bool:
+        normalized = str(mode).strip().lower()
+        if normalized == "trees":
+            return bool(self.trees_backend_expect_listener)
+        return bool(self.main_backend_expect_listener)
+
 
 @dataclass(slots=True, frozen=True)
 class DependencyEnvTemplateEntry:
@@ -376,6 +405,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()
     if default_mode not in {"main", "trees"}:
@@ -432,11 +462,21 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     redis_enabled_any = main_profile.redis_enable or trees_profile.redis_enable
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
+    main_backend_expect_listener = parse_bool(resolved.get("MAIN_BACKEND_EXPECT_LISTENER"), True)
+    trees_backend_expect_listener = parse_bool(resolved.get("TREES_BACKEND_EXPECT_LISTENER"), True)
+    plan_agent_cmux_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE", "") or "").strip()
+    plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
+        plan_agent_cmux_workspace
+    )
 
     return EngineConfig(
         base_dir=base_dir,
-        backend_dir_name=_resolved_backend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
-        frontend_dir_name=_resolved_frontend_dir_name(base_dir=base_dir, resolved=resolved, explicit_values=explicit_values),
+        backend_dir_name=_resolved_backend_dir_name(
+            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+        ),
+        frontend_dir_name=_resolved_frontend_dir_name(
+            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+        ),
         runtime_dir=runtime_dir,
         backend_start_cmd=_resolved_backend_start_cmd(base_dir=base_dir, resolved=resolved),
         frontend_start_cmd=_resolved_frontend_start_cmd(base_dir=base_dir, resolved=resolved),
@@ -467,6 +507,15 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
             DEFAULTS["ENVCTL_PORT_AVAILABILITY_MODE"],
         ),
         plan_strict_selection=parse_bool(resolved.get("ENVCTL_PLAN_STRICT_SELECTION"), False),
+        plan_agent_terminals_enable=plan_agent_terminals_enable,
+        plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "codex") or "codex").strip().lower() or "codex",
+        plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_task") or "implement_task").strip()
+        or "implement_task",
+        plan_agent_codex_cycles=max(parse_int(resolved.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES"), 0), 0),
+        plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
+        plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
+        plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
+        plan_agent_cmux_workspace=plan_agent_cmux_workspace,
         runtime_truth_mode=_parse_runtime_truth_mode(
             resolved.get("ENVCTL_RUNTIME_TRUTH_MODE"),
             DEFAULTS["ENVCTL_RUNTIME_TRUTH_MODE"],
@@ -474,6 +523,8 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         requirements_strict=parse_bool(resolved.get("ENVCTL_REQUIREMENTS_STRICT"), True),
         main_profile=main_profile,
         trees_profile=trees_profile,
+        main_backend_expect_listener=main_backend_expect_listener,
+        trees_backend_expect_listener=trees_backend_expect_listener,
         port_defaults=port_defaults,
         config_file_path=local_state.config_file_path,
         config_file_exists=local_state.config_file_exists,
@@ -489,6 +540,15 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_dependency_env_section_present=local_state.frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=local_state.frontend_dependency_env_template_errors,
     )
+
+
+def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
+    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "CMUX" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
+    if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
+    if "ENVCTL_PLAN_AGENT_CODEX_CYCLES" not in explicit_values and "CYCLES" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))
 
 
 def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:
@@ -585,7 +645,9 @@ def _resolved_backend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str]) 
     return str(suggested or "").strip()
 
 
-def _resolved_backend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+def _resolved_backend_dir_name(
+    *, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]
+) -> str:
     if "BACKEND_DIR" in explicit_values:
         return str(resolved.get("BACKEND_DIR") or "").strip()
     suggested = suggest_service_directory(service_name="backend", project_root=base_dir)
@@ -600,7 +662,9 @@ def _resolved_frontend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str])
     return str(suggested or "").strip()
 
 
-def _resolved_frontend_dir_name(*, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]) -> str:
+def _resolved_frontend_dir_name(
+    *, base_dir: Path, resolved: Mapping[str, str], explicit_values: Mapping[str, str]
+) -> str:
     if "FRONTEND_DIR" in explicit_values:
         return str(resolved.get("FRONTEND_DIR") or "").strip()
     suggested = suggest_service_directory(service_name="frontend", project_root=base_dir)
@@ -681,9 +745,17 @@ def _startup_profile_from_resolved(
         dependencies[definition.id] = value
     postgres_key = f"{prefix}_POSTGRES_ENABLE"
     supabase_key = f"{prefix}_SUPABASE_ENABLE"
-    if supabase_key in explicit_values and parse_bool(resolved.get(supabase_key), False) and postgres_key not in explicit_values:
+    if (
+        supabase_key in explicit_values
+        and parse_bool(resolved.get(supabase_key), False)
+        and postgres_key not in explicit_values
+    ):
         dependencies["postgres"] = False
-    if postgres_key in explicit_values and parse_bool(resolved.get(postgres_key), False) and supabase_key not in explicit_values:
+    if (
+        postgres_key in explicit_values
+        and parse_bool(resolved.get(postgres_key), False)
+        and supabase_key not in explicit_values
+    ):
         dependencies["supabase"] = False
     return StartupProfile(
         startup_enable=profile_bool(f"{prefix}_STARTUP_ENABLE", True),
@@ -968,7 +1040,9 @@ def _extract_template_section(
         if line.startswith("export "):
             line = line[len("export ") :].strip()
         if "=" not in line:
-            errors.append(f"invalid {section_label} entry on line {line_number}: expected KEY=VALUE, got {raw_line.strip()!r}")
+            errors.append(
+                f"invalid {section_label} entry on line {line_number}: expected KEY=VALUE, got {raw_line.strip()!r}"
+            )
             continue
         key, value = line.split("=", 1)
         name = key.strip()

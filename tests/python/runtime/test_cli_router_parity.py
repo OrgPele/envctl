@@ -33,7 +33,22 @@ class CliRouterParityTests(unittest.TestCase):
             "--delete-worktree": "delete-worktree",
             "--blast-worktree": "blast-worktree",
             "--install-prompts": "install-prompts",
+            "--codex-tmux": "codex-tmux",
             "--debug-ui-pack": "debug-pack",
+        }
+        for token, command in expected.items():
+            route = parse_route([token], env={})
+            self.assertEqual(route.command, command, msg=token)
+
+    def test_bare_direct_inspection_commands_map_to_expected_commands(self) -> None:
+        expected = {
+            "list-commands": "list-commands",
+            "list-targets": "list-targets",
+            "list-trees": "list-trees",
+            "show-config": "show-config",
+            "show-state": "show-state",
+            "explain-startup": "explain-startup",
+            "preflight": "preflight",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})
@@ -72,6 +87,12 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
+        route = parse_route(["review", "--review-base", "release/2026.03"], env={})
+        self.assertEqual(route.command, "review")
+        self.assertEqual(route.flags.get("review_base"), "release/2026.03")
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
+
         route = parse_route(["migrate"], env={})
         self.assertEqual(route.command, "migrate")
         self.assertTrue(route.flags.get("skip_startup"))
@@ -80,11 +101,17 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["config"], env={})
         self.assertEqual(route.command, "config")
 
-        route = parse_route(["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={})
+        route = parse_route(
+            ["install-prompts", "--cli", "codex,claude", "--preset", "implement_task", "--dry-run"], env={}
+        )
         self.assertEqual(route.command, "install-prompts")
         self.assertEqual(route.flags.get("cli"), "codex,claude")
         self.assertEqual(route.flags.get("preset"), "implement_task")
         self.assertTrue(route.flags.get("dry_run"))
+
+        route = parse_route(["codex-tmux", "workspace"], env={})
+        self.assertEqual(route.command, "codex-tmux")
+        self.assertEqual(route.passthrough_args, ["workspace"])
 
         route = parse_route(["health"], env={})
         self.assertEqual(route.command, "health")
@@ -270,7 +297,7 @@ class CliRouterParityTests(unittest.TestCase):
         docs = (REPO_ROOT / "docs" / "reference" / "important-flags.md").read_text(encoding="utf-8")
         documented_flags = {token for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs) if token.startswith("--")}
         parser_flags = set(list_supported_flag_tokens())
-        ignored = {"--help", "--repo"}
+        ignored = {"--help", "--repo", "--version"}
         missing = sorted(documented_flags.difference(parser_flags).difference(ignored))
         self.assertEqual(missing, [], msg=f"missing documented flags: {missing}")
 

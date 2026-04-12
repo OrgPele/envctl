@@ -98,7 +98,6 @@ def create_selector_app(
 
         def compose(self) -> ComposeResult:
             filter_input = Input(placeholder="Filter targets...", id="selector-filter")
-            filter_input.can_focus = False
             with Vertical(id="selector-shell"):
                 yield Static(prompt, id="selector-prompt")
                 yield filter_input
@@ -135,13 +134,18 @@ def create_selector_app(
         @staticmethod
         def _row_text(row: _RowRef) -> str:
             marker = "●" if row.selected else "○"
-            badge = row.item.kind.replace("_", " ")
+            badge = str(row.item.kind or "").replace("_", " ").strip()
+            if not badge:
+                return f"{marker} {row.item.label}"
             return f"{marker} {row.item.label}  ({badge})"
 
         @staticmethod
         def _row_classes(row: _RowRef) -> str:
             base_classes = selectable_list_row_classes("selector-row", selected=row.selected)
-            return f"{base_classes} kind-{row.item.kind.replace('_', '-')}"
+            kind = str(row.item.kind or "").replace("_", "-").strip("-")
+            if not kind:
+                return base_classes
+            return f"{base_classes} kind-{kind}"
 
         def _focused_model_index(self) -> int | None:
             return self._controller.focused_model_index(self._list().index)
@@ -159,6 +163,12 @@ def create_selector_app(
             if self.query_one("#selector-filter", Input).has_focus:
                 return "selector-filter"
             return "unknown"
+
+        def _focus_order(self) -> tuple[str, ...]:
+            focus_order = ["selector-filter", "selector-list", "btn-cancel"]
+            if not self.query_one("#btn-run", Button).disabled:
+                focus_order.append("btn-run")
+            return tuple(focus_order)
 
         def _emit_focus(self, *, reason: str) -> None:
             current = self._focused_widget_id()
@@ -279,12 +289,15 @@ def create_selector_app(
             if not initial_navigation:
                 return
             self.action_focus_list(reason="initial_navigation")
+
             async def _run_initial_navigation() -> None:
                 for action in initial_navigation:
                     if action == "down":
                         await self.action_nav_down()
                     elif action == "up":
                         await self.action_nav_up()
+                    elif action == "submit":
+                        await self.action_submit(cause="initial_navigation_submit")
 
             asyncio.create_task(_run_initial_navigation())
 
@@ -427,11 +440,13 @@ def create_selector_app(
             )
 
         async def action_nav_up(self) -> None:
-            list_index_before = self._list().index
+            list_index_before = self._controller.ensure_list_index(self._list().index)
             focus_before = self._focused_widget_id()
             if not self._list().has_focus:
-                self.action_focus_list(reason="key_recover")
-            self.action_cursor_up()
+                target_index = self._controller.cursor_up(list_index_before)
+                self.action_focus_list(reason="key_recover", target_index=target_index)
+            else:
+                self.action_cursor_up()
             list_index_after = self._list().index
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:
@@ -453,11 +468,13 @@ def create_selector_app(
             )
 
         async def action_nav_down(self) -> None:
-            list_index_before = self._list().index
+            list_index_before = self._controller.ensure_list_index(self._list().index)
             focus_before = self._focused_widget_id()
             if not self._list().has_focus:
-                self.action_focus_list(reason="key_recover")
-            self.action_cursor_down()
+                target_index = self._controller.cursor_down(list_index_before)
+                self.action_focus_list(reason="key_recover", target_index=target_index)
+            else:
+                self.action_cursor_down()
             list_index_after = self._list().index
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:
@@ -504,23 +521,30 @@ def create_selector_app(
             filter_input.focus()
             self._emit_focus(reason=reason)
 
-        def action_focus_list(self, *, reason: str = "focus_list") -> None:
+        def action_focus_list(self, *, reason: str = "focus_list", target_index: int | None = None) -> None:
             list_view = self._list()
-            index = self._controller.ensure_list_index(list_view.index)
+            index = self._controller.ensure_list_index(target_index if target_index is not None else list_view.index)
             apply_selectable_list_index(list_view, index)
             self._allow_filter_focus = False
-            self.query_one("#selector-filter", Input).can_focus = False
             focus_selectable_list(self, list_view, index)
+            self._emit_focus(reason=reason)
+
+        def action_focus_button(self, button_id: str, *, reason: str) -> None:
+            self._allow_filter_focus = False
+            self.query_one(f"#{button_id}", Button).focus()
             self._emit_focus(reason=reason)
 
         def action_cycle_focus(self) -> None:
             next_target = self._controller.cycle_focus_target(
-                filter_has_focus=self.query_one("#selector-filter", Input).has_focus
+                current_target=self._focused_widget_id(),
+                focus_order=self._focus_order(),
             )
-            if next_target == "list":
+            if next_target == "selector-list":
                 self.action_focus_list(reason="tab_cycle")
-            else:
+            elif next_target == "selector-filter":
                 self.action_focus_filter(reason="tab_cycle")
+            else:
+                self.action_focus_button(next_target, reason="tab_cycle")
 
         def _selected_values(self) -> list[str]:
             return [row.item.token for row in self._rows if row.selected and row.visible]
@@ -657,7 +681,25 @@ def create_selector_app(
                     )
             focused_id = self._focused_widget_id()
             filter_focused = focused_id == "selector-filter"
-            if filter_focused and handle_text_edit_key_alias(widget=self.query_one("#selector-filter", Input), event=event):
+            if event.key == "tab":
+                event.stop()
+                event.prevent_default()
+                self.action_cycle_focus()
+                _emit_selector_debug(
+                    emit,
+                    enabled=deep_debug,
+                    event="ui.selector.key",
+                    selector_id=selector_id,
+                    key=event.key,
+                    focused_widget_id=focused_id,
+                    list_index_before=self._list().index,
+                    list_index_after=self._list().index,
+                    handled=True,
+                )
+                return
+            if filter_focused and handle_text_edit_key_alias(
+                widget=self.query_one("#selector-filter", Input), event=event
+            ):
                 return
             if event.key == "enter":
                 event.stop()
@@ -694,6 +736,22 @@ def create_selector_app(
                     handled=True,
                 )
 
+        async def _maybe_handle_filter_focus_key(self, event: Key) -> bool:
+            if self._focused_widget_id() != "selector-filter":
+                return False
+            if event.key not in {"up", "down", "j", "k", "w", "s", "space"}:
+                return False
+            event.stop()
+            event.prevent_default()
+            self.action_focus_list(reason="filter_key_recover")
+            if event.key in {"up", "k", "w"}:
+                await self.action_nav_up()
+            elif event.key in {"down", "j", "s"}:
+                await self.action_nav_down()
+            else:
+                await self.action_toggle()
+            return True
+
         async def on_event(self, event: object) -> None:
             if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
                 self._touch_status_error_timeout()
@@ -701,6 +759,8 @@ def create_selector_app(
                 stop = getattr(event, "stop", None)
                 if callable(stop):
                     stop()
+                return
+            if isinstance(event, Key) and await self._maybe_handle_filter_focus_key(event):
                 return
             if key_trace_enabled and isinstance(event, Key):
                 key = str(event.key)
@@ -737,10 +797,6 @@ def create_selector_app(
                 self.action_cancel(cause="button_cancel")
 
         def on_focus(self, _event: object) -> None:
-            # Guard against transient default-focus jumps to the filter field.
-            if self._focused_widget_id() == "selector-filter" and not self._allow_filter_focus:
-                self.action_focus_list(reason="focus_guard")
-                return
             self._emit_focus(reason="focus_event")
 
         def on_unmount(self) -> None:

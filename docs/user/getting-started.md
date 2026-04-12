@@ -38,9 +38,12 @@ Why this is the default:
 To verify installation:
 
 ```bash
+envctl --version
 envctl --help
 envctl doctor --repo /absolute/path/to/repo
 ```
+
+`envctl --version` is launcher-level, so it works before repo detection, `.envctl` bootstrap, or runtime startup.
 
 Important notes:
 
@@ -65,6 +68,20 @@ Contributor note:
 
 - if you are developing `envctl` itself, use the editable install documented in [Contributing](../developer/contributing.md)
 - source/editable install is not the primary end-user path
+
+If you are running from an `envctl` source checkout instead of an installed command, bootstrap the runtime dependencies first:
+
+```bash
+python -m pip install -r python/requirements.txt
+```
+
+That `python/requirements.txt` flow is for source-wrapper usage such as `./bin/envctl`. Contributor validation still uses the editable `.[dev]` workflow from the developer docs.
+
+Current runtime-dependency gate boundary:
+
+- the full envctl runtime dependency check currently runs before `start`, `plan`, and `restart`
+- launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate
+- inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate
 
 ## 2. Pick a Repository
 
@@ -97,6 +114,7 @@ Useful inspection commands before that first run:
 ```bash
 envctl show-config --json
 envctl explain-startup --json
+envctl preflight --json
 ```
 
 Those commands tell you:
@@ -138,7 +156,10 @@ The wizard:
 - validates directories and ports before save
 - configures services and dependencies for `main` and `trees`
 - seeds user-owned backend/frontend launch env sections into `.envctl`
+- checks whether Git global excludes is configured for envctl-owned local artifacts
 - does not change already running services until a later start or restart
+
+Important: `envctl` no longer auto-edits the repository `.gitignore` for local workflow artifacts. Keep `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots out of `git status` by configuring Git `core.excludesFile` for your user account.
 
 See [First-Run Wizard](first-run-wizard.md) for the full step-by-step guide.
 
@@ -149,6 +170,7 @@ After config exists, this is the safest normal loop:
 ```bash
 envctl show-config --json
 envctl explain-startup --json
+envctl preflight --json
 envctl
 envctl dashboard
 envctl logs --all --logs-follow

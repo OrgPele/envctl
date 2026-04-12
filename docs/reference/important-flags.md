@@ -7,6 +7,7 @@ These are the highest-value flags for daily use.
 | --- | --- |
 | `--resume` | Resume previous runtime state and session mapping quickly. |
 | `--repo <path>` | Resolve and operate on a repo from outside that repo tree. |
+| `--version` | Print the current `envctl` package version and exit without repo/bootstrap/runtime startup. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
 | `--main` | Run main mode only (skip trees). |
@@ -20,6 +21,8 @@ These are the highest-value flags for daily use.
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
 Allowed values are `main` and `trees` (default: `main`).
 Engine note: Python runtime is the only supported runtime path.
+Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
+Launcher note: `--version` is launcher-owned and intentionally stays out of the runtime supported-command inventory.
 
 ## Targeting
 | Flag | Purpose |
@@ -30,6 +33,7 @@ Engine note: Python runtime is the only supported runtime path.
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
+| `--review-base <branch>` | Force the base branch for single-mode `review`, overriding provenance, upstream, and default-branch fallback. |
 
 ## Worktree Orchestration
 | Flag | Purpose |
@@ -81,6 +85,7 @@ Engine note: Python runtime is the only supported runtime path.
 | `ENVCTL_UI_BACKEND=auto\|textual\|legacy\|non_interactive` | Select dashboard backend policy. `auto` currently stays on legacy by default. |
 | `ENVCTL_UI_EXPERIMENTAL_DASHBOARD=1` | In `auto` mode, prefer the Textual dashboard when available. |
 | `ENVCTL_UI_SELECTOR_IMPL=textual\|planning_style\|legacy` | Selector implementation for dashboard target menus. Default is the Textual plan-style selector; `planning_style` enables the prompt-toolkit rollback; `legacy` is a compatibility alias that still maps to the Textual selector. |
+| `ENVCTL_UI_HYPERLINK_MODE=auto\|on\|off` | Control clickable local filesystem paths in human-facing terminal output. `off` forces plain text; `on` forces OSC-8 links when stdout is terminal-like; `auto` enables links only on supported interactive terminals. |
 
 ## Requirements and Seeding
 | Flag | Purpose |

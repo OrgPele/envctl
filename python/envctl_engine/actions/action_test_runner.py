@@ -9,31 +9,76 @@ import threading
 import time
 from typing import Any, Callable
 
+from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.test_output.progress_markers import strip_progress_markers
 from envctl_engine.test_output.symbols import format_duration
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def _render_command(command: list[str]) -> str:
     return " ".join(str(part) for part in command)
 
 
+def _clean_failure_lines(raw: object) -> list[str]:
+    if not isinstance(raw, str):
+        return []
+    cleaned_lines: list[str] = []
+    for line in raw.splitlines():
+        cleaned = strip_ansi(strip_progress_markers(line)).strip()
+        if cleaned:
+            cleaned_lines.append(cleaned)
+    return cleaned_lines
+
+
+def _format_failure_output_for_artifact(*, stdout: object, stderr: object, returncode: int) -> str:
+    stderr_lines = _clean_failure_lines(stderr)
+    stdout_lines = _clean_failure_lines(stdout)
+    if stderr_lines and stdout_lines:
+        return "\n".join(
+            [
+                "stderr:",
+                *stderr_lines,
+                "",
+                "stdout:",
+                *stdout_lines,
+            ]
+        )
+    lines = stderr_lines or stdout_lines
+    if not lines:
+        return f"exit:{returncode}"
+    return "\n".join(lines)
+
+
 def _summarize_failure_output(*, stdout: object, stderr: object, returncode: int) -> str:
-    chunks: list[str] = []
-    for raw in (stderr, stdout):
-        if not isinstance(raw, str):
-            continue
-        for line in raw.splitlines():
-            stripped = line.strip()
-            if stripped:
-                chunks.append(stripped)
-        if chunks:
-            break
+    chunks = _clean_failure_lines(stderr)
+    if not chunks:
+        chunks = _clean_failure_lines(stdout)
     if not chunks:
         return f"exit:{returncode}"
     snippet = " | ".join(chunks[:3])
     if len(chunks) > 3:
         snippet += f" | +{len(chunks) - 3} more lines"
     return snippet
+
+
+def _failed_summary_artifact_available(
+    *,
+    summary_metadata: dict[str, dict[str, object]] | None,
+    project_name: str,
+) -> bool:
+    if not isinstance(summary_metadata, dict):
+        return False
+    entry = summary_metadata.get(project_name)
+    if not isinstance(entry, dict):
+        return False
+    status = str(entry.get("status", "")).strip().lower()
+    if status and status != "failed":
+        return False
+    return bool(
+        str(entry.get("short_summary_path", "") or "").strip() or str(entry.get("summary_path", "") or "").strip()
+    )
 
 
 def _format_live_progress_status(label: str, current: int, total: int) -> str:
@@ -91,6 +136,17 @@ def run_test_action(
 
     target_contexts = orchestrator._test_target_contexts(targets)
     try:
+        seen_roots: set[Path] = set()
+        for context in target_contexts:
+            project_root = Path(context.project_root).resolve()
+            if project_root in seen_roots:
+                continue
+            seen_roots.add(project_root)
+            ensure_repo_local_test_prereqs(project_root, emit_status=orchestrator._emit_status)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+    try:
         execution_specs = orchestrator._build_test_execution_specs(
             route=route,
             targets=targets,
@@ -104,9 +160,7 @@ def run_test_action(
         print(str(exc))
         return 1
     if not execution_specs:
-        print(
-            "No test command configured. Set Backend test command or Frontend test command in envctl config."
-        )
+        print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
         return 1
 
     parallel = orchestrator._test_parallel_enabled(route, execution_specs)
@@ -128,11 +182,7 @@ def run_test_action(
     spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
     rich_progress_supported, rich_progress_error = rich_progress_available()
     suite_policy_enabled, suite_policy_reason = orchestrator._test_suite_spinner_policy_enabled(spinner_policy)
-    use_suite_spinner_group = bool(
-        interactive_command
-        and suite_policy_enabled
-        and rich_progress_supported
-    )
+    use_suite_spinner_group = bool(interactive_command and suite_policy_enabled and rich_progress_supported)
     suite_spinner_reason = "enabled"
     if not interactive_command:
         suite_spinner_reason = "non_interactive"
@@ -219,12 +269,102 @@ def run_test_action(
         enabled=use_suite_spinner_group,
         policy=spinner_policy,
         emit=getattr(rt, "_emit", None),
-            suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
+        suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
         multi_project=multi_project,
         env=getattr(rt, "env", {}),
     )
 
     suite_outcomes: list[dict[str, object]] = []
+    active_suite_lock = threading.Lock()
+    active_suite_registry: dict[int, dict[str, object]] = {}
+    termination_results: dict[int, bool] = {}
+    interrupt_state = {"received": False}
+
+    def _clear_registered_suite_by_index(suite_index: int, *, pid: int | None = None) -> None:
+        with active_suite_lock:
+            current = active_suite_registry.get(suite_index)
+            if not isinstance(current, dict):
+                return
+            current_pid = int(current.get("pid", 0) or 0)
+            if pid is not None and current_pid != int(pid):
+                return
+            active_suite_registry.pop(suite_index, None)
+
+    def _terminate_registered_pid(pid: int) -> bool:
+        if pid <= 0:
+            return True
+        with active_suite_lock:
+            if pid in termination_results:
+                return termination_results[pid]
+        process_runner = getattr(rt, "process_runner", None)
+        terminator = getattr(process_runner, "terminate_process_group", None)
+        if not callable(terminator):
+            terminator = getattr(process_runner, "terminate", None)
+        result = False
+        if callable(terminator):
+            result = bool(terminator(pid, term_timeout=2.0, kill_timeout=1.0))
+        with active_suite_lock:
+            termination_results[pid] = result
+        return result
+
+    def _register_started_suite(execution: Any, pid: int) -> None:
+        normalized_pid = int(pid or 0)
+        if normalized_pid <= 0:
+            return
+        suite_index = int(getattr(execution, "index", 0) or 0)
+        suite_entry = {
+            "index": suite_index,
+            "suite": str(getattr(execution.spec, "source", "")),
+            "project_name": str(getattr(execution, "project_name", "")),
+            "pid": normalized_pid,
+        }
+        with active_suite_lock:
+            active_suite_registry[suite_index] = suite_entry
+        if interrupt_state["received"]:
+            if _terminate_registered_pid(normalized_pid):
+                _clear_registered_suite_by_index(suite_index, pid=normalized_pid)
+
+    def _cleanup_interrupted_suites(*, queued_cancelled: int) -> None:
+        interrupt_state["received"] = True
+        cleanup_started = time.monotonic()
+        orchestrator._emit_status("Interrupt received, stopping active test suites...")
+        with active_suite_lock:
+            active_snapshot = [dict(entry) for entry in active_suite_registry.values()]
+        rt._emit(  # type: ignore[attr-defined]
+            "test.interrupt.received",
+            active_suites=len(active_snapshot),
+            queued_cancelled=queued_cancelled,
+            mode=execution_mode,
+        )
+        signaled_pids: set[int] = set()
+        survivors: set[int] = set()
+        for pass_index in range(2):
+            if pass_index > 0:
+                time.sleep(0.05)
+            with active_suite_lock:
+                pending_entries = [dict(entry) for entry in active_suite_registry.values()]
+            for entry in pending_entries:
+                pid = int(entry.get("pid", 0) or 0)
+                if pid <= 0 or pid in signaled_pids:
+                    continue
+                signaled_pids.add(pid)
+                if _terminate_registered_pid(pid):
+                    _clear_registered_suite_by_index(int(entry.get("index", 0) or 0), pid=pid)
+                else:
+                    survivors.add(pid)
+        with active_suite_lock:
+            for entry in active_suite_registry.values():
+                pid = int(entry.get("pid", 0) or 0)
+                if pid > 0:
+                    survivors.add(pid)
+        rt._emit(  # type: ignore[attr-defined]
+            "test.interrupt.cleanup",
+            active_suites=len(active_snapshot),
+            queued_cancelled=queued_cancelled,
+            signaled_pids=sorted(signaled_pids),
+            survivors=len(survivors),
+            cleanup_duration_ms=round((time.monotonic() - cleanup_started) * 1000.0, 1),
+        )
 
     def run_spec(execution: Any) -> tuple[int, str]:
         index = execution.index
@@ -253,7 +393,14 @@ def run_test_action(
                 state_text = orchestrator._colorize("started", fg="blue")
                 print(f"  - {index_text} {suite_text} {state_text}")
                 command_text = orchestrator._colorize(_render_command([*spec.command, *args]), fg="gray")
-                cwd_text = orchestrator._colorize(str(Path(spec.cwd).resolve()), fg="gray")
+                cwd_text = orchestrator._colorize(
+                    render_path_for_terminal(
+                        str(Path(spec.cwd).resolve()),
+                        env=getattr(orchestrator.runtime, "env", {}),
+                        stream=sys.stdout,
+                    ),
+                    fg="gray",
+                )
                 print(f"      command: {command_text}")
                 print(f"      cwd: {cwd_text}")
         progress_status: dict[str, object] = {
@@ -296,11 +443,18 @@ def run_test_action(
                 )
                 orchestrator._emit_status(message)
                 if use_suite_spinner_group:
+                    failed_count = min(
+                        max(_live_failed_count(runner.last_result), 0),
+                        max(int(merged_current), 0),
+                    )
+                    passed_count = max(0, int(merged_current) - failed_count)
                     suite_spinner_group.mark_progress(
                         execution,
-                        status_text=f"{int(merged_current)} complete • "
-                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed",
+                        status_text=(
+                            f"{int(merged_current)} complete • "
+                            f"{passed_count} passed, "
+                            f"{failed_count} failed"
+                        ),
                     )
                 return
             if int(current) == 0 and merged_current is not None and int(merged_current) > 0:
@@ -318,12 +472,17 @@ def run_test_action(
                 )
                 orchestrator._emit_status(message)
                 if use_suite_spinner_group:
+                    failed_count = min(
+                        max(_live_failed_count(runner.last_result), 0),
+                        max(int(merged_current), 0),
+                    )
+                    passed_count = max(0, int(merged_current) - failed_count)
                     suite_spinner_group.mark_progress(
                         execution,
                         status_text=(
                             f"{int(merged_current)}/{merged_total} complete • "
-                            f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                            f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                            f"{passed_count} passed, "
+                            f"{failed_count} failed"
                         ),
                     )
                 return
@@ -343,12 +502,17 @@ def run_test_action(
             )
             orchestrator._emit_status(message)
             if use_suite_spinner_group:
+                failed_count = min(
+                    max(_live_failed_count(runner.last_result), 0),
+                    max(int(merged_current), 0),
+                )
+                passed_count = max(0, int(merged_current) - failed_count)
                 suite_spinner_group.mark_progress(
                     execution,
                     status_text=(
                         f"{merged_current}/{merged_total} complete • "
-                        f"{max(0, int(merged_current) - min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0)))} passed, "
-                        f"{min(max(_live_failed_count(runner.last_result), 0), max(int(merged_current), 0))} failed"
+                        f"{passed_count} passed, "
+                        f"{failed_count} failed"
                     ),
                 )
 
@@ -398,22 +562,18 @@ def run_test_action(
             emit_callback=emit_test_event,
             render_output=not interactive_command,
         )
+        run_test_kwargs: dict[str, object] = {
+            "cwd": spec.cwd,
+            "env": env,
+            "timeout": 300.0,
+        }
+        run_test_parameters = inspect.signature(runner.run_tests).parameters
+        if interactive_command and "progress_callback" in run_test_parameters:
+            run_test_kwargs["progress_callback"] = emit_live_progress
+        if "process_started_callback" in run_test_parameters:
+            run_test_kwargs["process_started_callback"] = lambda pid: _register_started_suite(execution, int(pid))
 
-        completed = runner.run_tests(
-            command,
-            **(
-                {
-                    "cwd": spec.cwd,
-                    "env": env,
-                    "timeout": 300.0,
-                    **(
-                        {"progress_callback": emit_live_progress}
-                        if interactive_command and "progress_callback" in inspect.signature(runner.run_tests).parameters
-                        else {}
-                    ),
-                }
-            ),
-        )
+        completed = runner.run_tests(command, **run_test_kwargs)
         parsed = runner.last_result
         if parsed is not None:
             counts_detected = bool(getattr(parsed, "counts_detected", False))
@@ -432,11 +592,12 @@ def run_test_action(
                 total=len(execution_specs),
                 project=project_name,
                 project_root=str(project_root),
-                passed=parsed.passed,
-                failed=parsed.failed,
-                skipped=parsed.skipped,
-                errors=parsed.errors,
-                total_tests=parsed.total,
+                counts_detected=counts_detected,
+                passed=(parsed.passed if counts_detected else None),
+                failed=(parsed.failed if counts_detected else None),
+                skipped=(parsed.skipped if counts_detected else None),
+                errors=(parsed.errors if counts_detected else None),
+                total_tests=(parsed.total if counts_detected else None),
             )
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
         if interactive_command and not use_suite_spinner_group:
@@ -462,14 +623,7 @@ def run_test_action(
                 f"  - {icon} {index_text} {suite_text} {status_text} "
                 f"({format_duration(duration_ms / 1000.0)}){counts_suffix}"
             )
-            if completed.returncode != 0:
-                failure_excerpt = _summarize_failure_output(
-                    stdout=getattr(completed, "stdout", ""),
-                    stderr=getattr(completed, "stderr", ""),
-                    returncode=int(getattr(completed, "returncode", 1)),
-                )
-                print(f"      failure: {orchestrator._colorize(failure_excerpt, fg='red')}")
-            elif parsed is not None and not counts_detected:
+            if completed.returncode == 0 and parsed is not None and not counts_detected:
                 print("      note: test command completed, but envctl could not extract test counts from the output.")
         suite_outcomes.append(
             {
@@ -490,6 +644,13 @@ def run_test_action(
                 )
                 if completed.returncode != 0
                 else "",
+                "failure_details": _format_failure_output_for_artifact(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                    returncode=int(getattr(completed, "returncode", 1)),
+                )
+                if completed.returncode != 0
+                else "",
             }
         )
         rt._emit(  # type: ignore[attr-defined]
@@ -504,6 +665,7 @@ def run_test_action(
             project=project_name,
             project_root=str(project_root),
         )
+        _clear_registered_suite_by_index(int(index))
         with progress_lock:
             if parallel:
                 progress_state["running"] = max(0, int(progress_state["running"]) - 1)
@@ -538,9 +700,12 @@ def run_test_action(
     failures: list[str] = []
     suite_spinner_context = suite_spinner_group if use_suite_spinner_group else nullcontext(suite_spinner_group)
     with suite_spinner_context:
-        if parallel:
-            with futures_module.ThreadPoolExecutor(max_workers=parallel_workers) as pool:
-                future_map = {pool.submit(run_spec, spec): spec for spec in execution_specs}
+        executor: Any | None = None
+        future_map: dict[object, Any] = {}
+        try:
+            if parallel:
+                executor = futures_module.ThreadPoolExecutor(max_workers=parallel_workers)
+                future_map = {executor.submit(run_spec, spec): spec for spec in execution_specs}
                 for future in futures_module.as_completed(future_map):
                     execution = future_map[future]
                     code, error = future.result()
@@ -550,13 +715,43 @@ def run_test_action(
                             f"[{execution.index}/{len(execution_specs)}]"
                         )
                         failures.append(f"{label}: {error or 'unknown test failure'}")
-        else:
-            for spec in execution_specs:
-                code, error = run_spec(spec)
-                if code != 0:
-                    label = f"{spec.project_name}:{spec.spec.source} [{spec.index}/{len(execution_specs)}]"
-                    failures.append(f"{label}: {error or 'unknown test failure'}")
-                    break
+            else:
+                for spec in execution_specs:
+                    code, error = run_spec(spec)
+                    if code != 0:
+                        label = f"{spec.project_name}:{spec.spec.source} [{spec.index}/{len(execution_specs)}]"
+                        failures.append(f"{label}: {error or 'unknown test failure'}")
+                        break
+        except KeyboardInterrupt:
+            queued_cancelled = 0
+            executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
+            if parallel and callable(executor_shutdown):
+                try:
+                    executor_shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    executor_shutdown(wait=False)
+                for future in future_map:
+                    cancelled = False
+                    try:
+                        cancelled = bool(future.cancelled())
+                    except Exception:
+                        cancelled = False
+                    if not cancelled:
+                        try:
+                            cancelled = bool(future.cancel())
+                        except Exception:
+                            cancelled = False
+                    if cancelled:
+                        queued_cancelled += 1
+            _cleanup_interrupted_suites(queued_cancelled=queued_cancelled)
+            raise
+        finally:
+            executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
+            if parallel and callable(executor_shutdown):
+                try:
+                    executor_shutdown(wait=not interrupt_state["received"], cancel_futures=interrupt_state["received"])
+                except TypeError:
+                    executor_shutdown(wait=not interrupt_state["received"])
 
     summary_metadata = orchestrator._persist_test_summary_artifacts(
         route=route,
@@ -565,9 +760,24 @@ def run_test_action(
     )
 
     if failures:
-        message = "; ".join(failures)
+        fallback_failures: list[str] = []
+        for item in sorted(suite_outcomes, key=lambda value: int(value.get("index", 0))):
+            if int(item.get("returncode", 0) or 0) == 0:
+                continue
+            project_name = str(item.get("project_name", "")).strip()
+            if project_name and _failed_summary_artifact_available(
+                summary_metadata=summary_metadata,
+                project_name=project_name,
+            ):
+                continue
+            suite = str(item.get("suite", "suite"))
+            index = int(item.get("index", 0) or 0)
+            detail = str(item.get("failure_summary", "") or "").strip() or "unknown test failure"
+            fallback_failures.append(f"{project_name}:{suite} [{index}/{len(execution_specs)}]: {detail}")
+        message = "; ".join(fallback_failures or failures)
         if interactive_command:
-            orchestrator._emit_status(f"Test command failed: {message}")
+            if fallback_failures:
+                orchestrator._emit_status(f"Test command failed: {message}")
         else:
             print(f"test action failed: {message}")
         orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)

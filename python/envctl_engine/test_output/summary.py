@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+
+from envctl_engine.ui.path_links import render_path_for_terminal
+
 from .colors import TerminalColors
 from .parser_base import TestResult
 from .symbols import CHECK_MARK, CROSS_MARK, format_duration
@@ -148,7 +152,7 @@ class TestSummaryFormatter:
 
         if result.coverage_path:
             print(f"  {self.colors.GRAY}Report:{self.colors.NC}")
-            print(f"  {result.coverage_path}")
+            print(f"  {render_path_for_terminal(result.coverage_path, stream=sys.stdout)}")
 
     def _group_by_error(self, result: TestResult) -> dict[str, list[str]]:
         """Group failed tests by error message.

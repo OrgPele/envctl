@@ -16,11 +16,19 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
+from envctl_engine.planning.plan_agent_launch_support import PlanAgentLaunchResult
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.test_output.parser_base import strip_ansi
+import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class _FakeProcessRunner:
@@ -327,13 +335,56 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+
+    def test_backend_long_running_task_can_skip_listener_wait_and_start_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "MAIN_FRONTEND_ENABLE": "false",
+                        "TREES_BACKEND_ENABLE": "false",
+                        "TREES_FRONTEND_ENABLE": "false",
+                        "MAIN_POSTGRES_ENABLE": "false",
+                        "MAIN_REDIS_ENABLE": "false",
+                        "MAIN_N8N_ENABLE": "false",
+                        "TREES_POSTGRES_ENABLE": "false",
+                        "TREES_REDIS_ENABLE": "false",
+                        "TREES_N8N_ENABLE": "false",
+                        "MAIN_BACKEND_EXPECT_LISTENER": "false",
+                    },
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            code = engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="main")
+            self.assertIsNotNone(state)
+            assert state is not None
+            backend = state.services.get("Main Backend")
+            self.assertIsNotNone(backend)
+            assert backend is not None
+            self.assertFalse(backend.listener_expected)
+            self.assertIsNone(backend.requested_port)
+            self.assertIsNone(backend.actual_port)
+            self.assertEqual(backend.status, "running")
 
     def test_startup_summarizes_docker_daemon_outage_for_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -412,7 +463,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -458,7 +509,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner = _FakeSetupWorktreeRunner()
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -633,13 +684,58 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
-            out = StringIO()
+            out = _TtyStringIO()
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
             self.assertIn("ModuleNotFoundError", out.getvalue())
             self.assertIn("psycopg2", out.getvalue())
+
+    def test_listener_failure_output_renders_clickable_log_path_but_event_detail_stays_raw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                extra={"ENVCTL_RUNTIME_TRUTH_MODE": "strict"},
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_HYPERLINK_MODE": "on"})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = False
+            fake_runner.start_log_line = "ModuleNotFoundError: No module named 'psycopg2'"
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            captured_events: list[tuple[str, dict[str, object]]] = []
+            original_emit = engine._emit
+
+            def capture_emit(event: str, **payload: object) -> None:
+                captured_events.append((event, payload))
+                original_emit(event, **payload)
+
+            engine._emit = capture_emit  # type: ignore[method-assign]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("\x1b]8;;file://", rendered)
+            visible = strip_ansi(rendered)
+            self.assertIn("backend listener not detected", visible)
+            self.assertIn("log_path:", visible)
+            failure_events = [payload for event, payload in captured_events if event == "service.failure"]
+            self.assertTrue(failure_events)
+            detail = str(failure_events[0]["detail"])
+            self.assertIn("log_path:", detail)
+            self.assertNotIn("\x1b]8;;", detail)
 
     def test_startup_fails_when_service_loses_listener_immediately_after_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -927,7 +1023,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 )
             )
 
-    def test_backend_env_file_upserts_database_url_and_preserves_existing_redis_url(self) -> None:
+    def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -966,7 +1062,43 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 f"DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db",
                 content,
             )
-            self.assertIn("REDIS_URL=redis://legacy", content)
+            self.assertIn(
+                f"REDIS_URL=redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0",
+                content,
+            )
+
+    def test_backend_env_file_writeback_removes_stale_db_alias_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text(
+                "DATABASE_URL=postgresql://legacy\n"
+                "SQLALCHEMY_DATABASE_URL=postgresql://legacy\n"
+                "ASYNC_DATABASE_URL=postgresql://legacy\n"
+                "REDIS_URL=redis://legacy\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            content = env_file.read_text(encoding="utf-8")
+            self.assertIn("DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:", content)
+            self.assertNotIn("SQLALCHEMY_DATABASE_URL=postgresql://legacy", content)
+            self.assertNotIn("ASYNC_DATABASE_URL=postgresql://legacy", content)
 
     def test_backend_service_start_env_includes_backend_env_file_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1033,6 +1165,37 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("CUSTOM_FRONTEND_FLAG") == "enabled" for env in frontend_start_envs))
+
+    def test_frontend_relative_env_override_file_is_loaded_for_service_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            frontend_dir = repo / "trees" / "feature-a" / "1" / "frontend"
+            frontend_override = repo / "config" / "frontend.override.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_override.parent.mkdir(parents=True, exist_ok=True)
+            frontend_override.write_text("CUSTOM_FRONTEND_FLAG=relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"FRONTEND_ENV_FILE_OVERRIDE": "config/frontend.override.env"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
+            self.assertTrue(frontend_start_envs)
+            self.assertTrue(any(env.get("CUSTOM_FRONTEND_FLAG") == "relative" for env in frontend_start_envs))
 
     def test_startup_uses_configured_backend_and_frontend_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1103,6 +1266,85 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(frontend_start_envs)
             self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "active" for env in frontend_start_envs))
 
+    def test_main_frontend_relative_env_file_path_is_loaded_in_main_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            frontend_dir = repo / "frontend"
+            main_frontend_env = repo / "config" / "main.frontend.env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            main_frontend_env.parent.mkdir(parents=True, exist_ok=True)
+            main_frontend_env.write_text("MAIN_FRONTEND_FLAG=relative\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"MAIN_FRONTEND_ENV_FILE_PATH": "config/main.frontend.env"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            frontend_start_envs = [env for env in fake_runner.start_background_envs if isinstance(env, dict)]
+            self.assertTrue(frontend_start_envs)
+            self.assertTrue(any(env.get("MAIN_FRONTEND_FLAG") == "relative" for env in frontend_start_envs))
+
+    def test_startup_scrubs_inherited_shell_backend_env_keys_before_backend_prep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text("CUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
+
+            with patch.dict(
+                os.environ,
+                {
+                    "APP_ENV_FILE": "/tmp/leaked.env",
+                    "DATABASE_URL": "postgresql://shell-leak",
+                    "SQLALCHEMY_DATABASE_URL": "postgresql://shell-leak",
+                    "ASYNC_DATABASE_URL": "postgresql://shell-leak",
+                },
+                clear=False,
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            bootstrap_envs = [
+                env
+                for (cmd, _cwd), env in zip(fake_runner.run_calls, fake_runner.run_envs)
+                if len(cmd) >= 4 and cmd[1:4] == ("-m", "pip", "install") and isinstance(env, dict)
+            ]
+            self.assertTrue(bootstrap_envs)
+            env = bootstrap_envs[0]
+            self.assertEqual(env.get("APP_ENV_FILE"), str(env_file.resolve()))
+            self.assertEqual(
+                env.get("DATABASE_URL"),
+                f"postgresql+asyncpg://postgres:postgres@localhost:{planned_db_port}/postgres",
+            )
+            self.assertNotEqual(env.get("SQLALCHEMY_DATABASE_URL"), "postgresql://shell-leak")
+            self.assertNotEqual(env.get("ASYNC_DATABASE_URL"), "postgresql://shell-leak")
+
     def test_frontend_api_env_overrides_stale_env_local_per_project_backend_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1120,8 +1362,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
             (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
             env_local.write_text(
-                "VITE_BACKEND_URL=http://localhost:9999\n"
-                "VITE_API_URL=http://localhost:9999/api/v1\n",
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
                 encoding="utf-8",
             )
 
@@ -1142,8 +1383,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             env_local_contents = env_local.read_text(encoding="utf-8")
             self.assertEqual(
                 env_local_contents,
-                "VITE_BACKEND_URL=http://localhost:9999\n"
-                "VITE_API_URL=http://localhost:9999/api/v1\n",
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
             )
 
             frontend_envs = [
@@ -1291,6 +1531,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
+            engine.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
             route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             out = StringIO()
@@ -1300,8 +1542,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             output = out.getvalue()
             self.assertIn("Warning: backend migration step failed", output)
-            self.assertIn("backend log:", output)
-            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", output)
+            self.assertIn("\x1b]8;;file://", output)
+            visible = strip_ansi(output)
+            self.assertIn("backend log:", visible)
+            self.assertIn("hint: alembic revision e6f7a8b9c0d1 is missing", visible)
 
     def test_backend_alembic_failure_is_hard_when_bootstrap_strict_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1378,6 +1622,86 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(any("psycopg2" in str(env.get("DATABASE_URL", "")) for env in alembic_envs))
             self.assertTrue(any("postgresql+asyncpg://" in str(env.get("DATABASE_URL", "")) for env in alembic_envs))
 
+    def test_startup_backend_migrations_use_distinct_env_contracts_for_multiple_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            first_backend = repo / "trees" / "feature-a" / "1" / "backend"
+            second_backend = repo / "trees" / "feature-b" / "1" / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for backend_dir, marker in ((first_backend, "a"), (second_backend, "b")):
+                backend_dir.mkdir(parents=True, exist_ok=True)
+                (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+                (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
+                (backend_dir / ".env").write_text(f"PROJECT_MARKER={marker}\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(
+                ["--trees", "--project", "feature-a-1", "--project", "feature-b-1", "--batch"],
+                env={},
+            )
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            alembic_envs = [
+                env
+                for (cmd, _cwd), env in zip(fake_runner.run_calls, fake_runner.run_envs)
+                if tuple(cmd[-3:]) == ("alembic", "upgrade", "head") and isinstance(env, dict)
+            ]
+            self.assertEqual(len(alembic_envs), 2)
+            first_env = next(env for env in alembic_envs if env.get("PROJECT_MARKER") == "a")
+            second_env = next(env for env in alembic_envs if env.get("PROJECT_MARKER") == "b")
+            self.assertEqual(first_env.get("APP_ENV_FILE"), str((first_backend / ".env").resolve()))
+            self.assertEqual(second_env.get("APP_ENV_FILE"), str((second_backend / ".env").resolve()))
+            self.assertNotEqual(first_env.get("DATABASE_URL"), second_env.get("DATABASE_URL"))
+
+    def test_startup_migration_warnings_include_backend_env_source_without_secret_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
+            env_file.write_text(
+                "DATABASE_URL=postgresql+psycopg2://svc_user:super-secret@localhost:5432/svc_db\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "true"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.fail_alembic = True
+            fake_runner.alembic_error_text = "alembic failure"
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("backend env source: default", rendered)
+            self.assertIn(str(env_file.resolve()), rendered)
+            self.assertNotIn("super-secret", rendered)
+
     def test_startup_fails_when_requirements_are_unavailable_in_strict_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1396,7 +1720,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -1655,7 +1979,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_overrides[preferred_frontend + 2] = False
             fake_runner.wait_for_pid_port_overrides[preferred_frontend + 2] = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a"], env={})
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -2075,6 +2399,140 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(fake_runner.start_background_calls, [])
             self.assertIn("Planning PR mode complete; skipping service startup.", out.getvalue())
+
+    def test_plan_feature_launches_only_new_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            launches: list[list[str]] = []
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                side_effect=lambda _runtime, *, route, created_worktrees: (
+                    launches.append([item.name for item in created_worktrees]),
+                    PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                )[1],
+            ):
+                first_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+                second_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            self.assertEqual(launches, [["feature_task-1"], []])
+
+    def test_plan_planning_prs_does_not_invoke_plan_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                    },
+                ),
+                env={"ENVCTL_ACTION_PR_CMD": "sh -lc 'exit 0'", "CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals") as launch_mock:
+                code = engine.dispatch(parse_route(["--planning-prs", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            launch_mock.assert_not_called()
+
+    def test_plan_feature_with_opencode_and_codex_cycles_still_launches_only_new_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            launches: list[list[str]] = []
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                side_effect=lambda _runtime, *, route, created_worktrees: (
+                    launches.append([item.name for item in created_worktrees]),
+                    PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
+                )[1],
+            ):
+                first_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+                second_code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            self.assertEqual(launches, [["feature_task-1"], []])
+
+    def test_plan_launch_failure_preserves_created_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                return_value=PlanAgentLaunchResult(status="failed", reason="missing_executables", outcomes=()),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
 
     def test_service_log_and_runner_flags_are_forwarded_to_service_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2526,6 +2984,77 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 (repo / "trees-feature-a" / "2").resolve(),
             )
 
+    def test_setup_worktree_uses_nested_flat_trees_feature_root_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime, {"TREES_DIR_NAME": "work/trees"}),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(
+                [
+                    "--setup-worktree",
+                    "feature-a",
+                    "1",
+                    "--setup-worktree-existing",
+                    "--batch",
+                ],
+                env={},
+            )
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            roots = state.metadata.get("project_roots", {})
+            self.assertIsInstance(roots, dict)
+            self.assertEqual(
+                Path(str(roots.get("feature-a-1", ""))).resolve(),
+                (repo / "work" / "trees-feature-a" / "1").resolve(),
+            )
+
+    def test_setup_worktrees_prefers_existing_nested_flat_feature_root_for_new_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime, {"TREES_DIR_NAME": "work/trees"}),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeSetupWorktreeRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--setup-worktrees", "feature-a", "1", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            roots = state.metadata.get("project_roots", {})
+            self.assertIsInstance(roots, dict)
+            self.assertEqual(
+                Path(str(roots.get("feature-a-2", ""))).resolve(),
+                (repo / "work" / "trees-feature-a" / "2").resolve(),
+            )
+
     def test_setup_worktrees_parallel_flags_apply_in_effective_trees_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2744,7 +3273,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(loop_mock.call_count, 0)
 
-    def test_start_skips_interactive_dashboard_loop_under_bats_environment(self) -> None:
+    def test_start_skips_interactive_dashboard_loop_when_term_is_dumb(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -2762,11 +3291,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             with (
                 patch("sys.stdin.isatty", return_value=True),
                 patch("sys.stdout.isatty", return_value=True),
-                patch.dict(
-                    os.environ,
-                    {"TERM": "xterm-256color", "BATS_TEST_FILENAME": "/tmp/sample.bats"},
-                    clear=False,
-                ),
+                patch.dict(os.environ, {"TERM": "dumb"}, clear=False),
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as loop_mock,
             ):
                 code = engine.dispatch(route)
@@ -3179,6 +3704,194 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
 
+    def test_exact_tree_plan_match_reuses_prior_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            second_session_id = second_engine._current_session_id()
+            with redirect_stdout(StringIO()):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
+            self.assertNotEqual(first_engine._current_session_id(), second_session_id)
+
+    def test_disabled_tree_dashboard_relaunch_reuses_prior_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                extra={"TREES_STARTUP_ENABLE": "false", "ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            first_engine = PythonEngineRuntime(config, env={})
+            with redirect_stdout(StringIO()):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(config, env={})
+            with redirect_stdout(StringIO()):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
+            self.assertEqual(second_state.metadata.get("last_reuse_reason"), "resume_dashboard_exact")
+
+    def test_config_profile_change_forces_fresh_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime, extra={"BACKEND_DIR": "api"}), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertNotEqual(second_state.run_id, first_state.run_id)
+
+    def test_project_root_change_forces_fresh_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree / "backend").mkdir(parents=True, exist_ok=True)
+            (tree / "frontend").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            context = engine._discover_projects(mode="trees")[0]
+            wrong_root_context = ProjectContext(name=context.name, root=repo / "trees" / "feature-a" / "99", ports=context.ports)
+            metadata = startup_support.build_startup_identity_metadata(
+                engine,
+                runtime_mode="trees",
+                project_contexts=[wrong_root_context],
+            )
+            engine.state_repository.save_resume_state(
+                state=RunState(
+                    run_id="run-wrong-root",
+                    mode="trees",
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(wrong_root_context.root / "backend"),
+                            pid=9999,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    metadata={**metadata, "repo_scope_id": engine.config.runtime_scope_id},
+                ),
+                emit=lambda *args, **kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+
+            def fake_result(selected_context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=selected_context.name, health="healthy"),
+                    services={
+                        f"{selected_context.name} Backend": ServiceRecord(
+                            name=f"{selected_context.name} Backend",
+                            type="backend",
+                            cwd=str(selected_context.root / "backend"),
+                            pid=1234,
+                            requested_port=selected_context.ports["backend"].requested,
+                            actual_port=selected_context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            latest = engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertNotEqual(latest.run_id, "run-wrong-root")
+
     def test_resume_rejects_state_without_resumable_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -3408,10 +4121,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            engine.env["ENVCTL_UI_SPINNER_MODE"] = "off"
 
             out = StringIO()
             with redirect_stdout(out):
-                code = engine.dispatch(parse_route(["--plan", "feature-a"], env={}))
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
 
             self.assertEqual(code, 0)
             output = out.getvalue()
@@ -3499,8 +4213,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIn("feature-a-1", plain)
             self.assertIn("Backend: http://localhost:8000 (PID: 1111)", plain)
             self.assertIn("Frontend: http://localhost:9002 (PID: 2222)", plain)
-            self.assertIn("log:\n      /tmp/backend.log", plain)
-            self.assertIn("log:\n      /tmp/frontend.log", plain)
+            self.assertIn("log: /tmp/backend.log", plain)
+            self.assertIn("log: /tmp/frontend.log", plain)
             self.assertIn("n8n: http://localhost:5678 [Healthy]", plain)
 
     def test_plan_without_selection_and_without_tty_fails_when_planning_files_exist(self) -> None:

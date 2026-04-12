@@ -79,6 +79,32 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("codex: planned", buffer.getvalue())
 
+    def test_utility_command_dispatch_routes_to_codex_tmux_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            runtime = SimpleNamespace(
+                env={},
+                config=SimpleNamespace(base_dir=repo),
+                _command_exists=lambda command: command in {"tmux", "codex"},
+                process_runner=SimpleNamespace(
+                    run_probe=lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+                        args=["tmux"],
+                        returncode=1,
+                        stdout="",
+                        stderr="",
+                    )
+                ),
+            )
+            route = SimpleNamespace(command="codex-tmux", mode="main", flags={"dry_run": True}, passthrough_args=[])
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = dispatch_command(runtime, route)
+
+        self.assertEqual(code, 0)
+        self.assertIn("session_name:", buffer.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

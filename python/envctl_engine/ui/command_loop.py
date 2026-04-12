@@ -13,6 +13,7 @@ from ..state.models import RunState
 from .color_policy import colors_enabled
 from .command_aliases import normalize_interactive_command
 from .debug_anomaly_rules import detect_input_anomalies, detect_spinner_anomaly
+from .path_links import local_paths_in_text, render_paths_in_terminal_text
 from .spinner import Spinner, spinner, spinner_enabled, use_spinner_policy
 from .spinner_service import emit_spinner_policy, resolve_spinner_policy
 from .debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
@@ -327,7 +328,9 @@ def _consume_post_dashboard_prompt(
         return
     with suppress(Exception):
         setattr(runtime, "_dashboard_return_prompt", None)
-    runtime._emit("ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="post_command_input")
+    runtime._emit(
+        "ui.spinner.disabled", component="ui.command_loop", reason="input_phase_guard", phase="post_command_input"
+    )
     runtime._emit("ui.input.read.begin", component="ui.command_loop", prompt_kind="post_command")
     try:
         if read_command_line is not None:
@@ -451,7 +454,7 @@ def _install_spinner_event_bridge(
                 tracker.started = True
             message = _spinner_message_for_event(event_name, payload)
             if message and tracker.started:
-                active_spinner.update(message)
+                active_spinner.update(_render_spinner_message(runtime=runtime, event_name=event_name, message=message))
             failure_message = _spinner_failure_message_for_event(event_name, payload)
             if failure_message and not tracker.failed:
                 tracker.failed = True
@@ -487,7 +490,7 @@ def _install_spinner_event_bridge(
             tracker.started = True
         message = _spinner_message_for_event(event_name, payload)
         if message and tracker.started:
-            active_spinner.update(message)
+            active_spinner.update(_render_spinner_message(runtime=runtime, event_name=event_name, message=message))
         failure_message = _spinner_failure_message_for_event(event_name, payload)
         if failure_message and not tracker.failed:
             tracker.failed = True
@@ -507,6 +510,18 @@ def _install_spinner_event_bridge(
             pass
 
     return restore
+
+
+def _render_spinner_message(*, runtime: object, event_name: str, message: str) -> str:
+    if event_name != "ui.status":
+        return message
+    return render_paths_in_terminal_text(
+        message,
+        paths=local_paths_in_text(message),
+        env=getattr(runtime, "env", {}),
+        stream=sys.stdout,
+        interactive_tty=True,
+    )
 
 
 def _spinner_message_for_event(event_name: str, payload: Mapping[str, object]) -> str | None:

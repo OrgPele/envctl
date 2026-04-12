@@ -158,6 +158,27 @@ class RuntimeProjectionUrlsTests(unittest.TestCase):
         self.assertEqual(projection["Tree Alpha"]["backend_status"], "starting")
         self.assertEqual(projection["Tree Alpha"]["frontend_status"], "starting")
 
+    def test_projection_hides_urls_for_running_non_listener_backend(self) -> None:
+        state = RunState(
+            run_id="run-6",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main/backend",
+                    status="running",
+                    pid=1234,
+                    listener_expected=False,
+                ),
+            },
+        )
+
+        projection = build_runtime_projection(state)
+
+        self.assertIsNone(projection["Main"]["backend_url"])
+        self.assertEqual(projection["Main"]["backend_status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

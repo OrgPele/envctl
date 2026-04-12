@@ -29,6 +29,7 @@ class ServiceRecord:
     synthetic: bool = False
     started_at: float | None = None
     listener_pids: list[int] | None = None
+    listener_expected: bool = True
 
 
 @dataclass(slots=True)

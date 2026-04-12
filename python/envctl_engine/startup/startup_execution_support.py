@@ -6,15 +6,14 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.requirements_execution import (
-    format_requirements_progress_message,
     maybe_prewarm_docker,
     requirements_failure_message,
     requirements_for_restart_context,
     requirements_timing_enabled,
-    start_requirements_for_project,
+    start_requirements_for_project as start_requirements_for_project_impl,
     startup_breakdown_enabled,
 )
-from envctl_engine.startup.service_execution import start_project_services
+from envctl_engine.startup.service_execution import start_project_services as start_project_services_impl
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult
 
@@ -57,7 +56,11 @@ def start_project_context(
     orchestrator._report_progress(
         route,
         f"Services ready for {context.name}: "
-        f"backend={context.ports['backend'].final} frontend={context.ports['frontend'].final}",
+        + " ".join(
+            f"{service_type}={_service_ready_label(project_services.get(f'{context.name} {service_type.title()}'))}"
+            for service_type in ("backend", "frontend")
+            if f"{context.name} {service_type.title()}" in project_services
+        ),
         project=context.name,
     )
     return ProjectStartupResult(
@@ -144,7 +147,23 @@ def _component_port_summary(requirements: RequirementsResult, dependency_id: str
     return None
 
 
+def _service_ready_label(service: object | None) -> str:
+    if service is None:
+        return "disabled"
+    actual_port = getattr(service, "actual_port", None)
+    if isinstance(actual_port, int) and actual_port > 0:
+        return str(actual_port)
+    requested_port = getattr(service, "requested_port", None)
+    if isinstance(requested_port, int) and requested_port > 0:
+        return str(requested_port)
+    if isinstance(getattr(service, "pid", None), int) and getattr(service, "listener_expected", True) is False:
+        return "running"
+    return str(getattr(service, "status", "unknown") or "unknown")
+
+
 _requirements_failure_message = requirements_failure_message
 _maybe_prewarm_docker = maybe_prewarm_docker
 _requirements_timing_enabled = requirements_timing_enabled
 _startup_breakdown_enabled = startup_breakdown_enabled
+start_requirements_for_project = start_requirements_for_project_impl
+start_project_services = start_project_services_impl

@@ -14,15 +14,31 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.engine_runtime_artifacts import (  # noqa: E402
+    _runtime_readiness_async_enabled,
     print_summary,
     write_artifacts,
     write_runtime_readiness_report,
 )
+from envctl_engine.runtime.engine_runtime_event_support import persist_events_snapshot  # noqa: E402
 from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult  # noqa: E402
 from envctl_engine.state.models import PortPlan, RunState  # noqa: E402
 
 
 class EngineRuntimeArtifactsTests(unittest.TestCase):
+    def test_runtime_readiness_async_requires_explicit_opt_in(self) -> None:
+        self.assertFalse(_runtime_readiness_async_enabled(SimpleNamespace(env={})))
+        self.assertFalse(_runtime_readiness_async_enabled(SimpleNamespace(env={"ENVCTL_DEBUG_UI_MODE": "off"})))
+        self.assertFalse(
+            _runtime_readiness_async_enabled(
+                SimpleNamespace(env={"ENVCTL_ASYNC_RUNTIME_READINESS_REPORT": "false", "ENVCTL_DEBUG_UI_MODE": "off"})
+            )
+        )
+        self.assertTrue(
+            _runtime_readiness_async_enabled(
+                SimpleNamespace(env={"ENVCTL_ASYNC_RUNTIME_READINESS_REPORT": "true", "ENVCTL_DEBUG_UI_MODE": "off"})
+            )
+        )
+
     def test_print_summary_includes_project_ports(self) -> None:
         context = SimpleNamespace(
             name="Main",
@@ -68,20 +84,41 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertTrue(callable(captured["runtime_map_builder"]))
         self.assertTrue(callable(captured["write_runtime_readiness_report"]))
 
-    def test_write_artifacts_writes_pending_runtime_readiness_payload_before_background_refresh(self) -> None:
+    def test_persist_events_snapshot_updates_bound_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime"
+            legacy_root = Path(tmpdir) / "legacy"
+            run_id = "run-1"
+            run_dir = runtime_root / "runs" / run_id
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            runtime = SimpleNamespace(
+                events=[{"event": "planning.agent_launch.workflow_queued", "schema_version": 2}],
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                env={"ENVCTL_DEBUG_UI_RUN_ID": run_id},
+                _run_dir_path=lambda candidate_run_id: runtime_root / "runs" / str(candidate_run_id),
+            )
+
+            persist_events_snapshot(runtime)
+
+            expected = json.dumps(runtime.events[0], sort_keys=True) + "\n"
+            self.assertEqual((runtime_root / "events.jsonl").read_text(encoding="utf-8"), expected)
+            self.assertEqual((legacy_root / "events.jsonl").read_text(encoding="utf-8"), expected)
+            self.assertEqual((run_dir / "events.jsonl").read_text(encoding="utf-8"), expected)
+
+    def test_write_artifacts_writes_runtime_readiness_report_synchronously_without_explicit_async_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_root = Path(tmpdir) / "runtime"
             legacy_root = Path(tmpdir) / "legacy"
             run_dir = runtime_root / "runs" / "run-1"
             runtime_root.mkdir(parents=True, exist_ok=True)
             run_dir.mkdir(parents=True, exist_ok=True)
-            captured: dict[str, object] = {}
 
             def save_run(**kwargs):  # noqa: ANN003
                 callback = kwargs["write_runtime_readiness_report"]
                 if callable(callback):
                     callback(run_dir)
-                captured.update(kwargs)
                 return SimpleNamespace(run_dir=run_dir)
 
             runtime = SimpleNamespace(
@@ -98,8 +135,52 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             started_threads: list[threading.Thread] = []
             original_start = threading.Thread.start
 
-            def fake_start(thread):  # noqa: ANN001
-                started_threads.append(thread)
+            def fake_start(self):  # noqa: ANN001
+                started_threads.append(self)
+
+            try:
+                threading.Thread.start = fake_start  # type: ignore[assignment]
+                write_artifacts(runtime, state, [SimpleNamespace(name="Main")], errors=[])
+            finally:
+                threading.Thread.start = original_start  # type: ignore[assignment]
+
+            payload = json.loads((runtime_root / "runtime_readiness_report.json").read_text(encoding="utf-8"))
+            self.assertIn("passed", payload)
+            self.assertNotIn("pending", payload)
+            self.assertEqual(started_threads, [])
+
+    def test_write_artifacts_writes_pending_runtime_readiness_payload_before_background_refresh_when_async_opted_in(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime"
+            legacy_root = Path(tmpdir) / "legacy"
+            run_dir = runtime_root / "runs" / "run-1"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+            def save_run(**kwargs):  # noqa: ANN003
+                callback = kwargs["write_runtime_readiness_report"]
+                if callable(callback):
+                    callback(run_dir)
+                return SimpleNamespace(run_dir=run_dir)
+
+            runtime = SimpleNamespace(
+                state_repository=SimpleNamespace(save_run=save_run),
+                events=[{"event": "x"}],
+                _emit=lambda *args, **kwargs: None,
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                config=SimpleNamespace(base_dir=Path(tmpdir)),
+                env={"HOME": tmpdir, "ENVCTL_ASYNC_RUNTIME_READINESS_REPORT": "true"},
+            )
+            state = RunState(run_id="run-1", mode="main")
+
+            started_threads: list[threading.Thread] = []
+            original_start = threading.Thread.start
+
+            def fake_start(self):  # noqa: ANN001
+                started_threads.append(self)
 
             try:
                 threading.Thread.start = fake_start  # type: ignore[assignment]
@@ -124,6 +205,9 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
                 report_path=Path(tmpdir) / "contracts/python_runtime_gap_report.json",
                 report_generated_at="2026-03-06T10:00:00Z",
                 report_sha256="gap123",
+                matrix_path=Path(tmpdir) / "contracts/runtime_feature_matrix.json",
+                matrix_generated_at="2026-03-06T10:00:00Z",
+                matrix_sha256="matrix123",
                 parity_manifest_path=Path(tmpdir) / "contracts/python_engine_parity_manifest.json",
                 parity_manifest_generated_at="2026-03-06T10:00:00Z",
                 parity_manifest_sha256="manifest123",
@@ -149,6 +233,7 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(run_report["summary"]["blocking_gap_count"], 0)
         self.assertEqual(run_report["gap_report"]["sha256"], "gap123")
+        self.assertEqual(run_report["feature_matrix"]["sha256"], "matrix123")
 
     def test_write_runtime_readiness_report_reuses_cached_payload_when_report_hash_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -157,13 +242,17 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             legacy_root = Path(tmpdir) / "legacy"
             run_dir = Path(tmpdir) / "run"
             gap_report_path = repo_root / "contracts" / "python_runtime_gap_report.json"
+            matrix_path = repo_root / "contracts" / "runtime_feature_matrix.json"
             manifest_path = repo_root / "contracts" / "python_engine_parity_manifest.json"
             gap_report_path.parent.mkdir(parents=True, exist_ok=True)
             runtime_root.mkdir()
             run_dir.mkdir()
             report_text = json.dumps({"generated_at": "now", "summary": {"total_gap_count": 0}}, sort_keys=True)
             report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
+            matrix_text = json.dumps({"generated_at": "now", "features": [], "summary": {"feature_count": 0}}, sort_keys=True)
+            matrix_hash = hashlib.sha256((json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n").encode("utf-8")).hexdigest()
             gap_report_path.write_text(report_text, encoding="utf-8")
+            matrix_path.write_text(json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n", encoding="utf-8")
             manifest_path.write_text(
                 json.dumps({"generated_at": "now", "commands": {}, "modes": {}}, sort_keys=True), encoding="utf-8"
             )
@@ -175,6 +264,11 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
                     "path": str(gap_report_path),
                     "generated_at": "now",
                     "sha256": report_hash,
+                },
+                "feature_matrix": {
+                    "path": str(matrix_path),
+                    "generated_at": "now",
+                    "sha256": matrix_hash,
                 },
                 "parity_manifest": {
                     "path": str(manifest_path),

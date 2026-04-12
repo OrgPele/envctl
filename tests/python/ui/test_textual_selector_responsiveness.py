@@ -12,6 +12,7 @@ from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_row_styles import selectable_list_row_css
 from envctl_engine.ui.textual.list_row_styles import selectable_list_default_index
 from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
+from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
 from envctl_engine.ui.textual.screens.config_wizard import CONFIG_ROW_STYLES_CSS
 from envctl_engine.ui.textual.screens.planning_selector import PLANNING_ROW_STYLES_CSS
 from envctl_engine.ui.textual.screens import selector
@@ -19,7 +20,22 @@ from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTO
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import SELECTOR_ROW_STYLES_CSS
 
 
-class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+class _TextualAppTestHelpers:
+    def _build_selector_app(self, **kwargs):  # type: ignore[no-untyped-def]
+        app = selector._run_textual_selector(**kwargs)
+        if app is None:
+            self.skipTest("textual is not installed")
+        return app
+
+    def _build_planning_app(self, **kwargs):  # type: ignore[no-untyped-def]
+        app = select_planning_counts_textual(**kwargs)
+        if app is None:
+            self.skipTest("textual is not installed")
+        return app
+
+
+class TextualSelectorResponsivenessTests(_TextualAppTestHelpers, unittest.IsolatedAsyncioTestCase):
+
     def test_shared_list_row_styles_are_reused_across_textual_lists(self) -> None:
         self.assertEqual(SELECTOR_ROW_STYLES_CSS, selectable_list_row_css("selector-row"))
         self.assertEqual(PLANNING_ROW_STYLES_CSS, selectable_list_row_css("planning-row"))
@@ -49,6 +65,26 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("border-left: wide $success;", SELECTOR_CSS)
         self.assertIn("color: $success;", SELECTOR_CSS)
 
+    def test_build_only_selector_returns_none_when_textual_is_unavailable(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+        ]
+        with patch("envctl_engine.ui.textual.screens.selector.textual_impl._textual_importable", return_value=False):
+            app = selector._run_textual_selector(
+                prompt="Restart",
+                options=options,
+                multi=True,
+                emit=None,
+                build_only=True,
+            )
+        self.assertIsNone(app)
+
     async def test_arrow_navigation_moves_single_row_per_keypress(self) -> None:
         options = [
             SelectorItem(
@@ -73,7 +109,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:gamma",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Restart",
             options=options,
             multi=True,
@@ -119,7 +155,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:gamma",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Restart",
             options=options,
             multi=True,
@@ -162,7 +198,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:gamma",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Restart",
             options=options,
             multi=True,
@@ -198,7 +234,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,
@@ -229,7 +265,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Restart",
             options=options,
             multi=True,
@@ -243,6 +279,84 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("space")
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["beta"])
+
+    async def test_filter_accepts_focus_when_clicked(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = self._build_selector_app(
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#selector-filter")
+            self.assertFalse(filter_input.has_focus)
+            await pilot.click("#selector-filter")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            app.exit(None)
+
+    async def test_tab_cycles_focus_between_list_filter_and_buttons(self) -> None:
+        options = [
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha Backend",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+            SelectorItem(
+                id="service:beta",
+                label="Beta Frontend",
+                kind="service",
+                token="beta",
+                scope_signature=("service:beta",),
+            ),
+        ]
+        app = self._build_selector_app(
+            prompt="Run tests for",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#selector-filter")
+            list_view = app.query_one("#selector-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(run_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            app.exit(None)
 
     async def test_mouse_click_selects_single_mode_without_enter(self) -> None:
         options = [
@@ -261,7 +375,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Analyze",
             options=options,
             multi=False,
@@ -290,7 +404,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Analyze",
             options=options,
             multi=False,
@@ -321,7 +435,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,
@@ -353,7 +467,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,
@@ -389,7 +503,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,
@@ -434,7 +548,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,
@@ -472,7 +586,7 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 scope_signature=("scope:failed",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Choose test scope",
             options=options,
             multi=True,
@@ -500,6 +614,82 @@ class TextualSelectorResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app._rows[2].selected)  # type: ignore[attr-defined]
             await pilot.press("enter")
         self.assertEqual(app.return_value, ["__PROJECT__:Frontend"])
+
+
+class PlanningSelectorResponsivenessTests(_TextualAppTestHelpers, unittest.IsolatedAsyncioTestCase):
+    async def test_planning_filter_accepts_focus_when_clicked(self) -> None:
+        app = self._build_planning_app(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 1, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            self.assertFalse(filter_input.has_focus)
+            await pilot.click("#planning-filter")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            app.exit(None)
+
+    async def test_planning_tab_cycles_focus_between_list_filter_and_buttons(self) -> None:
+        app = self._build_planning_app(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 1, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            list_view = app.query_one("#planning-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(run_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            app.exit(None)
+
+    async def test_planning_tab_skips_disabled_run_button(self) -> None:
+        app = self._build_planning_app(
+            planning_files=["backend/task-a.md", "frontend/task-b.md"],
+            selected_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            existing_counts={"backend/task-a.md": 0, "frontend/task-b.md": 0},
+            emit=None,
+            build_only=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            filter_input = app.query_one("#planning-filter")
+            list_view = app.query_one("#planning-list")
+            cancel_button = app.query_one("#btn-cancel")
+            run_button = app.query_one("#btn-run")
+            self.assertTrue(run_button.disabled)
+            self.assertTrue(list_view.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(cancel_button.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(filter_input.has_focus)
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertTrue(list_view.has_focus)
+            self.assertFalse(run_button.has_focus)
+            app.exit(None)
 
 
 class SelectorDriverTracePolicyTests(unittest.TestCase):
@@ -550,7 +740,7 @@ class SelectorDriverTracePolicyTests(unittest.TestCase):
             self.assertEqual(probe_tuple[0](), {})
 
 
-class TextualSelectorFallbackRecoveryTests(unittest.TestCase):
+class TextualSelectorFallbackRecoveryTests(_TextualAppTestHelpers, unittest.TestCase):
     def test_fallback_values_prefers_selected_then_focused_then_first_visible(self) -> None:
         options = [
             SelectorItem(
@@ -568,7 +758,7 @@ class TextualSelectorFallbackRecoveryTests(unittest.TestCase):
                 scope_signature=("service:beta",),
             ),
         ]
-        app = selector._run_textual_selector(  # type: ignore[assignment]
+        app = self._build_selector_app(
             prompt="Run tests for",
             options=options,
             multi=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportUnusedFunction=false
 
 import json
+import os
 import re
 import sys
 from collections.abc import Mapping
@@ -11,6 +12,11 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    PlanSelectionResult,
+    PlanWorktreeSyncResult,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
@@ -22,6 +28,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
+from envctl_engine.ui.path_links import render_path_fragment_for_terminal
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
@@ -31,6 +38,10 @@ from envctl_engine.ui.textual.screens.planning_selector import select_planning_c
 class ProjectContextLike(Protocol):
     name: str
     root: Path
+
+
+WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
+WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
@@ -50,9 +61,10 @@ def _worktree_spinner_update(
     active_spinner: Any,
     op_id: str,
     message: str,
+    terminal_message: str | None = None,
 ) -> None:
     if enabled:
-        active_spinner.update(message)
+        active_spinner.update(terminal_message or message)
         self._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
             component="worktree_planning",
@@ -61,7 +73,23 @@ def _worktree_spinner_update(
             message=message,
         )
         return
-    print(message)
+    print(terminal_message or message)
+
+
+def _render_planning_path(
+    self: Any,
+    *,
+    absolute_path: Path,
+    display_text: str,
+    interactive_tty: bool | None = None,
+) -> str:
+    return render_path_fragment_for_terminal(
+        absolute_path,
+        display_text=display_text,
+        env=getattr(self, "env", {}),
+        stream=sys.stdout,
+        interactive_tty=interactive_tty,
+    )
 
 
 def _worktree_spinner_start(
@@ -167,12 +195,7 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
     target = feature_root / iteration
-    result = self.process_runner.run(
-        ["git", "-C", str(self.config.base_dir), "worktree", "add", "--detach", str(target)],
-        cwd=self.config.base_dir,
-        env=self._command_env(port=0),
-        timeout=120.0,
-    )
+    result = _run_worktree_add(self, feature=feature, iteration=iteration, target=target, env=self._command_env(port=0))
     if getattr(result, "returncode", 1) != 0:
         error = self._worktree_add_failure(
             feature=feature,
@@ -182,6 +205,9 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
         )
         if error:
             return error
+    else:
+        _link_repo_local_shared_artifacts(self, target=target)
+        _write_worktree_provenance(self, target=target)
     return None
 
 
@@ -422,15 +448,16 @@ def _preferred_tree_root_for_feature(self, feature: str) -> Path:
 def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
     normalized = str(self.config.trees_dir_name).strip().rstrip("/")
     nested_root = self.config.base_dir / (normalized or "trees")
+    flat_parent = nested_root.parent
+    flat_prefix = f"{Path(normalized).name}-" if normalized else "trees-"
     resolved_target = worktree_root.resolve()
     resolved_nested = nested_root.resolve()
     if resolved_nested == resolved_target or resolved_nested in resolved_target.parents:
         return nested_root
 
-    flat_prefix = f"{normalized}-" if normalized else "trees-"
     current = resolved_target
-    while current != self.config.base_dir and self.config.base_dir in current.parents:
-        if current.parent == self.config.base_dir and current.name.startswith(flat_prefix):
+    while current != flat_parent and flat_parent in current.parents:
+        if current.parent == flat_parent and current.name.startswith(flat_prefix):
             return current
         current = current.parent
     return nested_root
@@ -439,6 +466,7 @@ def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
 def _select_plan_projects(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
+    setattr(self, "_last_plan_selection_result", PlanSelectionResult(raw_projects=[], selected_contexts=[]))
     raw_projects = [(ctx.name, ctx.root) for ctx in project_contexts]
     planning_files = list_planning_files(self.config.planning_dir)
     selection_raw = ",".join(route.passthrough_args).strip()
@@ -456,19 +484,45 @@ def _select_plan_projects(
             except ValueError as exc:
                 self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
                 print(str(exc))
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error=str(exc)),
+                )
                 return []
-            raw_projects, sync_error = self._sync_plan_worktrees_from_plan_counts(
+            sync_result = self._sync_plan_worktrees_from_plan_counts(
                 plan_counts=plan_counts,
                 raw_projects=raw_projects,
                 keep_plan=keep_plan,
             )
-            if sync_error:
-                print(sync_error)
+            raw_projects = list(sync_result.raw_projects)
+            if sync_result.error:
+                print(sync_result.error)
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=[],
+                        created_worktrees=sync_result.created_worktrees,
+                        error=sync_result.error,
+                    ),
+                )
                 return []
             refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
             duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
             if duplicate_error:
                 print(duplicate_error)
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=[],
+                        created_worktrees=sync_result.created_worktrees,
+                        error=duplicate_error,
+                    ),
+                )
                 return []
             filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
             if filtered:
@@ -479,8 +533,28 @@ def _select_plan_projects(
                     plans=list(plan_counts.keys()),
                 )
                 selected_names = {name for name, _ in filtered}
-                return [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+                selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+                setattr(
+                    self,
+                    "_last_plan_selection_result",
+                    PlanSelectionResult(
+                        raw_projects=raw_projects,
+                        selected_contexts=selected_contexts,
+                        created_worktrees=sync_result.created_worktrees,
+                    ),
+                )
+                return selected_contexts
             print("No tree paths found for selected planning file(s).")
+            setattr(
+                self,
+                "_last_plan_selection_result",
+                PlanSelectionResult(
+                    raw_projects=raw_projects,
+                    selected_contexts=[],
+                    created_worktrees=sync_result.created_worktrees,
+                    error="No tree paths found for selected planning file(s).",
+                ),
+            )
             return []
 
         filtered = filter_projects_for_plan(
@@ -490,14 +564,34 @@ def _select_plan_projects(
         )
         if not filtered:
             print("No tree paths found for requested project filter(s): " + ", ".join(route.passthrough_args) + ".")
+            setattr(
+                self,
+                "_last_plan_selection_result",
+                PlanSelectionResult(
+                    raw_projects=raw_projects,
+                    selected_contexts=[],
+                    error="No tree paths found for requested project filter(s).",
+                ),
+            )
             return []
         selected_names = {name for name, _ in filtered}
-        return [ctx for ctx in project_contexts if ctx.name in selected_names]
+        selected_contexts = [ctx for ctx in project_contexts if ctx.name in selected_names]
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=selected_contexts),
+        )
+        return selected_contexts
 
     if not planning_files:
         print(
             f"No planning files found in {self.config.planning_dir}. "
             "Pass explicit selectors (for example: envctl --plan feature-a) or use --trees."
+        )
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files found."),
         )
         return []
 
@@ -506,38 +600,94 @@ def _select_plan_projects(
             "No TTY available for planning selection. "
             "Run 'envctl --list-trees --json' and retry with '--headless --plan <selector>'."
         )
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No TTY available."),
+        )
         return []
 
     plan_counts = self._prompt_planning_selection(planning_files, raw_projects)
     if plan_counts is None:
         print("Planning selection cancelled.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="Planning selection cancelled."),
+        )
         return []
     if not plan_counts:
         print("No planning files selected.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files selected."),
+        )
         return []
 
-    raw_projects, sync_error = self._sync_plan_worktrees_from_plan_counts(
+    sync_result = self._sync_plan_worktrees_from_plan_counts(
         plan_counts=plan_counts,
         raw_projects=raw_projects,
         keep_plan=keep_plan,
     )
-    if sync_error:
-        print(sync_error)
+    raw_projects = list(sync_result.raw_projects)
+    if sync_result.error:
+        print(sync_result.error)
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error=sync_result.error,
+            ),
+        )
         return []
     refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
     duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
     if duplicate_error:
         print(duplicate_error)
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error=duplicate_error,
+            ),
+        )
         return []
 
     positive_plan_counts = {plan_file: count for plan_file, count in plan_counts.items() if int(count) > 0}
     if not positive_plan_counts:
         print("Planning counts scaled to zero; no worktrees remain.")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error="Planning counts scaled to zero; no worktrees remain.",
+            ),
+        )
         return []
 
     filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=positive_plan_counts)
     if not filtered:
         print("No tree paths found for selected planning file(s).")
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=raw_projects,
+                selected_contexts=[],
+                created_worktrees=sync_result.created_worktrees,
+                error="No tree paths found for selected planning file(s).",
+            ),
+        )
         return []
 
     self._emit(
@@ -547,7 +697,17 @@ def _select_plan_projects(
         plans=list(positive_plan_counts.keys()),
     )
     selected_names = {name for name, _ in filtered}
-    return [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+    selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
+    setattr(
+        self,
+        "_last_plan_selection_result",
+        PlanSelectionResult(
+            raw_projects=raw_projects,
+            selected_contexts=selected_contexts,
+            created_worktrees=sync_result.created_worktrees,
+        ),
+    )
+    return selected_contexts
 
 
 def _prompt_planning_selection(
@@ -795,8 +955,11 @@ def _sync_plan_worktrees_from_plan_counts(
     plan_counts: Mapping[str, int],
     raw_projects: list[tuple[str, Path]],
     keep_plan: bool,
-) -> tuple[list[tuple[str, Path]], str | None]:
+) -> PlanWorktreeSyncResult:
     projects = list(raw_projects)
+    created_worktrees: list[CreatedPlanWorktree] = []
+    removed_worktrees: list[str] = []
+    archived_plan_files: list[str] = []
     trees_root = self.config.base_dir / self.config.trees_dir_name
     trees_root.mkdir(parents=True, exist_ok=True)
     policy = _worktree_spinner_policy(self, op_id="worktree.sync")
@@ -819,7 +982,7 @@ def _sync_plan_worktrees_from_plan_counts(
         )
         try:
             for plan_file, desired_raw in plan_counts.items():
-                projects, sync_error = _sync_single_plan_worktree_target(
+                target_result = _sync_single_plan_worktree_target(
                     self,
                     plan_file=plan_file,
                     desired_raw=desired_raw,
@@ -829,8 +992,18 @@ def _sync_plan_worktrees_from_plan_counts(
                     active_spinner=active_spinner,
                     op_id="worktree.sync",
                 )
-                if sync_error is not None:
-                    return projects, sync_error
+                projects = list(target_result.raw_projects)
+                created_worktrees.extend(target_result.created_worktrees)
+                removed_worktrees.extend(target_result.removed_worktrees)
+                archived_plan_files.extend(target_result.archived_plan_files)
+                if target_result.error is not None:
+                    return PlanWorktreeSyncResult(
+                        raw_projects=projects,
+                        created_worktrees=tuple(created_worktrees),
+                        removed_worktrees=tuple(removed_worktrees),
+                        archived_plan_files=tuple(archived_plan_files),
+                        error=target_result.error,
+                    )
             _worktree_spinner_finish(
                 self,
                 enabled=enabled,
@@ -838,7 +1011,12 @@ def _sync_plan_worktrees_from_plan_counts(
                 op_id="worktree.sync",
                 message="Planning worktree sync completed",
             )
-            return projects, None
+            return PlanWorktreeSyncResult(
+                raw_projects=projects,
+                created_worktrees=tuple(created_worktrees),
+                removed_worktrees=tuple(removed_worktrees),
+                archived_plan_files=tuple(archived_plan_files),
+            )
         except Exception:
             _worktree_spinner_fail(
                 self,
@@ -862,11 +1040,14 @@ def _sync_single_plan_worktree_target(
     enabled: bool,
     active_spinner: Any,
     op_id: str,
-) -> tuple[list[tuple[str, Path]], str | None]:
+) -> PlanWorktreeSyncResult:
     desired = max(0, int(desired_raw))
     feature = planning_feature_name(plan_file)
     candidates = self._feature_project_candidates(projects=projects, feature=feature)
     existing = len(candidates)
+    created_worktrees: tuple[CreatedPlanWorktree, ...] = ()
+    removed_worktrees: tuple[str, ...] = ()
+    archived_plan_files: tuple[str, ...] = ()
 
     if desired > existing:
         create_count = desired - existing
@@ -876,14 +1057,21 @@ def _sync_single_plan_worktree_target(
             active_spinner=active_spinner,
             op_id=op_id,
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
+            terminal_message=(
+                f"Setting up {create_count} worktree(s) for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}"
+                f" -> {feature}..."
+            ),
         )
-        create_error = self._create_feature_worktrees(
+        create_result = _create_feature_worktrees_result(
+            self,
             feature=feature,
             count=create_count,
             plan_file=plan_file,
         )
-        if create_error:
-            return projects, create_error
+        if create_result.error:
+            return PlanWorktreeSyncResult(raw_projects=projects, error=create_result.error)
+        created_worktrees = create_result.created_worktrees
         projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
         candidates = self._feature_project_candidates(projects=projects, feature=feature)
         existing = len(candidates)
@@ -899,6 +1087,11 @@ def _sync_single_plan_worktree_target(
                 f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
                 f"removing {remove_count} worktree(s)."
             ),
+            terminal_message=(
+                f"Selected count for "
+                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))} "
+                f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
+            ),
         )
         remove_error = self._delete_feature_worktrees(
             feature=feature,
@@ -906,8 +1099,16 @@ def _sync_single_plan_worktree_target(
             remove_count=remove_count,
         )
         if remove_error:
-            return projects, remove_error
-        print(f"Blasted and deleted {remove_count} worktree(s) for {plan_file}.")
+            return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
+        print(
+            f"Blasted and deleted {remove_count} worktree(s) for "
+            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}."
+        )
+        removed_worktrees = tuple(name for name, _root in sorted(
+            candidates,
+            key=lambda item: self._project_sort_key_for_feature(item[0], feature),
+            reverse=True,
+        )[:remove_count])
         projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
         if desired == 0:
             self._cleanup_empty_feature_root(feature=feature)
@@ -915,26 +1116,39 @@ def _sync_single_plan_worktree_target(
 
     if desired == 0 and existing > 0 and not keep_plan:
         self._move_plan_to_done(plan_file)
-    return projects, None
+        archived_plan_files = (plan_file,)
+    return PlanWorktreeSyncResult(
+        raw_projects=projects,
+        created_worktrees=created_worktrees,
+        removed_worktrees=removed_worktrees,
+        archived_plan_files=archived_plan_files,
+    )
 
 
 def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file: str) -> str | None:
+    return _create_feature_worktrees_result(self, feature=feature, count=count, plan_file=plan_file).error
+
+
+def _create_feature_worktrees_result(
+    self: Any,
+    *,
+    feature: str,
+    count: int,
+    plan_file: str,
+) -> PlanWorktreeSyncResult:
     if count <= 0:
-        return None
+        return PlanWorktreeSyncResult(raw_projects=[])
     feature_root = self._preferred_tree_root_for_feature(feature)
     feature_root.mkdir(parents=True, exist_ok=True)
     existing_iters = {int(path.name) for path in feature_root.iterdir() if path.is_dir() and path.name.isdigit()}
-    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(self._planning_root() / plan_file)})
+    plan_path = self._planning_root() / plan_file
+    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
+    created_worktrees: list[CreatedPlanWorktree] = []
 
     for _ in range(count):
         iteration = self._next_available_iteration(existing_iters)
         target = feature_root / str(iteration)
-        result = self.process_runner.run(
-            ["git", "-C", str(self.config.base_dir), "worktree", "add", "--detach", str(target)],
-            cwd=self.config.base_dir,
-            env=setup_env,
-            timeout=120.0,
-        )
+        result = _run_worktree_add(self, feature=feature, iteration=str(iteration), target=target, env=setup_env)
         if getattr(result, "returncode", 1) != 0:
             error = self._worktree_add_failure(
                 feature=feature,
@@ -943,9 +1157,15 @@ def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file:
                 result=result,
             )
             if error:
-                return error
+                return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
+        else:
+            _write_worktree_provenance(self, target=target, plan_file=plan_file)
+        _seed_main_task_from_plan(target=target, plan_path=plan_path)
+        created_worktrees.append(
+            CreatedPlanWorktree(name=f"{feature}-{iteration}", root=target.resolve(), plan_file=plan_file)
+        )
         existing_iters.add(iteration)
-    return None
+    return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees))
 
 
 def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Path, result: object) -> str | None:
@@ -962,6 +1182,7 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
             ),
             encoding="utf-8",
         )
+        _link_repo_local_shared_artifacts(self, target=target)
         self._emit(
             "setup.worktree.placeholder_fallback",
             feature=feature,
@@ -973,11 +1194,192 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
     return f"failed creating worktree {feature}/{iteration}: {reason}"
 
 
+def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
+    branch_name = _worktree_branch_name(feature=feature, iteration=iteration)
+    start_point = _worktree_start_point(self)
+    branch_flag = "-B" if _worktree_branch_exists(self, branch_name=branch_name) else "-b"
+    command = [
+        "git",
+        "-C",
+        str(self.config.base_dir),
+        "worktree",
+        "add",
+        branch_flag,
+        branch_name,
+        str(target),
+    ]
+    if start_point:
+        command.append(start_point)
+    return self.process_runner.run(
+        command,
+        cwd=self.config.base_dir,
+        env=env,
+        timeout=120.0,
+    )
+
+
+def _worktree_branch_name(*, feature: str, iteration: str) -> str:
+    return f"{feature}-{iteration}"
+
+
+def _worktree_branch_exists(self: Any, *, branch_name: str) -> bool:
+    normalized = branch_name.strip()
+    if not normalized:
+        return False
+    return bool(_git_command_output(self, ["rev-parse", "--verify", f"refs/heads/{normalized}"]).strip())
+
+
+def _worktree_start_point(self: Any) -> str | None:
+    provenance = _build_worktree_provenance(self) or {}
+    for key in ("source_ref", "source_branch"):
+        candidate = str(provenance.get(key, "")).strip()
+        if candidate and _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    head_commit = _git_command_output(self, ["rev-parse", "HEAD"]).strip()
+    return head_commit or None
+
+
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
     raw = self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK") or self.config.raw.get(
         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
     )
     return parse_bool(raw, False)
+
+
+def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None = None) -> None:
+    provenance = _build_worktree_provenance(self, plan_file=plan_file)
+    if provenance is None or not target.is_dir():
+        return
+    path = target / WORKTREE_PROVENANCE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
+    if not target.is_dir():
+        return
+    repo_root = self.config.base_dir
+    link_specs = (
+        ("backend/venv", repo_root / "backend" / "venv"),
+        ("backend/.env", repo_root / "backend" / ".env"),
+        ("frontend/node_modules", repo_root / "frontend" / "node_modules"),
+    )
+    for relative_target, source_path in link_specs:
+        if not source_path.exists():
+            continue
+        worktree_path = target / relative_target
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(worktree_path):
+            try:
+                if worktree_path.is_symlink() and worktree_path.resolve() == source_path.resolve():
+                    continue
+            except OSError:
+                pass
+            if worktree_path.is_symlink():
+                try:
+                    worktree_path.unlink()
+                except OSError:
+                    continue
+            else:
+                continue
+        try:
+            worktree_path.symlink_to(source_path)
+        except OSError:
+            continue
+
+
+def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> dict[str, object] | None:
+    source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if source_branch and source_branch != "HEAD":
+        return _worktree_provenance_payload(
+            self,
+            source_branch=source_branch,
+            resolution_reason="attached_branch",
+            plan_file=plan_file,
+        )
+
+    default_branch = _detect_default_branch(self)
+    if not default_branch:
+        return None
+    return _worktree_provenance_payload(
+        self,
+        source_branch=default_branch,
+        resolution_reason="default_branch_detached_head",
+        plan_file=plan_file,
+    )
+
+
+def _worktree_provenance_payload(
+    self: Any,
+    *,
+    source_branch: str,
+    resolution_reason: str,
+    plan_file: str | None = None,
+) -> dict[str, object]:
+    source_ref = _resolve_branch_ref(self, source_branch=source_branch)
+    payload: dict[str, object] = {
+        "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
+        "source_branch": source_branch,
+        "source_ref": source_ref or source_branch,
+        "resolution_reason": resolution_reason,
+        "created_from_repo": str(self.config.base_dir.resolve()),
+        "recorded_at": datetime.now(tz=UTC).isoformat(),
+    }
+    normalized_plan_file = str(plan_file or "").strip()
+    if normalized_plan_file:
+        payload["plan_file"] = normalized_plan_file
+    return payload
+
+
+def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:
+    normalized = source_branch.strip()
+    if not normalized:
+        return ""
+    for candidate in (f"origin/{normalized}", normalized):
+        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return normalized
+
+
+def _detect_default_branch(self: Any) -> str:
+    ref = _git_command_output(self, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+    if ref.startswith("origin/"):
+        return ref.split("origin/", 1)[1]
+    for candidate in ("main", "master"):
+        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return "main"
+
+
+def _git_command_output(self: Any, args: list[str]) -> str:
+    result = self.process_runner.run(
+        ["git", "-C", str(self.config.base_dir), *args],
+        cwd=self.config.base_dir,
+        env=self._command_env(port=0),
+        timeout=30.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return ""
+    return str(getattr(result, "stdout", ""))
+
+
+def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:
+    if not plan_path.is_file() or not target.is_dir():
+        return
+    try:
+        plan_text = plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not plan_text.strip():
+        return
+    main_task_path = target / "MAIN_TASK.md"
+    try:
+        main_task_path.write_text(plan_text if plan_text.endswith("\n") else f"{plan_text}\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def _delete_feature_worktrees(
@@ -1048,7 +1450,12 @@ def _move_plan_to_done(self: Any, plan_file: str) -> None:
         dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
     src.replace(dest)
     relative_done = dest.relative_to(self._planning_done_root())
-    print(f"Moved {plan_file} to done/{relative_done}.")
+    print(
+        "Moved "
+        f"{_render_planning_path(self, absolute_path=src, display_text=plan_file)} "
+        "to "
+        f"{_render_planning_path(self, absolute_path=dest, display_text=f'done/{relative_done}') }."
+    )
 
 
 def _feature_project_candidates(

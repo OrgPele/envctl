@@ -49,7 +49,7 @@ def discover_tree_projects(base_dir: Path, trees_dir_name: str) -> list[tuple[st
     projects: list[tuple[str, Path]] = []
     seen: set[str] = set()
     normalized = trees_dir_name.strip().rstrip("/")
-    flat_prefix = f"{normalized}-"
+    flat_prefix = f"{Path(normalized).name}-" if normalized else "trees-"
 
     for tree_root in tree_roots:
         root_name = tree_root.name

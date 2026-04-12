@@ -2,7 +2,7 @@ You are implementing real code, end-to-end.
 Authoritative source of truth: `MAIN_TASK.md`.
 First, read `MAIN_TASK.md`, then read all relevant code, tests, and call paths before changing anything.
 Ask questions only if a blocking ambiguity remains after deep code and test review; otherwise resolve everything yourself according to repo evidence and best practices.
-Final output must include: what changed, files changed, tests run, and any material assumptions or residual risks.
+Final output must include: what changed, files changed, tests run, commit status, and any material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
@@ -19,7 +19,8 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Before any implementation work, run `git add .` to stage the current baseline.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- After changes, append (not overwrite) a detailed summary to docs/changelog/{tree_name}_changelog.md (tree_name from worktree like trees/<feature>/<iter> => <feature>-<iter>, else main). Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- When the implementation is complete and the relevant tests are green, commit the work. Prefer `envctl commit --headless --main` first so the repo-standard commit flow is used without blocking on interactive prompts and targets the main commit path; if `envctl commit --headless --main` does not work, fall back to the git CLI and still produce the commit.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected implementation.
@@ -81,8 +82,9 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 1. Brief summary of what you changed.
 2. List of files modified/added.
 3. How to run the relevant tests (exact commands).
-4. Any notable edge cases covered.
-5. Risk register (only if needed): trade-offs or missing tests.
+4. Commit status.
+5. Any notable edge cases covered.
+6. Risk register (only if needed): trade-offs or missing tests.
 
 ## Self-check (before responding)
 - Requirements in the authoritative spec file are fully implemented.

@@ -16,8 +16,16 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.command_router import list_supported_commands
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+import envctl_engine.runtime.engine_runtime as engine_runtime_module
+import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class EngineRuntimeCommandParityTests(unittest.TestCase):
@@ -84,6 +92,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("synthetic_state_detected:", output)
         self.assertIn("runtime_readiness_status:", output)
         self.assertIn("runtime_gap_report_path:", output)
+        self.assertIn("runtime_feature_matrix_path:", output)
         self.assertIn("runtime_gap_blocking_count:", output)
         events_path = runtime.runtime_root / "events.jsonl"
         self.assertTrue(events_path.is_file())
@@ -95,6 +104,38 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             if line.strip()
         }
         self.assertIn("cutover.gate.evaluate", event_names)
+
+    def test_show_config_show_state_and_doctor_hyperlink_path_fields_when_enabled(self) -> None:
+        runtime = self._runtime()
+        runtime.env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+        state = RunState(run_id="run-1", mode="main")
+        runtime.state_repository.save_resume_state(
+            state=state,
+            emit=runtime._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
+        )
+
+        show_config_out = _TtyStringIO()
+        with redirect_stdout(show_config_out):
+            show_config_code = runtime.dispatch(parse_route(["show-config"], env={}))
+        self.assertEqual(show_config_code, 0)
+        self.assertIn("\x1b]8;;file://", show_config_out.getvalue())
+        self.assertIn("config_file:", strip_ansi(show_config_out.getvalue()))
+
+        show_state_out = _TtyStringIO()
+        with redirect_stdout(show_state_out):
+            show_state_code = runtime.dispatch(parse_route(["show-state"], env={}))
+        self.assertEqual(show_state_code, 0)
+        self.assertIn("\x1b]8;;file://", show_state_out.getvalue())
+        self.assertIn("run_state_path:", strip_ansi(show_state_out.getvalue()))
+
+        doctor_out = _TtyStringIO()
+        with redirect_stdout(doctor_out):
+            doctor_code = runtime.dispatch(parse_route(["--doctor"], env={}))
+        self.assertEqual(doctor_code, 0)
+        self.assertIn("\x1b]8;;file://", doctor_out.getvalue())
+        self.assertIn("runtime_gap_report_path:", strip_ansi(doctor_out.getvalue()))
+        self.assertIn("runtime_feature_matrix_path:", strip_ansi(doctor_out.getvalue()))
 
     def test_doctor_supports_json_output(self) -> None:
         runtime = self._runtime()
@@ -783,19 +824,22 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "migrate",
             "migrate-hooks",
             "install-prompts",
+            "codex-tmux",
             "list-commands",
             "list-targets",
             "list-trees",
             "show-config",
             "show-state",
             "explain-startup",
+            "ensure-worktree",
+            "preflight",
             "help",
             "debug-pack",
             "debug-report",
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 33, "Should have exactly 33 commands")
+        self.assertEqual(len(lines), 36, "Should have exactly 36 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -807,8 +851,10 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "dashboard",
                 "config",
                 "doctor",
+                "ensure-worktree",
                 "migrate-hooks",
                 "install-prompts",
+                "codex-tmux",
                 "debug-pack",
                 "debug-report",
                 "debug-last",
@@ -819,6 +865,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "show-config",
                 "show-state",
                 "explain-startup",
+                "preflight",
                 "test",
                 "pr",
                 "commit",
@@ -985,6 +1032,51 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
 
+    def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent"]["codex_cycles"], 2)
+
+    def test_show_config_json_reports_cycles_alias(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "CYCLES": "3",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent"]["codex_cycles"], 3)
+
     def test_runtime_uses_legacy_spacing_strategy_when_requested(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1061,6 +1153,34 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertTrue(payload["headless"])
         self.assertEqual(payload["selection"]["reason"], "headless_tree_start_requires_explicit_selection")
 
+    def test_preflight_json_wraps_startup_explanation_in_versioned_contract(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "MAIN_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["preflight", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["contract_version"], "envctl.preflight.v1")
+        self.assertEqual(payload["surface"], "preflight")
+        self.assertEqual(payload["mode"], "main")
+        self.assertEqual(payload["command"], "start")
+        self.assertFalse(payload["startup_enabled"])
+        self.assertIn("startup", payload)
+        self.assertEqual(payload["startup"]["reason"], "config_startup_disabled")
+
     def test_explain_startup_json_reports_disabled_startup(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1085,6 +1205,246 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "config_startup_disabled")
         self.assertEqual(payload["dependencies"], [])
         self.assertEqual(payload["services"], {"backend": False, "frontend": False})
+
+    def test_explain_startup_json_reports_dashboard_reuse_decision_for_disabled_startup(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        runtime_root = Path(tmpdir.name) / "runtime"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime_root),
+                "MAIN_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+        context = runtime._discover_projects(mode="main")[0]
+        metadata = startup_support.build_startup_identity_metadata(
+            runtime,
+            runtime_mode="main",
+            project_contexts=[context],
+        )
+        runtime.state_repository.save_resume_state(
+            state=RunState(
+                run_id="run-dashboard",
+                mode="main",
+                services={},
+                requirements={},
+                metadata={
+                    **metadata,
+                    "dashboard_runs_disabled": True,
+                    "repo_scope_id": config.runtime_scope_id,
+                },
+            ),
+            emit=lambda *args, **kwargs: None,
+            runtime_map_builder=lambda _state: {},
+        )
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["mode"], "main")
+        self.assertEqual(payload["run_reuse"]["decision_kind"], "resume_dashboard_exact")
+        self.assertEqual(payload["run_reuse"]["reason"], "exact_match")
+        self.assertEqual(payload["run_reuse"]["run_id"], "run-dashboard")
+
+    def test_explain_startup_json_preserves_plan_selection_semantics(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_DEFAULT_MODE": "trees",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["command"], "plan")
+        self.assertEqual(payload["selection"]["reason"], "no_planning_files")
+        self.assertEqual(payload["selection"]["selected_projects"], [])
+
+    def test_explain_startup_json_reports_plan_agent_launch_state(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 1)
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_codex_cycle_workflow_state(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertIsNone(payload["plan_agent_launch"]["workflow_warning"])
+
+    def test_explain_startup_json_reports_cycles_alias_workflow_state(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "CYCLES": "3",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 3)
+        self.assertIsNone(payload["plan_agent_launch"]["workflow_warning"])
+
+    def test_explain_startup_json_keeps_opencode_on_single_prompt_when_cycles_are_set(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["cli"], "opencode")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+
+    def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], "workspace:9")
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], "workspace:9")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_cmux_alias_enablement(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "CMUX": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+        self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -105,6 +106,62 @@ class _RunStreamingWithStdinRunner:
         )
 
 
+class _RunStreamingProcessStartedRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        process_started_callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cwd, env, timeout, callback, show_spinner, echo_output, stdin
+        self.calls.append(
+            {
+                "cmd": tuple(str(part) for part in cmd),
+                "process_started_callback": process_started_callback,
+            }
+        )
+        if callable(process_started_callback):
+            process_started_callback(2468)
+        return subprocess.CompletedProcess(
+            args=list(cmd),
+            returncode=0,
+            stdout="1 passed in 0.01s\n",
+            stderr="",
+        )
+
+
+class _RunOnlyProcessStartedRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run(self, cmd, *, cwd=None, env=None, timeout=None, stdin=None, process_started_callback=None):  # noqa: ANN001
+        _ = cwd, env, timeout, stdin
+        self.calls.append(
+            {
+                "cmd": tuple(str(part) for part in cmd),
+                "process_started_callback": process_started_callback,
+            }
+        )
+        if callable(process_started_callback):
+            process_started_callback(1357)
+        return subprocess.CompletedProcess(
+            args=list(cmd),
+            returncode=0,
+            stdout="1 passed in 0.01s\n",
+            stderr="",
+        )
+
+
 class _RunStreamingVitestRunner:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -189,6 +246,8 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             self.assertEqual(runner.last_result.passed, 3)
 
     def test_run_tests_reports_live_pytest_progress_with_real_subprocess(self) -> None:
+        if importlib.util.find_spec("pytest") is None:
+            self.skipTest("pytest is not installed in this interpreter")
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
             tests_dir = project_root / "tests"
@@ -211,7 +270,7 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             progress_updates: list[tuple[int, int]] = []
 
             completed = runner.run_tests(
-                [str(REPO_ROOT / ".venv" / "bin" / "python"), "-m", "pytest", "tests"],
+                [sys.executable, "-m", "pytest", "tests"],
                 cwd=project_root,
                 progress_callback=lambda current, total: progress_updates.append((current, total)),
             )
@@ -260,6 +319,92 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
         self.assertIn(
             ("python", "-m", "pytest", "-p", "envctl_engine.test_output.pytest_progress_plugin"),
             runtime.process_runner.calls,
+        )
+
+    def test_run_tests_forwards_process_started_callback_to_run_streaming(self) -> None:
+        process_runner = _RunStreamingProcessStartedRunner()
+        runtime = _RuntimeStreamingStub(process_runner)
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+        started_pids: list[int] = []
+
+        completed = runner.run_tests(
+            ["python", "-m", "pytest"],
+            process_started_callback=lambda pid: started_pids.append(pid),
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(started_pids, [2468])
+        self.assertTrue(callable(process_runner.calls[0]["process_started_callback"]))
+
+    def test_run_tests_forwards_process_started_callback_to_run_fallback(self) -> None:
+        process_runner = _RunOnlyProcessStartedRunner()
+        runtime = _RuntimeStreamingStub(process_runner)
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+        started_pids: list[int] = []
+
+        completed = runner.run_tests(
+            ["python", "-m", "pytest"],
+            process_started_callback=lambda pid: started_pids.append(pid),
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(started_pids, [1357])
+        self.assertTrue(callable(process_runner.calls[0]["process_started_callback"]))
+
+    def test_run_tests_fallback_parses_stderr_only_pytest_failures(self) -> None:
+        class _PytestStderrOnlyRunner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cmd, cwd, env, timeout
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", "pytest"],
+                    returncode=1,
+                    stdout="",
+                    stderr=(
+                        "FAILED tests/test_auth.py::test_login - AssertionError: expected 200, got 500\n"
+                        "============================== 1 failed in 0.03s ==============================\n"
+                    ),
+                )
+
+        runtime = _RuntimeStreamingStub(_PytestStderrOnlyRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+
+        completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        assert runner.last_result is not None
+        self.assertEqual(runner.last_result.failed_tests, ["tests/test_auth.py::test_login"])
+        self.assertEqual(
+            runner.last_result.error_details["tests/test_auth.py::test_login"],
+            "AssertionError: expected 200, got 500",
+        )
+        self.assertTrue(runner.last_result.counts_detected)
+        self.assertEqual(runner.last_result.failed, 1)
+
+    def test_run_tests_fallback_parses_combined_stdout_and_stderr_failure_output(self) -> None:
+        class _PytestSplitStreamsRunner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cmd, cwd, env, timeout
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", "pytest"],
+                    returncode=1,
+                    stdout="========================= 1 failed, 2 passed in 0.04s =========================\n",
+                    stderr="FAILED tests/test_auth.py::test_login - AssertionError: expected 200, got 500\n",
+                )
+
+        runtime = _RuntimeStreamingStub(_PytestSplitStreamsRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+
+        completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        assert runner.last_result is not None
+        self.assertTrue(runner.last_result.counts_detected)
+        self.assertEqual(runner.last_result.passed, 2)
+        self.assertEqual(runner.last_result.failed, 1)
+        self.assertEqual(runner.last_result.failed_tests, ["tests/test_auth.py::test_login"])
+        self.assertEqual(
+            runner.last_result.error_details["tests/test_auth.py::test_login"],
+            "AssertionError: expected 200, got 500",
         )
 
     def test_detect_test_type_identifies_bun_run_test_as_jest_family(self) -> None:

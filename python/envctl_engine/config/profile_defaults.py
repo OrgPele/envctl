@@ -41,6 +41,7 @@ _MANAGED_BASELINE_DEPENDENCY_DEFAULTS: dict[Mode, dict[str, bool]] = {
     },
 }
 
+
 def default_profile_settings(mode: str) -> dict[str, object]:
     normalized = _normalize_mode(mode)
     return {
@@ -53,9 +54,7 @@ def wizard_preset_settings(mode: str, preset: str) -> dict[str, object]:
     normalized_mode = _normalize_mode(mode)
     normalized_preset = _normalize_preset(preset)
     if normalized_preset == "apps_only":
-        dependencies = {
-            dependency_id: False for dependency_id in _RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode]
-        }
+        dependencies = {dependency_id: False for dependency_id in _RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode]}
     else:
         dependencies = dict(_RUNTIME_DEPENDENCY_DEFAULTS[normalized_mode])
     return {

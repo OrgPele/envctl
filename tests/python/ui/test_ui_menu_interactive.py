@@ -4,6 +4,8 @@ import unittest
 from unittest.mock import patch
 import importlib
 from types import SimpleNamespace
+from contextlib import redirect_stdout
+from io import StringIO
 
 from pathlib import Path
 
@@ -73,10 +75,11 @@ class InteractiveMenuTests(unittest.TestCase):
             return next(answers)
 
         presenter = FallbackMenuPresenter(input_provider=provider)
-        selected = presenter.select_single(
-            "Restart",
-            [MenuOption("Main Backend", "backend"), MenuOption("Main Frontend", "frontend")],
-        )
+        with redirect_stdout(StringIO()):
+            selected = presenter.select_single(
+                "Restart",
+                [MenuOption("Main Backend", "backend"), MenuOption("Main Frontend", "frontend")],
+            )
 
         self.assertEqual(selected, "frontend")
         self.assertEqual(len(prompts), 2)
@@ -85,10 +88,11 @@ class InteractiveMenuTests(unittest.TestCase):
         answers = iter(["99", "1,2"])
         presenter = FallbackMenuPresenter(input_provider=lambda _prompt: next(answers))
 
-        selected = presenter.select_multi(
-            "Restart",
-            [MenuOption("Main Backend", "backend"), MenuOption("Main Frontend", "frontend")],
-        )
+        with redirect_stdout(StringIO()):
+            selected = presenter.select_multi(
+                "Restart",
+                [MenuOption("Main Backend", "backend"), MenuOption("Main Frontend", "frontend")],
+            )
 
         self.assertEqual(selected, ["backend", "frontend"])
 

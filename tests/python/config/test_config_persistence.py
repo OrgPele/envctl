@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -20,20 +23,55 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
     parse_dependency_env_section,
-    render_default_dependency_env_section,
 )
 from envctl_engine.config.persistence import (
     ManagedConfigValues,
+    ensure_global_ignore_status,
     ensure_local_config_ignored,
     managed_values_from_mapping,
     managed_values_to_mapping,
     merge_managed_block,
     render_managed_block,
     save_local_config,
+    save_local_config_with_ignore_policy,
 )
 
 
 class ConfigPersistenceTests(unittest.TestCase):
+    def _init_git_repo(self, root: Path) -> None:
+        subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _isolated_git_env(self, tmpdir: str, *, excludes_path: Path | None = None) -> dict[str, str]:
+        home = Path(tmpdir) / "home"
+        xdg = Path(tmpdir) / "xdg"
+        home.mkdir(parents=True, exist_ok=True)
+        xdg.mkdir(parents=True, exist_ok=True)
+        global_config = Path(tmpdir) / "gitconfig"
+        global_config.write_text("", encoding="utf-8")
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg),
+            "GIT_CONFIG_GLOBAL": str(global_config),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        if excludes_path is not None:
+            subprocess.run(
+                ["git", "config", "--global", "core.excludesFile", str(excludes_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        return env
+
     def test_merge_managed_block_preserves_unknown_lines(self) -> None:
         values = ManagedConfigValues(
             default_mode="trees",
@@ -133,8 +171,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 "FOO=bar\n"
                 "# >>> envctl managed startup config >>>\n"
                 "ENVCTL_DEFAULT_MODE=main\n"
-                "# <<< envctl managed startup config <<<\n\n"
-                + dependency_section,
+                "# <<< envctl managed startup config <<<\n\n" + dependency_section,
                 encoding="utf-8",
             )
             local_state = LocalConfigState(
@@ -175,8 +212,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 "FOO=bar\n"
                 "# >>> envctl managed startup config >>>\n"
                 "ENVCTL_DEFAULT_MODE=main\n"
-                "# <<< envctl managed startup config <<<\n\n"
-                + backend_section,
+                "# <<< envctl managed startup config <<<\n\n" + backend_section,
                 encoding="utf-8",
             )
             local_state = LocalConfigState(
@@ -234,6 +270,21 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("PORT_SPACING=20", rendered)
         self.assertNotIn("MAIN_BACKEND_ENABLE=true", rendered)
         self.assertNotIn("TREES_BACKEND_ENABLE=true", rendered)
+
+    def test_render_managed_block_includes_backend_listener_expectation_when_disabled(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, False, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            main_backend_expect_listener=False,
+            backend_start_cmd="python worker.py",
+        )
+
+        rendered = render_managed_block(values)
+
+        self.assertIn("MAIN_BACKEND_EXPECT_LISTENER=false", rendered)
+        self.assertNotIn("BACKEND_PORT_BASE=8000", rendered)
 
     def test_validation_allows_zero_components_when_startup_disabled(self) -> None:
         values = ManagedConfigValues(
@@ -309,13 +360,17 @@ class ConfigPersistenceTests(unittest.TestCase):
 
         self.assertEqual(example_values["ENVCTL_PLANNING_DIR"], DEFAULTS["ENVCTL_PLANNING_DIR"])
         for key, value in expected_mapping.items():
-            if key in {
-                "ENVCTL_BACKEND_START_CMD",
-                "ENVCTL_FRONTEND_START_CMD",
-                "ENVCTL_BACKEND_TEST_CMD",
-                "ENVCTL_FRONTEND_TEST_CMD",
-                "ENVCTL_FRONTEND_TEST_PATH",
-            } and value == "":
+            if (
+                key
+                in {
+                    "ENVCTL_BACKEND_START_CMD",
+                    "ENVCTL_FRONTEND_START_CMD",
+                    "ENVCTL_BACKEND_TEST_CMD",
+                    "ENVCTL_FRONTEND_TEST_CMD",
+                    "ENVCTL_FRONTEND_TEST_PATH",
+                }
+                and value == ""
+            ):
                 continue
             self.assertEqual(example_values.get(key), value, msg=key)
         example_text = example_path.read_text(encoding="utf-8")
@@ -361,11 +416,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(entries[1].line_number, 5)
 
     def test_parse_dependency_env_section_rejects_invalid_lines(self) -> None:
-        text = (
-            f"{CONFIG_DEPENDENCY_ENV_START}\n"
-            "NOT_VALID\n"
-            f"{CONFIG_DEPENDENCY_ENV_END}\n"
-        )
+        text = f"{CONFIG_DEPENDENCY_ENV_START}\nNOT_VALID\n{CONFIG_DEPENDENCY_ENV_END}\n"
 
         with self.assertRaisesRegex(ValueError, "line 2"):
             parse_dependency_env_section(text)
@@ -439,42 +490,168 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("The shared section below applies to both backend and frontend launches.", upgraded)
         self.assertIn("DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}", upgraded)
 
+    def test_ignore_local_config_updates_configured_global_excludes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            repo_exclude_path = repo / ".git" / "info" / "exclude"
+            repo_exclude_before = repo_exclude_path.read_text(encoding="utf-8")
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            excludes_path.write_text("# existing user rule\n*.local\n", encoding="utf-8")
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
+
+            with patch.dict(os.environ, env, clear=True):
+                updated, warning = ensure_local_config_ignored(repo)
+
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            excludes_text = excludes_path.read_text(encoding="utf-8")
+            self.assertIn("*.local", excludes_text)
+            self.assertIn(".envctl*", excludes_text)
+            self.assertIn("MAIN_TASK.md", excludes_text)
+            self.assertIn("OLD_TASK_*.md", excludes_text)
+            self.assertIn("trees/", excludes_text)
+            self.assertIn("trees-*", excludes_text)
+            self.assertFalse((repo / ".gitignore").exists())
+            self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
+
     def test_ignore_local_config_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+            self._init_git_repo(repo)
+            excludes_path = Path(tmpdir) / "git" / "ignore"
+            excludes_path.parent.mkdir(parents=True, exist_ok=True)
+            env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
 
-            updated_first, warning_first = ensure_local_config_ignored(repo)
-            updated_second, warning_second = ensure_local_config_ignored(repo)
-            exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-            gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
+            with patch.dict(os.environ, env, clear=True):
+                updated_first, warning_first = ensure_local_config_ignored(repo)
+                updated_second, warning_second = ensure_local_config_ignored(repo)
+            exclude_text = excludes_path.read_text(encoding="utf-8")
             exclude_lines = exclude_text.splitlines()
-            gitignore_lines = gitignore_text.splitlines()
 
             self.assertTrue(updated_first)
             self.assertIsNone(warning_first)
             self.assertFalse(updated_second)
             self.assertIsNone(warning_second)
             self.assertEqual(exclude_lines.count(".envctl*"), 1)
-            self.assertEqual(gitignore_lines.count(".envctl*"), 1)
-            self.assertEqual(gitignore_lines.count("trees/"), 1)
+            self.assertEqual(exclude_lines.count("MAIN_TASK.md"), 1)
+            self.assertEqual(exclude_lines.count("OLD_TASK_*.md"), 1)
+            self.assertEqual(exclude_lines.count("trees/"), 1)
+            self.assertEqual(exclude_lines.count("trees-*"), 1)
+            self.assertFalse((repo / ".gitignore").exists())
 
-    def test_ignore_local_config_does_not_duplicate_existing_gitignore_entries(self) -> None:
+    def test_ignore_local_config_warns_when_global_excludes_are_not_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
-            (repo / ".gitignore").write_text(".envctl*\ntrees/\n", encoding="utf-8")
+            self._init_git_repo(repo)
+            repo_exclude_path = repo / ".git" / "info" / "exclude"
+            repo_exclude_before = repo_exclude_path.read_text(encoding="utf-8")
+            env = self._isolated_git_env(tmpdir)
 
-            updated, warning = ensure_local_config_ignored(repo)
+            with patch.dict(os.environ, env, clear=True):
+                updated, warning = ensure_local_config_ignored(repo)
 
-            gitignore_text = (repo / ".gitignore").read_text(encoding="utf-8")
-            exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-            exclude_lines = exclude_text.splitlines()
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            assert warning is not None
+            self.assertIn("global", warning.lower())
+            self.assertFalse((repo / ".gitignore").exists())
+            self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
 
-            self.assertTrue(updated)
-            self.assertIsNone(warning)
-            self.assertEqual(gitignore_text, ".envctl*\ntrees/\n")
-            self.assertEqual(exclude_lines.count(".envctl*"), 1)
+    def test_save_local_config_is_warning_only_when_global_excludes_are_not_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            env = self._isolated_git_env(tmpdir)
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+
+            with patch.dict(os.environ, env, clear=True):
+                save_result = save_local_config(local_state=local_state, values=values)
+
+            self.assertTrue((repo / ".envctl").is_file())
+            self.assertFalse(save_result.ignore_updated)
+            self.assertIsNotNone(save_result.ignore_warning)
+            assert save_result.ignore_status is not None
+            self.assertEqual(save_result.ignore_status.code, "missing_global_excludes_configuration")
+
+    def test_save_local_config_with_ignore_policy_does_not_bootstrap_missing_global_excludes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            env = self._isolated_git_env(tmpdir)
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+
+            with patch.dict(os.environ, env, clear=True):
+                save_result = save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=values,
+                    update_global_ignores=True,
+                )
+                global_excludes = subprocess.run(
+                    ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+            self.assertEqual(global_excludes.returncode, 1)
+            self.assertEqual(global_excludes.stdout.strip(), "")
+            self.assertFalse(save_result.ignore_updated)
+            self.assertIsNotNone(save_result.ignore_warning)
+            assert save_result.ignore_status is not None
+            self.assertEqual(save_result.ignore_status.code, "missing_global_excludes_configuration")
+
+    def test_global_ignore_status_distinguishes_lookup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+
+            class _Result:
+                returncode = 2
+                stdout = ""
+                stderr = "fatal: bad config file"
+
+            with patch("envctl_engine.config.git_global_ignore.subprocess.run", return_value=_Result()):
+                status = ensure_global_ignore_status(repo)
+
+            self.assertEqual(status.code, "global_excludes_lookup_failed")
+            self.assertFalse(status.updated)
+            self.assertIsNone(status.target_path)
+            self.assertIsNotNone(status.warning)
 
 
 if __name__ == "__main__":

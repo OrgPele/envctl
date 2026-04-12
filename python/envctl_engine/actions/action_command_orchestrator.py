@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import hashlib
@@ -21,6 +22,7 @@ from envctl_engine.actions.action_command_support import (
 )
 from envctl_engine.actions.action_target_support import (
     ActionCommandResolution,
+    ActionTargetContext,
     execute_targeted_action,
 )
 from envctl_engine.actions.action_test_support import (
@@ -41,12 +43,18 @@ from envctl_engine.actions.action_test_runner import run_test_action as run_test
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.startup.service_bootstrap_domain import (
+    _resolve_backend_env_contract,
+)
+from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
+from envctl_engine.ui.path_links import render_path_for_terminal, render_path_fragment_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -64,6 +72,22 @@ def _stdout_is_live_terminal() -> bool:
         except Exception:
             continue
     return False
+
+
+@dataclass(frozen=True)
+class _MigrateProjectContext:
+    name: str
+    root: Path
+    ports: dict[str, PortPlan]
+
+
+@dataclass(frozen=True)
+class _MigrateResultRecord:
+    project_name: str
+    status: str
+    headline: str = ""
+    hint_lines: tuple[str, ...] = ()
+    report_path: str = ""
 
 
 class ActionRuntimeFacade:
@@ -178,6 +202,8 @@ class ActionRuntimeFacade:
 class ActionCommandOrchestrator:
     def __init__(self, runtime: Any) -> None:
         self.runtime = ActionRuntimeFacade(runtime)
+        self._migrate_env_contracts: dict[str, dict[str, object]] = {}
+        self._deferred_post_action_output: Callable[[], None] | None = None
 
     @staticmethod
     def _short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
@@ -209,6 +235,7 @@ class ActionCommandOrchestrator:
         if handler is None:
             return rt.unsupported_command(route.command)
 
+        self._deferred_post_action_output = None
         spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
         op_id = f"action.{route.command}"
         start_status = self._command_start_status(route.command, targets)
@@ -248,7 +275,39 @@ class ActionCommandOrchestrator:
                     state="start",
                     message=start_status,
                 )
-            code = handler(route, targets)
+            restore_spinner_bridge = self._noop_restore
+            if action_spinner_enabled:
+                restore_spinner_bridge = self._install_action_spinner_status_bridge(
+                    command=route.command,
+                    op_id=op_id,
+                    active_spinner=active_spinner,
+                )
+            try:
+                try:
+                    code = handler(route, targets)
+                finally:
+                    restore_spinner_bridge()
+            except KeyboardInterrupt:
+                if action_spinner_enabled:
+                    interrupted = f"{route.command} interrupted"
+                    active_spinner.fail(interrupted)
+                    rt.emit(
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="fail",
+                        message=interrupted,
+                    )
+                    rt.emit(
+                        "ui.spinner.lifecycle",
+                        component="action.command",
+                        command=route.command,
+                        op_id=op_id,
+                        state="stop",
+                    )
+                rt.emit("action.command.finish", command=route.command, code=2)
+                raise
             if action_spinner_enabled:
                 if code == 0:
                     completion = f"{route.command} completed"
@@ -279,6 +338,10 @@ class ActionCommandOrchestrator:
                     op_id=op_id,
                     state="stop",
                 )
+        deferred_output = self._deferred_post_action_output
+        self._deferred_post_action_output = None
+        if deferred_output is not None:
+            deferred_output()
         rt.emit("action.command.finish", command=route.command, code=code)
         return code
 
@@ -435,6 +498,9 @@ class ActionCommandOrchestrator:
         raw = rt.env.get("ENVCTL_ACTION_MIGRATE_CMD")  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
         extra_env = self.action_extra_env(route)
+        observed_outcomes: dict[str, dict[str, object]] = {}
+        persist_success = self._project_action_success_handler("migrate", route.mode, interactive_command)
+        persist_failure = self._project_action_failure_handler("migrate", route.mode)
 
         def resolve_command(context: object) -> ActionCommandResolution:
             target = getattr(context, "target_obj")
@@ -453,14 +519,36 @@ class ActionCommandOrchestrator:
                 error=resolution.error,
             )
 
-        return execute_targeted_action(
+        def handle_success(context: ActionTargetContext, completed: Any) -> None:
+            observed_outcomes[context.name] = {"status": "success"}
+            if persist_success is not None:
+                persist_success(context, completed)
+
+        def handle_failure(context: ActionTargetContext, error_output: str) -> None:
+            clean_output = strip_ansi(str(error_output or "")).strip()
+            migrate_env_metadata = dict(self._migrate_env_contracts.get(context.name, {}))
+            summary_lines = self._project_action_failure_summary_lines(
+                command_name="migrate",
+                error_output=clean_output,
+                migrate_env_metadata=migrate_env_metadata if migrate_env_metadata else None,
+            )
+            observed_outcomes[context.name] = {
+                "status": "failed",
+                "headline": self._migrate_failure_headline(clean_output),
+                "summary": "\n".join(summary_lines).strip(),
+            }
+            if migrate_env_metadata:
+                observed_outcomes[context.name]["backend_env"] = migrate_env_metadata
+            if persist_failure is not None:
+                persist_failure(context, error_output)
+
+        code = execute_targeted_action(
             targets=targets,
             command_name="migrate",
             interactive_command=interactive_command,
             resolve_command=resolve_command,
-            build_env=lambda context: self.action_env(
-                "migrate",
-                targets,
+            build_env=lambda context: self.migrate_action_env(
+                targets=targets,
                 route=route,
                 target=getattr(context, "target_obj"),
                 extra=extra_env,
@@ -473,9 +561,22 @@ class ActionCommandOrchestrator:
             ),
             emit_status=self._emit_status,
             interactive_print_failures=False,
-            on_success=self._project_action_success_handler("migrate", route.mode, interactive_command),
-            on_failure=self._project_action_failure_handler("migrate", route.mode),
+            on_success=handle_success,
+            on_failure=handle_failure,
+            failure_status_formatter=lambda context, error: (
+                f"migrate failed for {context.name}: {self._migrate_failure_headline(error)}"
+            ),
+            print_noninteractive_failures=False,
+            print_noninteractive_successes=False,
         )
+        if not interactive_command:
+            target_names = [str(getattr(target, "name", "")).strip() for target in targets if str(getattr(target, "name", "")).strip()]
+            self._deferred_post_action_output = lambda: self._print_migrate_result_summary(
+                mode=route.mode,
+                project_names=target_names,
+                fallback_entries=observed_outcomes,
+            )
+        return code
 
     def _no_target_selected_message(self, route: Route) -> str:
         interactive_allowed = self._interactive_selection_allowed(route)
@@ -701,7 +802,6 @@ class ActionCommandOrchestrator:
         raw = rt.env.get(env_key)  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
         command_extra_env = dict(extra_env)
-        interactive_pr_action = command_name == "pr" and interactive_command
         stream_review_output = bool(
             command_name == "review"
             and not interactive_command
@@ -751,14 +851,16 @@ class ActionCommandOrchestrator:
             process_run=lambda command, cwd, env: (
                 subprocess.CompletedProcess(
                     args=command,
-                    returncode=(completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
-                        command,
-                        cwd=cwd,
-                        env=dict(env),
-                        timeout=300.0,
-                        show_spinner=False,
-                        echo_output=True,
-                    )).returncode,
+                    returncode=(
+                        completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
+                            command,
+                            cwd=cwd,
+                            env=dict(env),
+                            timeout=300.0,
+                            show_spinner=False,
+                            echo_output=True,
+                        )
+                    ).returncode,
                     stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
                     stderr=str(getattr(completed, "stderr", "") or ""),
                 )
@@ -822,6 +924,67 @@ class ActionCommandOrchestrator:
     def action_extra_env(route: Route) -> dict[str, str]:
         return build_action_extra_env(route)
 
+    def migrate_action_env(
+        self,
+        *,
+        targets: list[object],
+        route: Route | None,
+        target: object | None,
+        extra: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        env = self.action_env(
+            "migrate",
+            targets,
+            route=route,
+            target=target,
+            extra=extra,
+        )
+        if target is None:
+            return env
+
+        project_name = str(getattr(target, "name", "")).strip()
+        target_root = Path(str(getattr(target, "root")))
+        backend_cwd = self._migrate_backend_cwd(target_root)
+
+        runtime_raw = self.runtime.raw_runtime
+        context = _MigrateProjectContext(name=project_name, root=target_root, ports={})
+
+        projected_env: dict[str, str] = {}
+        requirements = self._migrate_requirements_for_target(route=route, project_name=project_name)
+        if requirements is not None:
+            project_context = self._migrate_project_context(
+                project_name=project_name,
+                project_root=target_root,
+                requirements=requirements,
+            )
+            projector = getattr(runtime_raw, "_project_service_env_internal", None)
+            if callable(projector):
+                projected_candidate = projector(project_context, requirements=requirements, route=route)
+                if isinstance(projected_candidate, dict):
+                    projected_env = {
+                        str(key): str(value)
+                        for key, value in projected_candidate.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+
+        contract = _resolve_backend_env_contract(
+            runtime_raw,
+            context=context,
+            backend_cwd=backend_cwd,
+            base_env=env,
+            projected_env=projected_env,
+        )
+        self._migrate_env_contracts[project_name] = {
+            "env_file_path": str(contract.env_file_path) if contract.env_file_path is not None else None,
+            "env_file_source": contract.env_file_source,
+            "override_requested": contract.override_requested,
+            "override_resolution": contract.override_resolution,
+            "override_authoritative": contract.override_authoritative,
+            "scrubbed_keys": list(contract.scrubbed_keys),
+            "projected_keys": list(contract.projected_keys),
+        }
+        return contract.env
+
     def run_delete_worktree_action(self, route: Route) -> int:
         return run_delete_worktree_action_impl(self, route)
 
@@ -832,6 +995,64 @@ class ActionCommandOrchestrator:
             return
         rt.emit("ui.status", message=text)
 
+    def _install_action_spinner_status_bridge(
+        self,
+        *,
+        command: str,
+        op_id: str,
+        active_spinner: Any,
+    ) -> Callable[[], None]:
+        rt = self.runtime.raw_runtime
+
+        def update_spinner(message: object) -> None:
+            text = str(message).strip()
+            if not text:
+                return
+            active_spinner.update(text)
+            self.runtime.emit(
+                "ui.spinner.lifecycle",
+                component="action.command",
+                command=command,
+                op_id=op_id,
+                state="update",
+                message=text,
+            )
+
+        add_listener = getattr(rt, "add_emit_listener", None)
+        if callable(add_listener):
+
+            def listener(event_name: str, payload: Mapping[str, object]) -> None:
+                if event_name != "ui.status":
+                    return
+                update_spinner(payload.get("message", ""))
+
+            remove = add_listener(listener)
+            if callable(remove):
+                return remove
+            return self._noop_restore
+
+        emit = getattr(rt, "_emit", None)
+        if not callable(emit):
+            return self._noop_restore
+
+        def bridged_emit(event_name: str, **payload: object) -> None:
+            emit(event_name, **payload)
+            if event_name == "ui.status":
+                update_spinner(payload.get("message", ""))
+
+        try:
+            setattr(rt, "_emit", bridged_emit)
+        except Exception:
+            return self._noop_restore
+
+        def restore() -> None:
+            try:
+                setattr(rt, "_emit", emit)
+            except Exception:
+                return
+
+        return restore
+
     def _project_action_success_handler(
         self,
         command_name: str,
@@ -840,14 +1061,22 @@ class ActionCommandOrchestrator:
     ) -> Callable[[ActionTargetContext, Any], None] | None:
         def handle_success(context: ActionTargetContext, completed: Any) -> None:
             self._clear_dashboard_pr_cache()
+            status = self._project_action_success_status(command_name=command_name, completed=completed)
+            extra_entry: dict[str, object] | None = None
+            if command_name == "review" and status == "success":
+                extra_entry = self._review_success_artifact_paths(
+                    stdout=getattr(completed, "stdout", ""),
+                    stderr=getattr(completed, "stderr", ""),
+                )
             self._persist_project_action_result(
                 command_name=command_name,
                 mode=mode,
                 project_name=context.name,
-                status="success",
+                status=status,
                 error_output="",
+                extra_entry=extra_entry,
             )
-            if command_name != "pr" or not interactive_command:
+            if command_name != "pr" or not interactive_command or status != "success":
                 return
             url = self._first_output_line(getattr(completed, "stdout", ""))
             if url:
@@ -879,6 +1108,7 @@ class ActionCommandOrchestrator:
         project_name: str,
         status: str,
         error_output: str,
+        extra_entry: Mapping[str, object] | None = None,
     ) -> None:
         rt = self.runtime
         state = rt.load_existing_state(mode=mode)
@@ -892,9 +1122,20 @@ class ActionCommandOrchestrator:
             "status": status,
             "updated_at": datetime.now(tz=UTC).isoformat(),
         }
+        migrate_env_metadata = (
+            dict(self._migrate_env_contracts.get(project_name, {})) if command_name == "migrate" else None
+        )
+        if migrate_env_metadata:
+            entry["backend_env"] = migrate_env_metadata
+        if isinstance(extra_entry, Mapping):
+            entry.update({str(key): value for key, value in extra_entry.items()})
         if status == "failed":
             clean_output = strip_ansi(str(error_output or "")).strip()
-            summary_lines = self._format_summary_error_lines(clean_output)
+            summary_lines = self._project_action_failure_summary_lines(
+                command_name=command_name,
+                error_output=clean_output,
+                migrate_env_metadata=migrate_env_metadata,
+            )
             summary_text = "\n".join(summary_lines).strip() or "Command failed."
             report_path = self._write_project_action_failure_report(
                 run_id=state.run_id,
@@ -902,6 +1143,10 @@ class ActionCommandOrchestrator:
                 command_name=command_name,
                 output=clean_output,
             )
+            if command_name == "migrate":
+                headline = self._migrate_failure_headline(clean_output)
+                if headline:
+                    entry["headline"] = headline
             entry["summary"] = summary_text
             entry["report_path"] = str(report_path)
         project_metadata[command_name] = entry
@@ -912,6 +1157,306 @@ class ActionCommandOrchestrator:
             emit=rt.emit,
             runtime_map_builder=build_runtime_map,
         )
+
+    def _print_migrate_result_summary(
+        self,
+        *,
+        mode: str,
+        project_names: list[str],
+        fallback_entries: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> None:
+        records = self._migrate_result_records(
+            mode=mode,
+            project_names=project_names,
+            fallback_entries=fallback_entries,
+        )
+        if not records:
+            return
+        self._print_migrate_result_records(records=records, env=getattr(self.runtime, "env", {}))
+
+    def _migrate_result_records(
+        self,
+        *,
+        mode: str,
+        project_names: list[str],
+        fallback_entries: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> list[_MigrateResultRecord]:
+        state = self.runtime.load_existing_state(mode=mode)
+        metadata = state.metadata.get("project_action_reports") if state is not None else None
+        fallback_map = dict(fallback_entries) if isinstance(fallback_entries, Mapping) else {}
+        records: list[_MigrateResultRecord] = []
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
+            if not project_name:
+                continue
+            project_entry = metadata.get(project_name) if isinstance(metadata, Mapping) else None
+            action_entry = project_entry.get("migrate") if isinstance(project_entry, Mapping) else None
+            if not isinstance(action_entry, Mapping):
+                action_entry = fallback_map.get(project_name)
+            record = self._migrate_result_record(project_name=project_name, action_entry=action_entry)
+            if record is not None:
+                records.append(record)
+        return records
+
+    @staticmethod
+    def _migrate_result_record(
+        *,
+        project_name: str,
+        action_entry: Mapping[str, object] | None,
+    ) -> _MigrateResultRecord | None:
+        if not isinstance(action_entry, Mapping):
+            return None
+        status = str(action_entry.get("status", "")).strip().lower()
+        if status == "success":
+            return _MigrateResultRecord(project_name=project_name, status="success")
+        if status != "failed":
+            return None
+        summary = str(action_entry.get("summary", "")).strip()
+        headline = str(action_entry.get("headline", "")).strip()
+        if not headline and summary:
+            headline = ActionCommandOrchestrator._migrate_failure_headline(summary)
+        hint_lines: list[str] = []
+        seen_hints: set[str] = set()
+        for line in [item.strip() for item in summary.splitlines() if item.strip()]:
+            if not line.lower().startswith("hint:"):
+                continue
+            if line in seen_hints:
+                continue
+            seen_hints.add(line)
+            hint_lines.append(line)
+        report_path = str(action_entry.get("report_path", "")).strip()
+        return _MigrateResultRecord(
+            project_name=project_name,
+            status="failed",
+            headline=headline,
+            hint_lines=tuple(hint_lines),
+            report_path=report_path,
+        )
+
+    @staticmethod
+    def _print_migrate_result_records(
+        *,
+        records: list[_MigrateResultRecord],
+        env: Mapping[str, str],
+        interactive_tty: bool | None = None,
+    ) -> None:
+        failed_records = [record for record in records if record.status == "failed"]
+        compact_failures = len(failed_records) > 1
+        shared_hints = ActionCommandOrchestrator._shared_migrate_hint_lines(failed_records) if compact_failures else ()
+        use_color = colors_enabled(
+            env,
+            stream=sys.stdout,
+            interactive_tty=bool(interactive_tty) if interactive_tty is not None else False,
+        )
+        for index, record in enumerate(records):
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=index,
+                use_color=use_color,
+            )
+            if record.status == "success":
+                print(f"{ActionCommandOrchestrator._render_migrate_symbol('✓', status='success', use_color=use_color)} migrate succeeded for {project_name}")
+                continue
+            if record.status != "failed":
+                continue
+            if record.headline:
+                print(
+                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
+                    f"migrate failed for {project_name}: {record.headline}"
+                )
+            else:
+                print(
+                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
+                    f"migrate failed for {project_name}"
+                )
+            if compact_failures:
+                continue
+            for hint in ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines):
+                print(hint)
+        for hint in shared_hints:
+            print(hint)
+        ActionCommandOrchestrator._print_migrate_failure_logs(
+            failed_records,
+            env=env,
+            interactive_tty=interactive_tty,
+            compact=compact_failures,
+            use_color=use_color,
+            ordered_records=records,
+        )
+
+    @staticmethod
+    def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
+        if len(records) <= 1:
+            return ()
+        visible_hint_lists = [ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records]
+        if not visible_hint_lists:
+            return ()
+        shared = set(visible_hint_lists[0])
+        for hint_lines in visible_hint_lists[1:]:
+            shared.intersection_update(hint_lines)
+        if not shared:
+            return ()
+        ordered_shared = [hint for hint in visible_hint_lists[0] if hint in shared]
+        return tuple(ordered_shared[:1])
+
+    @staticmethod
+    def _visible_migrate_hint_lines(hint_lines: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            hint for hint in hint_lines if not ActionCommandOrchestrator._is_migrate_env_source_hint(hint)
+        )
+
+    @staticmethod
+    def _is_migrate_env_source_hint(hint_line: str) -> bool:
+        return hint_line.lower().startswith("hint: backend env source:")
+
+    @staticmethod
+    def _print_migrate_failure_logs(
+        records: list[_MigrateResultRecord],
+        *,
+        env: Mapping[str, str],
+        interactive_tty: bool | None,
+        compact: bool,
+        use_color: bool,
+        ordered_records: list[_MigrateResultRecord],
+    ) -> None:
+        report_records = [record for record in records if record.report_path]
+        if not report_records:
+            return
+        if compact:
+            ActionCommandOrchestrator._print_compact_migrate_failure_logs(
+                report_records,
+                env=env,
+                interactive_tty=interactive_tty,
+                use_color=use_color,
+                ordered_records=ordered_records,
+            )
+            return
+        for record in report_records:
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                use_color=use_color,
+            )
+            print(f"migrate failure log for {project_name}:")
+            print(
+                render_path_for_terminal(
+                    record.report_path,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+            )
+
+    @staticmethod
+    def _print_compact_migrate_failure_logs(
+        records: list[_MigrateResultRecord],
+        *,
+        env: Mapping[str, str],
+        interactive_tty: bool | None,
+        use_color: bool,
+        ordered_records: list[_MigrateResultRecord],
+    ) -> None:
+        print("migrate failure logs:")
+        shared_parent = ActionCommandOrchestrator._shared_report_parent(records)
+        if shared_parent:
+            print(
+                render_path_for_terminal(
+                    shared_parent,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+            )
+            for record in records:
+                display_name = Path(record.report_path).name
+                rendered_path = render_path_fragment_for_terminal(
+                    record.report_path,
+                    display_text=display_name,
+                    env=env,
+                    stream=sys.stdout,
+                    interactive_tty=interactive_tty,
+                )
+                project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                    record.project_name,
+                    index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                    use_color=use_color,
+                )
+                print(f"- {project_name}: {rendered_path}")
+            return
+        for record in records:
+            rendered_path = render_path_for_terminal(
+                record.report_path,
+                env=env,
+                stream=sys.stdout,
+                interactive_tty=interactive_tty,
+            )
+            project_name = ActionCommandOrchestrator._render_migrate_project_name(
+                record.project_name,
+                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
+                use_color=use_color,
+            )
+            print(f"- {project_name}: {rendered_path}")
+
+    @staticmethod
+    def _shared_report_parent(records: list[_MigrateResultRecord]) -> str:
+        parents: list[str] = []
+        for record in records:
+            try:
+                parent = str(Path(record.report_path).parent)
+            except (OSError, RuntimeError, ValueError):
+                return ""
+            if not parent:
+                return ""
+            if parent not in parents:
+                parents.append(parent)
+        if len(parents) != 1:
+            return ""
+        return parents[0]
+
+    @staticmethod
+    def _record_index(records: list[_MigrateResultRecord], project_name: str) -> int:
+        for index, record in enumerate(records):
+            if record.project_name == project_name:
+                return index
+        return 0
+
+    @staticmethod
+    def _render_migrate_symbol(symbol: str, *, status: str, use_color: bool) -> str:
+        if not use_color:
+            return symbol
+        color = "32" if status == "success" else "31"
+        return f"\033[1;{color}m{symbol}\033[0m"
+
+    @staticmethod
+    def _render_migrate_project_name(project_name: str, *, index: int, use_color: bool) -> str:
+        if not use_color:
+            return project_name
+        palette = ("34", "35", "36", "32", "33")
+        color = palette[index % len(palette)]
+        return f"\033[1;{color}m{project_name}\033[0m"
+
+    @staticmethod
+    def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
+        cleaned = strip_ansi("\n".join(part for part in [str(stdout or ""), str(stderr or "")] if str(part or "").strip()))
+        lines = [line.rstrip() for line in cleaned.splitlines()]
+        label_map = {
+            "output directory": "output_dir",
+            "summary file": "summary_path",
+            "full review bundle": "bundle_path",
+        }
+        parsed: dict[str, object] = {}
+        for index, raw_line in enumerate(lines):
+            label = raw_line.strip().lower()
+            key = label_map.get(label)
+            if not key:
+                continue
+            for follow_line in lines[index + 1 :]:
+                candidate = follow_line.strip()
+                if not candidate:
+                    continue
+                parsed[key] = candidate
+                break
+        return parsed
 
     def _write_project_action_failure_report(
         self,
@@ -941,6 +1486,16 @@ class ActionCommandOrchestrator:
             if text:
                 return text
         return ""
+
+    @classmethod
+    def _project_action_success_status(cls, *, command_name: str, completed: Any) -> str:
+        if command_name != "pr":
+            return "success"
+        output = strip_ansi(str(getattr(completed, "stdout", "") or ""))
+        first_line = cls._first_output_line(output)
+        if first_line.startswith("Skipping ") and "detached HEAD" in output:
+            return "skipped"
+        return "success"
 
     def _colors_enabled(self) -> bool:
         rt_env = getattr(self.runtime, "env", {})
@@ -1190,6 +1745,7 @@ class ActionCommandOrchestrator:
 
         failures = self._collect_failed_tests(outcomes, project_name=project_name)
         generic_suite_failures = self._collect_generic_suite_failures(outcomes, project_name=project_name)
+        suite_failure_contexts = self._collect_suite_failure_contexts(outcomes, project_name=project_name)
         manifest_entries = self._collect_failed_test_manifest_entries(outcomes, project_name=project_name)
         failed_only = any(
             bool(item.get("failed_only", False))
@@ -1211,6 +1767,13 @@ class ActionCommandOrchestrator:
                 if error_text:
                     for detail in self._format_summary_error_lines(str(error_text)):
                         lines.append(f"    {detail}")
+                lines.append("")
+            for suite_name, context_text in suite_failure_contexts:
+                clean_suite_name = strip_ansi(str(suite_name)).strip()
+                lines.append(f"[{clean_suite_name}]")
+                lines.append("suite context:")
+                for detail in self._format_summary_error_lines(str(context_text)):
+                    lines.append(f"    {detail}")
                 lines.append("")
         elif generic_suite_failures:
             for suite_name, summary in generic_suite_failures:
@@ -1254,7 +1817,9 @@ class ActionCommandOrchestrator:
         )
         if preserve_previous:
             previous_manifest_path_raw = str(previous_entry.get("manifest_path", "") or "").strip()
-            previous_manifest = load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+            previous_manifest = (
+                load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+            )
             if previous_manifest is not None and previous_manifest.entries:
                 preserved = dict(previous_entry)
                 preserved["status"] = "failed"
@@ -1270,6 +1835,7 @@ class ActionCommandOrchestrator:
             "status": "failed" if failures or generic_suite_failures else "passed",
             "failed_tests": len(failures),
             "failed_manifest_entries": len(manifest_entries),
+            "summary_excerpt": extract_failure_summary_excerpt(summary_text, max_lines=3),
             "updated_at": generated_at.isoformat(),
         }
 
@@ -1321,10 +1887,15 @@ class ActionCommandOrchestrator:
             if not source:
                 continue
             parsed = item.get("parsed")
-            raw_failed_tests = [
-                str(failed_test).strip()
-                for failed_test in list(getattr(parsed, "failed_tests", []) or []) if str(failed_test).strip()
-            ] if parsed is not None else []
+            raw_failed_tests = (
+                [
+                    str(failed_test).strip()
+                    for failed_test in list(getattr(parsed, "failed_tests", []) or [])
+                    if str(failed_test).strip()
+                ]
+                if parsed is not None
+                else []
+            )
             failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
                 source=source,
                 failed_tests=raw_failed_tests,
@@ -1366,7 +1937,7 @@ class ActionCommandOrchestrator:
             failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
             if failed_tests:
                 continue
-            summary = str(item.get("failure_summary", "") or "").strip()
+            summary = str(item.get("failure_details", "") or item.get("failure_summary", "") or "").strip()
             if not summary:
                 summary = "Test command failed before envctl could extract failed tests."
             suite_name = self._suite_display_name(
@@ -1374,6 +1945,35 @@ class ActionCommandOrchestrator:
                 failed_only=bool(item.get("failed_only", False)),
             )
             collected.append((suite_name, summary))
+        return collected
+
+    def _collect_suite_failure_contexts(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        project_name: str | None = None,
+    ) -> list[tuple[str, str]]:
+        collected: list[tuple[str, str]] = []
+        ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+        for item in ordered:
+            if project_name is not None:
+                item_project_name = str(item.get("project_name", "")).strip()
+                if item_project_name != project_name:
+                    continue
+            if int(item.get("returncode", 0) or 0) == 0:
+                continue
+            parsed = item.get("parsed")
+            failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
+            if not failed_tests:
+                continue
+            context_text = str(item.get("failure_details", "") or "").strip()
+            if not context_text:
+                continue
+            suite_name = self._suite_display_name(
+                str(item.get("suite", "suite")),
+                failed_only=bool(item.get("failed_only", False)),
+            )
+            collected.append((suite_name, context_text))
         return collected
 
     @staticmethod
@@ -1433,6 +2033,173 @@ class ActionCommandOrchestrator:
         if source == "configured":
             return "Test command (failed only)" if failed_only else "Test command"
         return source.replace("_", " ")
+
+    def _project_action_failure_summary_lines(
+        self,
+        *,
+        command_name: str,
+        error_output: str,
+        migrate_env_metadata: Mapping[str, object] | None = None,
+    ) -> list[str]:
+        lines = self._format_summary_error_lines(error_output)
+        if command_name != "migrate":
+            return lines
+        headline = self._migrate_failure_headline_from_lines(lines)
+        hint_lines = self._migrate_failure_hint_lines(error_output)
+        env_lines = self._migrate_env_source_hint_lines(migrate_env_metadata)
+        merged: list[str] = []
+        if headline:
+            merged.append(headline)
+        seen = set(merged)
+        for line in lines:
+            if line in seen:
+                continue
+            merged.append(line)
+            seen.add(line)
+        for hint in [*hint_lines, *env_lines]:
+            if hint in seen:
+                continue
+            merged.append(hint)
+            seen.add(hint)
+        return merged
+
+    @staticmethod
+    def _migrate_failure_headline(error_output: str) -> str:
+        lines = ActionCommandOrchestrator._format_summary_error_lines(error_output)
+        headline = ActionCommandOrchestrator._migrate_failure_headline_from_lines(lines)
+        return headline or "Command failed."
+
+    @staticmethod
+    def _migrate_failure_headline_from_lines(lines: list[str]) -> str:
+        if not lines:
+            return ""
+        has_exception = any(ActionCommandOrchestrator._is_exception_start(line) for line in lines)
+        for line in lines:
+            if ActionCommandOrchestrator._is_exception_start(line):
+                return line
+        for line in lines:
+            if line == "Traceback (most recent call last):":
+                continue
+            if has_exception and line.startswith('File "'):
+                continue
+            if ActionCommandOrchestrator._is_captured_output_header(line):
+                continue
+            if ActionCommandOrchestrator._is_exception_context_marker(line):
+                continue
+            return line
+        return lines[0]
+
+    @staticmethod
+    def _migrate_failure_hint_lines(error_output: str) -> list[str]:
+        cleaned = strip_ansi(error_output)
+        normalized = cleaned.replace("\\", "/").lower()
+        if "alembic/env.py" not in normalized:
+            return []
+        if "validationerror" not in normalized and "field required" not in normalized and "type=missing" not in normalized:
+            return []
+
+        missing_vars = [
+            name
+            for name in ("DATABASE_URL", "REDIS_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
+            if re.search(rf"(?m)^{re.escape(name)}\s*$", cleaned)
+        ]
+        if not missing_vars:
+            return []
+        joined_vars = ", ".join(missing_vars)
+        return [
+            f"hint: migrate failed before Alembic reached revisions because required env vars were missing ({joined_vars}).",
+            "hint: envctl migrate loads backend env from backend/.env by default.",
+            "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
+            "hint: APP_ENV_FILE is exported when an env file is found, and running projects reuse current dependency URLs when available.",
+        ]
+
+    @staticmethod
+    def _migrate_env_source_hint_lines(migrate_env_metadata: Mapping[str, object] | None) -> list[str]:
+        if not isinstance(migrate_env_metadata, Mapping):
+            return []
+        source = str(migrate_env_metadata.get("env_file_source", "")).strip()
+        if not source:
+            return []
+        parts = [f"hint: backend env source: {source}"]
+        env_file_path_raw = migrate_env_metadata.get("env_file_path")
+        env_file_path = str(env_file_path_raw).strip() if isinstance(env_file_path_raw, str) else ""
+        if env_file_path:
+            parts.append(env_file_path)
+        if bool(migrate_env_metadata.get("override_requested")):
+            resolution = str(migrate_env_metadata.get("override_resolution", "")).strip()
+            if resolution:
+                parts.append(f"override_resolution={resolution}")
+        return [" | ".join(parts)]
+
+    def _migrate_requirements_for_target(
+        self,
+        *,
+        route: Route | None,
+        project_name: str,
+    ) -> RequirementsResult | None:
+        route_mode = getattr(route, "mode", None)
+        state = self.runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
+        if state is None:
+            return None
+        requirements_map = getattr(state, "requirements", None)
+        if not isinstance(requirements_map, dict):
+            return None
+        candidate = requirements_map.get(project_name)
+        if isinstance(candidate, RequirementsResult):
+            return candidate
+        normalized_name = project_name.strip().lower()
+        for key, value in requirements_map.items():
+            if str(key).strip().lower() == normalized_name and isinstance(value, RequirementsResult):
+                return value
+        return None
+
+    @staticmethod
+    def _migrate_backend_cwd(target_root: Path) -> Path:
+        backend_dir = target_root / "backend"
+        if backend_dir.is_dir():
+            return backend_dir
+        return target_root
+
+    @staticmethod
+    def _migrate_project_context(
+        *,
+        project_name: str,
+        project_root: Path,
+        requirements: RequirementsResult,
+    ) -> _MigrateProjectContext:
+        ports: dict[str, PortPlan] = {}
+        for component_name, port_key in (
+            ("postgres", "db"),
+            ("redis", "redis"),
+            ("n8n", "n8n"),
+            ("supabase", "db"),
+        ):
+            if port_key in ports:
+                continue
+            component = requirements.component(component_name)
+            port = ActionCommandOrchestrator._migrate_component_port(component)
+            if port <= 0:
+                continue
+            ports[port_key] = PortPlan(
+                project=project_name,
+                requested=port,
+                assigned=port,
+                final=port,
+                source="requirements_state",
+            )
+        return _MigrateProjectContext(name=project_name, root=project_root, ports=ports)
+
+    @staticmethod
+    def _migrate_component_port(component: Mapping[str, object]) -> int:
+        for key in ("final", "requested", "assigned"):
+            raw = component.get(key)
+            try:
+                value = int(raw)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 0
 
     @staticmethod
     def _format_summary_error_lines(error_text: str) -> list[str]:
@@ -1621,8 +2388,7 @@ class ActionCommandOrchestrator:
     def _is_exception_context_marker(line: str) -> bool:
         lowered = line.strip().lower()
         return (
-            "during handling of the above exception" in lowered
-            or "the above exception was the direct cause" in lowered
+            "during handling of the above exception" in lowered or "the above exception was the direct cause" in lowered
         )
 
     @staticmethod
@@ -1646,6 +2412,10 @@ class ActionCommandOrchestrator:
         if len(line) >= 40 and sum(1 for char in line if char == " ") > len(line) * 0.55 and box_count >= 1:
             return True
         return False
+
+    @staticmethod
+    def _noop_restore() -> None:
+        return None
 
     def _print_test_suite_overview(
         self,
@@ -1732,12 +2502,17 @@ class ActionCommandOrchestrator:
                         )
             summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
             if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
-                summary_path = str(summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or "").strip()
+                summary_path = str(
+                    summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
+                ).strip()
                 if summary_path:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
-                    print(f"{prefix}{summary_path}")
+                    rendered_path = render_path_for_terminal(
+                        summary_path, env=getattr(self.runtime, "env", {}), stream=sys.stdout
+                    )
+                    print(f"{prefix}{rendered_path}")
             if multi_project:
                 print("")
 
@@ -1751,18 +2526,6 @@ class ActionCommandOrchestrator:
                 f" (total {total_known}, duration {format_duration(total_duration)})"
             )
         print(self._colorize("======================================================================", fg="cyan"))
-
-    def _print_interactive_test_plan(self, execution_specs: list["_TestExecutionSpec"]) -> None:
-        grouped: dict[str, list[_TestExecutionSpec]] = {}
-        for execution in execution_specs:
-            grouped.setdefault(execution.project_name, []).append(execution)
-        print(self._colorize("Selected test targets:", fg="cyan", bold=True))
-        for project_name, specs in grouped.items():
-            print(f"  {self._colorize(project_name, fg='blue', bold=True)}")
-            for execution in specs:
-                suite_label = self._suite_display_name(execution.spec.source, failed_only=bool(route.flags.get("failed")))
-                suite_text = self._colorize(suite_label, fg="magenta")
-                print(f"    - {suite_text}")
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:

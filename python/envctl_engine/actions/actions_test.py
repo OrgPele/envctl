@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Sequence
+import shutil
+import subprocess
+import sys
+import tomllib
+from typing import Callable, Sequence
 
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
 
@@ -113,6 +117,28 @@ def default_test_commands(
                 )
             )
     return commands
+
+
+def ensure_repo_local_test_prereqs(
+    project_root: Path,
+    *,
+    emit_status: Callable[[str], None] | None = None,
+) -> None:
+    root = Path(project_root).resolve()
+    if not _is_envctl_repo(root):
+        return
+
+    repo_python = root / ".venv" / "bin" / "python"
+    if repo_python.is_file() and _repo_local_test_python_ready(repo_python):
+        return
+
+    if not repo_python.is_file():
+        _emit_bootstrap_status(emit_status, f"Creating repo-local .venv for envctl test actions in {root}")
+        bootstrap_python = _bootstrap_python_executable()
+        _run_bootstrap_command([bootstrap_python, "-m", "venv", str(root / ".venv")], cwd=root)
+
+    _emit_bootstrap_status(emit_status, f"Installing repo-local envctl test prerequisites in {root / '.venv'}")
+    _run_bootstrap_command([str(repo_python), "-m", "pip", "install", "-e", ".[dev]"], cwd=root)
 
 
 def append_frontend_test_path(
@@ -256,6 +282,74 @@ def build_test_args(project_names: Sequence[str], *, run_all: bool, untested: bo
     if untested:
         args.append("untested=true")
     return args
+
+
+def _emit_bootstrap_status(emit_status: Callable[[str], None] | None, message: str) -> None:
+    if callable(emit_status):
+        emit_status(message)
+
+
+def _is_envctl_repo(project_root: Path) -> bool:
+    pyproject = project_root / "pyproject.toml"
+    package_root = project_root / "python" / "envctl_engine"
+    if not pyproject.is_file() or not package_root.is_dir():
+        return False
+    try:
+        payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    project = payload.get("project")
+    if not isinstance(project, dict):
+        return False
+    return str(project.get("name", "")).strip() == "envctl"
+
+
+def _repo_local_test_python_ready(python_bin: Path) -> bool:
+    result = subprocess.run(
+        [str(python_bin), "-c", "import build, prompt_toolkit, psutil, pytest, rich, textual"],
+        cwd=python_bin.parent.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return int(result.returncode) == 0
+
+
+def _bootstrap_python_executable() -> str:
+    candidates = [
+        shutil.which("python3.12"),
+        sys.executable if sys.executable else None,
+        shutil.which("python3"),
+        shutil.which("python"),
+    ]
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    raise RuntimeError(
+        "Unable to bootstrap repo-local envctl test prerequisites: no Python interpreter was found. "
+        "Run python3.12 -m venv .venv and .venv/bin/python -m pip install -e '.[dev]'."
+    )
+
+
+def _run_bootstrap_command(command: list[str], *, cwd: Path) -> None:
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if int(result.returncode) == 0:
+        return
+    output_lines = [line.strip() for line in f"{result.stdout}\n{result.stderr}".splitlines() if line.strip()]
+    detail = output_lines[0] if output_lines else f"exit {result.returncode}"
+    rendered = " ".join(str(part) for part in command)
+    raise RuntimeError(
+        "Failed to bootstrap repo-local envctl test prerequisites "
+        f"with `{rendered}`: {detail}\n"
+        "Run python3.12 -m venv .venv\n"
+        ".venv/bin/python -m pip install -e '.[dev]'"
+    )
 
 
 def _root_unittest_discover_command(base_dir: Path) -> list[str] | None:

@@ -13,6 +13,7 @@ from envctl_engine.shared.process_probe import ProbeBackend, PsutilProbeBackend,
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.state.repository import RuntimeStateRepository
 from envctl_engine.ui.command_parsing import tokens_set_mode as shared_tokens_set_mode
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def state_compat_mode(runtime: Any) -> str:
@@ -176,10 +177,10 @@ def print_logs(
         log_path = Path(service.log_path)
         if not log_path.is_file():
             print(f"{service.name}: log missing at")
-            print(str(log_path))
+            print(render_path_for_terminal(log_path, env=getattr(runtime, "env", {})))
             continue
         print(f"{service.name}: log")
-        print(str(log_path))
+        print(render_path_for_terminal(log_path, env=getattr(runtime, "env", {})))
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         for line in lines[-tail:]:
             print(runtime._normalize_log_line(line, no_color=no_color))

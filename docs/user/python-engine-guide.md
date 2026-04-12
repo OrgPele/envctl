@@ -31,6 +31,8 @@ Behavior:
 - if `.envctl` is missing and you run a normal operational command interactively, runtime opens the setup wizard and writes `.envctl`
 - if `.envctl` is missing and there is no interactive TTY, runtime exits with a clear error instead of guessing
 
+The `.envctl` file remains repo-local. Envctl-owned local workflow artifacts such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots are expected to be ignored through Git global excludes, not by auto-editing the repository `.gitignore`.
+
 Useful commands:
 
 ```bash
@@ -80,9 +82,9 @@ envctl --plan
 These commands are safe to run before startup:
 
 ```bash
-envctl --list-commands
-envctl --list-targets --json
-envctl --list-trees --json
+envctl list-commands
+envctl list-targets --json
+envctl list-trees --json
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
@@ -91,13 +93,20 @@ envctl install-prompts --cli codex --dry-run
 
 What they are for:
 
-- `--list-commands`: show the supported runtime command surface
-- `--list-targets --json`: show discovered projects and targetable scopes
-- `--list-trees --json`: show discovered worktrees / planning targets
+- `list-commands`: show the supported runtime command surface
+- `list-targets --json`: show discovered projects and targetable scopes
+- `list-trees --json`: show discovered worktrees / planning targets
 - `show-config --json`: print effective config source and values
 - `show-state --json`: print the latest saved runtime state
 - `explain-startup --json`: show what startup would do before anything runs
 - `install-prompts --cli ...`: install built-in AI prompt presets without requiring a startup run
+  - omitting `--preset` installs all built-in presets for the selected CLI targets
+  - overwrites prompt files in place after one confirmation prompt
+  - use `--yes` or `--force` for non-interactive approval when existing files must be replaced
+
+Compatibility note:
+
+- `list-commands`, `list-targets`, and `list-trees` still accept the older `--list-*` flag spellings
 
 ## Runtime Artifacts
 

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from importlib import resources
 from pathlib import Path
-from typing import Any, Final
+import sys
+from typing import Any, Final, Mapping
 
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
-_DEFAULT_PRESET = "implement_task"
+_DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
 
@@ -29,6 +30,15 @@ class PromptTemplate:
     body: str
 
 
+@dataclass(slots=True)
+class PromptInstallPlan:
+    cli: str
+    preset: str
+    target_path: Path
+    rendered: str
+    existed: bool
+
+
 def dispatch_utility_command(runtime: Any, route: object) -> int:
     command = str(getattr(route, "command", "")).strip()
     if command == "install-prompts":
@@ -41,6 +51,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
     passthrough_args = list(getattr(route, "passthrough_args", []) or [])
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
+    overwrite_approved = bool(flags.get("yes")) or bool(flags.get("force"))
     raw_cli = str(flags.get("cli") or "").strip()
     preset_label, presets, preset_error = _resolve_presets(flags=flags, passthrough_args=passthrough_args)
 
@@ -49,6 +60,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="*",
@@ -65,6 +77,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             preset=preset_label,
             dry_run=dry_run,
             json_output=json_output,
+            env=getattr(runtime, "env", {}),
             results=[
                 PromptInstallResult(
                     cli="",
@@ -89,13 +102,39 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             )
         )
     results: list[PromptInstallResult] = list(invalid_results)
-    for cli_name in selected_clis:
-        for preset in presets:
-            results.append(_install_prompt_for_cli(cli_name=cli_name, preset=preset, home=home, dry_run=dry_run))
+    plans, planning_failures = _build_install_plans(selected_clis=selected_clis, presets=presets, home=home)
+    if planning_failures:
+        results.extend(planning_failures)
+        return _print_install_results(
+            preset=preset_label,
+            dry_run=dry_run,
+            json_output=json_output,
+            env=getattr(runtime, "env", {}),
+            results=results,
+        )
+    overwrite_candidates = [plan for plan in plans if plan.existed]
+    if overwrite_candidates and not dry_run and not overwrite_approved:
+        overwrite_error = _require_overwrite_approval(
+            overwrite_candidates=overwrite_candidates,
+            json_output=json_output,
+            env=getattr(runtime, "env", {}),
+        )
+        if overwrite_error is not None:
+            results.append(overwrite_error)
+            return _print_install_results(
+                preset=preset_label,
+                dry_run=dry_run,
+                json_output=json_output,
+                env=getattr(runtime, "env", {}),
+                results=results,
+            )
+    for plan in plans:
+        results.append(_install_prompt(plan=plan, dry_run=dry_run))
     return _print_install_results(
         preset=preset_label,
         dry_run=dry_run,
         json_output=json_output,
+        env=getattr(runtime, "env", {}),
         results=results,
     )
 
@@ -126,7 +165,9 @@ def _normalize_cli_targets(raw_cli: str) -> tuple[list[str], list[PromptInstallR
     invalid_results: list[PromptInstallResult] = []
     seen: set[str] = set()
     expand_all = "all" in raw_tokens
-    candidate_tokens = list(_SUPPORTED_CLIS) if expand_all else [token for token in raw_tokens if token in _SUPPORTED_CLIS]
+    candidate_tokens = (
+        list(_SUPPORTED_CLIS) if expand_all else [token for token in raw_tokens if token in _SUPPORTED_CLIS]
+    )
 
     for token in raw_tokens:
         if token in {"all", *_SUPPORTED_CLIS}:
@@ -149,48 +190,118 @@ def _normalize_cli_targets(raw_cli: str) -> tuple[list[str], list[PromptInstallR
     return ordered_tokens, invalid_results
 
 
-def _install_prompt_for_cli(*, cli_name: str, preset: str, home: Path, dry_run: bool) -> PromptInstallResult:
-    target_path = _target_path(cli_name=cli_name, preset=preset, home=home)
-    backup_path = _backup_path_for_target(target_path) if target_path.exists() else None
-    try:
-        template = _load_template(preset)
-        rendered = _render_preset(cli_name=cli_name, template=template)
-    except (LookupError, OSError, ValueError) as exc:
-        return PromptInstallResult(
-            cli=cli_name,
-            path=str(target_path),
-            status="failed",
-            backup_path=str(backup_path) if backup_path is not None else None,
-            message=str(exc),
+def _build_install_plans(
+    *,
+    selected_clis: list[str],
+    presets: list[str],
+    home: Path,
+) -> tuple[list[PromptInstallPlan], list[PromptInstallResult]]:
+    plans: list[PromptInstallPlan] = []
+    failures: list[PromptInstallResult] = []
+    for cli_name in selected_clis:
+        for preset in presets:
+            target_path = _target_path(cli_name=cli_name, preset=preset, home=home)
+            try:
+                template = _load_template(preset)
+                rendered = _render_preset(cli_name=cli_name, template=template)
+            except (LookupError, OSError, ValueError) as exc:
+                failures.append(
+                    PromptInstallResult(
+                        cli=cli_name,
+                        path=str(target_path),
+                        status="failed",
+                        backup_path=None,
+                        message=str(exc),
+                    )
+                )
+                continue
+            plans.append(
+                PromptInstallPlan(
+                    cli=cli_name,
+                    preset=preset,
+                    target_path=target_path,
+                    rendered=rendered,
+                    existed=target_path.exists(),
+                )
+            )
+    return plans, failures
+
+
+def _require_overwrite_approval(
+    *,
+    overwrite_candidates: list[PromptInstallPlan],
+    json_output: bool,
+    env: Mapping[str, str] | None = None,
+) -> PromptInstallResult | None:
+    if json_output:
+        return _overwrite_failure(
+            "Overwrite approval required for existing prompt files; rerun with --yes or --force because --json mode cannot prompt.",
         )
+    if not _interactive_stdio():
+        return _overwrite_failure(
+            "Overwrite approval required for existing prompt files; rerun with --yes or --force because no interactive TTY is available.",
+        )
+    response = input(_overwrite_prompt(overwrite_candidates, env=env)).strip().lower()
+    if response in {"y", "yes"}:
+        return None
+    return _overwrite_failure("Overwrite declined; no prompt files were changed.")
+
+
+def _overwrite_failure(message: str) -> PromptInstallResult:
+    return PromptInstallResult(
+        cli="install-prompts",
+        path="",
+        status="failed",
+        backup_path=None,
+        message=message,
+    )
+
+
+def _interactive_stdio() -> bool:
+    stdin_isatty = getattr(sys.stdin, "isatty", None)
+    stdout_isatty = getattr(sys.stdout, "isatty", None)
+    return bool(callable(stdin_isatty) and stdin_isatty() and callable(stdout_isatty) and stdout_isatty())
+
+
+def _overwrite_prompt(
+    overwrite_candidates: list[PromptInstallPlan],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    lines = [f"Overwrite {len(overwrite_candidates)} existing prompt file(s)?"]
+    for plan in overwrite_candidates:
+        lines.append(f"- {plan.cli}: {render_path_for_terminal(plan.target_path, env=env, stream=sys.stdout)}")
+    lines.append("Type 'y' to continue [y/N]: ")
+    return "\n".join(lines)
+
+
+def _install_prompt(*, plan: PromptInstallPlan, dry_run: bool) -> PromptInstallResult:
     if dry_run:
         return PromptInstallResult(
-            cli=cli_name,
-            path=str(target_path),
+            cli=plan.cli,
+            path=str(plan.target_path),
             status="planned",
-            backup_path=str(backup_path) if backup_path is not None else None,
-            message=f"Would install {preset} for {cli_name}",
+            backup_path=None,
+            message=f"Would install {plan.preset} for {plan.cli}",
         )
     try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.exists() and backup_path is not None:
-            target_path.replace(backup_path)
-        target_path.write_text(rendered, encoding="utf-8")
+        plan.target_path.parent.mkdir(parents=True, exist_ok=True)
+        plan.target_path.write_text(plan.rendered, encoding="utf-8")
     except OSError as exc:
         return PromptInstallResult(
-            cli=cli_name,
-            path=str(target_path),
+            cli=plan.cli,
+            path=str(plan.target_path),
             status="failed",
-            backup_path=str(backup_path) if backup_path is not None else None,
+            backup_path=None,
             message=str(exc),
         )
-    status = "overwritten" if backup_path is not None else "written"
+    status = "overwritten" if plan.existed else "written"
     return PromptInstallResult(
-        cli=cli_name,
-        path=str(target_path),
+        cli=plan.cli,
+        path=str(plan.target_path),
         status=status,
-        backup_path=str(backup_path) if backup_path is not None else None,
-        message=f"Installed {preset} for {cli_name}",
+        backup_path=None,
+        message=f"Installed {plan.preset} for {plan.cli}",
     )
 
 
@@ -210,14 +321,6 @@ def _user_home(runtime: Any) -> Path:
     if raw_home:
         return Path(raw_home).expanduser()
     return Path.home()
-
-
-def _backup_path_for_target(target_path: Path) -> Path:
-    return target_path.with_name(f"{target_path.stem}.bak-{_backup_timestamp()}{target_path.suffix}")
-
-
-def _backup_timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def _available_presets() -> frozenset[str]:
@@ -287,6 +390,7 @@ def _print_install_results(
     preset: str,
     dry_run: bool,
     json_output: bool,
+    env: dict[str, str] | Mapping[str, str] | None = None,
     results: list[PromptInstallResult],
 ) -> int:
     payload = {
@@ -299,9 +403,10 @@ def _print_install_results(
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         for result in results:
-            line = f"{result.cli or 'install-prompts'}: {result.status} {result.path}".rstrip()
+            rendered_path = render_path_for_terminal(result.path, env=env, stream=sys.stdout) if result.path else ""
+            line = f"{result.cli or 'install-prompts'}: {result.status} {rendered_path}".rstrip()
             if result.backup_path:
-                line += f" (backup: {result.backup_path})"
+                line += f" (backup: {render_path_for_terminal(result.backup_path, env=env, stream=sys.stdout)})"
             if result.message:
                 line += f" - {result.message}"
             print(line)

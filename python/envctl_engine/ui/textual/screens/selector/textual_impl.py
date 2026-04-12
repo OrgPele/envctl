@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import os
+import select
 import sys
 from typing import Callable, Sequence, cast
 
@@ -31,8 +32,29 @@ from envctl_engine.ui.textual.screens.selector.textual_app import (
 )
 
 
-def _consume_initial_selector_navigation() -> tuple[str, ...]:
-    raw = consume_preserved_input()
+def _drain_pending_selector_input(*, tty_fd: int | None, max_bytes: int = 64) -> bytes:
+    if tty_fd is None or max_bytes <= 0:
+        return b""
+    collected = bytearray()
+    while len(collected) < max_bytes:
+        try:
+            ready, _, _ = select.select([tty_fd], [], [], 0)
+        except Exception:
+            break
+        if not ready:
+            break
+        try:
+            chunk = os.read(tty_fd, 1)
+        except Exception:
+            break
+        if not chunk:
+            break
+        collected.extend(chunk)
+    return bytes(collected)
+
+
+def _consume_initial_selector_actions(*, tty_fd: int | None) -> tuple[str, ...]:
+    raw = consume_preserved_input() + _drain_pending_selector_input(tty_fd=tty_fd)
     if not raw:
         return ()
     actions: list[str] = []
@@ -45,6 +67,14 @@ def _consume_initial_selector_navigation() -> tuple[str, ...]:
         if raw[index : index + 3] == b"\x1b[B":
             actions.append("down")
             index += 3
+            continue
+        if raw[index : index + 2] in {b"\r\n", b"\n\r"}:
+            actions.append("submit")
+            index += 2
+            continue
+        if raw[index : index + 1] in {b"\r", b"\n"}:
+            actions.append("submit")
+            index += 1
             continue
         index += 1
     return tuple(actions)
@@ -140,7 +170,7 @@ def run_textual_selector(
 
     if build_only:
         run_policy = textual_run_policy(screen="selector")
-        initial_navigation = _consume_initial_selector_navigation()
+        initial_navigation = _consume_initial_selector_actions(tty_fd=tty_fd)
         app = create_selector_app(
             prompt=prompt,
             options=options,
@@ -161,13 +191,17 @@ def run_textual_selector(
         )
         return app  # type: ignore[return-value]
     prelaunch_mode = (
-        temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None and force_textual_backend else nullcontext(False)
+        temporary_tty_character_mode(fd=tty_fd, emit=emit)
+        if tty_fd is not None and force_textual_backend
+        else nullcontext(False)
     )
     with prelaunch_mode:
         launch_mode = (
             nullcontext(False)
             if tty_fd is not None and force_textual_backend
-            else temporary_tty_character_mode(fd=tty_fd, emit=emit) if tty_fd is not None else nullcontext(False)
+            else temporary_tty_character_mode(fd=tty_fd, emit=emit)
+            if tty_fd is not None
+            else nullcontext(False)
         )
         with launch_mode:
             with _guard_textual_nonblocking_read(
@@ -184,7 +218,7 @@ def run_textual_selector(
                 ) as _driver_probe:
                     driver_probe = cast(Callable[[], dict[str, object]] | None, _driver_probe)
                     run_policy = textual_run_policy(screen="selector")
-                    initial_navigation = _consume_initial_selector_navigation()
+                    initial_navigation = _consume_initial_selector_actions(tty_fd=tty_fd)
                     app = create_selector_app(
                         prompt=prompt,
                         options=options,

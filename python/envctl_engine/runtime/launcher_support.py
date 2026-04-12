@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from importlib import metadata as importlib_metadata
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import tomllib
 
 
 class LauncherError(RuntimeError):
@@ -12,20 +14,24 @@ class LauncherError(RuntimeError):
 
 USAGE_TEXT = """Usage:
   envctl [--repo <path>] [engine args...]
-  envctl doctor [--repo <path>]
+  envctl doctor [--repo <path>] [--json]
   envctl install [--shell-file <path>] [--dry-run]
   envctl uninstall [--shell-file <path>] [--dry-run]
+  envctl [--repo <path>] --version
   envctl --help
 
 Examples:
   envctl
   envctl --main
   envctl --repo /path/to/your/repo --resume
+  envctl --version
   envctl doctor --repo /path/to/your/repo
+  envctl doctor --repo /path/to/your/repo --json
 """
 
 _BLOCK_START = "# >>> envctl PATH >>>"
 _BLOCK_END = "# <<< envctl PATH <<<"
+ORIGINAL_WRAPPER_ARGV0_ENVVAR = "ENVCTL_WRAPPER_ORIGINAL_ARGV0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,30 +44,151 @@ def launcher_usage_text() -> str:
     return USAGE_TEXT
 
 
-def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
-    env_map = os.environ if env is None else env
-    path_value = env_map.get("PATH", "")
-    if not path_value:
-        return None
+def resolve_envctl_version(*, project_root: Path | None = None) -> str:
     try:
-        current_resolved = current_binary.resolve()
-    except OSError:
-        current_resolved = current_binary
-    seen: set[Path] = {current_resolved}
-    for entry in path_value.split(os.pathsep):
-        if not entry:
-            continue
-        candidate = Path(entry).expanduser() / "envctl"
-        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        return str(importlib_metadata.version("envctl"))
+    except importlib_metadata.PackageNotFoundError:
+        pass
+    except Exception as exc:
+        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
+
+    for pyproject_path in _candidate_version_files(project_root):
+        if not pyproject_path.is_file():
             continue
         try:
-            resolved = candidate.resolve()
-        except OSError:
-            resolved = candidate
+            payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: {exc}") from exc
+        project = payload.get("project")
+        if not isinstance(project, dict):
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing [project] table")
+        version = project.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing project.version")
+        return version.strip()
+
+    raise LauncherError("Could not determine envctl version from installed package metadata or pyproject.toml.")
+
+
+def _candidate_version_files(project_root: Path | None) -> list[Path]:
+    candidates: list[Path] = []
+    roots: list[Path] = []
+    if project_root is not None:
+        roots.append(project_root.expanduser())
+    try:
+        source_root = Path(__file__).resolve().parents[3]
+    except (IndexError, OSError):
+        source_root = None
+    if source_root is not None and source_root not in roots:
+        roots.append(source_root)
+    for root in roots:
+        candidate = root / "pyproject.toml"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
+    env_map = os.environ if env is None else env
+    current_resolved = _resolved_path(current_binary)
+    seen: set[Path] = {current_resolved}
+    for candidate in _path_envctl_candidates(env_map):
+        resolved = _resolved_path(candidate)
         if resolved in seen:
             continue
         return resolved
     return None
+
+
+def _path_envctl_candidates(env: Mapping[str, str]) -> list[Path]:
+    path_value = env.get("PATH", "")
+    if not path_value:
+        return []
+    candidates: list[Path] = []
+    for entry in path_value.split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry).expanduser() / "envctl"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            candidates.append(candidate)
+    return candidates
+
+
+def _resolved_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _effective_invocation_argv0(current_binary: Path, argv0: str, env: Mapping[str, str] | None = None) -> str:
+    if env is None:
+        return argv0
+    env_map = env
+    preserved = env_map.get(ORIGINAL_WRAPPER_ARGV0_ENVVAR)
+    if not preserved:
+        return argv0
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    if not any(separator in argv0 for separator in separators):
+        return argv0
+    candidate = Path(argv0).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    if _resolved_path(candidate) != _resolved_path(current_binary):
+        return argv0
+    return preserved
+
+
+def is_explicit_wrapper_path(
+    current_binary: Path,
+    argv0: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> bool:
+    env_map = os.environ if env is None else env
+    invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
+    if not invocation:
+        return False
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    if not any(separator in invocation for separator in separators):
+        return False
+    candidate = Path(invocation).expanduser()
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() if cwd is None else cwd) / candidate
+    current_resolved = _resolved_path(current_binary)
+    candidate_resolved = _resolved_path(candidate)
+    if candidate_resolved != current_resolved:
+        return False
+    # Shebang-launched scripts on macOS can receive the PATH-resolved shim path as argv[0]
+    # even when the user typed a bare `envctl`. Treat a PATH entry that differs from the
+    # real wrapper path as bare-name intent so the installed-command safety behavior stays on.
+    if candidate.is_absolute() and candidate != current_resolved:
+        if any(path_candidate == candidate for path_candidate in _path_envctl_candidates(env_map)):
+            return False
+    return True
+
+
+def select_envctl_reexec_target(
+    current_binary: Path,
+    argv0: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+    alternate: Path | None = None,
+) -> Path | None:
+    env_map = os.environ if env is None else env
+    if env_map.get("ENVCTL_USE_REPO_WRAPPER") == "1":
+        return None
+    if is_explicit_wrapper_path(current_binary, argv0, env=env_map, cwd=cwd):
+        return None
+    if alternate is not None:
+        return alternate
+    return find_shadowed_installed_envctl(current_binary, env=env_map)
 
 
 def is_repo_root(path: Path) -> bool:
@@ -93,14 +220,30 @@ def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
     return detected
 
 
+def launcher_doctor_payload(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> dict[str, str]:
+    return {
+        "launcher": "envctl",
+        "binary_path": str(binary_path),
+        "launcher_root": str(launcher_root),
+        "repo_root": str(repo_root),
+        "runtime_entrypoint": str(runtime_entrypoint),
+    }
+
+
 def launcher_doctor_text(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> str:
+    payload = launcher_doctor_payload(
+        binary_path=binary_path,
+        repo_root=repo_root,
+        runtime_entrypoint=runtime_entrypoint,
+        launcher_root=launcher_root,
+    )
     return "\n".join(
         (
-            "Launcher: envctl",
-            f"Binary Path: {binary_path}",
-            f"Launcher Root: {launcher_root}",
-            f"Repo Root: {repo_root}",
-            f"Runtime Entry: {runtime_entrypoint}",
+            f"Launcher: {payload['launcher']}",
+            f"Binary Path: {payload['binary_path']}",
+            f"Launcher Root: {payload['launcher_root']}",
+            f"Repo Root: {payload['repo_root']}",
+            f"Runtime Entry: {payload['runtime_entrypoint']}",
         )
     )
 

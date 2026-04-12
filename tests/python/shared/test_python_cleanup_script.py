@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 
@@ -152,8 +153,9 @@ class PythonCleanupScriptTests(unittest.TestCase):
         self.assertFalse(args.fix)
 
     def test_parse_args_rejects_positional_repo_and_flag_repo_together(self) -> None:
-        with self.assertRaises(SystemExit):
-            self.module.parse_args([str(REPO_ROOT), "--repo", str(REPO_ROOT)])
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                self.module.parse_args([str(REPO_ROOT), "--repo", str(REPO_ROOT)])
 
     def test_test_targets_map_source_domains_to_test_domains(self) -> None:
         paths = self.module._test_targets(
@@ -162,7 +164,7 @@ class PythonCleanupScriptTests(unittest.TestCase):
                 "python/envctl_engine/config",
                 "python/envctl_engine/ui/dashboard",
                 "python/envctl_engine/runtime",
-            ]
+            ],
         )
         self.assertEqual(paths, ["tests/python/config", "tests/python/ui", "tests/python/runtime"])
 
@@ -209,7 +211,7 @@ class PythonCleanupScriptTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as exc:
                 self.module._ensure_python_modules_available(["basedpyright"])
         self.assertIn("Missing required Python modules", str(exc.exception))
-        self.assertIn("pip install basedpyright", str(exc.exception))
+        self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", str(exc.exception))
 
     def test_run_plan_prints_fix_scope_note(self) -> None:
         plan = self.module.build_plan(
@@ -267,7 +269,9 @@ class PythonCleanupScriptTests(unittest.TestCase):
 
     def test_main_executes_by_default(self) -> None:
         with patch.object(self.module, "_run_plan", return_value=0) as run_plan:
-            code = self.module.main([str(REPO_ROOT), "--skip-format", "--skip-typecheck", "--skip-dead-code", "--skip-tests"])
+            code = self.module.main(
+                [str(REPO_ROOT), "--skip-format", "--skip-typecheck", "--skip-dead-code", "--skip-tests"]
+            )
         self.assertEqual(code, 0)
         run_plan.assert_called_once()
 

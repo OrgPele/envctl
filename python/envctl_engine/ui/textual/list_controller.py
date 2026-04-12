@@ -81,8 +81,15 @@ class TextualListController(Generic[TRow]):
         return current_index
 
     @staticmethod
-    def cycle_focus_target(*, filter_has_focus: bool) -> str:
-        return "list" if filter_has_focus else "filter"
+    def cycle_focus_target(*, current_target: str, focus_order: Sequence[str]) -> str:
+        ordered_targets = [str(target).strip() for target in focus_order if str(target).strip()]
+        if not ordered_targets:
+            return current_target
+        try:
+            current_index = ordered_targets.index(current_target)
+        except ValueError:
+            return ordered_targets[0]
+        return ordered_targets[(current_index + 1) % len(ordered_targets)]
 
     def apply_visible_toggle(
         self,

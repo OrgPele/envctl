@@ -36,8 +36,26 @@ class TextualSelectorSharedBehaviorTests(unittest.TestCase):
         ]
         controller = TextualListController(rows)
 
-        self.assertEqual(controller.cycle_focus_target(filter_has_focus=False), "filter")
-        self.assertEqual(controller.cycle_focus_target(filter_has_focus=True), "list")
+        focus_order = ["selector-filter", "selector-list", "btn-cancel", "btn-run"]
+        self.assertEqual(
+            controller.cycle_focus_target(current_target="selector-filter", focus_order=focus_order),
+            "selector-list",
+        )
+        self.assertEqual(
+            controller.cycle_focus_target(current_target="selector-list", focus_order=focus_order),
+            "btn-cancel",
+        )
+        self.assertEqual(
+            controller.cycle_focus_target(current_target="btn-run", focus_order=focus_order),
+            "selector-filter",
+        )
+        self.assertEqual(
+            controller.cycle_focus_target(
+                current_target="btn-cancel",
+                focus_order=["planning-filter", "planning-list", "btn-cancel"],
+            ),
+            "planning-filter",
+        )
 
         should_activate = controller.apply_visible_toggle(
             is_visible=lambda row: row.visible,

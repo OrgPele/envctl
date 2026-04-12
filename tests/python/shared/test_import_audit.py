@@ -88,7 +88,6 @@ PACKAGE_ROOTS = [
     ENGINE_ROOT / "planning",
     ENGINE_ROOT / "runtime",
     ENGINE_ROOT / "shared",
-    ENGINE_ROOT / "shell",
     ENGINE_ROOT / "startup",
     ENGINE_ROOT / "state",
     ENGINE_ROOT / "ui" / "dashboard",

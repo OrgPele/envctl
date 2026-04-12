@@ -27,6 +27,15 @@ class _RuntimeDeep:
 
 
 class TextualSelectorInteractionTests(unittest.TestCase):
+    @staticmethod
+    def _prompt_toolkit_available() -> bool:
+        try:
+            import importlib.util
+
+            return importlib.util.find_spec("prompt_toolkit") is not None
+        except Exception:
+            return False
+
     def setUp(self) -> None:
         self._original_selector_impl = os.environ.get("ENVCTL_UI_SELECTOR_IMPL")
         self._original_simple_menus = os.environ.get("ENVCTL_UI_SIMPLE_MENUS")
@@ -156,6 +165,29 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertIn("escape", actions_by_key)
         self.assertEqual(actions_by_key["escape"], "cancel")
 
+    def test_selector_bindings_keep_a_for_select_all(self) -> None:
+        options = [
+            selector.SelectorItem(  # type: ignore[attr-defined]
+                id="service:alpha",
+                label="Alpha",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            ),
+        ]
+        app = selector._run_textual_selector(  # type: ignore[assignment]
+            prompt="Restart",
+            options=options,
+            multi=True,
+            emit=None,
+            build_only=True,
+        )
+        if app is None:
+            self.skipTest("textual is not installed")
+        actions_by_key = {binding.key: binding.action for binding in app.BINDINGS}
+        self.assertIn("a", actions_by_key)
+        self.assertEqual(actions_by_key["a"], "toggle_visible")
+
     def test_prompt_toolkit_selector_disabled_for_build_only(self) -> None:
         with (
             patch("envctl_engine.ui.textual.screens.selector.can_interactive_tty", return_value=True),
@@ -243,6 +275,8 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertEqual(values, ["alpha"])
 
     def test_cursor_menu_prompt_toolkit_io_prefers_native_auto_tty(self) -> None:
+        if not self._prompt_toolkit_available():
+            self.skipTest("prompt_toolkit is not installed")
         with (
             patch("sys.stdin.isatty", return_value=False),
             patch("sys.stdout.isatty", return_value=True),
@@ -261,6 +295,8 @@ class TextualSelectorInteractionTests(unittest.TestCase):
         self.assertTrue(create_output.call_args.kwargs["always_prefer_tty"])
 
     def test_selector_prompt_toolkit_io_prefers_native_auto_tty(self) -> None:
+        if not self._prompt_toolkit_available():
+            self.skipTest("prompt_toolkit is not installed")
         with (
             patch("sys.stdin.isatty", return_value=False),
             patch("sys.stdout.isatty", return_value=True),

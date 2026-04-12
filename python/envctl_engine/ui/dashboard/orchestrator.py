@@ -5,10 +5,12 @@ import hashlib
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any, cast
+from typing import Any, Literal, cast
 
+from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.actions.actions_test import default_test_commands
-from envctl_engine.actions.project_action_domain import detect_default_branch, resolve_git_root
+from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
+from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from envctl_engine.state.models import RunState
@@ -16,6 +18,7 @@ from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
 from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
     recover_single_letter_command_from_escape_fragment,
@@ -27,6 +30,7 @@ from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import (
     no_target_selected_message,
     project_names_from_state,
@@ -35,7 +39,14 @@ from envctl_engine.ui.selection_support import (
 )
 from envctl_engine.ui.selection_support import SimpleProject
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
+
+
+DirtyPrDecision = Literal["commit", "skip", "cancel"]
+_REVIEW_TAB_OPEN_TOKEN = "__REVIEW_TAB_OPEN__"
+_REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
+_REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 
 
 class DashboardOrchestrator:
@@ -139,6 +150,12 @@ class DashboardOrchestrator:
         if route is None:
             return True, state
 
+        if route.command == "pr":
+            route = self._dedupe_route_projects_by_git_root(route, state, rt)
+            route, state = self._maybe_prepare_pr_commit(route, state, rt)
+            if route is None:
+                return True, state
+
         if route.command == "restart":
             route = self._apply_restart_selection(route, state, rt)
             if route is None:
@@ -159,7 +176,10 @@ class DashboardOrchestrator:
             )
             return True, state
 
-        code = runtime_any.dispatch(route)
+        try:
+            code = runtime_any.dispatch(route)
+        except KeyboardInterrupt:
+            code = 2
         runtime_any._emit(
             "ui.command.dispatch.result",
             component="dashboard_orchestrator",
@@ -167,8 +187,19 @@ class DashboardOrchestrator:
             code=code,
         )
         refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
-        if code != 0:
+        if code in {2, 130} and refreshed is None:
+            refreshed = state
+        printed_interactive_result = False
+        if route.command == "migrate":
+            printed_interactive_result = self._print_project_action_failure_details(
+                route,
+                state if refreshed is None else refreshed,
+            )
+        if code not in {0, 2, 130} and not printed_interactive_result:
             self._print_interactive_failure_details(route, state if refreshed is None else refreshed, code=code)
+        next_state = refreshed if refreshed is not None else state
+        if code == 0 and route.command == "review":
+            self._maybe_offer_review_tab_launch(route, next_state, rt)
         if route.command == "test":
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
                 self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
@@ -182,6 +213,8 @@ class DashboardOrchestrator:
 
     def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
         if route.command == "test":
+            if bool(route.flags.get("interactive_command")) and self._test_failure_details_available(route, state):
+                return
             printed = self._print_test_failure_details(route, state)
             if printed:
                 return
@@ -190,13 +223,33 @@ class DashboardOrchestrator:
             return
         print(f"Command failed (exit {code}).")
 
+    def _test_failure_details_available(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_test_summaries")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
+            entry = metadata.get(project_name)
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status", "")).strip().lower()
+            if status and status != "failed":
+                continue
+            if self._test_summary_display_path(project_name=project_name, entry=entry):
+                return True
+            if summary_excerpt_from_entry(entry, max_lines=3):
+                return True
+        return False
+
     def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
         metadata = state.metadata.get("project_test_summaries")
         if not isinstance(metadata, dict):
             return False
         project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        summaries_available = False
-        for project_name in project_names:
+        printed = False
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
             entry = metadata.get(project_name)
             if not isinstance(entry, dict):
                 continue
@@ -204,13 +257,23 @@ class DashboardOrchestrator:
             if status and status != "failed":
                 continue
             summary_path = self._test_summary_display_path(project_name=project_name, entry=entry)
-            if not summary_path:
+            excerpt_lines = summary_excerpt_from_entry(entry, max_lines=3)
+            if not summary_path and not excerpt_lines:
                 continue
-            summaries_available = True
-        # Test action output already renders per-project "failure summary:" lines inside
-        # the main Test Suite Summary block. If saved summaries exist here, treat them as
-        # already surfaced and avoid printing the detached dashboard-only duplicate block.
-        return summaries_available
+            print(f"Test failure summary for {project_name}:")
+            for line in excerpt_lines:
+                print(line)
+            if summary_path:
+                print(
+                    render_path_for_terminal(
+                        summary_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
+            printed = True
+        return printed
 
     @staticmethod
     def _test_summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:
@@ -224,7 +287,9 @@ class DashboardOrchestrator:
         summary_path = str(entry.get("summary_path", "") or "").strip()
         if not summary_path:
             return ""
-        resolved = DashboardOrchestrator._ensure_short_test_summary_path(project_name=project_name, summary_path=summary_path)
+        resolved = DashboardOrchestrator._ensure_short_test_summary_path(
+            project_name=project_name, summary_path=summary_path
+        )
         return resolved or summary_path
 
     @staticmethod
@@ -246,12 +311,17 @@ class DashboardOrchestrator:
         return str(short_path) if short_path.exists() else summary_path
 
     def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
+        if route.command == "migrate":
+            return self._print_migrate_result_details(route, state)
         metadata = state.metadata.get("project_action_reports")
         if not isinstance(metadata, dict):
             return False
-        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
+        project_names = route.projects or self._project_name_list(
+            self._project_names_from_state(state, cast(Any, self.runtime))
+        )
         printed = False
-        for project_name in project_names:
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
             if not isinstance(project_entry, dict):
                 continue
@@ -265,21 +335,63 @@ class DashboardOrchestrator:
             if summary:
                 summary_lines = [line.strip() for line in summary.splitlines() if line.strip()]
                 first_line = summary_lines[0] if summary_lines else ""
+                hint_lines = [line for line in summary_lines[1:] if line.lower().startswith("hint:")]
                 if len(summary_lines) == 1 and len(first_line) <= 220:
                     print(f"{route.command} failed for {project_name}: {first_line}")
                 else:
                     if first_line:
                         print(f"{route.command} failed for {project_name}: {first_line}")
+                    for hint in hint_lines:
+                        print(hint)
                     if report_path:
                         print(f"{route.command} failure log for {project_name}:")
-                        print(report_path)
+                        print(
+                            render_path_for_terminal(
+                                report_path,
+                                env=getattr(self.runtime, "env", {}),
+                                stream=sys.stdout,
+                                interactive_tty=True,
+                            )
+                        )
                 printed = True
                 continue
             if report_path:
                 print(f"{route.command} failure log for {project_name}:")
-                print(report_path)
+                print(
+                    render_path_for_terminal(
+                        report_path,
+                        env=getattr(self.runtime, "env", {}),
+                        stream=sys.stdout,
+                        interactive_tty=True,
+                    )
+                )
                 printed = True
         return printed
+
+    def _print_migrate_result_details(self, route: Route, state: RunState) -> bool:
+        metadata = state.metadata.get("project_action_reports")
+        if not isinstance(metadata, dict):
+            return False
+        project_names = route.projects or self._project_name_list(
+            self._project_names_from_state(state, cast(Any, self.runtime))
+        )
+        records = []
+        for project_name_raw in project_names:
+            project_name = str(project_name_raw).strip()
+            project_entry = metadata.get(project_name)
+            action_entry = project_entry.get("migrate") if isinstance(project_entry, dict) else None
+            record = ActionCommandOrchestrator._migrate_result_record(project_name=project_name, action_entry=action_entry)
+            if record is None:
+                continue
+            records.append(record)
+        if not records:
+            return False
+        ActionCommandOrchestrator._print_migrate_result_records(
+            records=records,
+            env=getattr(self.runtime, "env", {}),
+            interactive_tty=True,
+        )
+        return True
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         if route.command == "restart":
@@ -292,7 +404,12 @@ class DashboardOrchestrator:
             return route
 
         if route.command in self._dashboard_owned_project_selection_commands():
-            return self._apply_project_target_selection(route, state, rt)
+            selected_route = self._apply_project_target_selection(route, state, rt)
+            if selected_route is None:
+                return None
+            if selected_route.command == "review":
+                return self._apply_review_tab_launch_selection(selected_route, state, rt)
+            return selected_route
 
         runtime_any = cast(Any, rt)
         if self._route_has_explicit_target(route, runtime_any):
@@ -348,12 +465,16 @@ class DashboardOrchestrator:
 
     def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
-        route = self._apply_project_target_selection(route, state, rt)
-        if route is None:
+        selected_route = self._apply_project_target_selection(route, state, rt)
+        if selected_route is None:
             return None
+        route = selected_route
         if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
             return route
-        if isinstance(route.flags.get("commit_message_file"), str) and str(route.flags.get("commit_message_file")).strip():
+        if (
+            isinstance(route.flags.get("commit_message_file"), str)
+            and str(route.flags.get("commit_message_file")).strip()
+        ):
             return route
         raw = self._prompt_commit_message(
             runtime_any,
@@ -476,15 +597,16 @@ class DashboardOrchestrator:
                 project_count=1,
                 projects=[single_project],
             )
-        selection = self._run_pr_selection_flow(
+        selection_raw = self._run_pr_selection_flow(
             projects=projects,
             initial_project_names=[single_project] if single_project else (),
             default_branch=default_branch,
             runtime=runtime_any,
         )
-        if selection is None:
+        if selection_raw is None:
             print(self._no_target_selected_message(route.command))
             return None
+        selection = cast(Any, selection_raw)
         if selection.cancelled:
             if str(getattr(selection, "cancelled_step", "")).strip().lower() == "branch":
                 print("No PR base branch selected.")
@@ -522,6 +644,353 @@ class DashboardOrchestrator:
             )
         return route
 
+    def _maybe_prepare_pr_commit(self, route: Route, state: RunState, rt: object) -> tuple[Route | None, RunState]:
+        runtime_any = cast(Any, rt)
+        dirty_reports = self._dirty_pr_reports(route, state, runtime_any)
+        dirty_targets = [report for report in dirty_reports if report.dirty]
+        runtime_any._emit(
+            "dashboard.pr_dirty_state",
+            command="pr",
+            selected_project_count=len(dirty_reports),
+            dirty_project_count=len(dirty_targets),
+            staged=any(report.staged for report in dirty_targets),
+            unstaged=any(report.unstaged for report in dirty_targets),
+            untracked=any(report.untracked for report in dirty_targets),
+        )
+        if not dirty_targets:
+            return route, state
+
+        prompt = self._dirty_pr_prompt(dirty_targets)
+        runtime_any._emit(
+            "dashboard.pr_dirty_commit.prompt",
+            command="pr",
+            dirty_project_count=len(dirty_targets),
+            staged=any(report.staged for report in dirty_targets),
+            unstaged=any(report.unstaged for report in dirty_targets),
+            untracked=any(report.untracked for report in dirty_targets),
+        )
+        decision = self._prompt_dirty_pr_menu(
+            runtime_any,
+            title="Commit dirty changes before PR?",
+            prompt=prompt,
+        )
+        if decision == "cancel":
+            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            print("Cancelled PR creation.")
+            return None, state
+        if decision == "skip":
+            runtime_any._emit("dashboard.pr_dirty_commit.declined", command="pr", dirty_project_count=len(dirty_targets))
+            return route, state
+
+        runtime_any._emit("dashboard.pr_dirty_commit.accepted", command="pr", dirty_project_count=len(dirty_targets))
+        commit_route = Route(
+            command="commit",
+            mode=route.mode,
+            raw_args=["commit"],
+            passthrough_args=[],
+            projects=[report.project_name for report in dirty_targets],
+            flags={"batch": True, "interactive_command": True},
+        )
+        commit_route = self._apply_commit_selection(commit_route, state, runtime_any)
+        if commit_route is None:
+            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            return None, state
+        code = runtime_any.dispatch(commit_route)
+        refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
+        next_state = refreshed if refreshed is not None else state
+        if code != 0:
+            runtime_any._emit("dashboard.pr_dirty_commit.failed", command="pr", dirty_project_count=len(dirty_targets))
+            self._print_interactive_failure_details(commit_route, next_state, code=code)
+            return None, next_state
+        runtime_any._emit("dashboard.pr_dirty_commit.completed", command="pr", dirty_project_count=len(dirty_targets))
+        return route, next_state
+
+    def _dirty_pr_reports(self, route: Route, state: RunState, runtime: Any) -> list[DirtyWorktreeReport]:
+        repo_root = self._repo_root(runtime)
+        project_roots = self._project_roots_for_route(route, state, runtime)
+        reports_by_git_root: dict[str, DirtyWorktreeReport] = {}
+        for project_name in route.projects or []:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                continue
+            report = probe_dirty_worktree(project_root, repo_root, project_name=project_name)
+            git_root_key = str(report.git_root.resolve())
+            existing = reports_by_git_root.get(git_root_key)
+            if existing is None:
+                reports_by_git_root[git_root_key] = report
+        return list(reports_by_git_root.values())
+
+    def _dedupe_route_projects_by_git_root(self, route: Route, state: RunState, rt: object) -> Route:
+        runtime_any = cast(Any, rt)
+        if len(route.projects) <= 1:
+            return route
+        repo_root = self._repo_root(runtime_any)
+        project_roots = self._project_roots_for_route(route, state, runtime_any)
+        unique_projects: list[str] = []
+        seen_git_roots: set[str] = set()
+        collapsed = False
+        for project_name in route.projects:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                unique_projects.append(project_name)
+                continue
+            git_root = resolve_git_root(project_root, repo_root)
+            git_root_key = str(git_root.resolve())
+            if git_root_key in seen_git_roots:
+                collapsed = True
+                continue
+            seen_git_roots.add(git_root_key)
+            unique_projects.append(project_name)
+        if collapsed:
+            route.projects = unique_projects
+            runtime_any._emit(
+                "dashboard.pr_target_scope.deduped_git_roots",
+                command="pr",
+                original_project_count=len(project_roots) if project_roots else len(route.projects),
+                deduped_project_count=len(unique_projects),
+                projects=list(unique_projects),
+            )
+        return route
+
+    @staticmethod
+    def _repo_root(runtime: Any) -> Path:
+        base_dir = getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())
+        return Path(str(base_dir)).resolve()
+
+    def _project_roots_for_route(self, route: Route, state: RunState, runtime: Any) -> dict[str, Path]:
+        repo_root = self._repo_root(runtime)
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        raw_project_roots = metadata.get("project_roots")
+        project_roots: dict[str, Path] = {}
+        if isinstance(raw_project_roots, dict):
+            for name, root in raw_project_roots.items():
+                project_name = str(name).strip()
+                root_raw = str(root or "").strip()
+                if not project_name or not root_raw:
+                    continue
+                resolved = Path(root_raw)
+                if not resolved.is_absolute():
+                    resolved = repo_root / resolved
+                project_roots[project_name] = resolved.resolve()
+        for project_name in route.projects or []:
+            if project_name in project_roots:
+                continue
+            if str(project_name).strip().casefold() == "main":
+                project_roots[project_name] = repo_root
+        return project_roots
+
+    def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
+        runtime_any = cast(Any, rt)
+        if not bool(route.flags.get(_REVIEW_TAB_LAUNCH_FLAG)):
+            return
+        target = self._review_tab_target(route, state, runtime_any)
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return
+        project_name, project_root = target
+        launch_review_agent_terminal(
+            runtime_any,
+            repo_root=self._repo_root(runtime_any),
+            project_name=project_name,
+            project_root=project_root,
+            review_bundle_path=self._review_bundle_path(state, project_name=project_name),
+        )
+
+    def _apply_review_tab_launch_selection(self, route: Route, state: RunState, rt: object) -> Route:
+        runtime_any = cast(Any, rt)
+        route.flags = {key: value for key, value in route.flags.items() if key != _REVIEW_TAB_LAUNCH_FLAG}
+        target = self._review_tab_target(route, state, runtime_any)
+        runtime_any._emit(
+            "dashboard.review_tab.evaluate",
+            command="review",
+            project_count=len(route.projects or []),
+            eligible=target is not None,
+        )
+        if target is None:
+            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
+            return route
+        project_name, _project_root = target
+        readiness = review_agent_launch_readiness(runtime_any)
+        if not readiness.ready:
+            runtime_any._emit(
+                "dashboard.review_tab.skipped",
+                command="review",
+                reason=readiness.reason,
+                project=project_name,
+                cli=readiness.cli,
+                missing=list(readiness.missing),
+            )
+            message = self._review_tab_unavailable_message(readiness.reason, readiness.missing)
+            if message:
+                print(message)
+            return route
+        runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
+        decision = self._prompt_review_tab_menu(runtime_any, project_name=project_name)
+        if decision != "commit":
+            runtime_any._emit("dashboard.review_tab.declined", command="review", project=project_name, cli=readiness.cli)
+            return route
+        runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
+        route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}
+        return route
+
+    def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
+        repo_root = self._repo_root(runtime)
+        project_roots = self._project_roots_for_route(route, state, runtime)
+        distinct_targets: list[tuple[str, Path]] = []
+        seen_git_roots: set[str] = set()
+        for project_name in route.projects or []:
+            project_root = project_roots.get(project_name)
+            if project_root is None:
+                continue
+            git_root = resolve_git_root(project_root, repo_root)
+            if git_root == repo_root and project_root != repo_root and not (project_root / ".git").exists():
+                git_root = project_root
+            git_root_key = str(git_root.resolve())
+            if git_root_key in seen_git_roots:
+                continue
+            seen_git_roots.add(git_root_key)
+            distinct_targets.append((project_name, project_root))
+        if len(distinct_targets) != 1:
+            return None
+        project_name, project_root = distinct_targets[0]
+        if str(project_name).strip().casefold() == "main":
+            return None
+        if project_root.resolve() == repo_root:
+            return None
+        return project_name, project_root
+
+    @staticmethod
+    def _review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
+        if reason == "missing_executables" and missing:
+            return f"Origin review tab unavailable: missing required executables: {', '.join(missing)}."
+        if reason in {"missing_cmux_context", "workspace_unavailable"}:
+            return "Origin review tab unavailable: current cmux workspace context is unavailable."
+        return ""
+
+    @staticmethod
+    def _review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        reports = metadata.get("project_action_reports")
+        if not isinstance(reports, dict):
+            return None
+        project_entry = reports.get(project_name)
+        if not isinstance(project_entry, dict):
+            return None
+        review_entry = project_entry.get("review")
+        if not isinstance(review_entry, dict):
+            return None
+        if str(review_entry.get("status", "")).strip().lower() != "success":
+            return None
+        raw_path = str(review_entry.get("bundle_path", "") or "").strip()
+        if not raw_path:
+            return None
+        return Path(raw_path).expanduser()
+
+    @staticmethod
+    def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
+        if len(dirty_targets) == 1:
+            target = dirty_targets[0]
+            return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
+        return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
+
+    @staticmethod
+    def _prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
+        prompt = f"Open an origin-side AI review tab for {project_name}?"
+        values = _run_selector_with_impl(
+            prompt=prompt,
+            options=[
+                SelectorItem(
+                    id="review-tab:open",
+                    label="Yes",
+                    kind="",
+                    token=_REVIEW_TAB_OPEN_TOKEN,
+                    scope_signature=("review-tab:open",),
+                ),
+                SelectorItem(
+                    id="review-tab:skip",
+                    label="No",
+                    kind="",
+                    token=_REVIEW_TAB_SKIP_TOKEN,
+                    scope_signature=("review-tab:skip",),
+                ),
+            ],
+            multi=False,
+            initial_tokens=[_REVIEW_TAB_SKIP_TOKEN],
+            emit=getattr(runtime, "_emit", None),
+        )
+        if not values:
+            return "skip"
+        chosen = str(values[0]).strip()
+        if chosen == _REVIEW_TAB_OPEN_TOKEN:
+            return "commit"
+        if chosen == _REVIEW_TAB_SKIP_TOKEN:
+            return "skip"
+        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title="Open origin review tab?", prompt=prompt)
+
+    @staticmethod
+    def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:
+        categories: list[str] = []
+        if bool(getattr(report, "staged", False)):
+            categories.append("staged changes")
+        if bool(getattr(report, "unstaged", False)):
+            categories.append("unstaged changes")
+        if bool(getattr(report, "untracked", False)):
+            categories.append("untracked files")
+        return categories
+
+    @staticmethod
+    def _prompt_dirty_pr_menu(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
+        values = _run_selector_with_impl(
+            prompt=prompt,
+            options=[
+                SelectorItem(
+                    id="dirty-pr:commit",
+                    label="Commit",
+                    kind="",
+                    token="__DIRTY_PR_COMMIT__",
+                    scope_signature=("dirty-pr:commit",),
+                ),
+                SelectorItem(
+                    id="dirty-pr:skip",
+                    label="Do nothing",
+                    kind="",
+                    token="__DIRTY_PR_SKIP__",
+                    scope_signature=("dirty-pr:skip",),
+                ),
+            ],
+            multi=False,
+            initial_tokens=["__DIRTY_PR_COMMIT__"],
+            emit=getattr(runtime, "_emit", None),
+        )
+        if not values:
+            return "cancel"
+        chosen = str(values[0]).strip()
+        if chosen == "__DIRTY_PR_COMMIT__":
+            return "commit"
+        if chosen == "__DIRTY_PR_SKIP__":
+            return "skip"
+        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title=title, prompt=prompt)
+
+    @staticmethod
+    def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
+        confirm = getattr(runtime, "_prompt_yes_no", None)
+        if callable(confirm):
+            try:
+                result = confirm(title=title, prompt=prompt)
+            except TypeError:
+                result = confirm(prompt)
+            if result is None:
+                return "cancel"
+            return "commit" if bool(result) else "skip"
+        response = DashboardOrchestrator._read_interactive_line(runtime, prompt).strip().lower()
+        if response in {"y", "yes"}:
+            return "commit"
+        if response in {"", "n", "no"}:
+            return "skip"
+        if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
+            return "cancel"
+        return "skip"
+
     def _default_pr_base_branch(self, runtime: Any) -> str:
         git_root = self._pr_git_root(runtime)
         try:
@@ -540,11 +1009,9 @@ class DashboardOrchestrator:
             capture_output=True,
             check=False,
         )
-        branch_names = [
-            line.strip()
-            for line in listed.stdout.splitlines()
-            if line.strip()
-        ] if listed.returncode == 0 else []
+        branch_names = (
+            [line.strip() for line in listed.stdout.splitlines() if line.strip()] if listed.returncode == 0 else []
+        )
         if default_branch and default_branch not in branch_names:
             branch_names.append(default_branch)
         if not branch_names:
@@ -595,7 +1062,11 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _single_project_name(projects: list[object]) -> str:
-        names = [str(getattr(project, "name", "")).strip() for project in projects if str(getattr(project, "name", "")).strip()]
+        names = [
+            str(getattr(project, "name", "")).strip()
+            for project in projects
+            if str(getattr(project, "name", "")).strip()
+        ]
         if len(names) != 1:
             return ""
         return names[0]
@@ -661,9 +1132,15 @@ class DashboardOrchestrator:
             runtime_any,
             project_names=all_project_names,
         )
-        include_requirements = set(selected_projects) == set(all_project_names) and set(selected_service_types) == set(all_service_types)
+        include_requirements = set(selected_projects) == set(all_project_names) and set(selected_service_types) == set(
+            all_service_types
+        )
         route.flags = {
-            **{key: value for key, value in route.flags.items() if key not in {"all", "services", "restart_service_types"}},
+            **{
+                key: value
+                for key, value in route.flags.items()
+                if key not in {"all", "services", "restart_service_types"}
+            },
             "services": selected_service_names,
             "restart_service_types": list(selected_service_types),
             "restart_include_requirements": include_requirements,
@@ -761,7 +1238,7 @@ class DashboardOrchestrator:
                 _tree_preselected_projects_from_state_impl(
                     startup,
                     runtime=runtime,
-                    project_contexts=projects,
+                    project_contexts=cast(Any, projects),
                 )
             )
         except Exception:
@@ -795,7 +1272,11 @@ class DashboardOrchestrator:
             state,
             project_names=selected_projects,
         )
-        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
+        if (
+            len(available_types) <= 1
+            and not failed_scope_available
+            and not (all_tests_available and not available_types)
+        ):
             return list(available_types)
         default_service_names = [service_type.title() for service_type in available_types]
         initial_service_names = list(default_service_names)
@@ -851,7 +1332,11 @@ class DashboardOrchestrator:
             state,
             project_names=selected_projects,
         )
-        if len(available_types) <= 1 and not failed_scope_available and not (all_tests_available and not available_types):
+        if (
+            len(available_types) <= 1
+            and not failed_scope_available
+            and not (all_tests_available and not available_types)
+        ):
             return list(available_types)
         options: list[str] = []
         initial_names: list[str] = []
@@ -929,13 +1414,22 @@ class DashboardOrchestrator:
                 continue
             if not isinstance(entry, dict):
                 continue
+            status = str(entry.get("status", "") or "").strip().lower()
+            if status == "passed":
+                continue
+            for key in ("failed_tests", "failed_manifest_entries"):
+                raw_count = entry.get(key)
+                with suppress(TypeError, ValueError):
+                    if int(raw_count) > 0:
+                        return True
+            if summary_excerpt_from_entry(entry, max_lines=1):
+                return True
             if str(entry.get("manifest_path", "") or "").strip():
                 return True
             if str(entry.get("short_summary_path", "") or "").strip():
                 return True
             if str(entry.get("summary_path", "") or "").strip():
                 return True
-            status = str(entry.get("status", "") or "").strip().lower()
             if status == "failed":
                 return True
         return False
@@ -1048,13 +1542,16 @@ class DashboardOrchestrator:
     ) -> str | None:
         dialog = getattr(runtime, "_prompt_text_input", None)
         if callable(dialog):
-            return dialog(
+            result = dialog(
                 title=title,
                 help_text=help_text,
                 placeholder=placeholder,
                 initial_value="",
                 default_button_label=default_button_label,
             )
+            if result is None:
+                return None
+            return str(result)
         result = run_text_input_dialog_textual(
             title=title,
             help_text=help_text,
@@ -1072,9 +1569,9 @@ class DashboardOrchestrator:
         return DashboardOrchestrator._prompt_text_dialog(
             runtime,
             title="Commit Message",
-            help_text="Commit message (leave blank to use changelog).",
+            help_text="Commit message (leave blank to use the envctl commit log).",
             placeholder="Type a commit message",
-            default_button_label="Use changelog",
+            default_button_label="Use envctl commit log",
         )
 
     @staticmethod

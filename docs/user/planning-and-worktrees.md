@@ -46,6 +46,55 @@ envctl --list-trees --json
 envctl explain-startup --json
 ```
 
+## Optional Cmux Agent Launch
+
+`--plan` can now open one new `cmux` terminal surface per newly created worktree when the feature is enabled in config or env:
+
+```dotenv
+ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
+ENVCTL_PLAN_AGENT_CLI=codex
+ENVCTL_PLAN_AGENT_PRESET=implement_task
+ENVCTL_PLAN_AGENT_CODEX_CYCLES=1
+ENVCTL_PLAN_AGENT_SHELL=zsh
+ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
+```
+
+Shorthand aliases also work:
+
+```dotenv
+CMUX=true
+CYCLES=3
+```
+
+Behavior:
+
+- only runs for `--plan`
+- only launches for worktrees created during the current reconciliation
+- skips `--planning-prs`
+- skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
+- when enabled without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
+- if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
+- the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
+- when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
+- `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
+- `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+- `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
+- canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
+
+Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset command. By default that preset is `implement_task`. For Codex the launch command is `/prompts:<preset>`; for OpenCode it remains `/<preset>`. `implement_plan` is still available when you want to override the default.
+
+`ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
+
+- default/unset is `1`, so Codex launches queue `/prompts:implement_task` plus `/prompts:finalize_task`
+- `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
+- `0` keeps the current one-shot launch behavior
+- `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `/prompts:finalize_task`
+- `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `/prompts:finalize_task` for the final round
+- OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
+- `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+- envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
+- queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
+
 ## Selection Input
 When passing plan selections, you can use any of these forms:
 - `folder/task`
@@ -109,6 +158,22 @@ Use `--plan` when:
 - you want repo-native selection by plan/task
 - multiple people or agents need to run the same implementation matrix
 
+New worktrees created by `envctl` now persist their origin branch in:
+
+```text
+<worktree>/.envctl-state/worktree-provenance.json
+```
+
+When the source repo already has common local dependency/runtime artifacts, envctl-created worktrees also try to link a small compatibility set into the new worktree:
+
+- `backend/venv`
+- `backend/.env`
+- `frontend/node_modules`
+
+This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory.
+
+Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
+
 ## Typical Loop
 
 ```bash
@@ -124,6 +189,13 @@ Useful follow-up commands:
 envctl errors --all
 envctl restart --project <tree-name>
 envctl logs --project <tree-name> --logs-follow
+```
+
+Recommended inspection before enabling auto-launch:
+
+```bash
+envctl show-config --json
+envctl explain-startup --json
 ```
 
 ## Headless Planning

@@ -3,20 +3,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
-from pathlib import Path
+import json
 import os
+from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from typing import Mapping
 
+from envctl_engine.planning import planning_feature_name
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import (
+    normalize_local_path_text,
+    render_path_for_terminal,
+    render_paths_in_terminal_text,
+    rich_path_text,
+)
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
 COMMIT_MESSAGE_MAX_CHARS = 16_000
+WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
+WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+PLANNING_ROOT = Path("todo") / "plans"
+DONE_PLANNING_ROOT = Path("todo") / "done"
+ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
+ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +44,38 @@ class ActionProjectContext:
     @property
     def interactive(self) -> bool:
         return parse_bool(self.env.get("ENVCTL_ACTION_INTERACTIVE"), False) and bool(sys.stdin.isatty())
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewBaseResolution:
+    base_branch: str
+    base_ref: str
+    source: str
+    merge_base: str
+
+
+class ReviewBaseResolutionError(RuntimeError):
+    """Raised when envctl cannot determine a usable review base."""
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalPlanResolution:
+    path: Path | None
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class DirtyWorktreeReport:
+    project_name: str
+    project_root: Path
+    git_root: Path
+    staged: bool
+    unstaged: bool
+    untracked: bool
+
+    @property
+    def dirty(self) -> bool:
+        return self.staged or self.unstaged or self.untracked
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
@@ -55,9 +102,15 @@ def run_commit_action(context: ActionProjectContext) -> int:
         print(f"No changes to commit for {branch}.")
         return 0
 
-    commit_message, message_file, error = _resolve_commit_message(context, branch=branch)
+    commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
     if error:
-        print(error)
+        error_paths: list[object] = []
+        explicit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
+        if explicit_message_file:
+            error_paths.append(explicit_message_file)
+        elif ledger_path is not None:
+            error_paths.append(ledger_path)
+        print(render_paths_in_terminal_text(error, paths=error_paths, env=context.env, stream=sys.stdout))
         return 1
 
     generated_message_file = message_file.endswith(".envctl-commit-message.txt")
@@ -75,6 +128,19 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if commit.returncode != 0:
         _print_error("git commit failed", commit)
         return 1
+
+    if ledger_path is not None:
+        advance_error = _advance_commit_ledger_pointer(ledger_path)
+        if advance_error:
+            print(
+                render_paths_in_terminal_text(
+                    advance_error,
+                    paths=[ledger_path],
+                    env=context.env,
+                    stream=sys.stdout,
+                )
+            )
+            return 1
 
     remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
     push = _run_git(git_root, ["push", "-u", remote, branch])
@@ -102,6 +168,13 @@ def run_pr_action(context: ActionProjectContext) -> int:
     if existing_url:
         print(f"PR already exists: {existing_url}")
         return 0
+
+    dirty_report = probe_dirty_worktree(context.project_root, context.repo_root, project_name=context.project_name)
+    if dirty_report.dirty:
+        print(f"Dirty worktree detected for {context.project_name}; committing and pushing before PR creation.")
+        commit_code = run_commit_action(context)
+        if commit_code != 0:
+            return commit_code
 
     helper = context.repo_root / "utils" / "create-pr.sh"
     if helper.is_file() and os.access(helper, os.X_OK):
@@ -152,6 +225,15 @@ def run_review_action(context: ActionProjectContext) -> int:
 
     mode = _resolve_analyze_mode(context)
     scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
+    original_plan = _resolve_original_plan(context)
+    review_base: ReviewBaseResolution | None = None
+    if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
+        try:
+            review_base = _resolve_review_base(context, git_root)
+        except ReviewBaseResolutionError as exc:
+            print(str(exc))
+            return 1
+
     helper = context.repo_root / "utils" / "analyze-tree-changes.sh"
     if helper.is_file() and os.access(helper, os.X_OK):
         iterations = _analysis_iterations(context, mode=mode)
@@ -162,10 +244,52 @@ def run_review_action(context: ActionProjectContext) -> int:
                 iterations=iterations,
                 mode=mode,
                 scope=scope,
+                review_base=review_base,
+                original_plan=original_plan,
             )
 
-    diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
-    status = _git_output(git_root, ["status", "--porcelain"]).strip()
+    if review_base is None:
+        diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
+        status = _git_output(git_root, ["status", "--porcelain"]).strip()
+        output_path = _tree_diffs_output_path(
+            context,
+            "review",
+            f"review_{sanitize_label(context.project_name)}_{mode}",
+        )
+        _write_markdown_lines(
+            output_path,
+            [
+                f"# Review Summary: {context.project_name}",
+                "",
+                f"Mode: {mode}",
+                f"Scope: {scope}",
+                "",
+                *_original_plan_markdown_lines(original_plan, include_contents=True),
+                "## Diff Stat",
+                diff_stat or "(no diff)",
+                "",
+                "## Working Tree",
+                status or "(clean)",
+                "",
+            ],
+        )
+        _print_review_completion(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_path.parent,
+            summary_path=output_path,
+            all_in_one_path=output_path,
+            stats=[],
+            tree_count=1,
+        )
+        return 0
+
+    diff_left = review_base.merge_base or review_base.base_ref
+    diff_stat = _git_output(git_root, ["diff", "--find-renames", "--stat", diff_left]).strip()
+    changed_files = _git_output(git_root, ["diff", "--find-renames", "--name-status", diff_left]).strip()
+    full_diff = _git_output(git_root, ["diff", "--find-renames", diff_left]).strip()
+    status = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"]).strip()
     output_path = _tree_diffs_output_path(
         context,
         "review",
@@ -179,10 +303,29 @@ def run_review_action(context: ActionProjectContext) -> int:
             f"Mode: {mode}",
             f"Scope: {scope}",
             "",
+            *_original_plan_markdown_lines(original_plan, include_contents=True),
+            "## Base branch",
+            review_base.base_branch,
+            "",
+            "## Base resolution source",
+            review_base.source,
+            "",
+            "## Base ref",
+            review_base.base_ref,
+            "",
+            "## Merge base",
+            review_base.merge_base or "(merge-base unavailable)",
+            "",
             "## Diff Stat",
             diff_stat or "(no diff)",
             "",
-            "## Working Tree",
+            "## Changed files",
+            changed_files or "(no changed files)",
+            "",
+            "## Full diff",
+            full_diff or "(no diff)",
+            "",
+            "## Working tree / untracked files",
             status or "(clean)",
             "",
         ],
@@ -205,6 +348,43 @@ def resolve_git_root(project_root: Path, repo_root: Path) -> Path:
         if (candidate / ".git").exists():
             return candidate
     return project_root
+
+
+def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
+    git_root = resolve_git_root(project_root, repo_root)
+    status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
+    staged, unstaged, untracked = _classify_dirty_porcelain(status_output)
+    resolved_name = project_name.strip() or project_root.name or git_root.name or "project"
+    return DirtyWorktreeReport(
+        project_name=resolved_name,
+        project_root=project_root,
+        git_root=git_root,
+        staged=staged,
+        unstaged=unstaged,
+        untracked=untracked,
+    )
+
+
+def _classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
+    staged = False
+    unstaged = False
+    untracked = False
+    for raw_line in str(status_output or "").splitlines():
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        if line.startswith("??"):
+            untracked = True
+            continue
+        if len(line) < 2:
+            continue
+        index_status = line[0]
+        worktree_status = line[1]
+        if index_status not in {" ", "?"}:
+            staged = True
+        if worktree_status not in {" ", "?"}:
+            unstaged = True
+    return staged, unstaged, untracked
 
 
 def detect_default_branch(git_root: Path) -> str:
@@ -241,32 +421,184 @@ def sanitize_label(value: str) -> str:
     return cleaned.strip("_") or "project"
 
 
+def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
+    if context.project_root.resolve() == context.repo_root.resolve():
+        return OriginalPlanResolution(path=None, source="not_applicable")
+
+    provenance = _read_worktree_provenance(context.project_root)
+    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    resolved = _resolve_plan_file_from_record(provenance_root=context.repo_root, recorded_plan=recorded_plan)
+    if resolved is not None:
+        return OriginalPlanResolution(path=resolved, source="provenance")
+
+    inferred = _infer_original_plan_file(context.repo_root, feature_name=_feature_name_from_project_name(context.project_name))
+    if inferred is not None:
+        return OriginalPlanResolution(path=inferred, source="feature_inference")
+    return OriginalPlanResolution(path=None, source="unresolved")
+
+
+def _read_worktree_provenance(project_root: Path) -> dict[str, object]:
+    path = project_root / WORKTREE_PROVENANCE_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_plan_file_from_record(*, provenance_root: Path, recorded_plan: str) -> Path | None:
+    normalized = str(recorded_plan or "").strip()
+    if not normalized:
+        return None
+    relative = Path(normalized.replace("\\", "/").lstrip("./"))
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        candidate = provenance_root / root / relative
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _infer_original_plan_file(repo_root: Path, *, feature_name: str) -> Path | None:
+    normalized_feature = str(feature_name).strip()
+    if not normalized_feature:
+        return None
+    matches: list[Path] = []
+    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
+        planning_root = repo_root / root
+        if not planning_root.is_dir():
+            continue
+        for candidate in sorted(planning_root.glob("*/*.md")):
+            if candidate.name == "README.md":
+                continue
+            relative = candidate.relative_to(planning_root)
+            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
+                continue
+            matches.append(candidate.resolve())
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _feature_name_from_project_name(project_name: str) -> str:
+    normalized = str(project_name).strip()
+    return re.sub(r"-\d+$", "", normalized)
+
+
+def _original_plan_markdown_lines(resolution: OriginalPlanResolution, *, include_contents: bool) -> list[str]:
+    resolved_path = str(resolution.path) if resolution.path is not None else "(unresolved)"
+    lines = [
+        "## Original plan file",
+        resolved_path,
+        "",
+        "## Original plan resolution",
+        resolution.source,
+        "",
+    ]
+    if include_contents:
+        plan_text = _read_text(resolution.path) if resolution.path is not None else ""
+        lines.extend(
+            [
+                "## Original plan",
+                plan_text or "(unavailable)",
+                "",
+            ]
+        )
+    return lines
+
+
+def _augment_review_output_dir(output_dir: Path, *, original_plan: OriginalPlanResolution) -> None:
+    _augment_review_markdown_file(output_dir / "all.md", original_plan=original_plan, include_contents=True)
+    _augment_review_markdown_file(output_dir / "summary.md", original_plan=original_plan, include_contents=False)
+
+
+def _augment_review_markdown_file(path: Path, *, original_plan: OriginalPlanResolution, include_contents: bool) -> None:
+    if not path.is_file():
+        return
+    original_text = _read_text(path)
+    if not original_text:
+        return
+    if "## Original plan file" in original_text:
+        return
+    metadata_block = "\n".join(_original_plan_markdown_lines(original_plan, include_contents=include_contents)).strip()
+    if not metadata_block:
+        return
+    lines = original_text.splitlines()
+    if lines and lines[0].startswith("# "):
+        title = lines[0]
+        remainder = "\n".join(lines[1:]).strip()
+        rewritten = f"{title}\n\n{metadata_block}\n\n{remainder}".rstrip() + "\n"
+    else:
+        rewritten = f"{metadata_block}\n\n{original_text.strip()}".rstrip() + "\n"
+    _atomic_write(path, rewritten)
+
+
 def _resolve_commit_message(
     context: ActionProjectContext,
     *,
     branch: str,
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str | None, Path | None]:
     commit_message = str(context.env.get("ENVCTL_COMMIT_MESSAGE", "")).strip()
     commit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
     if commit_message:
-        return commit_message, "", None
+        return commit_message, "", None, None
     if commit_message_file:
         path = Path(commit_message_file)
         if path.is_file() and _file_has_text(path):
-            return "", str(path), None
-        return "", "", f"Commit message file is missing or empty: {commit_message_file}"
+            return "", str(path), None, None
+        return "", "", f"Commit message file is missing or empty: {commit_message_file}", None
 
-    changelog = _tree_changelog_path(context)
-    if changelog is not None:
-        commit_message = _latest_changelog_commit_message(_read_text(changelog), max_chars=COMMIT_MESSAGE_MAX_CHARS)
-        if commit_message:
-            return "", str(_write_commit_message_file(commit_message)), None
+    ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
+    payload, error = _read_commit_ledger_segment(ledger_path)
+    if error:
+        return "", "", error, ledger_path
+    return "", str(_write_commit_message_file(payload)), None, ledger_path
 
-    main_task = context.project_root / "MAIN_TASK.md"
-    if main_task.is_file() and _file_has_text(main_task):
-        return "", str(main_task), None
 
-    return "", "", f"MAIN_TASK.md is missing or empty and no commit message provided for {branch}."
+def _read_commit_ledger_segment(path: Path) -> tuple[str, str | None]:
+    if not path.exists():
+        _atomic_write(path, f"# Envctl Commit Log\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n")
+
+    text = _read_text(path)
+    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
+    if marker_count == 0:
+        return "", (
+            f"Envctl commit log is malformed: {path} is missing the required pointer marker "
+            f"'{ENVCTL_COMMIT_POINTER_MARKER}'."
+        )
+    if marker_count > 1:
+        return "", f"Envctl commit log is malformed: {path} contains multiple pointer markers."
+
+    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
+    del before
+    payload = _normalize_text_block(after)
+    if not payload:
+        return "", (
+            f"Envctl commit log is empty after the pointer in {path}. Provide --commit-message, "
+            f"--commit-message-file, or append a new summary to {path}."
+        )
+    return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
+
+
+def _advance_commit_ledger_pointer(path: Path) -> str | None:
+    if not path.exists():
+        return f"Envctl commit log disappeared before pointer advance: {path}"
+    text = _read_text(path)
+    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
+    if marker_count == 0:
+        return f"Envctl commit log is malformed during pointer advance: {path} is missing the required pointer marker."
+    if marker_count > 1:
+        return f"Envctl commit log is malformed during pointer advance: {path} contains multiple pointer markers."
+    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
+    archived_before = _normalize_text_block(before)
+    payload = _normalize_text_block(after)
+    parts = [part for part in (archived_before, payload) if part]
+    archived = "\n\n".join(parts).strip()
+    updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
+    try:
+        _atomic_write(path, updated)
+    except OSError as exc:
+        return f"Failed to advance envctl commit log pointer in {path}: {exc}"
+    return None
 
 
 def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> str:
@@ -283,7 +615,142 @@ def _resolve_analyze_mode(context: ActionProjectContext) -> str:
     return "single"
 
 
+def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> ReviewBaseResolution:
+    explicit = str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip()
+    if explicit:
+        resolved = _resolve_review_base_candidate(git_root, base_branch=explicit, source="explicit")
+        if resolved is None:
+            raise ReviewBaseResolutionError(
+                f"Review base '{explicit}' could not be resolved. Supply --review-base <branch> with an existing branch."
+            )
+        return resolved
+
+    if context.project_root.resolve() != context.repo_root.resolve():
+        provenance = _load_worktree_provenance(context.project_root)
+        resolved = _resolve_provenance_review_base(git_root, provenance)
+        if resolved is not None:
+            return resolved
+
+    resolved = _resolve_upstream_review_base(git_root)
+    if resolved is not None:
+        return resolved
+
+    default_branch = detect_default_branch(git_root).strip()
+    resolved = _resolve_review_base_candidate(git_root, base_branch=default_branch, source="default_branch")
+    if resolved is not None:
+        return resolved
+    raise ReviewBaseResolutionError(
+        "Unable to resolve a review base automatically. Supply --review-base <branch>."
+    )
+
+
+def _resolve_provenance_review_base(
+    git_root: Path,
+    provenance: Mapping[str, object] | None,
+) -> ReviewBaseResolution | None:
+    if not provenance:
+        return None
+    source_branch = str(provenance.get("source_branch", "")).strip()
+    source_ref = str(provenance.get("source_ref", "")).strip()
+    if source_branch:
+        return _resolve_review_base_candidate(
+            git_root,
+            base_branch=source_branch,
+            source="provenance",
+            preferred_ref=source_ref,
+        )
+    if source_ref:
+        return _resolve_review_base_candidate(
+            git_root,
+            base_branch=_branch_name_from_ref(source_ref),
+            source="provenance",
+            preferred_ref=source_ref,
+        )
+    return None
+
+
+def _resolve_upstream_review_base(git_root: Path) -> ReviewBaseResolution | None:
+    head_branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if not head_branch or head_branch == "HEAD":
+        return None
+    upstream_ref = _git_output(git_root, ["rev-parse", "--abbrev-ref", f"{head_branch}@{{upstream}}"]).strip()
+    if not upstream_ref or upstream_ref == "HEAD":
+        return None
+    return _resolve_review_base_candidate(
+        git_root,
+        base_branch=_branch_name_from_ref(upstream_ref),
+        source="upstream",
+        preferred_ref=upstream_ref,
+    )
+
+
+def _resolve_review_base_candidate(
+    git_root: Path,
+    *,
+    base_branch: str,
+    source: str,
+    preferred_ref: str = "",
+) -> ReviewBaseResolution | None:
+    normalized_branch = _branch_name_from_ref(base_branch)
+    base_ref = _resolve_review_base_ref(git_root, base_branch=base_branch, preferred_ref=preferred_ref)
+    if not base_ref:
+        return None
+    merge_base = _git_output(git_root, ["merge-base", "HEAD", base_ref]).strip()
+    return ReviewBaseResolution(
+        base_branch=normalized_branch or base_branch.strip(),
+        base_ref=base_ref,
+        source=source,
+        merge_base=merge_base,
+    )
+
+
+def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref: str = "") -> str:
+    branch = base_branch.strip()
+    candidates: list[str] = []
+    for candidate in (
+        preferred_ref.strip(),
+        branch,
+        "" if not branch or branch.startswith("origin/") else f"origin/{branch}",
+        "" if not branch.startswith("origin/") else branch.split("origin/", 1)[1],
+    ):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if _git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
+            return candidate
+    return ""
+
+
+def _branch_name_from_ref(ref: str) -> str:
+    cleaned = ref.strip()
+    if cleaned.startswith("origin/"):
+        return cleaned.split("origin/", 1)[1]
+    return cleaned
+
+
+def _load_worktree_provenance(project_root: Path) -> Mapping[str, object] | None:
+    path = project_root / WORKTREE_PROVENANCE_PATH
+    if not path.is_file():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    schema_version = int(loaded.get("schema_version", 0) or 0)
+    if schema_version > WORKTREE_PROVENANCE_SCHEMA_VERSION:
+        return None
+    return loaded
+
+
 def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
+    explicit = _normalize_title_text(str(context.env.get("ENVCTL_PR_TITLE", "")))
+    if explicit:
+        return explicit[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
+    main_task_title = _main_task_title(context.project_root)
+    if main_task_title:
+        return main_task_title[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
     subject = _git_output(git_root, ["log", "-1", "--pretty=%s"]).strip()
     title = subject or f"{context.project_name}: {head_branch}"
     title = " ".join(title.split())
@@ -329,7 +796,9 @@ def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -
         entries.append("\n".join(entry_lines).strip())
     if not entries:
         return ""
-    return _truncate_recent_entries(entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]")
+    return _truncate_recent_entries(
+        entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]"
+    )
 
 
 def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
@@ -427,14 +896,53 @@ def _latest_changelog_commit_message(text: str, *, max_chars: int) -> str:
         return _truncate_pr_body(normalized, max_chars=max_chars)
     body = _normalize_text_block("\n".join(section_lines))
     if body:
-        first_line, *rest = body.splitlines()
-        subject = first_line.strip() or latest_heading
-        remainder = "\n".join(rest).strip()
+        subject, remainder = _select_changelog_subject(body, fallback=latest_heading)
+        if not subject:
+            subject = latest_heading
         commit_message = subject if not remainder else f"{subject}\n\n{remainder}"
         return _truncate_pr_body(commit_message, max_chars=max_chars)
     if latest_heading:
         return _truncate_pr_body(latest_heading, max_chars=max_chars)
     return ""
+
+
+def _select_changelog_subject(body: str, *, fallback: str) -> tuple[str, str]:
+    lines = body.splitlines()
+    subject_index = -1
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^#{1,6}\s+", line):
+            continue
+        subject_index = index
+        break
+    if subject_index == -1:
+        return fallback.strip(), ""
+    subject = lines[subject_index].strip()
+    remainder = "\n".join(lines[subject_index + 1 :]).strip()
+    return subject, remainder
+
+
+def _main_task_title(project_root: Path) -> str:
+    main_task = project_root / "MAIN_TASK.md"
+    if not main_task.is_file():
+        return ""
+    text = _read_text(main_task)
+    if not text.strip():
+        return ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("# "):
+            continue
+        return _normalize_title_text(line[2:])
+    return ""
+
+
+def _normalize_title_text(text: str) -> str:
+    cleaned = text.replace("`", " ")
+    cleaned = " ".join(cleaned.split())
+    return cleaned.strip()
 
 
 def _truncate_pr_body(text: str, *, max_chars: int) -> str:
@@ -474,6 +982,21 @@ def _write_commit_message_file(message: str) -> Path:
     ) as handle:
         handle.write(message)
         return Path(handle.name)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        Path(temp_name).replace(path)
+    finally:
+        try:
+            if Path(temp_name).exists():
+                Path(temp_name).unlink()
+        except OSError:
+            pass
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
@@ -527,6 +1050,8 @@ def _run_analyze_helper(
     iterations: list[str],
     mode: str,
     scope: str,
+    review_base: ReviewBaseResolution | None,
+    original_plan: OriginalPlanResolution,
 ) -> int:
     project_root = context.project_root.resolve()
     family_dir = _project_family_dir(project_root)
@@ -543,6 +1068,14 @@ def _run_analyze_helper(
         f"approach={approach}",
         "output-dir=" + str(output_dir),
     ]
+    if review_base is not None:
+        args.extend(
+            [
+                f"base-branch={review_base.base_branch}",
+                f"base-source={review_base.source}",
+                f"base-ref={review_base.base_ref}",
+            ]
+        )
     if scope != "all":
         args.append(f"scope={scope}")
     if not (mode == "grouped" and len(iterations) > 1):
@@ -552,6 +1085,9 @@ def _run_analyze_helper(
     env_map.update(context.env)
     env_map["BASE_DIR"] = str(context.repo_root)
     env_map["TREES_DIR_NAME"] = str(family_dir)
+    if original_plan.path is not None:
+        env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_FILE"] = str(original_plan.path)
+    env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_SOURCE"] = original_plan.source
 
     result = subprocess.run(
         [str(helper), *args],
@@ -562,6 +1098,7 @@ def _run_analyze_helper(
         check=False,
     )
     if result.returncode == 0:
+        _augment_review_output_dir(output_dir, original_plan=original_plan)
         short_summary_path = output_dir / "summary_short.txt"
         stats = _parse_review_stats(short_summary_path)
         _prune_review_output_dir(output_dir, keep_names={"summary.md", "all.md"})
@@ -680,17 +1217,18 @@ def _print_review_completion(
     stats: list[tuple[str, str]],
     tree_count: int,
 ) -> None:
-    if _print_review_completion_rich(
-        context,
-        mode=mode,
-        scope=scope,
-        output_dir=output_dir,
-        summary_path=summary_path,
-        all_in_one_path=all_in_one_path,
-        stats=stats,
-        tree_count=tree_count,
-    ):
-        return
+    if parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False):
+        if _print_review_completion_rich(
+            context,
+            mode=mode,
+            scope=scope,
+            output_dir=output_dir,
+            summary_path=summary_path,
+            all_in_one_path=all_in_one_path,
+            stats=stats,
+            tree_count=tree_count,
+        ):
+            return
     color = _review_colorizer(context)
     print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
     print(f"  Mode: {mode}")
@@ -698,11 +1236,11 @@ def _print_review_completion(
     print(f"  Trees: {tree_count}")
     print()
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     print(color("  Summary file", fg="blue", bold=True))
-    print(f"    {_display_path(summary_path)}")
+    print(f"    {_display_path(summary_path, env=context.env)}")
     print(color("  Full review bundle", fg="blue", bold=True))
-    print(f"    {_display_path(all_in_one_path)}")
+    print(f"    {_display_path(all_in_one_path, env=context.env)}")
     if stats:
         print()
         print(color("  Quick stats", fg="green", bold=True))
@@ -727,7 +1265,7 @@ def _print_review_completion_rich(
     tree_count: int,
 ) -> bool:
     force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
-    if not force_rich and not sys.stdout.isatty():
+    if not force_rich:
         return False
     try:
         from rich import box
@@ -750,9 +1288,19 @@ def _print_review_completion_rich(
     details.add_row("Mode", mode)
     details.add_row("Scope", scope)
     details.add_row("Trees", str(tree_count))
-    details.add_row("Output", _display_path(output_dir))
-    details.add_row("Summary", _display_path(summary_path))
-    details.add_row("Bundle", _display_path(all_in_one_path))
+    link_tty = force_rich or sys.stdout.isatty()
+    details.add_row(
+        "Output",
+        rich_path_text(output_dir, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Summary",
+        rich_path_text(summary_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
+    details.add_row(
+        "Bundle",
+        rich_path_text(all_in_one_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
+    )
     for label, value in stats:
         details.add_row(label, value)
 
@@ -781,7 +1329,7 @@ def _print_review_failure(
     color = _review_colorizer(context)
     print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
     print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir)}")
+    print(f"    {_display_path(output_dir, env=context.env)}")
     stderr = str(result.stderr or "").strip()
     stdout = str(result.stdout or "").strip()
     details = stderr or stdout or f"exit:{result.returncode}"
@@ -851,13 +1399,8 @@ def _review_colorizer(context: ActionProjectContext):
     return colorize
 
 
-def _display_path(path: Path) -> str:
-    text = str(path)
-    if text == "/private/tmp":
-        return "/tmp"
-    if text.startswith("/private/tmp/"):
-        return "/tmp/" + text[len("/private/tmp/") :]
-    return text
+def _display_path(path: Path, *, env: Mapping[str, str] | None = None) -> str:
+    return render_path_for_terminal(normalize_local_path_text(path), env=env, stream=sys.stdout)
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:

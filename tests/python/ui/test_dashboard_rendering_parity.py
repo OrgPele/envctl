@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import re
 import threading
 import tempfile
 import time
@@ -15,6 +17,12 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class _TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class DashboardRenderingParityTests(unittest.TestCase):
@@ -191,6 +199,102 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("workspace backend:", output)
             self.assertNotIn("workspace frontend:", output)
 
+    def test_dashboard_renders_service_log_on_single_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("ok\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(f"log: {log_path}", output)
+            self.assertNotIn("log:\n", output)
+
+    def test_dashboard_path_output_keeps_visible_text_and_adds_hyperlinks_when_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("ok\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                load_config(self._config(repo, runtime)),
+                env={"ENVCTL_UI_HYPERLINK_MODE": "on", "NO_COLOR": "1"},
+            )
+            summary = (
+                engine.runtime_root
+                / "runs"
+                / "run-1"
+                / "test-results"
+                / "run_20260302_180000"
+                / "Main"
+                / "failed_tests_summary.txt"
+            )
+            summary.parent.mkdir(parents=True, exist_ok=True)
+            summary.write_text("# Generated at: now\nNo failed tests.\n", encoding="utf-8")
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+                metadata={
+                    "project_test_summaries": {
+                        "Main": {
+                            "summary_path": str(summary),
+                            "status": "passed",
+                        }
+                    }
+                },
+            )
+
+            buffer = _TtyStringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+            visible = strip_ansi(output)
+            from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
+
+            expected_summary = DashboardOrchestrator._test_summary_display_path(
+                project_name="Main",
+                entry=state.metadata["project_test_summaries"]["Main"],
+            )
+
+            self.assertIn("\x1b]8;;file://", output)
+            self.assertIn(f"log: {log_path}", visible)
+            self.assertIn(f"tests: {expected_summary}", visible)
+
     def test_dashboard_renders_project_test_summary_link_with_passed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -244,10 +348,16 @@ class DashboardRenderingParityTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
+            expected_short = engine.runtime_root / "runs" / "run-1" / f"ft_{hashlib.sha1(b'Main').hexdigest()[:10]}.txt"
+            tests_line = next(line for line in output.splitlines() if "tests:" in line and str(expected_short) in line)
 
             self.assertIn("tests:", output)
-            self.assertIn(str(summary), output)
+            self.assertIn(str(expected_short), output)
             self.assertIn("✓ tests:", output)
+            self.assertRegex(tests_line, rf"✓ tests: {re.escape(str(expected_short))} \([A-Z][a-z]{{2}} \d{{2}} \d{{2}}:\d{{2}}\)")
+            self.assertTrue(expected_short.is_file())
+            self.assertEqual(expected_short.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8"))
+            self.assertNotIn(str(summary), output)
 
     def test_dashboard_renders_project_test_summary_link_with_failed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -265,7 +375,15 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 / "failed_tests_summary.txt"
             )
             summary.parent.mkdir(parents=True, exist_ok=True)
-            summary.write_text("# Generated at: now\n- tests/test_auth.py::test_signup_regression\n", encoding="utf-8")
+            summary.write_text(
+                (
+                    "# Generated at: now\n"
+                    "[Repository tests (unittest)]\n"
+                    "- tests/test_auth.py::test_signup_regression\n"
+                    "    AssertionError: expected 201, got 500\n"
+                ),
+                encoding="utf-8",
+            )
 
             state = RunState(
                 run_id="run-1",
@@ -302,10 +420,18 @@ class DashboardRenderingParityTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
+            expected_short = engine.runtime_root / "runs" / "run-1" / f"ft_{hashlib.sha1(b'Main').hexdigest()[:10]}.txt"
+            tests_line = next(line for line in output.splitlines() if "tests:" in line and str(expected_short) in line)
 
             self.assertIn("tests:", output)
-            self.assertIn(str(summary), output)
+            self.assertIn(str(expected_short), output)
             self.assertIn("✗ tests:", output)
+            self.assertRegex(tests_line, rf"✗ tests: {re.escape(str(expected_short))} \([A-Z][a-z]{{2}} \d{{2}} \d{{2}}:\d{{2}}\)")
+            self.assertIn("tests/test_auth.py::test_signup_regression", output)
+            self.assertIn("AssertionError: expected 201, got 500", output)
+            self.assertTrue(expected_short.is_file())
+            self.assertEqual(expected_short.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8"))
+            self.assertNotIn(str(summary), output)
 
     def test_dashboard_renders_active_project_pr_link(self) -> None:
         class _Runner:

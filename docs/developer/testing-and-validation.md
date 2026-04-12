@@ -50,6 +50,7 @@ Examples:
 - debug bundle analysis helpers
 
 If your change affects one of these machine-readable contracts, update the script-side checks too.
+Script tests should assert exit status and stderr/stdout semantics, not just partial argument acceptance.
 
 ## Docs Are Part of the Contract
 
@@ -73,7 +74,9 @@ Expected:
 
 - parser tests
 - dispatch/command behavior tests
+- packaging or CLI smoke coverage when invocation spelling changes
 - reference docs update
+- release-gate/doc-parity coverage when docs or contracts are part of the command surface
 
 ### Startup/resume/runtime-truth change
 
@@ -109,14 +112,28 @@ Expected:
 
 ## Validation Commands
 
-Common commands:
+Canonical repo-wide validation:
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/python -m unittest discover -s tests/python -p 'test_*.py'
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+.venv/bin/python -m build
+.venv/bin/python scripts/release_shipability_gate.py --repo .
 ```
 
-Use narrower scopes while iterating, then widen before finishing.
+Install-path reminder:
+
+- source-checkout operator bootstrap: `python -m pip install -r python/requirements.txt`
+- contributor validation lane: `.venv/bin/python -m pip install -e '.[dev]'`
+
+To confirm the release gate runs the same test lane:
+
+```bash
+.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
+```
+
+Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.
 
 ## How to Choose Test Scope
 

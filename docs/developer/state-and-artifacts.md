@@ -167,6 +167,21 @@ If you are adding a new artifact, decide whether it belongs:
 - only in per-run history
 - in both
 
+## Failed Test Artifacts
+
+Interactive test failures persist run-scoped artifacts under:
+
+- `runs/<run-id>/test-results/run_<timestamp>/<project>/failed_tests_summary.txt`
+- `runs/<run-id>/ft_<digest>.txt`
+- `runs/<run-id>/test-results/run_<timestamp>/<project>/failed_tests_manifest.json`
+
+Contract details:
+
+- the dashboard should point operators at the saved summary file path instead of replaying inline suite logs
+- the displayed path should prefer the stable short alias `ft_<digest>.txt` when available
+- the summary file should contain cleaned diagnostic context for the failing project, including generic suite failures where rerunnable selectors could not be extracted
+- rerun state remains owned by `failed_tests_manifest.json`; do not overload the manifest for dashboard rendering concerns
+
 ## Runtime Map
 
 `python/envctl_engine/state/runtime_map.py` builds the operator-facing projection.
@@ -268,7 +283,7 @@ The runtime also persists:
 
 These are part of the migration/cutover governance layer.
 
-Even if you are working on pure Python behavior, these artifacts may still need to stay consistent because doctor and release gates read them.
+Even if you are working on pure Python behavior, these artifacts may still need to stay consistent because doctor and release gates read them, including the embedded runtime feature matrix provenance used to prove the gap report is still current.
 
 ## Adding a New Artifact
 

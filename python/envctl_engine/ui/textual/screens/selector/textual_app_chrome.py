@@ -23,7 +23,8 @@ SELECTOR_BINDINGS = [
 
 SELECTOR_ROW_STYLES_CSS = selectable_list_row_css("selector-row")
 
-SELECTOR_CSS = """
+SELECTOR_CSS = (
+    """
 Screen {
     align: center middle;
 }
@@ -58,9 +59,11 @@ Screen {
     align-horizontal: right;
     height: auto;
 }
-""" + SELECTOR_ROW_STYLES_CSS + """
-.kind-synthetic-all Label,
+"""
+    + SELECTOR_ROW_STYLES_CSS
+    + """
 .kind-synthetic-untested Label {
     color: $warning;
 }
 """
+)

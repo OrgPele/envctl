@@ -31,7 +31,8 @@ class ServiceManager:
         requested_port: int,
         start: Callable[[int], tuple[bool, str | None, int | None]],
         reserve_next: Callable[[int], int],
-        detect_actual: Callable[[int | None, int], int] | None = None,
+        detect_actual: Callable[[int | None, int], int | None] | None = None,
+        listener_expected: bool = True,
         max_retries: int = 3,
         on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
     ) -> ServiceRecord:
@@ -42,7 +43,7 @@ class ServiceManager:
             success, error, pid = start(current_port)
             if success:
                 try:
-                    actual_port = current_port
+                    actual_port: int | None = current_port if listener_expected else None
                     if detect_actual is not None:
                         actual_port = detect_actual(pid, current_port)
                     return ServiceRecord(
@@ -50,10 +51,11 @@ class ServiceManager:
                         type=service_type,
                         cwd=cwd,
                         pid=pid,
-                        requested_port=requested_port,
+                        requested_port=requested_port if listener_expected else None,
                         actual_port=actual_port,
                         status="running",
                         started_at=time.time(),
+                        listener_expected=listener_expected,
                     )
                 except RuntimeError as exc:
                     error = str(exc)
@@ -83,6 +85,8 @@ class ServiceManager:
         reserve_next: Callable[[int], int],
         detect_backend_actual: Callable[[int | None, int], int] | None = None,
         detect_frontend_actual: Callable[[int | None, int], int] | None = None,
+        backend_listener_expected: bool = True,
+        frontend_listener_expected: bool = True,
         max_retries: int = 3,
         on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
         parallel_start: bool = False,
@@ -96,6 +100,7 @@ class ServiceManager:
                 start=start_backend,
                 reserve_next=reserve_next,
                 detect_actual=detect_backend_actual,
+                listener_expected=backend_listener_expected,
                 max_retries=max_retries,
                 on_retry=on_retry,
             )
@@ -109,6 +114,7 @@ class ServiceManager:
                 start=start_frontend,
                 reserve_next=reserve_next,
                 detect_actual=detect_frontend_actual,
+                listener_expected=frontend_listener_expected,
                 max_retries=max_retries,
                 on_retry=on_retry,
             )

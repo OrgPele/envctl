@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import os
+import select
 import unittest
 from unittest.mock import patch
 
@@ -152,6 +153,99 @@ class TextualCompatTests(unittest.TestCase):
 
         self.assertEqual(result, ["alpha"])
         self.assertEqual(character_mode_calls, [0])
+
+    def test_initial_selector_actions_merge_preserved_navigation_and_pending_submit(self) -> None:
+        reads = [b"\x1b", b"[", b"B", b"\r"]
+
+        def fake_read(_fd: int, _count: int) -> bytes:
+            if reads:
+                return reads.pop(0)
+            return b""
+
+        def fake_select(_read_fds, _write_fds, _error_fds, _timeout):  # noqa: ANN001
+            if reads:
+                return ([_read_fds[0]], [], [])
+            return ([], [], [])
+
+        with (
+            patch.object(selector_impl, "consume_preserved_input", return_value=b"\x1b[B"),
+            patch.object(selector_impl.os, "read", side_effect=fake_read),
+            patch.object(selector_impl.select, "select", side_effect=fake_select),
+        ):
+            actions = selector_impl._consume_initial_selector_actions(tty_fd=0)
+
+        self.assertEqual(actions, ("down", "down", "submit"))
+
+    def test_selector_run_passes_initial_actions_to_app(self) -> None:
+        options = []
+        from envctl_engine.ui.selector_model import SelectorItem
+
+        options.append(
+            SelectorItem(
+                id="service:alpha",
+                label="Alpha",
+                kind="service",
+                token="alpha",
+                scope_signature=("service:alpha",),
+            )
+        )
+
+        class _App:
+            explicit_cancel = False
+
+            def fallback_values(self):  # pragma: no cover - defensive
+                return []
+
+            def run(self, **_kwargs):
+                return ["alpha"]
+
+        app = _App()
+        captured: dict[str, object] = {}
+
+        @contextlib.contextmanager
+        def _guard(**_kwargs):
+            yield
+
+        @contextlib.contextmanager
+        def _instrument(**_kwargs):
+            yield lambda: {}
+
+        @contextlib.contextmanager
+        def _character_mode(*, fd: int, emit=None):  # noqa: ANN001
+            _ = fd, emit
+            yield True
+
+        class _FakeStdin:
+            def fileno(self) -> int:
+                return 0
+
+        def fake_create_selector_app(**kwargs):  # noqa: ANN001
+            captured.update(kwargs)
+            return app
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(selector_impl, "_textual_importable", return_value=True),
+            patch.object(selector_impl, "_guard_textual_nonblocking_read", _guard),
+            patch.object(selector_impl, "_instrument_textual_parser_keys", _instrument),
+            patch.object(selector_impl, "create_selector_app", side_effect=fake_create_selector_app),
+            patch.object(selector_impl, "_selector_backend_decision", return_value=(False, {})),
+            patch.object(selector_impl, "temporary_tty_character_mode", _character_mode),
+            patch.object(selector_impl, "consume_preserved_input", return_value=b"\x1b[B\r"),
+            patch.object(selector_impl.select, "select", return_value=([], [], [])),
+            patch.object(selector_impl.os, "isatty", return_value=True),
+            patch.object(selector_impl.sys, "stdin", _FakeStdin()),
+        ):
+            result = selector_impl.run_textual_selector(
+                prompt="Run tests for",
+                options=options,
+                multi=False,
+                emit=None,
+                force_textual_backend=True,
+            )
+
+        self.assertEqual(result, ["alpha"])
+        self.assertEqual(captured.get("initial_navigation"), ("down", "submit"))
 
     def test_apply_textual_driver_compat_disables_mouse_protocols(self) -> None:
         writes: list[str] = []

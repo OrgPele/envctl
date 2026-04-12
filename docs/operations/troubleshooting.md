@@ -12,6 +12,7 @@ Run these before changing config or retrying random fixes:
 envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
+envctl preflight --json
 envctl --doctor --json
 ```
 
@@ -29,6 +30,7 @@ That sequence answers four different questions:
 ## Installed command is missing or wrong
 - Verify the install:
   - `command -v envctl`
+  - `envctl --version`
   - `pipx list`
 - Reinstall the package if needed:
   - `pipx install "git+https://github.com/kfiramar/envctl.git"`
@@ -36,8 +38,21 @@ That sequence answers four different questions:
 - If `pipx` says it is using an unsupported Python version, point it at a supported one explicitly with `--python`.
 - `pipx` does not automatically reuse the Python from your activated `.venv`.
 - If you intentionally use the clone-compatibility wrapper, use:
+  - `./bin/envctl --version`
   - `./bin/envctl install`
   - `./bin/envctl uninstall`
+- If a source-checkout invocation such as `./bin/envctl` reports missing runtime Python packages, install them into that interpreter with:
+  - `python -m pip install -r python/requirements.txt`
+- Do not use the contributor editable-install bootstrap to repair an installed end-user command.
+- Wrapper precedence:
+  - explicit wrapper paths such as `./bin/envctl` or `/absolute/path/to/bin/envctl` now run that wrapper directly, even if another `envctl` exists later on `PATH`
+  - bare `envctl` still prefers the installed command path when the repo wrapper shadows it
+  - `ENVCTL_USE_REPO_WRAPPER=1` is still useful when a PATH-based invocation needs to force the repo wrapper
+
+## Runtime dependency gate boundary
+- The full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`.
+- Launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate.
+- Inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate.
 
 ## Required external tools are missing
 - `envctl` itself installs through `pipx`, but some workflows rely on system tools:
@@ -159,6 +174,37 @@ Check toggles:
 - `REDIS_*`
 - `N8N_*`
 
+## Alembic or settings import fails before migrations run
+- Run:
+  - `envctl migrate --project <target>`
+- If the failure mentions `alembic/env.py`, `ValidationError`, `DATABASE_URL`, or `REDIS_URL`, envctl likely never reached the revision chain because backend settings could not load their env contract.
+- Native `migrate` now resolves backend env in this order:
+  - `BACKEND_ENV_FILE_OVERRIDE`
+  - `MAIN_ENV_FILE_PATH` for Main mode
+  - default `backend/.env`
+- When an env file is found, envctl exports `APP_ENV_FILE` for the migrate subprocess.
+- Relative override paths are checked against both the target root and repo root. If both exist and differ, envctl fails and requires an absolute path.
+- Inherited shell backend keys such as `DATABASE_URL`, `APP_ENV_FILE`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `DB_*` are scrubbed before target-specific merge.
+- If the project already has saved run state, envctl also reuses the current projected dependency URLs for `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `REDIS_URL` unless an explicit backend env override file is meant to stay authoritative.
+- Inspect the persisted raw failure log from the dashboard output or from `envctl show-state --json` under `metadata.project_action_reports.<project>.migrate.report_path`.
+- If you intentionally need a different env file, set one of:
+  - `BACKEND_ENV_FILE_OVERRIDE=/absolute/or/relative/path.env`
+  - `MAIN_ENV_FILE_PATH=/absolute/or/relative/path.env`
+- If the raw report shows missing env vars even after that, verify the target env file exists and actually defines the required backend settings.
+
+## Frontend env file is not loading during service startup
+- Frontend service startup uses the same env-file override contract as backend startup/bootstrap, but not the backend-only `migrate` failure summary path.
+- Frontend env resolution order is:
+  - `FRONTEND_ENV_FILE_OVERRIDE`
+  - `MAIN_FRONTEND_ENV_FILE_PATH` for Main mode
+  - default `frontend/.env`
+- Relative override paths are checked against both the target root and repo root. If both exist and differ, envctl fails and requires an absolute path.
+- If neither relative candidate exists, envctl falls back to `frontend/.env` when that file is present.
+- If you intentionally need a different frontend env file, set one of:
+  - `FRONTEND_ENV_FILE_OVERRIDE=/absolute/or/relative/path.env`
+  - `MAIN_FRONTEND_ENV_FILE_PATH=/absolute/or/relative/path.env`
+- If the expected frontend vars are still missing, verify which target root envctl selected, confirm the chosen env file exists, and check that the file defines the frontend keys you expect.
+
 ## Planning files are not found
 - Check `ENVCTL_PLANNING_DIR` in `.envctl`.
 - Verify files exist under that directory and are `.md` files.
@@ -170,6 +216,7 @@ A good bug report bundle for maintainers usually includes:
 
 - `envctl show-config --json`
 - `envctl explain-startup --json`
+- `envctl preflight --json`
 - `envctl --doctor --json`
 - `envctl --debug-report` for interactive or timing issues
 - the bundle path from `envctl --debug-last`

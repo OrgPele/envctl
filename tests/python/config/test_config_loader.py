@@ -214,5 +214,6 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.n8n_main_enable)
             self.assertFalse(config.n8n_enable)
 
+
 if __name__ == "__main__":
     unittest.main()

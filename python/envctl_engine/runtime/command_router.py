@@ -126,6 +126,7 @@ VALUE_FLAGS = {
     "--service",
     "--set",
     "--pr-base",
+    "--review-base",
     "--commit-message",
     "--commit-message-file",
     "--analyze-mode",
@@ -229,7 +230,9 @@ _COMMAND_ALIAS_PAIRS = (
     ("--resume", "resume"),
     ("resume", "resume"),
     ("--list-commands", "list-commands"),
+    ("list-commands", "list-commands"),
     ("--list-targets", "list-targets"),
+    ("list-targets", "list-targets"),
     ("--list-trees", "list-trees"),
     ("list-trees", "list-trees"),
     ("--show-config", "show-config"),
@@ -238,6 +241,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("show-state", "show-state"),
     ("--explain-startup", "explain-startup"),
     ("explain-startup", "explain-startup"),
+    ("--preflight", "preflight"),
+    ("preflight", "preflight"),
     ("--help", "help"),
     ("-h", "help"),
     ("help", "help"),
@@ -318,11 +323,16 @@ _COMMAND_ALIAS_PAIRS = (
     ("--migrate-hooks", "migrate-hooks"),
     ("install-prompts", "install-prompts"),
     ("--install-prompts", "install-prompts"),
+    ("codex-tmux", "codex-tmux"),
+    ("--codex-tmux", "codex-tmux"),
+    ("ensure-worktree", "ensure-worktree"),
+    ("--ensure-worktree", "ensure-worktree"),
     ("dash", "dashboard"),
     ("d", "doctor"),
     ("r", "restart"),
 )
 COMMAND_ALIASES = _unique_mapping(registry_name="COMMAND_ALIASES", pairs=_COMMAND_ALIAS_PAIRS)
+_INSPECTION_OVERRIDE_COMMANDS = {"explain-startup", "preflight"}
 
 SUPPORTED_COMMANDS = sorted(
     {
@@ -352,12 +362,15 @@ SUPPORTED_COMMANDS = sorted(
         "migrate",
         "migrate-hooks",
         "install-prompts",
+        "codex-tmux",
+        "ensure-worktree",
         "list-commands",
         "list-targets",
         "list-trees",
         "show-config",
         "show-state",
         "explain-startup",
+        "preflight",
         "help",
     }
 )
@@ -408,6 +421,7 @@ class _ParserState:
     mode: str = ""
     command: str = "start"
     command_explicit: bool = False
+    explain_startup_requested: bool = False
     projects: list[str] = field(default_factory=list)
     passthrough: list[str] = field(default_factory=list)
     flags: dict[str, object] = field(default_factory=dict)
@@ -536,7 +550,10 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
-                state.command = mapped
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
+                    state.explain_startup_requested = True
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
+                    state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
                 if forced_mode is not None:
@@ -588,7 +605,10 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 mapped = COMMAND_ALIASES.get(command_token)
                 if mapped is None:
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
-                state.command = mapped
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
+                    state.explain_startup_requested = True
+                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
+                    state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
                 if forced_mode is not None:
@@ -813,7 +833,8 @@ def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
 
 def _handle_plan_flag(state: _ParserState, token: str) -> None:
     """Handle plan-related inline flags."""
-    state.command = "plan"
+    if not state.explain_startup_requested:
+        state.command = "plan"
     state.command_explicit = True
     state.mode = "trees"
 
@@ -925,6 +946,7 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--service": "services",
         "--set": "set_values",
         "--pr-base": "pr_base",
+        "--review-base": "review_base",
         "--commit-message": "commit_message",
         "--commit-message-file": "commit_message_file",
         "--analyze-mode": "analyze_mode",

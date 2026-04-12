@@ -4,7 +4,6 @@ import codecs
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 import importlib
-import importlib.util
 import os
 import re
 import select
@@ -14,6 +13,7 @@ import termios
 import time
 from typing import Any, cast
 
+from envctl_engine.runtime.runtime_dependency_contract import python_dependency_available
 from .capabilities import prompt_toolkit_disabled
 from .debug_flight_recorder import DebugFlightRecorder
 
@@ -21,8 +21,6 @@ _PUSHBACK_BYTES: dict[int, bytearray] = {}
 
 
 def can_interactive_tty() -> bool:
-    if os.environ.get("BATS_TEST_FILENAME") or os.environ.get("BATS_RUN_TMPDIR"):
-        return False
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
     term = os.environ.get("TERM", "")
@@ -32,7 +30,7 @@ def can_interactive_tty() -> bool:
 
 
 def prompt_toolkit_available() -> bool:
-    return importlib.util.find_spec("prompt_toolkit") is not None
+    return python_dependency_available("prompt_toolkit")
 
 
 def restore_terminal_after_input(

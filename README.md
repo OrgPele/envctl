@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kfiramar/envctl/releases/tag/1.2.3"><img src="https://img.shields.io/badge/release-1.2.3-2ea043" alt="Release 1.2.3"></a>
+  <a href="https://github.com/kfiramar/envctl/releases/tag/1.5.0"><img src="https://img.shields.io/badge/release-1.5.0-2ea043" alt="Release 1.5.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12--3.14-3776AB" alt="Python 3.12-3.14"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-readable-0969DA" alt="Documentation"></a>
   <a href="docs/changelog/main_changelog.md"><img src="https://img.shields.io/badge/changelog-main-7A3EFF" alt="Changelog"></a>
@@ -46,6 +46,9 @@ This is the point where normal local development usually starts breaking down: t
 pipx install "git+https://github.com/kfiramar/envctl.git"
 pipx ensurepath
 
+# Verify the installed launcher and version
+envctl --version
+
 # 2) Go to a target repo
 cd /path/to/your-project
 
@@ -64,6 +67,12 @@ envctl --plan
 ```
 
 That first interactive run is the normal setup path. The wizard writes the repo-local `.envctl` for you, whether you start in `main` mode or jump straight into plan-driven worktrees.
+
+If you are running `envctl` from a source checkout instead of an installed `pipx` command, install the runtime dependencies into that interpreter first:
+
+```bash
+python -m pip install -r python/requirements.txt
+```
 
 ## What envctl Is For
 
@@ -127,10 +136,17 @@ Project docs:
 
 `envctl` bootstraps target-repo dependencies from the repo itself, so tools such as `pytest` are usually installed as part of the backend project rather than separately for `envctl`.
 
+Install-path summary:
+
+- `pipx install ...`: package metadata installs the `envctl` runtime Python dependencies for you
+- source checkout / `./bin/envctl`: install `python/requirements.txt` into the interpreter that runs `envctl`
+- contributor workflow: use the editable `.[dev]` bootstrap in [Contributing](docs/developer/contributing.md)
+
 ## Configuration
 
 `envctl` writes and maintains a repo-local `.envctl`.
 
 - On first interactive use, the setup wizard creates it for you.
 - Later, run `envctl config` to reopen the wizard and edit it safely.
+- Envctl-managed local workflow artifacts are expected to be ignored through your Git global excludes file, not by auto-editing the repository `.gitignore`.
 - [`docs/reference/.envctl.example`](docs/reference/.envctl.example) is the reference file for managed keys and defaults, not the primary onboarding flow.
