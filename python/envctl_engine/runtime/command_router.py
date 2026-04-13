@@ -946,8 +946,6 @@ def _boolean_flag_name(token: str) -> str:
         "--tmux": "tmux",
         "--opencode": "opencode",
         "--with-codex-skills": "with_codex_skills",
-        "--session-action": "session_action",
-        "--session-id-override": "session_id_override",
     }
     return mapping[token]
 
@@ -985,6 +983,8 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--timeout": "timeout",
         "--debug-capture": "debug_capture",
         "--debug-auto-pack": "debug_auto_pack",
+        "--session-action": "session_action",
+        "--session-id-override": "session_id_override",
     }
     key = mapping[token]
     if key in {"services", "include_existing_worktrees", "set_values"}:

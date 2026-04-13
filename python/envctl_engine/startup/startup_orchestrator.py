@@ -1029,6 +1029,9 @@ class StartupOrchestrator:
         if attach_target is None:
             return None
         session.plan_agent_attach_target = None
+        if str(attach_target.session_name).startswith("envctl-codex-"):
+            self._print_plan_follow_up_command_with_attach(session, attach_target)
+            return None
         attach_code = attach_plan_agent_terminal(self.runtime, attach_target)
         if attach_code != 0:
             self._print_plan_follow_up_command_with_attach(session, attach_target)

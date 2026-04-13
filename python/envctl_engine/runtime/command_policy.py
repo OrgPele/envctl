@@ -24,7 +24,7 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
 SKIP_STARTUP_ONLY_COMMANDS: Final[frozenset[str]] = frozenset({"debug-pack", "debug-report", "debug-last"})
 
 DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup", "preflight"}
+    {"list-commands", "list-targets", "list-trees", "session", "show-config", "show-state", "explain-startup", "preflight"}
 )
 UTILITY_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts", "codex-tmux", "ensure-worktree"})
 DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts", "codex-tmux", "ensure-worktree"})
