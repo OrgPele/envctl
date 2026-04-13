@@ -127,7 +127,8 @@ def _prepare_backend_runtime(
         )
         return
 
-    if pyproject_file.is_file() and self._command_exists("poetry"):
+    uses_poetry = _pyproject_uses_poetry(pyproject_file)
+    if pyproject_file.is_file() and uses_poetry and self._command_exists("poetry"):
         install_check_started = time.monotonic()
         install_required, install_reason, install_state = _backend_dependency_install_required(
             backend_cwd=backend_cwd,
@@ -584,6 +585,16 @@ def _frontend_install_commands(*, frontend_cwd: Path, manager: str) -> tuple[lis
             ["npm", "install", "--include=dev"],
         )
     return ["npm", "install", "--include=dev"], None
+
+
+def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
+    if not pyproject_file.is_file():
+        return False
+    try:
+        text = pyproject_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text
 
 
 def _backend_dependency_install_required(*, backend_cwd: Path, manager: str) -> tuple[bool, str, dict[str, object]]:
@@ -1120,6 +1131,32 @@ def _skip_local_db_env(self: Any, *, backend_env_file: Path | None, backend_env_
     return skip
 
 
+def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
+    lower_error = error.lower()
+    if "poetry install" in step.lower() or "poetry" in lower_error:
+        if "set `packages`" in error or "no packages found" in lower_error:
+            return (
+                f"\nTip: this project has pyproject.toml but does not use Poetry.\n"
+                f"Fix: create a venv manually in {cwd}:\n"
+                f"  python -m venv venv && source venv/bin/activate && pip install -e .\n"
+                f"Or add TREES_BACKEND_ENABLE=false to your .envctl to skip backend bootstrap."
+            )
+        if "lock file" in lower_error or "poetry.lock" in lower_error:
+            return (
+                f"\nTip: Poetry lock file is missing. Run `poetry lock` in {cwd},\n"
+                f"or set TREES_BACKEND_ENABLE=false in .envctl to skip bootstrap."
+            )
+        return (
+            f"\nTip: Poetry install failed. Check that the project is configured for Poetry.\n"
+            f"If this project uses pip/setuptools instead, add TREES_BACKEND_ENABLE=false to .envctl."
+        )
+    if "pip install" in lower_error or "pip" in lower_error:
+        return (
+            f"\nTip: pip install failed. Check that requirements.txt or pyproject.toml is valid in {cwd}."
+        )
+    return ""
+
+
 def _run_backend_bootstrap_command(
     self: Any,
     *,
@@ -1146,7 +1183,8 @@ def _run_backend_bootstrap_command(
                 handle.write(f"[envctl] backend bootstrap step failed ({step}): {error}\n")
         except OSError:
             pass
-    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}")
+    suggestion = _bootstrap_failure_suggestion(step, error, cwd)
+    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}\n{suggestion}")
 
 
 def _run_backend_migration_step(

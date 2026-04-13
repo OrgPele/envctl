@@ -278,8 +278,10 @@ def resolve_plan_agent_launch_config(
     transport: Literal["cmux", "tmux"]
     if bool(route_flags.get("tmux")) or configured_transport == "tmux":
         transport = "tmux"
-    else:
+    elif bool(route_flags.get("cmux")) or configured_transport == "cmux":
         transport = "cmux"
+    else:
+        transport = "tmux"
     cli = str(
         "opencode"
         if bool(route_flags.get("opencode"))
