@@ -101,13 +101,14 @@ def run_dashboard_command_loop(
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
                 plan_commands = [
-                    ("(a)i attach", "session-attach"),
+                    ("(a)i", "ai"),
+                    ("(k)ill", "kill-session"),
                 ]
-                print(f"  {magenta}Plan:{reset} " + " | ".join(l for l, _ in plan_commands))
-                plan_commands2 = [
-                    ("(s)essions", "session"),
+                print(f"  {magenta}AI:{reset} " + " | ".join(l for l, _ in plan_commands))
+                session_commands = [
+                    ("(s)essions", "sessions"),
                 ]
-                print(f"  {magenta}Sessions:{reset} " + " | ".join(l for l, _ in plan_commands2))
+                print(f"  {magenta}Sessions:{reset} " + " | ".join(l for l, _ in session_commands))
                 inspect_commands = [
                     ("(l)ogs", "logs"),
                     ("(x) clear-logs", "clear-logs"),

@@ -115,11 +115,14 @@ class DashboardOrchestrator:
             return False, state
         if command in {"help", "?"}:
             return True, state
-        if command in {"s", "session"}:
+        if command in {"s", "session", "sessions"}:
             self._dispatch_session_command(runtime_any)
             return True, state
-        if command in {"a", "ai-attach", "session-attach"}:
-            self._dispatch_session_attach(runtime_any)
+        if command in {"a", "ai"}:
+            self._dispatch_ai_command(runtime_any, state)
+            return True, state
+        if command in {"k", "kill-session"}:
+            self._dispatch_kill_session(runtime_any)
             return True, state
 
         normalized = normalize_interactive_command(command)
@@ -1597,12 +1600,57 @@ class DashboardOrchestrator:
     @staticmethod
     def _dispatch_session_command(runtime_any: Any) -> None:
         try:
-            from envctl_engine.runtime.session_management import print_session_list  # noqa: PLC0415
-            from pathlib import Path  # noqa: PLC0415
-            runtime_root = getattr(runtime_any.config, "base_dir", Path.cwd())
-            print_session_list(Path(runtime_root))
+            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+            sessions = list_tmux_sessions()
+            if not sessions:
+                print("No active tmux sessions.")
+                return
+            for i, s in enumerate(sessions):
+                print(f"  {i+1}. {s['name']} (windows: {s['windows']})")
+                print(f"     attach: {s['attach']}")
+                print(f"     kill:   {s['kill']}")
         except Exception as exc:
             print(f"Error listing sessions: {exc}")
+
+    @staticmethod
+    def _dispatch_ai_command(runtime_any: Any, state: RunState) -> None:
+        try:
+            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+            from pathlib import Path  # noqa: PLC0415
+            runtime_root = Path(str(getattr(runtime_any.config, "base_dir", Path.cwd())))
+            sessions = list_tmux_sessions()
+            if sessions:
+                print("Active AI sessions:")
+                for s in sessions:
+                    print(f"  {s['name']} (attach: {s['attach']})")
+            else:
+                print("No active AI sessions. Launch one with:")
+                print(f"  envctl --headless --plan <plan_file> --tmux --opencode")
+        except Exception as exc:
+            print(f"Error: {exc}")
+
+    @staticmethod
+    def _dispatch_kill_session(runtime_any: Any) -> None:
+        try:
+            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+            sessions = list_tmux_sessions()
+            if not sessions:
+                print("No active sessions to kill.")
+                return
+            for i, s in enumerate(sessions):
+                print(f"  {i+1}. {s['name']}")
+            if len(sessions) == 1:
+                s = sessions[0]
+                print(f"Killing: {s['name']}")
+                import subprocess  # noqa: PLC0415
+                subprocess.run(["tmux", "kill-session", "-t", s["name"]], capture_output=True, text=True, timeout=5.0)
+                print("Killed.")
+            else:
+                print("Multiple sessions found. Kill a specific one with:")
+                for s in sessions:
+                    print(f"  tmux kill-session -t {s['name']}")
+        except Exception as exc:
+            print(f"Error: {exc}")
 
     @staticmethod
     def _dispatch_session_attach(runtime_any: Any) -> None:

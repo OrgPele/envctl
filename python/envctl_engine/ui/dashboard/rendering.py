@@ -75,12 +75,9 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     if runs_disabled_dashboard:
         tmux_sessions = _dashboard_tmux_sessions(state)
         if tmux_sessions:
-            print(f"{bold}{magenta}Tmux Sessions:{reset}")
+            print(f"{bold}{magenta}AI Sessions:{reset}")
             for sess in tmux_sessions:
-                print(f"  {dim}{sess['name']}:{reset}")
-                print(f"    attach: {cyan}{sess['attach']}{reset}")
-                print(f"    kill:   {yellow}{sess['kill']}{reset}")
-            print(f"{dim}  (s)ession list for all envctl tmux sessions{reset}")
+                print(f"  {cyan}{sess['name']}{reset} {dim}(windows: {sess['windows']}){reset}")
     dashboard_banner = state.metadata.get("dashboard_banner")
     if isinstance(dashboard_banner, str) and dashboard_banner.strip():
         print(f"{dim}{dashboard_banner.strip()}{reset}")
