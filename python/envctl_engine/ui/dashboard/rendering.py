@@ -72,6 +72,15 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     if not session_id_text:
         session_id_text = "unknown"
     print(f"{dim}run_id: {state.run_id}  session_id: {session_id_text}  mode: {state.mode}{reset}")
+    if runs_disabled_dashboard:
+        tmux_sessions = _dashboard_tmux_sessions(state)
+        if tmux_sessions:
+            print(f"{bold}{magenta}Tmux Sessions:{reset}")
+            for sess in tmux_sessions:
+                print(f"  {dim}{sess['name']}:{reset}")
+                print(f"    attach: {cyan}{sess['attach']}{reset}")
+                print(f"    kill:   {yellow}{sess['kill']}{reset}")
+            print(f"{dim}  (s)ession list for all envctl tmux sessions{reset}")
     dashboard_banner = state.metadata.get("dashboard_banner")
     if isinstance(dashboard_banner, str) and dashboard_banner.strip():
         print(f"{dim}{dashboard_banner.strip()}{reset}")
@@ -599,3 +608,21 @@ def _dashboard_palette(self: Any) -> dict[str, str]:
         "magenta": "\033[35m",
         "gray": "\033[90m",
     }
+
+
+def _dashboard_tmux_sessions(state: RunState) -> list[dict[str, str]]:
+    from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+
+    runtime_root = state.metadata.get("runtime_root") or state.metadata.get("project_roots", {}).get("__root__", "")
+    if not runtime_root:
+        return []
+    sessions = list_tmux_sessions()
+    if not sessions:
+        return []
+    worktree_names = [str(p).split("/")[-2] for p in state.metadata.get("worktree_roots", [])]
+    result: list[dict[str, str]] = []
+    for s in sessions:
+        name = s.get("name", "")
+        if any(w in name for w in worktree_names) or not worktree_names:
+            result.append(s)
+    return result
