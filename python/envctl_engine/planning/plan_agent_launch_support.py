@@ -1150,21 +1150,11 @@ def _launch_plan_agent_tmux_terminals(
     if failed:
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
-    attach_target = None
-    if first_window_name is not None:
-        attach_target = PlanAgentAttachTarget(
-            repo_root=repo_root,
-            session_name=session_name,
-            window_name=first_window_name,
-            attach_via=attach_via,
-            attach_command=("tmux", attach_via, "-t", _tmux_target(session_name, first_window_name)),
-        )
     _print_launch_summary(f"Plan agent launch prepared {len(launched)} tmux window(s).")
     return PlanAgentLaunchResult(
         status="launched",
         reason="launched",
         outcomes=tuple(outcomes),
-        attach_target=attach_target,
     )
 
 
