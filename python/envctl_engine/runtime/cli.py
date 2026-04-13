@@ -158,6 +158,7 @@ def run(
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "migrate-hooks",
             "show-config",
             "show-state",

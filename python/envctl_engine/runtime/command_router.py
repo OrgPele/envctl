@@ -238,6 +238,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("list-targets", "list-targets"),
     ("--list-trees", "list-trees"),
     ("list-trees", "list-trees"),
+    ("--session", "session"),
+    ("session", "session"),
     ("--show-config", "show-config"),
     ("show-config", "show-config"),
     ("--show-state", "show-state"),
@@ -370,6 +372,7 @@ SUPPORTED_COMMANDS = sorted(
         "list-commands",
         "list-targets",
         "list-trees",
+        "session",
         "show-config",
         "show-state",
         "explain-startup",
@@ -943,6 +946,8 @@ def _boolean_flag_name(token: str) -> str:
         "--tmux": "tmux",
         "--opencode": "opencode",
         "--with-codex-skills": "with_codex_skills",
+        "--session-action": "session_action",
+        "--session-id-override": "session_id_override",
     }
     return mapping[token]
 

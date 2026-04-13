@@ -123,9 +123,27 @@ class StartupOrchestrator:
         if session.identifiers_announced:
             return
         self._ensure_run_id(session)
-        print(f"run_id: {self._resolved_run_id(session)}")
-        print(f"session_id: {self.runtime._current_session_id() or 'unknown'}")
+        run_id = self._resolved_run_id(session)
+        session_id = self.runtime._current_session_id() or 'unknown'
+        print(f"run_id: {run_id}")
+        print(f"session_id: {session_id}")
         session.identifiers_announced = True
+        self._persist_session_record(run_id=run_id, session_id=session_id, session=session)
+
+    def _persist_session_record(self, *, run_id: str, session_id: str, session: StartupSession) -> None:
+        record: dict[str, object] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "run_id": run_id,
+            "session_id": session_id,
+            "command": session.effective_route.command if hasattr(session, "effective_route") and session.effective_route else "",
+        }
+        history_file = Path(self.runtime.runtime_root) / ".envctl-sessions.jsonl"  # type: ignore[attr-defined]
+        try:
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            with history_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        except OSError:
+            pass
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
         rt = self.runtime
