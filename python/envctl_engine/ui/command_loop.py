@@ -100,6 +100,14 @@ def run_dashboard_command_loop(
                 visible_actions = [label for label, command in action_commands if command not in hidden_commands]
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
+                plan_commands = [
+                    ("(a)i attach", "session-attach"),
+                ]
+                print(f"  {magenta}Plan:{reset} " + " | ".join(l for l, _ in plan_commands))
+                plan_commands2 = [
+                    ("(s)essions", "session"),
+                ]
+                print(f"  {magenta}Sessions:{reset} " + " | ".join(l for l, _ in plan_commands2))
                 inspect_commands = [
                     ("(l)ogs", "logs"),
                     ("(x) clear-logs", "clear-logs"),

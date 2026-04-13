@@ -613,16 +613,7 @@ def _dashboard_palette(self: Any) -> dict[str, str]:
 def _dashboard_tmux_sessions(state: RunState) -> list[dict[str, str]]:
     from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
 
-    runtime_root = state.metadata.get("runtime_root") or state.metadata.get("project_roots", {}).get("__root__", "")
-    if not runtime_root:
-        return []
     sessions = list_tmux_sessions()
     if not sessions:
         return []
-    worktree_names = [str(p).split("/")[-2] for p in state.metadata.get("worktree_roots", [])]
-    result: list[dict[str, str]] = []
-    for s in sessions:
-        name = s.get("name", "")
-        if any(w in name for w in worktree_names) or not worktree_names:
-            result.append(s)
-    return result
+    return sessions
