@@ -158,6 +158,105 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("workspace backend:", output)
             self.assertNotIn("Frontend:", output)
 
+    def test_dashboard_renders_run_ai_row_when_launch_command_resolves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "features_feature_a" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            plan_path = repo / "todo" / "plans" / "features" / "feature-a.md"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                '{"plan_file": "features/feature-a.md"}',
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {"features_feature_a-1": str(project_root)},
+                    "dashboard_configured_service_types": ["backend"],
+                    "dashboard_runs_disabled": True,
+                    "dashboard_banner": "envctl runs are disabled for trees; planning and action commands remain available.",
+                },
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "envctl-codex-envctl-pr98-197bdc97",
+                            "windows": "features_feature_a-1",
+                            "paths": str(project_root),
+                            "attach": "tmux attach-session -t envctl-codex-envctl-pr98-197bdc97",
+                            "kill": "tmux kill-session -t envctl-codex-envctl-pr98-197bdc97",
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("envctl-codex-envctl-pr98-197bdc97", str(project_root)),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(
+                "○ AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (attached)",
+                output,
+            )
+            self.assertNotIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
+            self.assertNotIn("command:", output)
+
+    def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "features_feature_a" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            plan_path = repo / "todo" / "plans" / "features" / "feature-a.md"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                '{"plan_file": "features/feature-a.md"}',
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {"features_feature_a-1": str(project_root)},
+                    "dashboard_configured_service_types": ["backend"],
+                    "dashboard_runs_disabled": True,
+                    "dashboard_banner": "envctl runs are disabled for trees; planning and action commands remain available.",
+                },
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch("envctl_engine.runtime.session_management.list_tmux_sessions", return_value=[]),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
+            self.assertNotIn("AI session:", output)
+
     def test_dashboard_does_not_render_workspace_rows_for_running_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

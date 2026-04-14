@@ -51,11 +51,19 @@ def list_tmux_sessions(prefix: str = "envctl-") -> list[dict[str, str]]:
                 timeout=5.0,
             )
             windows = [w.strip() for w in windows_result.stdout.strip().splitlines() if w.strip()]
+            paths_result = subprocess.run(
+                ["tmux", "list-windows", "-t", name, "-F", "#{pane_current_path}"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            paths = [w.strip() for w in paths_result.stdout.strip().splitlines() if w.strip()]
             attach_cmd = f"tmux attach-session -t {shlex.quote(name)}"
             kill_cmd = f"tmux kill-session -t {shlex.quote(name)}"
             sessions.append({
                 "name": name,
                 "windows": ", ".join(windows) if windows else "unknown",
+                "paths": "\n".join(paths),
                 "attach": attach_cmd,
                 "kill": kill_cmd,
             })
