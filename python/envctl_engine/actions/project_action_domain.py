@@ -14,6 +14,7 @@ import tempfile
 from typing import Mapping
 
 from envctl_engine.planning import planning_feature_name
+from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import (
@@ -89,10 +90,24 @@ def run_commit_action(context: ActionProjectContext) -> int:
         print(f"Skipping {context.project_name} (detached HEAD).")
         return 0
 
-    add = _run_git(git_root, ["add", "-A"])
-    if add.returncode != 0:
-        _print_error("git add failed", add)
+    pre_stage_status = _run_git(git_root, ["status", "--porcelain", "--untracked-files=all"])
+    if pre_stage_status.returncode != 0:
+        _print_error("git status failed", pre_stage_status)
         return 1
+    protected_staged, protected_paths, stageable_paths = _partition_envctl_protected_paths(pre_stage_status.stdout)
+    if protected_staged:
+        print(
+            "Refusing to commit because envctl-local artifacts are already staged: "
+            + ", ".join(protected_paths)
+        )
+        return 1
+    if stageable_paths:
+        add = _run_git(git_root, ["add", "--", *stageable_paths])
+        if add.returncode != 0:
+            _print_error("git add failed", add)
+            return 1
+    if protected_paths:
+        print("Skipping envctl-local artifacts: " + ", ".join(protected_paths))
 
     status = _run_git(git_root, ["status", "--porcelain"])
     if status.returncode != 0:
@@ -150,6 +165,46 @@ def run_commit_action(context: ActionProjectContext) -> int:
 
     print(f"Committed and pushed changes for {context.project_name} ({branch}).")
     return 0
+
+
+def _partition_envctl_protected_paths(status_output: str) -> tuple[bool, list[str], list[str]]:
+    protected_staged = False
+    protected_paths: list[str] = []
+    stageable_paths: list[str] = []
+    seen_protected: set[str] = set()
+    seen_stageable: set[str] = set()
+    for raw_line in str(status_output or "").splitlines():
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        if len(line) < 4:
+            continue
+        index_status = line[0]
+        candidate = _status_candidate_path(line)
+        if not candidate:
+            continue
+        if is_envctl_local_artifact_path(candidate):
+            if candidate not in seen_protected:
+                protected_paths.append(candidate)
+                seen_protected.add(candidate)
+            if index_status not in {" ", "?"}:
+                protected_staged = True
+            continue
+        if candidate not in seen_stageable:
+            stageable_paths.append(candidate)
+            seen_stageable.add(candidate)
+    return protected_staged, protected_paths, stageable_paths
+
+
+def _status_candidate_path(line: str) -> str:
+    if line.startswith("?? "):
+        return line[3:].strip()
+    payload = line[3:].strip()
+    if not payload:
+        return ""
+    if " -> " in payload:
+        return payload.split(" -> ", 1)[1].strip()
+    return payload
 
 
 def run_pr_action(context: ActionProjectContext) -> int:

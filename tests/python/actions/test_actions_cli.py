@@ -781,10 +781,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
                     return subprocess.CompletedProcess(
                         args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
@@ -823,10 +825,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
                     return subprocess.CompletedProcess(
                         args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
@@ -866,10 +870,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
                     captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
                     return subprocess.CompletedProcess(
@@ -910,10 +916,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -939,10 +947,12 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run_git(_git_root: Path, args: list[str]):
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -972,10 +982,12 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run_git(_git_root: Path, args: list[str]):
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -1009,10 +1021,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-m"]:
                     return subprocess.CompletedProcess(
                         args=args, returncode=0, stdout="[feature/demo abc123] explicit\n", stderr=""
@@ -1052,10 +1066,12 @@ class ActionsCliTests(unittest.TestCase):
                 seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
                     return subprocess.CompletedProcess(
                         args=args, returncode=0, stdout="[feature/demo abc123] explicit file\n", stderr=""
@@ -1088,10 +1104,12 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run_git(_git_root: Path, args: list[str]):
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -1123,10 +1141,12 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run_git(_git_root: Path, args: list[str]):
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -1158,10 +1178,12 @@ class ActionsCliTests(unittest.TestCase):
             def fake_run_git(_git_root: Path, args: list[str]):
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
-                if args == ["add", "-A"]:
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=" M app.py\n", stderr="")
+                if args == ["add", "--", "app.py"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M app.py\n", stderr="")
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
                 if args[:2] == ["commit", "-F"]:
                     captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
                     return subprocess.CompletedProcess(
@@ -1190,6 +1212,115 @@ class ActionsCliTests(unittest.TestCase):
                 "Newest queued summary\n\n"
                 "### Envctl pointer ###\n",
             )
+
+    def test_commit_action_skips_envctl_local_artifacts_and_commits_normal_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            ledger = project_root / ".envctl-commit-message.md"
+            ledger.write_text(
+                "# Envctl Commit Log\n\n### Envctl pointer ###\nShip the feature\n",
+                encoding="utf-8",
+            )
+            seen_git_args: list[list[str]] = []
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="?? .envctl-commit-message.md\n?? MAIN_TASK.md\n M app.py\n",
+                        stderr="",
+                    )
+                if args == ["add", "--", "app.py"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="[feature/demo abc123] Ship it\n", stderr=""
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("Skipping envctl-local artifacts: .envctl-commit-message.md, MAIN_TASK.md", output)
+            self.assertIn(["add", "--", "app.py"], seen_git_args)
+            self.assertIn(["push", "-u", "origin", "feature/demo"], seen_git_args)
+
+    def test_commit_action_noops_when_only_envctl_local_artifacts_are_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="?? .envctl\n?? OLD_TASK_feature.md\n",
+                        stderr="",
+                    )
+                if args == ["status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 0)
+            self.assertIn("Skipping envctl-local artifacts: .envctl, OLD_TASK_feature.md", output)
+            self.assertIn("No changes to commit for feature/demo.", output)
+
+    def test_commit_action_fails_when_envctl_local_artifacts_are_already_staged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+
+            def fake_run_git(_git_root: Path, args: list[str]):
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="A  MAIN_TASK.md\n M app.py\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
+            ):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = actions_cli._run_commit_action(project_root, "Main")
+            output = buffer.getvalue()
+
+            self.assertEqual(code, 1)
+            self.assertIn("Refusing to commit because envctl-local artifacts are already staged: MAIN_TASK.md", output)
 
     def test_analyze_action_branch_relative_review_uses_explicit_base_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1738,14 +1869,21 @@ class ActionsCliTests(unittest.TestCase):
                         else subprocess.CompletedProcess(
                             args=args,
                             returncode=0,
-                            stdout="",
+                            stdout=" M app.py\n",
                             stderr="",
                         )
-                        if args == ["add", "-A"]
+                        if args == ["status", "--porcelain", "--untracked-files=all"]
                         else subprocess.CompletedProcess(
                             args=args,
                             returncode=0,
-                            stdout="M app.py\n",
+                            stdout="",
+                            stderr="",
+                        )
+                        if args == ["add", "--", "app.py"]
+                        else subprocess.CompletedProcess(
+                            args=args,
+                            returncode=0,
+                            stdout="M  app.py\n",
                             stderr="",
                         )
                         if args == ["status", "--porcelain"]
