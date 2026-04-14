@@ -288,9 +288,9 @@ def resolve_plan_agent_launch_config(
         else (
             env_map.get("ENVCTL_PLAN_AGENT_CLI")
             or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-            or "codex"
+            or "opencode"
         )
-    ).strip().lower() or "codex"
+    ).strip().lower() or "opencode"
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
@@ -1803,6 +1803,25 @@ def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path
             matches.append(candidate.resolve())
     if len(matches) == 1:
         return matches[0]
+    return None
+
+
+def resolve_plan_agent_launch_command(*, project_name: str, project_root: Path, repo_root: Path) -> str | None:
+    original_plan = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
+    if original_plan is None:
+        return None
+    planning_root: Path | None = None
+    for root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
+        candidate_root = repo_root / root
+        try:
+            relative = original_plan.relative_to(candidate_root)
+        except ValueError:
+            continue
+        planning_root = candidate_root
+        normalized_plan = str(relative).replace("\\", "/")
+        return f"envctl --plan {shlex.quote(normalized_plan)} --tmux"
+    if planning_root is None:
+        return None
     return None
 
 

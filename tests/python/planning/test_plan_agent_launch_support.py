@@ -134,11 +134,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                },
+            )
 
             result = launch_plan_agent_terminals(
                 rt,
-                route=parse_route(["--plan", "feature-a"], env={}),
+                route=parse_route(["--plan", "feature-a"], env={"ENVCTL_PLAN_AGENT_TRANSPORT": "cmux"}),
                 created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
             )
 
@@ -151,7 +158,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
+                },
+            )
 
             result = launch_plan_agent_terminals(
                 rt,
@@ -168,7 +183,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
+                },
+            )
 
             buffer = StringIO()
             with redirect_stdout(buffer):
@@ -183,6 +206,45 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn("Plan agent launch skipped", buffer.getvalue())
             self.assertEqual(rt.process_runner.calls, [])
 
+    def test_resolve_plan_agent_launch_command_uses_worktree_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            project_root = repo / "trees" / "features_feature_a" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            plan_path = repo / "todo" / "plans" / "features" / "feature-a.md"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                json.dumps({"plan_file": "features/feature-a.md"}),
+                encoding="utf-8",
+            )
+
+            command = launch_support.resolve_plan_agent_launch_command(
+                project_name="features_feature_a-1",
+                project_root=project_root,
+                repo_root=repo,
+            )
+
+            self.assertEqual(command, "envctl --plan features/feature-a.md --tmux")
+
+    def test_resolve_plan_agent_launch_command_falls_back_to_feature_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            project_root = repo / "trees" / "features_feature_b"
+            project_root.mkdir(parents=True, exist_ok=True)
+            plan_path = repo / "todo" / "plans" / "features" / "feature-b.md"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+
+            command = launch_support.resolve_plan_agent_launch_command(
+                project_name="features_feature_b",
+                project_root=project_root,
+                repo_root=repo,
+            )
+
+            self.assertEqual(command, "envctl --plan features/feature-b.md --tmux")
+
     def test_missing_cmux_executable_returns_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -193,6 +255,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
                     "CMUX_WORKSPACE_ID": "workspace:7",
                 },
             )
@@ -219,6 +282,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
                     "CMUX_WORKSPACE_ID": "workspace:7",
                 },
             )
@@ -244,6 +308,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                 },
             )
@@ -328,7 +394,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    and str(call[-1]).startswith("/ulw_loop You are implementing real code, end-to-end.")
                     for call in rt.process_runner.calls
                 )
             )
@@ -897,6 +963,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
                 },
@@ -1291,6 +1359,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
                 },
@@ -1389,6 +1459,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "CYCLES": "3",
                 },
@@ -1468,6 +1540,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
                     "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "false",
                 },
             )
@@ -1575,6 +1648,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX_WORKSPACE_ID": "workspace:4",
                 },
             )
@@ -1638,7 +1713,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-77"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    and str(call[-1]).startswith("/ulw_loop You are implementing real code, end-to-end.")
                     for call in rt.process_runner.calls
                 )
             )
@@ -1777,6 +1852,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
                 },
             )
@@ -1814,6 +1891,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "envctl",
                 },
             )
@@ -1858,6 +1937,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX": "true",
                     "CMUX_WORKSPACE_ID": "workspace:7",
                 },
@@ -1904,6 +1985,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX": "true",
                     "CMUX_WORKSPACE_ID": "B2F931FE-491C-448F-8B45-0BA5C932C8F0",
                 },
@@ -1966,6 +2049,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX_WORKSPACE": "envctl",
                 },
             )
@@ -2009,6 +2094,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "brand-new-workspace",
                 },
             )
@@ -2057,6 +2144,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "brand-new-workspace",
                 },
             )
@@ -2122,6 +2211,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "brand-new-workspace",
                 },
             )
@@ -2164,6 +2255,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "brand-new-workspace",
                 },
             )
@@ -2238,6 +2331,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX_WORKSPACE_ID": "workspace:4",
                 },
             )
@@ -2277,6 +2372,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX_WORKSPACE_ID": "workspace:4",
                 },
             )
@@ -2339,6 +2436,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 repo,
                 runtime,
                 env={
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "codex",
                     "CMUX_WORKSPACE_ID": "workspace:4",
                 },
             )
@@ -2424,6 +2523,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 env={
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:9",
                 },
             )
@@ -2452,20 +2552,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
-            self.assertIn(
-                [
-                    "cmux",
-                    "send",
-                    "--workspace",
-                    "workspace:9",
-                    "--surface",
-                    "surface:15",
-                    "/review_worktree_imp Project: feature-a-1\n"
-                    f'Review bundle: "{review_bundle}"\n'
-                    f'Worktree directory: "{project_root}"\n'
-                    f'Original plan file: "{original_plan.resolve()}"',
-                ],
-                rt.process_runner.calls,
+            self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:15", "opencode"], rt.process_runner.calls)
+            self.assertEqual(
+                [call for call in rt.process_runner.calls if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]],
+                [],
             )
 
     def test_review_launch_uses_direct_prompt_submission_for_opencode_when_enabled(self) -> None:
@@ -2494,6 +2584,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "HOME": tmpdir,
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "cmux",
                     "ENVCTL_PLAN_AGENT_DIRECT_PROMPT": "true",
                     "ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX": "true",
                     "ENVCTL_PLAN_AGENT_APPEND_ULW": "true",
