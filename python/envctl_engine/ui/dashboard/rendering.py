@@ -9,7 +9,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
@@ -164,6 +164,14 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             dim=dim,
             reset=reset,
         )
+        if runs_disabled_dashboard:
+            _print_dashboard_ai_session_row(
+                state=state,
+                project=project,
+                gray=gray,
+                dim=dim,
+                reset=reset,
+            )
         print("")
 
 
@@ -409,7 +417,7 @@ def _dashboard_configured_service_types(state: RunState) -> set[str]:
     return {str(service_type).strip().lower() for service_type in raw if str(service_type).strip()}
 
 
-def _dashboard_configured_service_total(*, projection: dict[str, object], configured_service_types: set[str]) -> int:
+def _dashboard_configured_service_total(*, projection: Mapping[str, object], configured_service_types: set[str]) -> int:
     if not projection or not configured_service_types:
         return 0
     return sum(len(configured_service_types) for _project in projection)
@@ -599,3 +607,144 @@ def _dashboard_palette(self: Any) -> dict[str, str]:
         "magenta": "\033[35m",
         "gray": "\033[90m",
     }
+
+
+def _print_dashboard_ai_session_row(
+    *,
+    state: RunState,
+    project: str,
+    gray: str,
+    dim: str,
+    reset: str,
+) -> None:
+    import subprocess  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
+    from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+
+    project_root = _dashboard_project_root_from_state(state=state, project=project)
+    repo_root = _dashboard_repo_root_for_project(project_root=project_root)
+    launch_command = (
+        resolve_plan_agent_launch_command(project_name=project, project_root=project_root, repo_root=repo_root)
+        if project_root is not None and repo_root is not None
+        else None
+    )
+    sessions = list_tmux_sessions()
+    matching = [
+        session
+        for session in sessions
+        if _dashboard_session_matches_project(project_root=project_root, project=project, session=session)
+    ]
+    current_session, current_path = _dashboard_current_tmux_target(subprocess_module=subprocess)
+    if matching:
+        for session in matching:
+            if _dashboard_session_is_attached(
+                project_root=project_root,
+                session=session,
+                current_session=current_session,
+                current_path=current_path,
+            ):
+                session_message = "attached"
+            else:
+                session_message = "detached"
+            print(
+                f"    {dim}○{reset} {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}"
+            )
+        return
+    if not launch_command:
+        return
+    print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
+
+
+def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:
+    if project_root is not None:
+        return _dashboard_session_matches_project_root(project_root=project_root, session=session)
+    return _dashboard_window_matches_project(project=project, window_name=str(session.get("windows", "") or ""))
+
+
+def _dashboard_session_is_attached(
+    *,
+    project_root: Path | None,
+    session: dict[str, str],
+    current_session: str,
+    current_path: str,
+) -> bool:
+    if str(session.get("name", "") or "").strip() != current_session:
+        return False
+    if project_root is None:
+        return False
+    return _dashboard_path_matches_project_root(project_root=project_root, candidate_path=current_path)
+
+
+def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool:
+    from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent_launch_support import _tmux_window_name_for_worktree  # noqa: PLC0415
+
+    expected_window = _tmux_window_name_for_worktree(CreatedPlanWorktree(name=project, root=Path("."), plan_file=""))
+    normalized_expected = str(expected_window).strip().lower()
+    normalized_windows = {part.strip().lower() for part in str(window_name).split(",") if part.strip()}
+    return normalized_expected in normalized_windows
+
+
+def _dashboard_project_root_from_state(*, state: RunState, project: str) -> Path | None:
+    metadata_roots = state.metadata.get("project_roots")
+    if not isinstance(metadata_roots, dict):
+        return None
+    root_raw = str(metadata_roots.get(project, "") or "").strip()
+    if not root_raw:
+        return None
+    return Path(root_raw).expanduser().resolve(strict=False)
+
+
+def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | None:
+    if project_root is None:
+        return None
+    current = project_root.resolve(strict=False)
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists() or (candidate / "todo").is_dir():
+            return candidate
+    return None
+
+
+def _dashboard_session_matches_project_root(*, project_root: Path, session: dict[str, str]) -> bool:
+    paths_raw = str(session.get("paths", "") or "")
+    if not paths_raw:
+        return False
+    for raw_path in paths_raw.splitlines():
+        candidate = str(raw_path).strip()
+        if not candidate:
+            continue
+        if _dashboard_path_matches_project_root(project_root=project_root, candidate_path=candidate):
+            return True
+    return False
+
+
+def _dashboard_path_matches_project_root(*, project_root: Path, candidate_path: str) -> bool:
+    normalized_project_root = str(project_root.resolve(strict=False))
+    normalized_candidate = str(candidate_path).replace(" (deleted)", "").strip()
+    if not normalized_candidate:
+        return False
+    try:
+        resolved_candidate = str(Path(normalized_candidate).expanduser().resolve(strict=False))
+    except Exception:
+        resolved_candidate = normalized_candidate
+    if resolved_candidate == normalized_project_root:
+        return True
+    return resolved_candidate.startswith(f"{normalized_project_root}/")
+
+
+def _dashboard_current_tmux_target(*, subprocess_module: Any) -> tuple[str, str]:
+    try:
+        result = subprocess_module.run(
+            ["tmux", "display-message", "-p", "#{session_name}\n#{pane_current_path}"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except Exception:
+        return "", ""
+    if result.returncode != 0:
+        return "", ""
+    lines = [line.strip() for line in str(result.stdout or "").splitlines() if line.strip()]
+    if len(lines) < 2:
+        return "", ""
+    return lines[0], lines[1]

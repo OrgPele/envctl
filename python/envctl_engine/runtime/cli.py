@@ -43,7 +43,7 @@ def check_prereqs(route: Route, config: EngineConfig, *, env: Mapping[str, str] 
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
     if route.command == "plan" and not bool(route.flags.get("planning_prs")):
-        required_tools.update(plan_agent_launch_prereq_commands(config))
+        required_tools.update(plan_agent_launch_prereq_commands(config, route=route))
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"
@@ -158,6 +158,7 @@ def run(
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "migrate-hooks",
             "show-config",
             "show-state",

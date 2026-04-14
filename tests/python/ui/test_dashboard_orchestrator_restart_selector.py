@@ -174,7 +174,7 @@ class _RuntimeStubMissingProjectResolver(_RuntimeStub):
 
 
 class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
-    def test_interactive_stop_defers_selection_to_lifecycle_cleanup(self) -> None:
+    def test_interactive_sessions_shortcut_dispatches_session_listing(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
@@ -194,14 +194,15 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+        out = StringIO()
+        with redirect_stdout(out):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertIs(next_state, state)
         self.assertEqual(runtime.selection_calls, [])
-        self.assertIsNotNone(runtime.last_dispatched_route)
-        assert runtime.last_dispatched_route is not None
-        self.assertEqual(runtime.last_dispatched_route.command, "stop")
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("attach:", out.getvalue())
 
     def test_hidden_dashboard_command_is_rejected_without_dispatch(self) -> None:
         runtime = _RuntimeStub()

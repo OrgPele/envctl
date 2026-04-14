@@ -119,6 +119,9 @@ _BOOLEAN_FLAG_TOKENS = (
     "--copy-db-storage",
     "--no-resume",
     "--no-auto-resume",
+    "--tmux",
+    "--opencode",
+    "--with-codex-skills",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
 
@@ -235,6 +238,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("list-targets", "list-targets"),
     ("--list-trees", "list-trees"),
     ("list-trees", "list-trees"),
+    ("--session", "session"),
+    ("session", "session"),
     ("--show-config", "show-config"),
     ("show-config", "show-config"),
     ("--show-state", "show-state"),
@@ -367,6 +372,7 @@ SUPPORTED_COMMANDS = sorted(
         "list-commands",
         "list-targets",
         "list-trees",
+        "session",
         "show-config",
         "show-state",
         "explain-startup",
@@ -937,6 +943,9 @@ def _boolean_flag_name(token: str) -> str:
         "--copy-db-storage": "seed_requirements_from_base",
         "--no-resume": "no_resume",
         "--no-auto-resume": "no_resume",
+        "--tmux": "tmux",
+        "--opencode": "opencode",
+        "--with-codex-skills": "with_codex_skills",
     }
     return mapping[token]
 
@@ -974,6 +983,8 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--timeout": "timeout",
         "--debug-capture": "debug_capture",
         "--debug-auto-pack": "debug_auto_pack",
+        "--session-action": "session_action",
+        "--session-id-override": "session_id_override",
     }
     key = mapping[token]
     if key in {"services", "include_existing_worktrees", "set_values"}:

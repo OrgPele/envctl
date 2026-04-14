@@ -42,6 +42,9 @@ def spinner(message: str, *, enabled: bool, start_immediately: bool = True) -> I
         policy=policy,
         start_immediately=start_immediately,
     )
+    if not policy.enabled:
+        import sys  # noqa: PLC0415
+        print(f"  {message}", file=sys.stderr, flush=True)
     try:
         yield s
     finally:

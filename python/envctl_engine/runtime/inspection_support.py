@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
 from envctl_engine.config import discover_local_config_state
@@ -25,6 +27,11 @@ from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
 from envctl_engine.ui.path_links import render_path_for_terminal
+from envctl_engine.runtime.session_management import (
+    print_session_list,
+    print_attach_command,
+    kill_session,
+)
 from envctl_engine.state import state_to_dict
 
 
@@ -43,6 +50,8 @@ def dispatch_direct_inspection(runtime: Any, route: object) -> int:
         return _print_startup_explanation(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
     if command == "preflight":
         return _print_preflight(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
+    if command == "session":
+        return _dispatch_session(runtime, route)
     raise RuntimeError(f"Unsupported direct inspection command: {command}")
 
 
@@ -463,3 +472,35 @@ def _startup_route_for_explanation(runtime: Any, route: object) -> object:
             projects=getattr(route, "projects", []),
             flags=dict(getattr(route, "flags", {})),
         )
+
+
+def _dispatch_session(runtime: Any, route: object) -> int:
+    action = str(getattr(route, "flags", {}).get("session_action", "") or "").strip().lower()
+    session_id = str(getattr(route, "flags", {}).get("session_id_override", "") or "").strip()
+    runtime_root = getattr(runtime, "runtime_root", None)
+    if runtime_root is None:
+        print("Could not determine runtime root.", file=sys.stderr)
+        return 1
+
+    if not action and not session_id:
+        print_session_list(Path(runtime_root))
+        return 0
+
+    if action == "list":
+        print_session_list(Path(runtime_root))
+        return 0
+    if action == "attach":
+        if session_id:
+            ok = print_attach_command(session_id)
+            return 0 if ok else 1
+        print("Usage: envctl --session --session-action=attach --session-id-override <name>", file=sys.stderr)
+        return 1
+    if action == "kill":
+        if session_id:
+            ok = kill_session(session_id)
+            return 0 if ok else 1
+        print("Usage: envctl --session --session-action=kill --session-id-override <name>", file=sys.stderr)
+        return 1
+
+    print(f"Unknown session action: {action}", file=sys.stderr)
+    return 1

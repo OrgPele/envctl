@@ -530,6 +530,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
             (repo / "MAIN_TASK.md").write_text("task\n", encoding="utf-8")
+            (repo / ".envctl-commit-message.md").write_text("queued\n", encoding="utf-8")
 
             with patch.dict(os.environ, env, clear=True):
                 result = evaluate_shipability(

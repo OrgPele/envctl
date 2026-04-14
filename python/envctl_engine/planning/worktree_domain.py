@@ -101,6 +101,8 @@ def _worktree_spinner_start(
     message: str,
 ) -> None:
     if not enabled:
+        import sys  # noqa: PLC0415
+        print(f"  {message}", file=sys.stderr, flush=True)
         return
     active_spinner.start()
     self._emit(  # type: ignore[attr-defined]
@@ -121,6 +123,8 @@ def _worktree_spinner_finish(
     message: str,
 ) -> None:
     if not enabled:
+        import sys  # noqa: PLC0415
+        print(f"✓ {message}", file=sys.stderr, flush=True)
         return
     active_spinner.succeed(message)
     self._emit(  # type: ignore[attr-defined]
@@ -141,6 +145,8 @@ def _worktree_spinner_fail(
     message: str,
 ) -> None:
     if not enabled:
+        import sys  # noqa: PLC0415
+        print(f"✗ {message}", file=sys.stderr, flush=True)
         return
     active_spinner.fail(message)
     self._emit(  # type: ignore[attr-defined]

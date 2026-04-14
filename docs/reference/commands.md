@@ -61,6 +61,7 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Behavior:
@@ -76,8 +77,9 @@ Behavior:
   - `finalize_task`
   - `merge_trees_into_dev`
   - `create_plan`
+  - `ship_release`
 - target roots:
-  - Codex: `~/.codex/prompts`
+  - Codex: `~/.config/envctl/codex/prompts`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
 - existing files are overwritten in place after one confirmation prompt for the command
@@ -86,6 +88,9 @@ Behavior:
 - this command is available from the normal CLI, but not from dashboard interactive mode
 - `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 - interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
+- Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
+- experimental Codex skill mirrors are available only when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true` and you pass `--with-codex-skills`
+- when enabled, envctl also installs explicit-only Codex skills under `~/.agents/skills/envctl-*`
 
 ## Main Runtime Commands
 
@@ -258,7 +263,8 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `1`
-- Codex launches send `/prompts:<preset>` while OpenCode launches send `/<preset>`
+- OpenCode launches send `/<preset>`
+- Codex resolves the preset from `~/.config/envctl/codex/prompts/<preset>.md` and submits that prompt body directly
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text
@@ -271,7 +277,7 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues `/prompts:finalize_task` in the same Codex tab
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues `finalize_task` in the same Codex tab
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
 
 Optional dashboard review-tab launch:
@@ -279,8 +285,8 @@ Optional dashboard review-tab launch:
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `/prompts:finalize_task` for the last round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
 

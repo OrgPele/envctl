@@ -237,6 +237,34 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertNotIn("(l)ogs", rendered)
         self.assertNotIn("confi(g)", rendered)
 
+    def test_dashboard_loop_footer_removes_ai_shortcut_and_keeps_session_controls(self) -> None:
+        state = RunState(run_id="run-footer", mode="trees")
+        runtime = _RuntimeStub(state)
+
+        def handle_command(_raw: str, current: RunState, _rt: object):  # noqa: ANN001
+            return False, current
+
+        out = StringIO()
+        with (
+            patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            redirect_stdout(out),
+        ):
+            code = run_dashboard_command_loop(
+                state=state,
+                runtime=runtime,
+                handle_command=handle_command,
+                sanitize=lambda value: value,
+                input_provider=lambda _prompt: "q",
+            )
+
+        self.assertEqual(code, 0)
+        rendered = out.getvalue()
+        self.assertNotIn("(a)i", rendered)
+        self.assertNotIn("AI:", rendered)
+        self.assertIn("Sessions:", rendered)
+        self.assertIn("(k)ill", rendered)
+        self.assertIn("(s)essions", rendered)
+
     def test_dashboard_loop_marks_spinner_failed_from_action_finish_event(self) -> None:
         state = RunState(run_id="run-4", mode="trees")
         runtime = _RuntimeStub(state)

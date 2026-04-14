@@ -12,13 +12,14 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Use this when you want `envctl` to install built-in prompt presets into your user-local AI CLI directories.
 
 Current targets:
 
-- Codex: `~/.codex/prompts`
+- Codex: `~/.config/envctl/codex/prompts`
 - Claude Code: `~/.claude/commands`
 - OpenCode: `~/.config/opencode/commands`
 
@@ -30,6 +31,8 @@ Notes:
 - `--dry-run` shows what would be written without mutating anything
 - this command is intentionally unavailable inside dashboard interactive mode
 - the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
+- `--with-codex-skills` is experimental and only works when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true`
+- the experimental Codex skill mirrors install as explicit-only skills under `~/.agents/skills/envctl-*`
 
 Current built-in presets:
 
@@ -41,8 +44,26 @@ Current built-in presets:
 - `finalize_task`
 - `merge_trees_into_dev`
 - `create_plan`
+- `ship_release`
 
-`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. Codex launches send it as `/prompts:implement_task`; `implement_plan` remains available as a backward-compatible preset.
+`implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. For Codex, envctl resolves the preset from the envctl-owned Codex prompt directory and submits the prompt body directly. `implement_plan` remains available as a backward-compatible preset.
+
+All Codex presets now use the same direct-submission path. Install them with `envctl install-prompts --cli codex`, then edit the generated files in `~/.config/envctl/codex/prompts/` before launching them through envctl.
+
+If you want to compare the same workflows as Codex skills, enable the experimental flag and install the skill mirrors:
+
+```bash
+ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
+```
+
+The installed skill mirrors are explicit-only and use names such as:
+
+- `$envctl-implement-task`
+- `$envctl-continue-task`
+- `$envctl-finalize-task`
+- `$envctl-review-task`
+- `$envctl-review-worktree`
+- `$envctl-ship-release`
 
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
@@ -53,7 +74,7 @@ Dashboard review follow-up:
 - during interactive `envctl dashboard` -> `review` setup for exactly one non-`Main` worktree, envctl can offer one origin-side AI review tab through the same selector UI used for dashboard target selection
 - the opened tab starts in the current repo root, not the target worktree
 - the submitted prompt includes reviewer notes pointing at the generated full review bundle, the target worktree directory, and the original plan file that created the worktree when provenance can resolve it
-- Codex receives `/prompts:review_worktree_imp <worktree>` and OpenCode receives `/review_worktree_imp <worktree>`
+- Codex receives the rendered `review_worktree_imp` prompt body with the reviewer notes injected, and OpenCode receives `/review_worktree_imp <worktree>`
 - choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the existing markdown bundle-only behavior
 - this optional review-tab launch reuses the same `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` transport settings as the post-`--plan` launcher, but it does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`
 
@@ -92,12 +113,12 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 
 Codex-only cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus `/prompts:finalize_task`
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus `finalize_task`
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `/prompts:finalize_task`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `/prompts:finalize_task`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR follow-up, use commit/push-only follow-ups in the middle, and reserve `/prompts:finalize_task` for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `finalize_task`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `finalize_task`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself

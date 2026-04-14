@@ -80,31 +80,48 @@ Use this structure (adapt section names only if truly necessary):
 - One plan file created in todo/plans/<category>/.
 
 ## Optional envctl follow-up
-- After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
+- After completing the required final response items, ask which AI CLI the user wants to use for the implementation follow-up: `codex`, `opencode`, or `both`.
+- If the user selects `codex` or `both`, also offer to configure the Codex cycle count and ask what cycle count they want to use.
+- Then offer exactly two next-step choices grounded in the real supported envctl flow:
+  1. I can run the implementation flow for you headlessly now.
+  2. If you want to run it yourself interactively, I can give you the exact command.
 - Do not run `envctl` unless the user explicitly says yes.
+- If the user says yes to the headless auto-run option, also tell them how they will attach afterward once envctl launches the tmux session.
+- If the user chooses the interactive/manual option, give them both exact commands and do not imply that anything already ran.
 - When you refer to that follow-up, ground it in the real supported flow:
-  - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
+  - use an explicit selector for the created plan with `envctl --headless --plan <selector>` for the automated headless option
+  - for the automated headless option, tell the user that envctl will print the attach command after launch so they can attach to the tmux session
+  - for the interactive/manual option, print both commands in this exact shape:
+    - Codex: `envctl --plan <selector> --tmux --codex`
+    - Opencode: `envctl --plan <selector> --tmux --opencode`
+  - if the user selects `both`, print both commands and say they can compare the two flows themselves
+  - if the user selects `codex` or `both`, include the Codex cycle count in the follow-up guidance and let the user choose that value
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - derive the cmux workspace name dynamically from the current repo root directory name as `"<repo-name> implementation"` and use that as `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
   - do not rely on inherited `CMUX_WORKSPACE_ID` or any current-workspace detection for this follow-up
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
   - do not separately surface or require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; setting `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is sufficient to enable the launcher for this flow
   - default the launch preset to `implement_task`
-  - if you mention Codex behavior, be accurate: envctl launches the CLI and sends `/prompts:implement_task` (and optional queued follow-up messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
+  - if you mention Codex behavior, be accurate: envctl launches the CLI and submits the rendered `implement_task` prompt body (and optional rendered follow-up prompts/messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
   - the final question must mention only the launch settings that should be surfaced to the user
   - do not ask the user to provide or confirm cmux workspace, cmux context, shell, custom CLI command override, or launcher-enable flags; derive or use those internally
-  - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
-    - AI CLI: `codex`
-    - Codex cycles: `2`
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
-  - if the selected CLI is not Codex, say that the Codex cycle count setting is ignored
 
 ## Final response format
 1. Path of the plan file created.
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
 4. Risk register (only if non-empty).
-5. One final approval question asking whether you should run the envctl worktree-and-prompt follow-up now, with all launch defaults listed inline and overrides invited.
+5. One final approval question that:
+   - asks whether the user wants `codex`, `opencode`, or `both`
+   - if `codex` or `both` is selected, asks what Codex cycle count they want to use
+   - offers exactly these two choices:
+     - headless auto-run by envctl now
+     - interactive manual run with commands you print for them
+   - if the user chooses the headless auto-run option, says that envctl will print the attach command after launch so they can attach to the tmux session
+6. If you include the manual option, print both commands in these exact shapes:
+   - `envctl --plan <selector> --tmux --codex`
+   - `envctl --plan <selector> --tmux --opencode`
 
 ## Self-check (before responding)
 - Plan matches existing todo/plans/ quality and depth.

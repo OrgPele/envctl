@@ -1,3 +1,20 @@
+## 2026-04-14 - envctl 1.6.0 release
+
+### Scope
+Cut the `1.6.0` release with a focus on making tmux/OpenCode planning flows, dashboard AI visibility, prompt contracts, and commit safety more coherent for real worktree-heavy development.
+
+### Key behavior changes
+- planning/runtime defaults now prefer tmux + Opencode and align better with direct-prompt session workflows
+- dashboard AI rows now show either a live attach surface or a Run AI command, but never both for the same project
+- headless plan follow-up and manual run guidance now distinguish attach/session summaries from interactive launch commands more truthfully
+- shipped prompts now encode stronger workflow contracts for CLI choice, Codex cycles, attach guidance, and PR creation only at the end of implementation
+- envctl-managed local artifacts are now protected at commit time, so envctl will not stage them even when Git excludes are missing or incomplete
+
+### Verification
+- `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence tests.python.runtime.test_release_shipability_gate tests.python.actions.test_actions_cli`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prompt_install_support`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging`
+
 ## 2026-03-16 - Review base provenance and branch-relative single-mode review
 
 ### Scope

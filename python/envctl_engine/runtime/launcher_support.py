@@ -45,14 +45,8 @@ def launcher_usage_text() -> str:
 
 
 def resolve_envctl_version(*, project_root: Path | None = None) -> str:
-    try:
-        return str(importlib_metadata.version("envctl"))
-    except importlib_metadata.PackageNotFoundError:
-        pass
-    except Exception as exc:
-        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
-
-    for pyproject_path in _candidate_version_files(project_root):
+    preferred_paths = _candidate_version_files(project_root)
+    for pyproject_path in preferred_paths:
         if not pyproject_path.is_file():
             continue
         try:
@@ -66,6 +60,13 @@ def resolve_envctl_version(*, project_root: Path | None = None) -> str:
         if not isinstance(version, str) or not version.strip():
             raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing project.version")
         return version.strip()
+
+    try:
+        return str(importlib_metadata.version("envctl"))
+    except importlib_metadata.PackageNotFoundError:
+        pass
+    except Exception as exc:
+        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
 
     raise LauncherError("Could not determine envctl version from installed package metadata or pyproject.toml.")
 
