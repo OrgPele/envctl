@@ -118,9 +118,6 @@ class DashboardOrchestrator:
         if command in {"s", "session", "sessions"}:
             self._dispatch_session_command(runtime_any)
             return True, state
-        if command in {"a", "ai"}:
-            self._dispatch_ai_command(runtime_any, state)
-            return True, state
         if command in {"k", "kill-session"}:
             self._dispatch_kill_session(runtime_any)
             return True, state
@@ -209,7 +206,7 @@ class DashboardOrchestrator:
         next_state = refreshed if refreshed is not None else state
         if code == 0 and route.command == "review":
             self._maybe_offer_review_tab_launch(route, next_state, rt)
-        if route.command == "test":
+        if route.command in {"test", "review"}:
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
                 self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
             else:
@@ -1429,7 +1426,7 @@ class DashboardOrchestrator:
             for key in ("failed_tests", "failed_manifest_entries"):
                 raw_count = entry.get(key)
                 with suppress(TypeError, ValueError):
-                    if int(raw_count) > 0:
+                    if int(str(raw_count)) > 0:
                         return True
             if summary_excerpt_from_entry(entry, max_lines=1):
                 return True
@@ -1609,46 +1606,56 @@ class DashboardOrchestrator:
                 print(f"  {i+1}. {s['name']} (windows: {s['windows']})")
                 print(f"     attach: {s['attach']}")
                 print(f"     kill:   {s['kill']}")
+            runtime_any._read_interactive_command_line("Press Enter to continue: ")
         except Exception as exc:
             print(f"Error listing sessions: {exc}")
 
     @staticmethod
-    def _dispatch_ai_command(runtime_any: Any, state: RunState) -> None:
-        try:
-            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
-            from pathlib import Path  # noqa: PLC0415
-            runtime_root = Path(str(getattr(runtime_any.config, "base_dir", Path.cwd())))
-            sessions = list_tmux_sessions()
-            if sessions:
-                print("Active AI sessions:")
-                for s in sessions:
-                    print(f"  {s['name']} (attach: {s['attach']})")
-            else:
-                print("No active AI sessions. Launch one with:")
-                print(f"  envctl --headless --plan <plan_file> --tmux --opencode")
-        except Exception as exc:
-            print(f"Error: {exc}")
+    def _repo_root_for_project(project_root: Path) -> Path | None:
+        current = Path(project_root).expanduser().resolve(strict=False)
+        for candidate in (current, *current.parents):
+            if (candidate / ".git").exists() or (candidate / "todo").is_dir():
+                return candidate
+        return None
 
-    @staticmethod
-    def _dispatch_kill_session(runtime_any: Any) -> None:
+    def _dispatch_kill_session(self, runtime_any: Any) -> None:
         try:
             from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
+            from envctl_engine.runtime.session_management import kill_session  # noqa: PLC0415
             sessions = list_tmux_sessions()
             if not sessions:
                 print("No active sessions to kill.")
                 return
-            for i, s in enumerate(sessions):
-                print(f"  {i+1}. {s['name']}")
-            if len(sessions) == 1:
-                s = sessions[0]
-                print(f"Killing: {s['name']}")
-                import subprocess  # noqa: PLC0415
-                subprocess.run(["tmux", "kill-session", "-t", s["name"]], capture_output=True, text=True, timeout=5.0)
-                print("Killed.")
+            values = _run_selector_with_impl(
+                prompt="Select sessions to kill:",
+                options=[
+                    SelectorItem(
+                        id=f"tmux-session:{session['name']}",
+                        label=f"{session['name']} (windows: {session['windows']})",
+                        kind="tmux_session",
+                        token=session["name"],
+                        scope_signature=(f"tmux_session:{session['name']}",),
+                        section="AI Sessions",
+                    )
+                    for session in sessions
+                ],
+                multi=True,
+                emit=getattr(runtime_any, "_emit", None),
+            )
+            if not values:
+                return
+            any_failed = False
+            for raw_name in values:
+                name = str(raw_name).strip()
+                if not name:
+                    continue
+                print(f"Killing: {name}")
+                if not kill_session(name):
+                    any_failed = True
+            if any_failed:
+                print("Finished with session kill errors.")
             else:
-                print("Multiple sessions found. Kill a specific one with:")
-                for s in sessions:
-                    print(f"  tmux kill-session -t {s['name']}")
+                print("Done.")
         except Exception as exc:
             print(f"Error: {exc}")
 

@@ -100,12 +100,8 @@ def run_dashboard_command_loop(
                 visible_actions = [label for label, command in action_commands if command not in hidden_commands]
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
-                plan_commands = [
-                    ("(a)i", "ai"),
-                    ("(k)ill", "kill-session"),
-                ]
-                print(f"  {magenta}AI:{reset} " + " | ".join(l for l, _ in plan_commands))
                 session_commands = [
+                    ("(k)ill", "kill-session"),
                     ("(s)essions", "sessions"),
                 ]
                 print(f"  {magenta}Sessions:{reset} " + " | ".join(l for l, _ in session_commands))
