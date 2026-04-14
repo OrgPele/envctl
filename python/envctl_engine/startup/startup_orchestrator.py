@@ -125,7 +125,8 @@ class StartupOrchestrator:
         self._ensure_run_id(session)
         run_id = self._resolved_run_id(session)
         session_id = self.runtime._current_session_id() or 'unknown'
-        print(f"run_id: {run_id}")
+        if not self._headless_plan_output_only(session):
+            print(f"run_id: {run_id}")
         print(f"session_id: {session_id}")
         session.identifiers_announced = True
         self._persist_session_record(run_id=run_id, session_id=session_id, session=session)
@@ -345,7 +346,7 @@ class StartupOrchestrator:
                     for worktree in getattr(selection_result, "created_worktrees", ())
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
-                if not created_worktrees and bool(route.flags.get("tmux")) and bool(route.flags.get("opencode")):
+                if not created_worktrees and bool(route.flags.get("tmux")):
                     created_worktrees = tuple(
                         CreatedPlanWorktree(
                             name=context.name,
@@ -393,6 +394,9 @@ class StartupOrchestrator:
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+        if self._headless_plan_output_only(session):
+            self._print_headless_plan_session_summary(session)
+            return 0
         enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
         if route.command == "plan":
             print(
@@ -963,6 +967,9 @@ class StartupOrchestrator:
             service_count=len(run_state.services),
             requirement_count=len(run_state.requirements),
         )
+        if self._headless_plan_output_only(session):
+            self._print_headless_plan_session_summary(session)
+            return 0
         if rt._should_enter_post_start_interactive(session.effective_route):
             return rt._run_interactive_dashboard_loop(run_state)
         self._print_plan_follow_up_command(session)
@@ -1036,8 +1043,12 @@ class StartupOrchestrator:
         return attach_code
 
     def _print_plan_follow_up_command(self, session: StartupSession) -> None:
+        from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
+
         route = session.effective_route
         if route.command != "plan":
+            return
+        if self._headless_plan_output_only(session):
             return
         if session.plan_agent_attach_target is not None:
             return
@@ -1045,46 +1056,70 @@ class StartupOrchestrator:
             return
         context = session.selected_contexts[0]
         root = Path(getattr(context, "root", ""))
-        provenance_path = root / ".envctl-state" / "worktree-provenance.json"
-        try:
-            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        repo_root = self._repo_root_for_project(root)
+        if repo_root is None:
             return
-        plan_file = str(provenance.get("plan_file", "")).strip()
-        if not plan_file:
-            return
-        print(
-            "Run this in a new terminal: "
-            f"envctl --headless --plan {shlex.quote(plan_file)} --tmux --opencode"
+        command = resolve_plan_agent_launch_command(
+            project_name=str(getattr(context, "name", "") or ""),
+            project_root=root,
+            repo_root=repo_root,
         )
+        if not command:
+            return
+        print(f"To run it yourself non-headlessly, use: {command}")
 
     def _print_plan_follow_up_command_with_attach(
         self, session: StartupSession, attach_target: object
     ) -> None:
+        from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
+
         route = session.effective_route
         if route.command != "plan":
+            return
+        if self._headless_plan_output_only(session):
             return
         if len(session.selected_contexts) != 1:
             return
         context = session.selected_contexts[0]
         root = Path(getattr(context, "root", ""))
-        provenance_path = root / ".envctl-state" / "worktree-provenance.json"
-        try:
-            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        repo_root = self._repo_root_for_project(root)
+        if repo_root is None:
             return
-        plan_file = str(provenance.get("plan_file", "")).strip()
-        if not plan_file:
+        command = resolve_plan_agent_launch_command(
+            project_name=str(getattr(context, "name", "") or ""),
+            project_root=root,
+            repo_root=repo_root,
+        )
+        if not command:
             return
         attach_command_str = " ".join(getattr(attach_target, "attach_command", ()))
         print(
             f"Plan agent launch created tmux session. "
             f"Attach to it with: {attach_command_str}"
         )
-        print(
-            "Or run this in a new terminal: "
-            f"envctl --headless --plan {shlex.quote(plan_file)} --tmux --opencode"
-        )
+        print(f"Or to run it yourself non-headlessly, use: {command}")
+
+    def _headless_plan_output_only(self, session: StartupSession) -> bool:
+        route = session.effective_route
+        return route.command == "plan" and bool(route.flags.get("batch"))
+
+    def _print_headless_plan_session_summary(self, session: StartupSession) -> None:
+        attach_target = session.plan_agent_attach_target
+        if attach_target is None:
+            return
+        attach_command = " ".join(str(part).strip() for part in attach_target.attach_command if str(part).strip())
+        kill_command = f"tmux kill-session -t {shlex.quote(attach_target.session_name)}"
+        if attach_command:
+            print(f"attach: {attach_command}")
+        print(f"kill: {kill_command}")
+
+    @staticmethod
+    def _repo_root_for_project(project_root: Path) -> Path | None:
+        current = Path(project_root).expanduser().resolve(strict=False)
+        for candidate in (current, *current.parents):
+            if (candidate / ".git").exists() or (candidate / "todo").is_dir():
+                return candidate
+        return None
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
         self.runtime._emit(

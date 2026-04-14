@@ -12,6 +12,7 @@ from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
+    PlanAgentAttachTarget,
     PlanAgentLaunchResult,
     PlanSelectionResult,
 )
@@ -407,13 +408,17 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             runtime = root / "runtime"
             engine = self._engine(repo, runtime)
             context = self._tree_context(repo, "feature-a-1", "feature a/1", backend_port=8100, frontend_port=9100)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            plan_path = repo / "todo" / "plans" / "features" / "feature a.md"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
             state_dir = Path(context.root) / ".envctl-state"
             state_dir.mkdir(parents=True, exist_ok=True)
             (state_dir / "worktree-provenance.json").write_text(
                 json.dumps({"plan_file": "features/feature a.md"}),
                 encoding="utf-8",
             )
-            session = engine.startup_orchestrator._create_session(parse_route(["--plan", "feature-a", "--batch"], env={}))
+            session = engine.startup_orchestrator._create_session(parse_route(["--plan", "feature-a"], env={}))
             session.selected_contexts = [context]
             out = StringIO()
 
@@ -421,9 +426,70 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 engine.startup_orchestrator._print_plan_follow_up_command(session)
 
             self.assertIn(
-                "Run this in a new terminal: envctl --headless --plan 'features/feature a.md' --tmux --opencode",
+                "To run it yourself non-headlessly, use: envctl --plan 'features/feature a.md' --tmux",
                 out.getvalue(),
             )
+
+    def test_headless_plan_disabled_startup_prints_only_session_attach_and_kill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(
+                repo,
+                runtime,
+                extra={
+                    "TREES_STARTUP_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-opencode-test",
+                window_name="feature-a-1",
+                attach_via="session",
+                attach_command=("tmux", "attach-session", "-t", "envctl-opencode-test"),
+            )
+            engine.planning_worktree_orchestrator._last_plan_selection_result = PlanSelectionResult(
+                raw_projects=[(context.name, context.root)],
+                selected_contexts=[context],
+                created_worktrees=(CreatedPlanWorktree(name=context.name, root=Path(context.root), plan_file="features/feature-a.md"),),
+            )
+            out = StringIO()
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(
+                        status="launched",
+                        reason="launched",
+                        outcomes=(),
+                        attach_target=attach_target,
+                    ),
+                ),
+                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal",
+                    return_value=0,
+                ) as attach_mock,
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--headless", "--tmux"], env={}))
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            dashboard_mock.assert_not_called()
+            attach_mock.assert_not_called()
+            self.assertIn("session_id:", rendered)
+            self.assertIn("attach: tmux attach-session -t envctl-opencode-test", rendered)
+            self.assertIn("kill: tmux kill-session -t envctl-opencode-test", rendered)
+            self.assertNotIn("run_id:", rendered)
+            self.assertNotIn("Interactive mode enabled.", rendered)
+            self.assertNotIn("Development Environment - Interactive Mode", rendered)
+            self.assertNotIn("Run this in a new terminal:", rendered)
 
     def test_tmux_follow_up_run_uses_selected_existing_worktree_when_no_new_worktrees_created(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -444,7 +510,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 created_worktrees=(),
             )
             session = engine.startup_orchestrator._create_session(
-                parse_route(["--plan", "feature-a", "--batch", "--tmux", "--opencode"], env={})
+                parse_route(["--plan", "feature-a", "--batch", "--tmux"], env={})
             )
             session.selected_contexts = [context]
 
