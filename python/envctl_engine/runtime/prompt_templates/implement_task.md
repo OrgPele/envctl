@@ -21,6 +21,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - When the implementation is complete and the relevant tests are green, commit the work. Prefer `envctl commit --headless --main` first so the repo-standard commit flow is used without blocking on interactive prompts and targets the main commit path; if `envctl commit --headless --main` does not work, fall back to the git CLI and still produce the commit.
+- Only at the very end of the implementation task, after the implementation work is complete, the relevant tests are green, and the implementation commit is complete, create or update the pull request as part of the same implementation task. Prefer the repo-standard envctl/gh-backed PR flow when available; otherwise use the GitHub CLI. Make sure the PR title/body are accurate, polished, and reflect the implemented behavior, validation results, and any residual risks.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected implementation.
@@ -83,8 +84,9 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 2. List of files modified/added.
 3. How to run the relevant tests (exact commands).
 4. Commit status.
-5. Any notable edge cases covered.
-6. Risk register (only if needed): trade-offs or missing tests.
+5. PR status.
+6. Any notable edge cases covered.
+7. Risk register (only if needed): trade-offs or missing tests.
 
 ## Self-check (before responding)
 - Requirements in the authoritative spec file are fully implemented.

@@ -534,6 +534,9 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("one complete next commit message", codex)
         self.assertIn("Prefer `envctl commit --headless --main` first", codex)
         self.assertIn("fall back to the git CLI", codex)
+        self.assertIn("Only at the very end of the implementation task", codex)
+        self.assertIn("create or update the pull request as part of the same implementation task", codex)
+        self.assertIn("PR title/body are accurate, polished", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertEqual(claude, codex)
         self.assertEqual(opencode, codex)
@@ -589,6 +592,18 @@ class PromptInstallSupportTests(unittest.TestCase):
 
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
+        self.assertIn("ask which AI CLI the user wants to use", plan_prompt.body)
+        self.assertIn("`codex`, `opencode`, or `both`", plan_prompt.body)
+        self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
+        self.assertIn("what cycle count they want to use", plan_prompt.body)
+        self.assertIn("run the implementation flow for you headlessly now", plan_prompt.body)
+        self.assertIn("tell them how they will attach afterward", plan_prompt.body)
+        self.assertIn("envctl will print the attach command after launch", plan_prompt.body)
+        self.assertIn("run it yourself interactively", plan_prompt.body)
+        self.assertIn("envctl --plan <selector> --tmux --codex", plan_prompt.body)
+        self.assertIn("envctl --plan <selector> --tmux --opencode", plan_prompt.body)
+        self.assertIn("if the user selects `both`, print both commands", plan_prompt.body)
+        self.assertNotIn("AI CLI: `opencode`", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
