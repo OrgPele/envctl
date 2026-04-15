@@ -367,8 +367,13 @@ class StartupOrchestrator:
                             )
                         )
                     created_worktrees = tuple(recovered_worktrees)
-                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
-                session.plan_agent_attach_target = launch_result.attach_target
+                if not self._headless_plan_output_only(session):
+                    launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                    session.plan_agent_attach_target = launch_result.attach_target
+                    if launch_result.status == "failed":
+                        reason = str(getattr(launch_result, "reason", "") or "Plan agent launch failed.").strip()
+                        print(reason)
+                        return 1
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
