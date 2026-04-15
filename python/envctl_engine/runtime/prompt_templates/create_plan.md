@@ -85,18 +85,22 @@ Use this structure (adapt section names only if truly necessary):
 - When you refer to that follow-up, ground it in the real supported flow:
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
-  - derive the cmux workspace name dynamically from the current repo root directory name as `"<repo-name> implementation"` and use that as `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
-  - do not rely on inherited `CMUX_WORKSPACE_ID` or any current-workspace detection for this follow-up
+  - if you show an OpenCode launch command, include an explicit repo-scoped shell form such as `cd <repo> && CMUX=true ENVCTL_PLAN_AGENT_CLI=opencode envctl --headless --plan <selector>`
+  - if you show a Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && CMUX=true ENVCTL_PLAN_AGENT_CLI=codex envctl --headless --plan <selector>`
+  - if the user selects `both`, provide both repo-scoped commands explicitly as separate alternatives, not as a single combined runtime mode
+  - when you need a concise launch example, prefer the supported `CMUX=true` shorthand for enabling the launcher
+  - do not invent unsupported command flags such as `--tmux`, `--codex`, or `--opencode`
+  - do not claim that envctl can launch both CLIs in one combined command; `ENVCTL_PLAN_AGENT_CLI` accepts one CLI value at a time
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
-  - do not separately surface or require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; setting `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is sufficient to enable the launcher for this flow
+  - do not separately surface or require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` when the concise `CMUX=true` shorthand is sufficient for the user-facing example
   - default the launch preset to `implement_task`
   - if you mention Codex behavior, be accurate: envctl launches the CLI and submits the rendered `implement_task` prompt body (and optional rendered follow-up prompts/messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
   - the final question must mention only the launch settings that should be surfaced to the user
-  - do not ask the user to provide or confirm cmux workspace, cmux context, shell, custom CLI command override, or launcher-enable flags; derive or use those internally
+  - do not ask the user to provide or confirm cmux workspace, cmux context, shell, or custom CLI command override unless a task-specific repo constraint makes the default `CMUX=true` example insufficient
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
-    - AI CLI: `codex`
-    - Codex cycles: `2`
+    - AI CLI choice: `codex`, `opencode`, or `both` (where `both` means show two separate commands)
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
+  - if the selected CLI includes Codex, offer to configure the Codex cycle count and you may suggest `CYCLES=2` as an optional override for this follow-up, but make clear that the current runtime default remains `1` unless the user chooses another value
   - if the selected CLI is not Codex, say that the Codex cycle count setting is ignored
 
 ## Final response format

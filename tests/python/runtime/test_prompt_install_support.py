@@ -589,6 +589,30 @@ class PromptInstallSupportTests(unittest.TestCase):
 
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
+        self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
+        self.assertIn(
+            "cd <repo> && CMUX=true ENVCTL_PLAN_AGENT_CLI=opencode envctl --headless --plan <selector>",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "cd <repo> && CMUX=true ENVCTL_PLAN_AGENT_CLI=codex envctl --headless --plan <selector>",
+            plan_prompt.body,
+        )
+        self.assertIn("provide both repo-scoped commands explicitly as separate alternatives", plan_prompt.body)
+        self.assertIn(
+            "AI CLI choice: `codex`, `opencode`, or `both` (where `both` means show two separate commands)",
+            plan_prompt.body,
+        )
+        self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
+        self.assertIn("you may suggest `CYCLES=2` as an optional override for this follow-up", plan_prompt.body)
+        self.assertIn("the current runtime default remains `1`", plan_prompt.body)
+        self.assertIn("if the selected CLI is not Codex, say that the Codex cycle count setting is ignored", plan_prompt.body)
+        self.assertIn("CMUX=true", plan_prompt.body)
+        self.assertIn("ENVCTL_PLAN_AGENT_CLI", plan_prompt.body)
+        self.assertIn("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE", plan_prompt.body)
+        self.assertNotIn("--tmux --opencode", plan_prompt.body)
+        self.assertNotIn("--tmux --codex", plan_prompt.body)
+        self.assertNotIn("single combined runtime mode", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
