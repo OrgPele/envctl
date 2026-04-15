@@ -224,6 +224,13 @@ class CliRouterParityTests(unittest.TestCase):
             [{"feature": "feature-c", "iteration": "2"}],
         )
 
+    def test_tmux_plan_flags_are_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("batch"))
+
     def test_shell_compatibility_alias_flags_are_parsed(self) -> None:
         route = parse_route(
             [

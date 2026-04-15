@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Callable
+from typing import Callable, cast
 
 from envctl_engine.runtime.command_router import Route, RouteError, parse_route
 from envctl_engine.config import EngineConfig, discover_local_config_state, load_config
@@ -43,7 +43,7 @@ def check_prereqs(route: Route, config: EngineConfig, *, env: Mapping[str, str] 
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
     if route.command == "plan" and not bool(route.flags.get("planning_prs")):
-        required_tools.update(plan_agent_launch_prereq_commands(config))
+        required_tools.update(plan_agent_launch_prereq_commands(config, route=route))
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"
@@ -72,13 +72,16 @@ def run(
     *,
     env: Mapping[str, str] | None = None,
     shell_runner: Callable[[Sequence[str]], int] | None = None,
-    dispatcher: Callable[[object, EngineConfig], int] | None = None,
+    dispatcher: Callable[[Route, EngineConfig], int] | None = None,
 ) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     env_map = dict(os.environ if env is None else env)
     custom_dispatcher = dispatcher is not None
     use_shell_runner = shell_runner is not None and dispatcher is None
-    dispatcher = dispatcher or (lambda route, config: dispatch_route(route, config, env=env_map))
+    dispatcher = dispatcher or cast(
+        Callable[[Route, EngineConfig], int],
+        lambda route, config: dispatch_route(route, config, env=env_map),
+    )
 
     try:
         try:
