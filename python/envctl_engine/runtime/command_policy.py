@@ -14,6 +14,7 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
         "health",
         "errors",
         "blast-worktree",
+        "self-destruct-worktree",
         "pr",
         "commit",
         "review",
@@ -32,7 +33,7 @@ DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset({"install-pr
 LIFECYCLE_CLEANUP_COMMANDS: Final[frozenset[str]] = frozenset({"stop", "stop-all", "blast-all"})
 STATE_ACTION_COMMANDS: Final[frozenset[str]] = frozenset({"logs", "clear-logs", "health", "errors"})
 ACTION_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"test", "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate"}
+    {"test", "delete-worktree", "blast-worktree", "self-destruct-worktree", "pr", "commit", "review", "migrate"}
 )
 STARTUP_COMMANDS: Final[frozenset[str]] = frozenset({"restart", "plan", "start"})
 

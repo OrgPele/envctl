@@ -26,6 +26,8 @@ class CommandRouterContractTests(unittest.TestCase):
             "blastall": "blast-all",
             "--blast-worktree": "blast-worktree",
             "blastworktree": "blast-worktree",
+            "self-destruct-worktree": "self-destruct-worktree",
+            "--self-destruct-worktree": "self-destruct-worktree",
             "--logs": "logs",
             "l": "logs",
             "--clear-logs": "clear-logs",
