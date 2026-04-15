@@ -80,20 +80,20 @@ Use this structure (adapt section names only if truly necessary):
 - One plan file created in todo/plans/<category>/.
 
 ## Optional envctl follow-up
-- After completing the required final response items, ask which AI CLI the user wants to use for the implementation follow-up: `codex`, `opencode`, or `both`.
+- After completing the required final response items, always ask which AI CLI the user wants to use for the implementation follow-up: `codex`, `opencode`, or `both`.
 - If the user selects `codex` or `both`, also offer to configure the Codex cycle count and ask what cycle count they want to use.
-- Then offer exactly two next-step choices grounded in the real supported envctl flow:
+- Then always offer exactly two next-step choices grounded in the real supported envctl flow:
   1. I can run the implementation flow for you headlessly now.
-  2. If you want to run it yourself interactively, I can give you the exact command.
+  2. If you want to run it yourself interactively, I will give you the exact command(s) to run yourself.
 - Do not run `envctl` unless the user explicitly says yes.
 - If the user says yes to the headless auto-run option, also tell them how they will attach afterward once envctl launches the tmux session.
-- If the user chooses the interactive/manual option, give them both exact commands and do not imply that anything already ran.
+- If the user chooses the interactive/manual option, always give them the exact command(s) and do not imply that anything already ran.
 - When you refer to that follow-up, ground it in the real supported flow:
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>` for the automated headless option
   - for the automated headless option, tell the user that envctl will print the attach command after launch so they can attach to the tmux session
   - for the interactive/manual option, print both commands in this exact shape:
-    - Codex: `envctl --plan <selector> --tmux --codex`
-    - Opencode: `envctl --plan <selector> --tmux --opencode`
+    - Codex: `ENVCTL_PLAN_AGENT_CLI=codex envctl --plan <selector> --tmux`
+    - Opencode: `ENVCTL_PLAN_AGENT_CLI=opencode envctl --plan <selector> --tmux --opencode`
   - if the user selects `both`, print both commands and say they can compare the two flows themselves
   - if the user selects `codex` or `both`, include the Codex cycle count in the follow-up guidance and let the user choose that value
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
@@ -113,15 +113,15 @@ Use this structure (adapt section names only if truly necessary):
 3. Files referenced during research (short list).
 4. Risk register (only if non-empty).
 5. One final approval question that:
-   - asks whether the user wants `codex`, `opencode`, or `both`
-   - if `codex` or `both` is selected, asks what Codex cycle count they want to use
-   - offers exactly these two choices:
-     - headless auto-run by envctl now
-     - interactive manual run with commands you print for them
-   - if the user chooses the headless auto-run option, says that envctl will print the attach command after launch so they can attach to the tmux session
+    - asks whether the user wants `codex`, `opencode`, or `both`
+    - if `codex` or `both` is selected, asks what Codex cycle count they want to use
+    - offers exactly these two choices:
+      - headless auto-run by envctl now
+      - interactive manual run with commands you print for them so they can run it themselves
+    - if the user chooses the headless auto-run option, says that envctl will print the attach command after launch so they can attach to the tmux session
 6. If you include the manual option, print both commands in these exact shapes:
-   - `envctl --plan <selector> --tmux --codex`
-   - `envctl --plan <selector> --tmux --opencode`
+   - `ENVCTL_PLAN_AGENT_CLI=codex envctl --plan <selector> --tmux`
+   - `ENVCTL_PLAN_AGENT_CLI=opencode envctl --plan <selector> --tmux --opencode`
 
 ## Self-check (before responding)
 - Plan matches existing todo/plans/ quality and depth.

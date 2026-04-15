@@ -600,8 +600,10 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("tell them how they will attach afterward", plan_prompt.body)
         self.assertIn("envctl will print the attach command after launch", plan_prompt.body)
         self.assertIn("run it yourself interactively", plan_prompt.body)
-        self.assertIn("envctl --plan <selector> --tmux --codex", plan_prompt.body)
-        self.assertIn("envctl --plan <selector> --tmux --opencode", plan_prompt.body)
+        self.assertIn("always offer exactly two next-step choices", plan_prompt.body)
+        self.assertIn("I will give you the exact command(s) to run yourself", plan_prompt.body)
+        self.assertIn("ENVCTL_PLAN_AGENT_CLI=codex envctl --plan <selector> --tmux", plan_prompt.body)
+        self.assertIn("ENVCTL_PLAN_AGENT_CLI=opencode envctl --plan <selector> --tmux --opencode", plan_prompt.body)
         self.assertIn("if the user selects `both`, print both commands", plan_prompt.body)
         self.assertNotIn("AI CLI: `opencode`", plan_prompt.body)
 
