@@ -326,6 +326,20 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(killpg_calls, [(8765, signal.SIGTERM)])
 
+    def test_is_pid_running_treats_zombie_process_as_not_running(self) -> None:
+        runner = ProcessRunner()
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.kill", return_value=None),
+            patch.object(runner, "_pid_identity", return_value="Wed Apr 16 00:00:00 2026", create=True),
+            patch.object(
+                runner,
+                "run_probe",
+                return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout="Zs\n", stderr=""),
+            ),
+        ):
+            self.assertFalse(runner.is_pid_running(4321))
+
 
 if __name__ == "__main__":
     unittest.main()

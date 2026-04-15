@@ -361,6 +361,7 @@ class ProcessRunner:
                 cwd=str(cwd) if cwd is not None else None,
                 env=dict(env) if env is not None else None,
                 text=True,
+                start_new_session=True,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_target,
                 stderr=stderr_target,
@@ -530,6 +531,16 @@ class ProcessRunner:
             os.kill(pid, 0)
         except OSError:
             return False
+        identity = self._pid_identity(pid)
+        if identity is not None:
+            try:
+                completed = self.run_probe(["ps", "-p", str(pid), "-o", "stat="])
+            except OSError:
+                completed = None
+            if completed is not None and completed.returncode == 0:
+                stat = completed.stdout.strip().upper()
+                if stat.startswith("Z"):
+                    return False
         return True
 
     def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
