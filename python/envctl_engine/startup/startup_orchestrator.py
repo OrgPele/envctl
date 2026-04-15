@@ -347,21 +347,26 @@ class StartupOrchestrator:
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
                 if not created_worktrees and bool(route.flags.get("tmux")):
-                    created_worktrees = tuple(
-                        CreatedPlanWorktree(
-                            name=context.name,
-                            root=Path(context.root),
-                            plan_file=str(
-                                json.loads(
-                                    (Path(context.root) / ".envctl-state" / "worktree-provenance.json").read_text(
-                                        encoding="utf-8"
-                                    )
-                                ).get("plan_file", "")
-                            ).strip(),
+                    recovered_worktrees: list[CreatedPlanWorktree] = []
+                    for context in project_contexts:
+                        root = Path(context.root)
+                        provenance_path = root / ".envctl-state" / "worktree-provenance.json"
+                        plan_file = ""
+                        if provenance_path.is_file():
+                            try:
+                                plan_file = str(
+                                    json.loads(provenance_path.read_text(encoding="utf-8")).get("plan_file", "")
+                                ).strip()
+                            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                                plan_file = ""
+                        recovered_worktrees.append(
+                            CreatedPlanWorktree(
+                                name=context.name,
+                                root=root,
+                                plan_file=plan_file,
+                            )
                         )
-                        for context in project_contexts
-                        if (Path(context.root) / ".envctl-state" / "worktree-provenance.json").is_file()
-                    )
+                    created_worktrees = tuple(recovered_worktrees)
                 launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
                 session.plan_agent_attach_target = launch_result.attach_target
         session.selected_contexts = list(project_contexts)
@@ -406,11 +411,11 @@ class StartupOrchestrator:
             self._print_plan_follow_up_command(session)
         elif not enter_interactive_dashboard:
             print(f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services.")
-        if enter_interactive_dashboard:
-            return rt._run_interactive_dashboard_loop(run_state)
         attach_code = self._maybe_attach_plan_agent_terminal(session)
         if attach_code is not None:
             return attach_code
+        if enter_interactive_dashboard:
+            return rt._run_interactive_dashboard_loop(run_state)
         return 0
 
     def _resolve_run_reuse(self, session: StartupSession) -> int | None:
@@ -633,11 +638,11 @@ class StartupOrchestrator:
                     print(
                         f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
                     )
-                if enter_interactive_dashboard:
-                    return rt._run_interactive_dashboard_loop(candidate_state)
                 attach_code = self._maybe_attach_plan_agent_terminal(session)
                 if attach_code is not None:
                     return attach_code
+                if enter_interactive_dashboard:
+                    return rt._run_interactive_dashboard_loop(candidate_state)
                 return 0
             else:
                 self._emit_phase(
@@ -695,6 +700,7 @@ class StartupOrchestrator:
     def _start_selected_contexts(self, session: StartupSession) -> None:
         rt = self.runtime
         route = session.effective_route
+        allow_plan_startup_warnings = self._allow_plan_startup_warnings(session)
         spinner_message = f"Starting {len(session.contexts_to_start)} project(s)..."
         spinner_policy = resolve_spinner_policy(dict(rt.env))
         use_startup_spinner = spinner_policy.enabled and not self._suppress_progress_output(route)
@@ -816,10 +822,26 @@ class StartupOrchestrator:
                                         else None,
                                     )
                                 except RuntimeError as exc:
-                                    failures.append(str(exc))
-                                    rt._emit("startup.project.failed", project=context.name, error=str(exc))
+                                    failure_text = str(exc)
+                                    rt._emit("startup.project.failed", project=context.name, error=failure_text)
+                                    if allow_plan_startup_warnings:
+                                        warning = (
+                                            f"Warning: could not start {context.name}; continuing AI run without local startup. "
+                                            f"Reason: {failure_text}"
+                                        )
+                                        session.warnings.append(warning)
+                                        self._render_project_startup_warnings(
+                                            context=context,
+                                            warnings=[warning],
+                                            route=route_for_execution,
+                                            project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                                        )
+                                        if use_project_spinner_group:
+                                            project_spinner_group.mark_success(context.name, "warning: startup skipped")
+                                        continue
+                                    failures.append(failure_text)
                                     if use_project_spinner_group:
-                                        project_spinner_group.mark_failure(context.name, str(exc))
+                                        project_spinner_group.mark_failure(context.name, failure_text)
                         for context in session.contexts_to_start:
                             result = completed.get(context.name)
                             if result is None:
@@ -829,12 +851,32 @@ class StartupOrchestrator:
                             raise RuntimeError("; ".join(failures))
                     else:
                         for context in session.contexts_to_start:
-                            result = rt._start_project_context(
-                                context=context,
-                                mode=session.runtime_mode,
-                                route=route_for_execution,
-                                run_id=self._resolved_run_id(session),
-                            )
+                            try:
+                                result = rt._start_project_context(
+                                    context=context,
+                                    mode=session.runtime_mode,
+                                    route=route_for_execution,
+                                    run_id=self._resolved_run_id(session),
+                                )
+                            except RuntimeError as exc:
+                                failure_text = str(exc)
+                                rt._emit("startup.project.failed", project=context.name, error=failure_text)
+                                if allow_plan_startup_warnings:
+                                    warning = (
+                                        f"Warning: could not start {context.name}; continuing AI run without local startup. "
+                                        f"Reason: {failure_text}"
+                                    )
+                                    session.warnings.append(warning)
+                                    self._render_project_startup_warnings(
+                                        context=context,
+                                        warnings=[warning],
+                                        route=route_for_execution,
+                                        project_spinner_group=project_spinner_group if use_project_spinner_group else None,
+                                    )
+                                    if use_project_spinner_group:
+                                        project_spinner_group.mark_success(context.name, "warning: startup skipped")
+                                    continue
+                                raise
                             self._record_project_startup(session, context, result)
                             self._render_project_startup_warnings(
                                 context=context,
@@ -970,12 +1012,12 @@ class StartupOrchestrator:
         if self._headless_plan_output_only(session):
             self._print_headless_plan_session_summary(session)
             return 0
-        if rt._should_enter_post_start_interactive(session.effective_route):
-            return rt._run_interactive_dashboard_loop(run_state)
-        self._print_plan_follow_up_command(session)
         attach_code = self._maybe_attach_plan_agent_terminal(session)
         if attach_code is not None:
             return attach_code
+        if rt._should_enter_post_start_interactive(session.effective_route):
+            return rt._run_interactive_dashboard_loop(run_state)
+        self._print_plan_follow_up_command(session)
         return 0
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
@@ -1191,6 +1233,28 @@ class StartupOrchestrator:
                     interactive_tty=(True if link_mode == "on" else None),
                 )
             )
+
+    def _allow_plan_startup_warnings(self, session: StartupSession) -> bool:
+        if session.requested_command != "plan":
+            return False
+        route = session.effective_route
+        env = dict(getattr(self.runtime, "env", {}) or {})
+        raw_cli = str(env.get("ENVCTL_PLAN_AGENT_CLI") or getattr(self.runtime.config, "plan_agent_cli", "")).strip().lower()
+        raw_workspace = str(
+            env.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+            or getattr(self.runtime.config, "plan_agent_cmux_workspace", "")
+        ).strip()
+        raw_terminals = str(
+            env.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
+            or ("true" if bool(getattr(self.runtime.config, "plan_agent_terminals_enable", False)) else "")
+        ).strip().lower()
+        return bool(
+            route.flags.get("tmux")
+            or route.flags.get("opencode")
+            or raw_cli in {"codex", "opencode", "both"}
+            or bool(raw_workspace)
+            or raw_terminals in {"1", "true", "yes", "on"}
+        )
 
     def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
         return trees_start_selection_required_impl(self, route=route, runtime_mode=runtime_mode)

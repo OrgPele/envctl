@@ -246,6 +246,7 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
                         planning_files=planning_files,
                         base_dir=runtime.config.base_dir,
                         planning_dir=runtime.config.planning_dir,
+                        requested_cli=str(runtime.env.get("ENVCTL_PLAN_AGENT_CLI") or runtime.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""),
                     )
                     filtered = select_projects_for_plan_files(
                         projects=[(project.name, project.root) for project in projects],

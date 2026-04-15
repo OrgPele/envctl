@@ -66,6 +66,23 @@ class PlanningSelectionTests(unittest.TestCase):
 
             self.assertEqual(counts, OrderedDict([("backend/task.md", 1)]))
 
+    def test_resolve_planning_files_duplicates_count_when_plan_agent_cli_is_both(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            planning_dir = repo / "todo" / "plans"
+            planning_dir.mkdir(parents=True, exist_ok=True)
+            available = ["backend/task.md"]
+
+            counts = resolve_planning_files(
+                selection_raw="backend/task",
+                planning_files=available,
+                base_dir=repo,
+                planning_dir=planning_dir,
+                requested_cli="both",
+            )
+
+            self.assertEqual(counts, OrderedDict([("backend/task.md", 2)]))
+
     def test_select_projects_for_plan_files_respects_requested_count(self) -> None:
         projects = [
             ("feature_a_task-2", Path("/tmp/feature_a_task/2")),

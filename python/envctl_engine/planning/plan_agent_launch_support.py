@@ -88,6 +88,7 @@ class CreatedPlanWorktree:
     name: str
     root: Path
     plan_file: str
+    cli: str = ""
 
 
 @dataclass(slots=True)
@@ -291,6 +292,8 @@ def resolve_plan_agent_launch_config(
             or "opencode"
         )
     ).strip().lower() or "opencode"
+    if cli == "both":
+        cli = "opencode"
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
@@ -1142,11 +1145,25 @@ def _launch_plan_agent_tmux_terminals(
         outcomes.append(outcome)
     launched = [item for item in outcomes if item.status == "launched"]
     failed = [item for item in outcomes if item.status == "failed"]
+    attach_target = None
+    if first_window_name is not None:
+        attach_target = PlanAgentAttachTarget(
+            repo_root=repo_root,
+            session_name=session_name,
+            window_name=first_window_name,
+            attach_via=attach_via,
+            attach_command=("tmux", attach_via, "-t", session_name),
+        )
     if failed and launched:
         _print_launch_summary(
             f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}."
         )
-        return PlanAgentLaunchResult(status="partial", reason="partial_failure", outcomes=tuple(outcomes))
+        return PlanAgentLaunchResult(
+            status="partial",
+            reason="partial_failure",
+            outcomes=tuple(outcomes),
+            attach_target=attach_target,
+        )
     if failed:
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
@@ -1155,6 +1172,7 @@ def _launch_plan_agent_tmux_terminals(
         status="launched",
         reason="launched",
         outcomes=tuple(outcomes),
+        attach_target=attach_target,
     )
 
 
@@ -1167,11 +1185,29 @@ def _launch_single_tmux_worktree(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> PlanAgentLaunchOutcome:
+    worktree_cli = str(getattr(worktree, "cli", "")).strip().lower() or launch_config.cli
+    effective_launch_config = launch_config
+    if worktree_cli != launch_config.cli:
+        effective_launch_config = PlanAgentLaunchConfig(
+            enabled=launch_config.enabled,
+            transport=launch_config.transport,
+            cli=worktree_cli,
+            cli_command=worktree_cli,
+            preset=launch_config.preset,
+            codex_cycles=launch_config.codex_cycles,
+            codex_cycles_warning=launch_config.codex_cycles_warning,
+            shell=launch_config.shell,
+            require_cmux_context=launch_config.require_cmux_context,
+            cmux_workspace=launch_config.cmux_workspace,
+            direct_prompt_enabled=(True if worktree_cli == "opencode" and launch_config.transport == "tmux" else False),
+            ulw_loop_prefix=launch_config.ulw_loop_prefix,
+            ulw_suffix=launch_config.ulw_suffix,
+        )
     create_error = _ensure_tmux_window(
         runtime,
         session_name=session_name,
         window_name=window_name,
-        launch_config=launch_config,
+        launch_config=effective_launch_config,
         worktree=worktree,
     )
     if create_error is not None:
@@ -1203,7 +1239,7 @@ def _launch_single_tmux_worktree(
         runtime,
         session_name=session_name,
         window_name=window_name,
-        launch_config=launch_config,
+        launch_config=effective_launch_config,
         workflow=workflow,
         worktree=worktree,
     )
@@ -1229,7 +1265,7 @@ def _launch_single_tmux_worktree(
         session_name=session_name,
         window_name=window_name,
         worktree=worktree.name,
-        preset=launch_config.preset,
+        preset=effective_launch_config.preset,
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         transport="tmux",

@@ -42,6 +42,7 @@ class StartupSession:
     strict_truth_failed: bool = False
     failure_message: str | None = None
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     debug_plan_snapshot: bool = False
     base_metadata: dict[str, Any] = field(default_factory=dict)
     identifiers_announced: bool = False
