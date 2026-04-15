@@ -20,7 +20,9 @@ class _RuntimeStub:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.env: dict[str, str] = {}
         self.config = SimpleNamespace(base_dir=Path("/tmp"), raw={})
-        self.process_runner = SimpleNamespace()
+        self.process_runner = SimpleNamespace(
+            run=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="/tmp\n", stderr="")
+        )
         self._dashboard_pr_url_cache: dict[str, object] = {}
         self._emitted: list[tuple[str, dict[str, object]]] = []
         runtime_root = Path(self._tmpdir.name) / "runtime"
@@ -78,6 +80,44 @@ class ActionCommandTargetTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(len(targets), 2)
+
+    def test_resolve_targets_self_destruct_uses_current_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = _RuntimeStub()
+            tree_root = Path(tmpdir).resolve()
+            orchestrator = ActionCommandOrchestrator(runtime)
+            route = Route(command="self-destruct-worktree", mode="trees")
+
+            with (
+                patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=tree_root),
+                patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+                patch(
+                    "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                    return_value=[("feature-a-1", tree_root)],
+                ),
+            ):
+                targets, error = orchestrator.resolve_targets(route, trees_only=True)
+
+            self.assertIsNone(error)
+            self.assertEqual([getattr(targets[0], "name")], ["feature-a-1"])
+
+    def test_resolve_targets_self_destruct_requires_current_worktree(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="self-destruct-worktree", mode="trees")
+
+        with (
+            patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=Path("/tmp/other")),
+            patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+            patch(
+                "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                return_value=[("feature-a-1", Path("/tmp/feature-a/1"))],
+            ),
+        ):
+            targets, error = orchestrator.resolve_targets(route, trees_only=True)
+
+        self.assertEqual(targets, [])
+        self.assertEqual(error, "self-destruct-worktree must be run from inside a discovered worktree.")
 
     def test_resolve_targets_does_not_flush_pending_input_for_interactive_command(self) -> None:
         runtime = _RuntimeStub()

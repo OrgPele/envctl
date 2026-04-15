@@ -82,6 +82,8 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             "repo_scope_id": runtime.config.runtime_scope_id,
         }
     )
+    if session.warnings:
+        metadata["warnings"] = list(session.warnings)
     run_state = RunState(
         run_id=session.run_id,
         mode=session.runtime_mode,

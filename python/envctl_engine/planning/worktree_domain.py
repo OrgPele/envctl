@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -486,6 +487,7 @@ def _select_plan_projects(
                     planning_files=planning_files,
                     base_dir=self.config.base_dir,
                     planning_dir=self.config.planning_dir,
+                    requested_cli=str(self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""),
                 )
             except ValueError as exc:
                 self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
@@ -666,7 +668,9 @@ def _select_plan_projects(
         )
         return []
 
-    positive_plan_counts = {plan_file: count for plan_file, count in plan_counts.items() if int(count) > 0}
+    positive_plan_counts: OrderedDict[str, int] = OrderedDict(
+        (plan_file, int(count)) for plan_file, count in plan_counts.items() if int(count) > 0
+    )
     if not positive_plan_counts:
         print("Planning counts scaled to zero; no worktrees remain.")
         setattr(
@@ -770,9 +774,11 @@ def _run_planning_selection_menu(
         )
         if chosen is None:
             return None
-        return chosen
+        if not isinstance(chosen, dict):
+            return None
+        return {str(plan_file): int(count) for plan_file, count in chosen.items()}
     except Exception:
-        return {plan_file: count for plan_file, count in selected_counts.items() if count > 0}
+        return {str(plan_file): int(count) for plan_file, count in selected_counts.items() if int(count) > 0}
     finally:
         emit = getattr(self, "_emit", None)
         normalize_standard_tty_state(emit=emit, component="planning.worktree_domain")
@@ -1150,8 +1156,10 @@ def _create_feature_worktrees_result(
     plan_path = self._planning_root() / plan_file
     setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
     created_worktrees: list[CreatedPlanWorktree] = []
+    requested_cli = str(self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or "").strip().lower()
+    cli_sequence = (["codex", "opencode"] if requested_cli == "both" and count == 2 else [""] * count)
 
-    for _ in range(count):
+    for index in range(count):
         iteration = self._next_available_iteration(existing_iters)
         target = feature_root / str(iteration)
         result = _run_worktree_add(self, feature=feature, iteration=str(iteration), target=target, env=setup_env)
@@ -1167,8 +1175,14 @@ def _create_feature_worktrees_result(
         else:
             _write_worktree_provenance(self, target=target, plan_file=plan_file)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
+        worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
         created_worktrees.append(
-            CreatedPlanWorktree(name=f"{feature}-{iteration}", root=target.resolve(), plan_file=plan_file)
+            CreatedPlanWorktree(
+                name=f"{feature}-{iteration}",
+                root=target.resolve(),
+                plan_file=plan_file,
+                cli=worktree_cli,
+            )
         )
         existing_iters.add(iteration)
     return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees))
@@ -1410,6 +1424,8 @@ def _delete_feature_worktrees(
                 project_root=root,
                 source_command="blast-worktree",
             )
+            if not isinstance(warnings, list):
+                warnings = []
             for warning in warnings:
                 self._emit(  # type: ignore[attr-defined]
                     "cleanup.worktree.warning",

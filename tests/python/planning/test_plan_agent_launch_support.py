@@ -11,7 +11,11 @@ from unittest.mock import patch
 
 from envctl_engine.config import load_config
 from envctl_engine.planning import plan_agent_launch_support as launch_support
-from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    PlanAgentAttachTarget,
+    launch_plan_agent_terminals,
+)
 from envctl_engine.runtime.command_router import parse_route
 
 _screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
@@ -85,7 +89,7 @@ class _RuntimeHarness:
         self._persist_events_snapshot_calls = 0
 
     def _command_exists(self, command: str) -> bool:
-        return command in {"cmux", "codex", "opencode", "zsh"}
+        return command in {"cmux", "tmux", "codex", "opencode", "zsh"}
 
     def _emit(self, event: str, **payload: object) -> None:
         self._plan_agent_events.append({"event": event, **payload})
@@ -177,6 +181,69 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "skipped")
             self.assertEqual(result.reason, "no_new_worktrees")
             self.assertEqual(rt.process_runner.calls, [])
+
+    def test_resolve_launch_config_normalizes_both_cli_to_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CLI": "both",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {"ENVCTL_PLAN_AGENT_CLI": "both"})
+
+            self.assertEqual(launch_config.cli, "opencode")
+
+    def test_tmux_launch_returns_attach_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "tmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                },
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._launch_single_tmux_worktree",
+                    return_value=launch_support.PlanAgentLaunchOutcome(
+                        worktree_name="feature-a-1",
+                        worktree_root=repo,
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIsInstance(result.attach_target, PlanAgentAttachTarget)
+            assert result.attach_target is not None
+            self.assertEqual(
+                result.attach_target.session_name,
+                launch_support._session_name_for_repo(repo, env=rt.env),
+            )
+            self.assertEqual(result.attach_target.window_name, "feature-a-1")
+            self.assertEqual(
+                result.attach_target.attach_command,
+                ("tmux", "attach-session", "-t", result.attach_target.session_name),
+            )
 
     def test_missing_cmux_context_skips_when_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

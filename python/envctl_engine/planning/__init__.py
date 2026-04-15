@@ -97,6 +97,7 @@ def resolve_planning_files(
     planning_files: list[str],
     base_dir: Path,
     planning_dir: Path,
+    requested_cli: str = "",
 ) -> OrderedDict[str, int]:
     if not selection_raw.strip():
         raise ValueError("empty planning selection")
@@ -105,6 +106,8 @@ def resolve_planning_files(
 
     tokenized = [part.strip() for part in selection_raw.split(",")]
     plan_counts: OrderedDict[str, int] = OrderedDict()
+
+    duplicate_for_both = str(requested_cli or "").strip().lower() == "both"
 
     for token in tokenized:
         if not token:
@@ -127,7 +130,8 @@ def resolve_planning_files(
         if not match:
             raise ValueError(f"Planning file not found: {token}")
 
-        plan_counts[match] = plan_counts.get(match, 0) + 1
+        increment = 2 if duplicate_for_both else 1
+        plan_counts[match] = plan_counts.get(match, 0) + increment
 
     if not plan_counts:
         raise ValueError("No planning files selected.")

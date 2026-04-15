@@ -7,9 +7,12 @@ import hashlib
 import concurrent.futures
 import os
 from pathlib import Path
+import os
+import tempfile
 import re
 import subprocess
 import sys
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
@@ -41,6 +44,7 @@ from envctl_engine.actions.action_test_support import (
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
+from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
@@ -213,6 +217,10 @@ class ActionCommandOrchestrator:
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
+        if route.command == "self-destruct-worktree":
+            code = self.run_self_destruct_worktree_action(route)
+            rt.emit("action.command.finish", command=route.command, code=code)
+            return code
         if route.command in {"delete-worktree", "blast-worktree"}:
             code = self.run_delete_worktree_action(route)
             rt.emit("action.command.finish", command=route.command, code=code)
@@ -347,6 +355,11 @@ class ActionCommandOrchestrator:
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
         rt = self.runtime
+        if trees_only and route.command == "self-destruct-worktree":
+            current = self._resolve_current_worktree_target()
+            if current is not None:
+                return [current], None
+            return [], "self-destruct-worktree must be run from inside a discovered worktree."
         if trees_only:
             candidates = rt.discover_projects(mode="trees")
         else:
@@ -405,6 +418,169 @@ class ActionCommandOrchestrator:
             requested = ", ".join(sorted(project_selectors))
             return [], f"No matching targets found for: {requested}"
         return selected, None
+
+    def run_self_destruct_worktree_action(self, route: Route) -> int:
+        rt = self.runtime
+        targets, error = self.resolve_targets(route, trees_only=True)
+        if error is not None:
+            print(error)
+            return 1
+        if len(targets) != 1:
+            print("self-destruct-worktree requires exactly one current worktree target.")
+            return 1
+        target = targets[0]
+        target_root = Path(str(getattr(target, "root"))).resolve()
+        target_name = str(getattr(target, "name", target_root.name))
+        cwd = Path.cwd().resolve()
+        if target_root != cwd:
+            print("self-destruct-worktree must be launched from the worktree root.")
+            return 1
+
+        warnings = self.runtime._blast_worktree_before_delete(
+            project_name=target_name,
+            project_root=target_root,
+            source_command="self-destruct-worktree",
+        )
+        for warning in warnings:
+            print(f"Warning: {warning}")
+
+        repo_root = self._main_repo_root_for_worktree(target_root)
+        if repo_root is None:
+            print("Could not determine main repo root for current worktree.")
+            return 1
+        trees_root = self.runtime._trees_root_for_worktree(target_root)
+        if not self._spawn_self_destruct_helper(
+            repo_root=repo_root,
+            trees_root=trees_root,
+            worktree_root=target_root,
+        ):
+            print("Failed to launch detached worktree self-destruct helper.")
+            return 1
+
+        print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
+        return 0
+
+    def _resolve_current_worktree_target(self) -> object | None:
+        cwd = Path.cwd().resolve()
+        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
+        repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
+        if repo_root is None:
+            return None
+        candidates = [SimpleNamespace(name=name, root=root) for name, root in discover_tree_projects(repo_root, trees_dir_name)]
+        matches = [candidate for candidate in candidates if Path(str(getattr(candidate, "root"))).resolve() == cwd]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
+        normalized_trees_dir = str(trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")).strip().rstrip("/")
+        repo_root_from_layout = self._repo_root_from_worktree_layout(worktree_root, normalized_trees_dir)
+        if repo_root_from_layout is not None:
+            return repo_root_from_layout
+
+        completed = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=worktree_root,
+            timeout=10.0,
+        )
+        if getattr(completed, "returncode", 1) != 0:
+            return None
+        top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
+
+        common = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=worktree_root,
+            timeout=10.0,
+        )
+        if getattr(common, "returncode", 1) != 0:
+            return top_level
+        common_dir_raw = str(getattr(common, "stdout", "") or "").strip()
+        if not common_dir_raw:
+            return top_level
+        common_dir = (worktree_root / common_dir_raw).resolve() if not Path(common_dir_raw).is_absolute() else Path(common_dir_raw).resolve()
+        if common_dir.name == ".git":
+            return common_dir.parent
+        if common_dir.name == "worktrees" and common_dir.parent.name == ".git":
+            return common_dir.parent.parent
+        return top_level
+
+    @staticmethod
+    def _repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> Path | None:
+        normalized = str(trees_dir_name).strip().rstrip("/")
+        if not normalized:
+            return None
+
+        resolved_target = worktree_root.resolve()
+        nested_suffix = Path(normalized)
+        flat_prefix = f"{nested_suffix.name}-"
+
+        ancestors = [resolved_target, *resolved_target.parents]
+        for candidate_repo_root in ancestors:
+            nested_root = candidate_repo_root / nested_suffix
+            if nested_root == resolved_target or nested_root in resolved_target.parents:
+                return candidate_repo_root
+
+            flat_parent = nested_root.parent
+            if flat_parent == resolved_target or flat_parent not in ancestors:
+                continue
+            current = resolved_target
+            while current != flat_parent and flat_parent in current.parents:
+                if current.parent == flat_parent and current.name.startswith(flat_prefix):
+                    return candidate_repo_root
+                current = current.parent
+        return None
+
+    def _spawn_self_destruct_helper(self, *, repo_root: Path, trees_root: Path, worktree_root: Path) -> bool:
+        rt = self.runtime.raw_runtime
+        helper_dir = Path(tempfile.mkdtemp(prefix="envctl-self-destruct-", dir=str(repo_root)))
+        helper_script = helper_dir / "self_destruct.py"
+        helper_script.write_text(
+            """
+from __future__ import annotations
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+trees_root = Path(sys.argv[2]).resolve()
+worktree_root = Path(sys.argv[3]).resolve()
+parent_pid = int(sys.argv[4])
+
+for _ in range(200):
+    try:
+        subprocess.run(["kill", "-0", str(parent_pid)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.1)
+    except Exception:
+        break
+
+result = subprocess.run(
+    ["git", "-C", str(repo_root), "worktree", "remove", "--force", str(worktree_root)],
+    capture_output=True,
+    text=True,
+    timeout=30.0,
+)
+if result.returncode != 0:
+    sys.exit(result.returncode)
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        completed = rt.process_runner.start_background(  # type: ignore[attr-defined]
+            [
+                "python3",
+                str(helper_script),
+                str(repo_root),
+                str(trees_root),
+                str(worktree_root),
+                str(os.getpid()),
+            ],
+            cwd=repo_root,
+            stdout_path=helper_dir / "self_destruct.log",
+            stderr_path=helper_dir / "self_destruct.log",
+        )
+        return getattr(completed, "pid", 0) > 0
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
         return interactive_selection_allowed(self.runtime.raw_runtime, route, allow_dashboard_override=True)

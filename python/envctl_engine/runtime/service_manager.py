@@ -59,7 +59,7 @@ class ServiceManager:
                     )
                 except RuntimeError as exc:
                     error = str(exc)
-                    _terminate_pid(pid)
+                    _terminate_pid(pid, process_runner=self)
 
             if retries >= max_retries or not _is_retryable_error(error):
                 raise ServiceStartError(
@@ -131,7 +131,7 @@ class ServiceManager:
                     partial_records.append(frontend)
                 except Exception:
                     for record in partial_records:
-                        _terminate_pid(record.pid)
+                        _terminate_pid(record.pid, process_runner=self)
                     raise
         else:
             backend = start_backend_record()
@@ -154,9 +154,16 @@ def _is_retryable_error(error: str | None) -> bool:
     return False
 
 
-def _terminate_pid(pid: int | None) -> None:
+def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> None:
     if not isinstance(pid, int) or pid <= 0:
         return
+    terminator = getattr(process_runner, "terminate_process_group", None) if process_runner is not None else None
+    if callable(terminator):
+        try:
+            terminator(pid, term_timeout=2.0, kill_timeout=1.0)
+            return
+        except Exception:  # noqa: BLE001
+            pass
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:

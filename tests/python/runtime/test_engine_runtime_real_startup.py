@@ -2466,7 +2466,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             launch_mock.assert_not_called()
 
-    def test_plan_feature_with_opencode_and_codex_cycles_still_launches_only_new_worktrees(self) -> None:
+    def test_plan_feature_with_both_cli_creates_two_worktrees_then_reuses_existing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -2481,7 +2481,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     extra={
                         "TREES_STARTUP_ENABLE": "false",
                         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                        "ENVCTL_PLAN_AGENT_CLI": "both",
                         "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
                         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
                     },
@@ -2502,7 +2502,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(first_code, 0)
             self.assertEqual(second_code, 0)
-            self.assertEqual(launches, [["feature_task-1"], []])
+            self.assertEqual(launches, [["feature_task-1", "feature_task-2"], []])
+            self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
+            self.assertTrue((repo / "trees" / "feature_task" / "2").is_dir())
 
     def test_plan_launch_failure_preserves_created_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2533,6 +2535,37 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
+
+    def test_ai_plan_run_warns_and_continues_when_project_start_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    },
+                ),
+                env={"ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "repo implementation"},
+            )
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with (
+                patch.object(engine, "_start_project_context", side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend")),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertIn("continuing AI run without local startup", out.getvalue())
+            self.assertIn("missing_service_start_command", out.getvalue())
 
     def test_service_log_and_runner_flags_are_forwarded_to_service_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

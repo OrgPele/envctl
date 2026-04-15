@@ -216,6 +216,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "commit",
         "dashboard",
         "delete-worktree",
+        "self-destruct-worktree",
         "help",
         "install-prompts",
         "codex-tmux",

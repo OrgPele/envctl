@@ -48,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 36 commands
-        self.assertEqual(len(commands), 36, f"Expected 36 commands, got {len(commands)}")
+        # Verify we have exactly 38 commands
+        self.assertEqual(len(commands), 38, f"Expected 38 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -71,6 +71,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "errors",
             "delete-worktree",
             "blast-worktree",
+            "self-destruct-worktree",
             "pr",
             "commit",
             "review",
@@ -80,6 +81,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "show-config",
             "show-state",
             "explain-startup",
@@ -130,6 +132,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "test": "action_command_orchestrator",
             "delete-worktree": "action_command_orchestrator",
             "blast-worktree": "action_command_orchestrator",
+            "self-destruct-worktree": "action_command_orchestrator",
             "pr": "action_command_orchestrator",
             "commit": "action_command_orchestrator",
             "review": "action_command_orchestrator",
