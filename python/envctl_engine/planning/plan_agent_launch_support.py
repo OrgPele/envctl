@@ -20,6 +20,7 @@ from envctl_engine.runtime.codex_tmux_support import (
     _session_name_for_repo,
     _tmux_session_exists,
 )
+from envctl_engine.runtime.session_management import find_tmux_session_for_path
 from envctl_engine.runtime.prompt_install_support import (
     codex_preset_uses_direct_submission,
     resolve_codex_direct_prompt_body,
@@ -1109,12 +1110,35 @@ def _launch_plan_agent_tmux_terminals(
     repo_root = Path(runtime.config.base_dir).resolve()
     env_map = dict(getattr(runtime, "env", {}) or {})
     session_name = _session_name_for_repo(repo_root, env=env_map)
-    base_session_name = session_name
-    instance = 0
-    while _tmux_session_exists(runtime, session_name):
-        instance += 1
-        session_name = f"{base_session_name}-{instance}"
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
+
+    existing_session = None
+    for worktree in created_worktrees:
+        matched_session = find_tmux_session_for_path(Path(worktree.root))
+        if matched_session is not None:
+            existing_session = matched_session
+            break
+    if existing_session is not None:
+        existing_session_name = str(existing_session.get("name", "")).strip()
+        attach_target = None
+        if existing_session_name:
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo_root,
+                session_name=existing_session_name,
+                window_name="",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", existing_session_name),
+            )
+        attach_command = ""
+        if attach_target is not None:
+            attach_command = " ".join(attach_target.attach_command)
+        worktree_label = str(getattr(created_worktrees[0], "name", "worktree")) if created_worktrees else "worktree"
+        reason = (
+            f"An envctl tmux session already exists for {worktree_label}. "
+            f"Attach with: {attach_command}".strip()
+        )
+        return PlanAgentLaunchResult(status="failed", reason=reason, outcomes=(), attach_target=attach_target)
+
     runtime._emit(
         "planning.agent_launch.evaluate",
         reason="ready",

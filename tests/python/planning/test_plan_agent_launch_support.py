@@ -245,6 +245,41 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("tmux", "attach-session", "-t", result.attach_target.session_name),
             )
 
+    def test_tmux_launch_fails_with_attach_guidance_when_worktree_session_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_TRANSPORT": "tmux",
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                },
+            )
+
+            with patch(
+                "envctl_engine.planning.plan_agent_launch_support.find_tmux_session_for_path",
+                return_value={
+                    "name": "envctl-opencode-existing",
+                    "paths": str(repo),
+                    "attach": "tmux attach-session -t envctl-opencode-existing",
+                    "kill": "tmux kill-session -t envctl-opencode-existing",
+                },
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIn("already exists", result.reason)
+            self.assertIn("tmux attach-session -t envctl-opencode-existing", result.reason)
+            self.assertIsNotNone(result.attach_target)
+
     def test_missing_cmux_context_skips_when_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
