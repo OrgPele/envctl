@@ -70,6 +70,20 @@ def list_tmux_sessions(prefix: str = "envctl-") -> list[dict[str, str]]:
     return sessions
 
 
+def find_tmux_session_for_path(project_root: Path, prefix: str = "envctl-") -> dict[str, str] | None:
+    target_root = Path(project_root).expanduser().resolve(strict=False)
+    for session in list_tmux_sessions(prefix=prefix):
+        raw_paths = str(session.get("paths", "") or "")
+        for raw_path in raw_paths.splitlines():
+            normalized = raw_path.strip()
+            if not normalized:
+                continue
+            candidate = Path(normalized).expanduser().resolve(strict=False)
+            if candidate == target_root or target_root in candidate.parents:
+                return session
+    return None
+
+
 def print_session_list(runtime_root: Path) -> None:
     tmux_sessions = list_tmux_sessions()
     history = list_sessions(runtime_root)
