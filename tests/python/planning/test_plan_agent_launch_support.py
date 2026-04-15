@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 from envctl_engine.config import load_config
@@ -17,13 +19,14 @@ from envctl_engine.runtime.command_router import parse_route
 _screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
 _prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_screen_looks_ready")
 _tab_title_for_worktree = getattr(launch_support, "_tab_title_for_worktree")
-_build_plan_agent_workflow = getattr(launch_support, "_build_plan_agent_workflow", None)
-_finalization_instruction_text = getattr(launch_support, "_finalization_instruction_text", None)
-_first_cycle_completion_instruction_text = getattr(launch_support, "_first_cycle_completion_instruction_text", None)
-_intermediate_cycle_completion_instruction_text = getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None)
-_wait_for_codex_queue_ready = getattr(launch_support, "_wait_for_codex_queue_ready", None)
-_workflow_step_prompt_text = getattr(launch_support, "_workflow_step_prompt_text", None)
-_WorkspaceLaunchTarget = getattr(launch_support, "_WorkspaceLaunchTarget", None)
+_build_plan_agent_workflow = cast(Any, getattr(launch_support, "_build_plan_agent_workflow", None))
+_finalization_instruction_text = cast(Any, getattr(launch_support, "_finalization_instruction_text", None))
+_first_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_first_cycle_completion_instruction_text", None))
+_intermediate_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None))
+_wait_for_codex_queue_ready = cast(Any, getattr(launch_support, "_wait_for_codex_queue_ready", None))
+_workflow_step_prompt_text = cast(Any, getattr(launch_support, "_workflow_step_prompt_text", None))
+_WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarget", None))
+_ensure_tmux_window = cast(Any, getattr(launch_support, "_ensure_tmux_window", None))
 
 
 def _launch_config_for_tests(
@@ -36,6 +39,7 @@ def _launch_config_for_tests(
 ) -> launch_support.PlanAgentLaunchConfig:
     return launch_support.PlanAgentLaunchConfig(
         enabled=True,
+        transport="cmux",
         cli=cli,
         cli_command=cli,
         preset=preset,
@@ -340,6 +344,223 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]), 2)
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 1)
             self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
+
+    def test_plan_agent_launch_prereqs_switch_to_tmux_for_tmux_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+
+        self.assertEqual(prereqs, ("tmux", "opencode"))
+
+    def test_resolve_plan_agent_launch_config_uses_tmux_and_opencode_route_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "tmux")
+        self.assertEqual(launch_config.cli, "opencode")
+        self.assertTrue(launch_config.enabled)
+
+    def test_launch_sequence_uses_tmux_commands_for_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=1, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="feature-a-1\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout="ask anything\n/status\n> ",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="envctl-test-session\n", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="feature-a-1\n", stderr=""),
+                ]
+            )
+
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-test-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._resolve_tmux_attach_target", return_value=attach_target),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIsNotNone(result.attach_target)
+            assert result.attach_target is not None
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", "envctl-test-session"))
+            expected_session_name = next(call[3] for call in rt.process_runner.calls if call[:3] == ["tmux", "has-session", "-t"])
+            self.assertEqual(expected_session_name, next(call[4] for call in rt.process_runner.calls if call[:4] == ["tmux", "new-session", "-d", "-s"]))
+            self.assertIn(["tmux", "new-session", "-d", "-s", expected_session_name, "-n", "feature-a-1", "-c", str(repo), "zsh"], rt.process_runner.calls)
+            self.assertIn(["tmux", "has-session", "-t", expected_session_name], rt.process_runner.calls)
+            self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "-l", f"cd {shlex.quote(str(repo))}"], rt.process_runner.calls)
+            self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "Enter"], rt.process_runner.calls)
+            self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "-l", "opencode"], rt.process_runner.calls)
+
+    def test_tmux_launch_reuses_existing_session_for_matching_worktree_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="envctl-existing\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout=f"feature-a-1|||ENVCTL_TMUX_PATH|||{worktree_root}\n",
+                        stderr="",
+                    ),
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIsNotNone(result.attach_target)
+            assert result.attach_target is not None
+            self.assertEqual(result.attach_target.session_name, "envctl-existing")
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", "envctl-existing"))
+            self.assertEqual(rt.process_runner.calls[0], ["tmux", "list-sessions", "-F", "#{session_name}"])
+            self.assertEqual(rt.process_runner.calls[1], ["tmux", "list-windows", "-t", "envctl-existing", "-F", "#{window_name}|||ENVCTL_TMUX_PATH|||#{pane_current_path}"])
+
+    def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="envctl-existing\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout=f"feature-a-1|||ENVCTL_TMUX_PATH|||{worktree_root}\n",
+                        stderr="",
+                    ),
+                ]
+            )
+
+            attach_target = launch_support._find_existing_tmux_attach_target(
+                rt,
+                repo_root=repo,
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
+            )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "envctl-existing")
+            self.assertEqual(attach_target.window_name, "feature-a-1")
+
+    def test_ensure_tmux_window_waits_until_window_list_contains_created_window(self) -> None:
+        self.assertIsNotNone(_ensure_tmux_window)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["tmux"], returncode=1, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="other\n", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="feature-a-1\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            ):
+                error = _ensure_tmux_window(
+                    rt,
+                    session_name="envctl-test-session",
+                    window_name="feature-a-1",
+                    launch_config=launch_support.PlanAgentLaunchConfig(
+                        enabled=True,
+                        transport="tmux",
+                        cli="opencode",
+                        cli_command="opencode",
+                        preset="implement_task",
+                        codex_cycles=0,
+                        codex_cycles_warning=None,
+                        shell="zsh",
+                        require_cmux_context=True,
+                        cmux_workspace="",
+                        direct_prompt_enabled=True,
+                        ulw_loop_prefix=False,
+                        ulw_suffix=False,
+                    ),
+                    worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                )
+
+            self.assertIsNone(error)
+            list_windows_calls = [
+                call
+                for call in rt.process_runner.calls
+                if len(call) >= 6
+                and call[0:3] == ["tmux", "list-windows", "-t"]
+                and call[3] == "envctl-test-session"
+                and call[4] == "-F"
+            ]
+            self.assertGreaterEqual(len(list_windows_calls), 2)
 
     def test_resolve_plan_agent_launch_config_parses_codex_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -655,6 +876,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             launch_config = launch_support.PlanAgentLaunchConfig(
                 enabled=True,
+                transport="cmux",
                 cli="opencode",
                 cli_command="opencode",
                 preset="implement_task",
@@ -691,6 +913,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
@@ -731,6 +954,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             launch_config = launch_support.PlanAgentLaunchConfig(
                 enabled=True,
+                transport="cmux",
                 cli="opencode",
                 cli_command="opencode",
                 preset="implement_task",
@@ -768,6 +992,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
@@ -804,6 +1029,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
         launch_config = launch_support.PlanAgentLaunchConfig(
             enabled=True,
+            transport="cmux",
             cli="opencode",
             cli_command="opencode",
             preset="implement_task",
