@@ -104,6 +104,9 @@ class ServiceManagerTests(unittest.TestCase):
     def test_listener_detection_failure_retries_with_next_port(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []
+        terminated: list[int] = []
+
+        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
 
         def start_backend(port: int) -> tuple[bool, str | None, int | None]:
             attempts.append(port)
@@ -129,6 +132,7 @@ class ServiceManagerTests(unittest.TestCase):
 
         self.assertEqual(attempts, [8000, 8001])
         self.assertEqual(service.actual_port, 8001)
+        self.assertEqual(terminated, [23001])
 
     def test_retry_callback_receives_service_retry_metadata(self) -> None:
         manager = ServiceManager()
