@@ -85,6 +85,12 @@ def terminate_service_record(runtime: Any, service: object, *, aggressive: bool,
             return False
 
     try:
+        terminate_group = getattr(runtime.process_runner, "terminate_process_group", None)
+        if callable(terminate_group):
+            return bool(terminate_group(pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         return bool(runtime.process_runner.terminate(pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0))
     except Exception:  # noqa: BLE001
         pass

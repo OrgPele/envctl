@@ -88,6 +88,26 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
         self.assertEqual(terminated, [1])
         self.assertEqual(released, [8000])
 
+    def test_terminate_service_record_prefers_process_group_termination(self) -> None:
+        calls: list[tuple[str, int]] = []
+        runtime = SimpleNamespace(
+            _emit=lambda *args, **kwargs: None,
+            process_runner=SimpleNamespace(
+                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
+            ),
+        )
+
+        terminated = terminate_service_record(
+            runtime,
+            SimpleNamespace(name="Main Backend", pid=3210, actual_port=8000),
+            aggressive=False,
+            verify_ownership=False,
+        )
+
+        self.assertTrue(terminated)
+        self.assertEqual(calls, [("group", 3210)])
+
     def test_blast_worktree_before_delete_updates_state_and_emits_finish(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         saved_states: list[RunState] = []
