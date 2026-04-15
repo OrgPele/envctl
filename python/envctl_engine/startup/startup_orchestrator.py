@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import concurrent.futures
 from contextlib import nullcontext
+from pathlib import Path
+import shlex
 import sys
 import threading
 import time
+from typing import cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
-from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
+from envctl_engine.planning.plan_agent_launch_support import (
+    CreatedPlanWorktree,
+    attach_plan_agent_terminal,
+    launch_plan_agent_terminals,
+)
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
@@ -18,6 +25,7 @@ from envctl_engine.startup.finalization import (
     build_planning_dashboard_state,
     build_success_run_state,
 )
+from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
@@ -116,8 +124,9 @@ class StartupOrchestrator:
         if session.identifiers_announced:
             return
         self._ensure_run_id(session)
-        print(f"run_id: {self._resolved_run_id(session)}")
-        print(f"session_id: {self.runtime._current_session_id() or 'unknown'}")
+        if not self._headless_plan_output_only(session):
+            print(f"run_id: {self._resolved_run_id(session)}")
+            print(f"session_id: {self.runtime._current_session_id() or 'unknown'}")
         session.identifiers_announced = True
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
@@ -318,7 +327,19 @@ class StartupOrchestrator:
                     for worktree in getattr(selection_result, "created_worktrees", ())
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
-                launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                if not created_worktrees and bool(route.flags.get("tmux")):
+                    recovered_worktrees: list[CreatedPlanWorktree] = []
+                    for context in project_contexts:
+                        recovered_worktrees.append(
+                            CreatedPlanWorktree(
+                                name=context.name,
+                                root=Path(context.root),
+                                plan_file="",
+                            )
+                        )
+                    created_worktrees = tuple(recovered_worktrees)
+                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                session.plan_agent_attach_target = launch_result.attach_target
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
@@ -349,12 +370,18 @@ class StartupOrchestrator:
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+        if self._headless_plan_output_only(session):
+            self._print_headless_plan_session_summary(session)
+            return 0
         enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
         if route.command == "plan":
             print(
                 "Planning mode complete; skipping service startup because "
                 f"envctl runs are disabled for {session.runtime_mode}."
             )
+        attach_code = self._maybe_attach_plan_agent_terminal(session)
+        if attach_code is not None:
+            return attach_code
         elif not enter_interactive_dashboard:
             print(f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services.")
         if enter_interactive_dashboard:
@@ -375,11 +402,14 @@ class StartupOrchestrator:
             debug_orch_groups = set()
         if requested_command != "restart":
             reuse_started = time.monotonic()
-            decision = evaluate_run_reuse(
-                rt,
-                runtime_mode=runtime_mode,
-                route=route,
-                contexts=session.selected_contexts,
+            decision = cast(
+                RunReuseDecision,
+                evaluate_run_reuse(
+                    rt,
+                    runtime_mode=runtime_mode,
+                    route=route,
+                    contexts=cast(list[object], session.selected_contexts),
+                ),
             )
             candidate_state = decision.candidate_state
             candidate_run_id = candidate_state.run_id if candidate_state is not None else None
@@ -545,7 +575,7 @@ class StartupOrchestrator:
                 resolve_state_repository(rt).save_resume_state(
                     state=candidate_state,
                     emit=rt._emit,
-                    runtime_map_builder=build_runtime_map,
+                    runtime_map_builder=cast(object, build_runtime_map),
                 )
                 self._emit_phase(
                     session,
@@ -570,12 +600,18 @@ class StartupOrchestrator:
                     mode=runtime_mode,
                     command=route.command,
                 )
+                if self._headless_plan_output_only(session):
+                    self._print_headless_plan_session_summary(session)
+                    return 0
                 enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
                 if route.command == "plan":
                     print(
                         "Planning mode complete; skipping service startup because "
                         f"envctl runs are disabled for {session.runtime_mode}."
                     )
+                    attach_code = self._maybe_attach_plan_agent_terminal(session)
+                    if attach_code is not None:
+                        return attach_code
                 elif not enter_interactive_dashboard:
                     print(
                         f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
@@ -911,9 +947,43 @@ class StartupOrchestrator:
             service_count=len(run_state.services),
             requirement_count=len(run_state.requirements),
         )
+        if self._headless_plan_output_only(session):
+            self._print_headless_plan_session_summary(session)
+            return 0
+        attach_code = self._maybe_attach_plan_agent_terminal(session)
+        if attach_code is not None:
+            return attach_code
         if rt._should_enter_post_start_interactive(session.effective_route):
             return rt._run_interactive_dashboard_loop(run_state)
         return 0
+
+    def _headless_plan_output_only(self, session: StartupSession) -> bool:
+        route = session.effective_route
+        return route.command == "plan" and bool(route.flags.get("batch"))
+
+    def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
+        attach_target = session.plan_agent_attach_target
+        if attach_target is None:
+            return None
+        session.plan_agent_attach_target = None
+        attach_code = attach_plan_agent_terminal(self.runtime, attach_target)
+        if attach_code != 0:
+            self._print_headless_plan_session_summary(session, attach_target=attach_target)
+            return 0
+        return attach_code
+
+    def _print_headless_plan_session_summary(self, session: StartupSession, *, attach_target: object | None = None) -> None:
+        resolved_target = attach_target or session.plan_agent_attach_target
+        if resolved_target is None:
+            return
+        attach_command = " ".join(
+            str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
+        )
+        session_name = str(getattr(resolved_target, "session_name", "")).strip()
+        if attach_command:
+            print(f"attach: {attach_command}")
+        if session_name:
+            print(f"kill: tmux kill-session -t {shlex.quote(session_name)}")
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
         rt = self.runtime

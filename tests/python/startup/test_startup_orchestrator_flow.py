@@ -5,12 +5,14 @@ from io import StringIO
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
+    PlanAgentAttachTarget,
     PlanAgentLaunchResult,
     PlanSelectionResult,
 )
@@ -39,7 +41,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
         (repo / "frontend").mkdir(parents=True, exist_ok=True)
         return repo
 
-    def _main_context(self, repo: Path) -> object:
+    def _main_context(self, repo: Path) -> Any:
         return type(
             "Context",
             (),
@@ -53,7 +55,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             },
         )()
 
-    def _tree_context(self, repo: Path, name: str, tree_rel: str, *, backend_port: int, frontend_port: int) -> object:
+    def _tree_context(self, repo: Path, name: str, tree_rel: str, *, backend_port: int, frontend_port: int) -> Any:
         root = repo / "trees" / tree_rel
         root.mkdir(parents=True, exist_ok=True)
         return type(
@@ -91,7 +93,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
-            state = captured["state"]
+            state = cast(RunState, captured["state"])
             self.assertEqual(state.services, {})
             self.assertEqual(state.requirements, {})
             self.assertTrue(state.metadata["dashboard_runs_disabled"])
@@ -191,7 +193,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 code = engine.dispatch(parse_route([], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 0)
-            state = captured["state"]
+            state = cast(RunState, captured["state"])
             self.assertNotEqual(state.run_id, "run-dashboard")
             self.assertTrue(state.metadata["dashboard_runs_disabled"])
 
@@ -237,6 +239,115 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertTrue(written_state.metadata["failed"])
             self.assertIn("failure_message", written_state.metadata)
             self.assertIn("Main Backend", written_state.services)
+
+    def test_headless_plan_prints_attach_command_from_plan_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-test-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target)),
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertNotIn("session_id:", rendered)
+            self.assertNotIn("run_id:", rendered)
+            self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
+            self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_resume_dashboard_exact_headless_plan_prints_attach_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-test-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+            )
+            existing_state = RunState(
+                run_id="run-dashboard",
+                mode="trees",
+                services={},
+                requirements={},
+                metadata={"repo_scope_id": engine.config.runtime_scope_id},
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(status="failed", reason="existing", attach_target=attach_target),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=existing_state,
+                        decision_kind="resume_dashboard_exact",
+                        reason="exact_match",
+                        selected_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                        state_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                    ),
+                ),
+                patch.object(engine.state_repository, "save_resume_state", return_value={}),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertNotIn("Planning mode complete; skipping service startup", rendered)
+            self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
+            self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
     def test_resume_reuse_failure_falls_back_to_fresh_run_id_before_failure_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -287,7 +398,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["start", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 1)
-            written_state = captured["state"]
+            written_state = cast(RunState, captured["state"])
             self.assertEqual(written_state.run_id, "run-fresh-after-resume-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)
 
@@ -352,7 +463,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b", "--batch"], env={}))
 
             self.assertEqual(code, 1)
-            written_state = captured["state"]
+            written_state = cast(RunState, captured["state"])
             self.assertEqual(written_state.run_id, "run-fresh-expand-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)
 

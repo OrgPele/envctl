@@ -7,6 +7,7 @@ from envctl_engine.startup.run_reuse_support import (
     build_startup_identity_metadata as build_startup_identity_metadata_impl,
     evaluate_run_reuse as evaluate_run_reuse_impl,
     mark_run_reused as mark_run_reused_impl,
+    RunReuseDecision,
     state_has_resumable_services as state_has_resumable_services_impl,
 )
 from envctl_engine.state.models import PortPlan, RunState
@@ -47,7 +48,7 @@ def build_startup_identity_metadata(
     )
 
 
-def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: object, contexts: list[object]) -> object:
+def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: object, contexts: list[object]) -> RunReuseDecision:
     return evaluate_run_reuse_impl(runtime, runtime_mode=runtime_mode, route=route, contexts=contexts)
 
 
