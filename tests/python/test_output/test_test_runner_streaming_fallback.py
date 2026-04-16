@@ -198,7 +198,59 @@ class _RuntimeStreamingStub:
         self.process_runner = process_runner
 
 
+class _MalformedUtf8StreamingRunner:
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cmd, cwd, env, timeout, show_spinner, echo_output, stdin
+        if callable(callback):
+            callback("ENVCTL_TEST_TOTAL:2")
+            callback("ENVCTL_TEST_PROGRESS:1/2")
+            callback("bad byte: �")
+            callback("ENVCTL_TEST_PROGRESS:2/2")
+            callback("========================= 2 passed in 0.03s =========================")
+        return subprocess.CompletedProcess(
+            args=["python", "-m", "pytest"],
+            returncode=0,
+            stdout=(
+                "ENVCTL_TEST_TOTAL:2\n"
+                "ENVCTL_TEST_PROGRESS:1/2\n"
+                "bad byte: �\n"
+                "ENVCTL_TEST_PROGRESS:2/2\n"
+                "========================= 2 passed in 0.03s =========================\n"
+            ),
+            stderr="",
+        )
+
+
 class TestRunnerStreamingFallbackTests(unittest.TestCase):
+    def test_run_tests_tolerates_replaced_non_utf8_output_during_streaming(self) -> None:
+        runtime = _RuntimeStreamingStub(_MalformedUtf8StreamingRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+        progress_updates: list[tuple[int, int]] = []
+
+        completed = runner.run_tests(
+            ["python", "-m", "pytest"],
+            progress_callback=lambda current, total: progress_updates.append((current, total)),
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("bad byte: �", completed.stdout)
+        self.assertEqual(progress_updates, [(0, 2), (1, 2), (2, 2)])
+        assert runner.last_result is not None
+        self.assertTrue(runner.last_result.counts_detected)
+        self.assertEqual(runner.last_result.total, 2)
+        self.assertEqual(runner.last_result.passed, 2)
+
     def test_run_tests_reports_live_unittest_progress_with_real_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
@@ -478,6 +530,7 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
             self.assertEqual(len(process_runner.calls), 1)
             invoked = process_runner.calls[0]["cmd"]
             reporter_path = str(PYTHON_ROOT / "envctl_engine" / "test_output" / "vitest_progress_reporter.mjs")
+            assert isinstance(invoked, tuple)
             self.assertEqual(invoked[:3], ("bun", "run", "test"))
             self.assertEqual(invoked[-3:], ("--", "--reporter=default", f"--reporter={reporter_path}"))
             self.assertEqual(progress_updates, [(-1, 47), (5, 0), (0, 179), (6, 179)])

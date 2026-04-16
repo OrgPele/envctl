@@ -211,8 +211,40 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(len(popen_calls), 1)
-        self.assertIs(popen_calls[0]["kwargs"]["stdin"], subprocess.DEVNULL)
-        self.assertTrue(bool(popen_calls[0]["kwargs"]["start_new_session"]))
+        kwargs = popen_calls[0]["kwargs"]
+        assert isinstance(kwargs, dict)
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertTrue(bool(kwargs["start_new_session"]))
+
+    def test_run_streaming_decodes_invalid_utf8_bytes_with_replacement(self) -> None:
+        runner = ProcessRunner()
+
+        class _BinaryStdout:
+            def __init__(self) -> None:
+                self._lines = iter([b"progress \xbb line\n", b""])
+
+            def readline(self) -> bytes:
+                return next(self._lines)
+
+            def close(self) -> None:
+                return None
+
+        class _BinaryPopen:
+            def __init__(self) -> None:
+                self.stdout = _BinaryStdout()
+
+            def wait(self, timeout: float | None = None) -> int:
+                _ = timeout
+                return 0
+
+        with patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=False), patch(
+            "envctl_engine.shared.process_runner.subprocess.Popen",
+            return_value=_BinaryPopen(),
+        ):
+            completed = runner.run_streaming(["echo", "hello"], callback=None)
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("progress � line", completed.stdout)
 
 
 if __name__ == "__main__":
