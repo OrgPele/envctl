@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 from io import StringIO
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +71,43 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 },
             },
         )()
+
+
+    class _TmuxProbeRunner:
+        def __init__(self, *, window_name: str) -> None:
+            self.calls: list[list[str]] = []
+            self._window_name = window_name
+            self._session_created = False
+
+        def _result(
+            self, cmd: list[str], *, returncode: int = 0, stdout: str = "", stderr: str = ""
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout=stdout, stderr=stderr)
+
+        def run_probe(self, cmd, *, cwd=None, env=None, timeout=None, stdout_target=None, stderr_target=None):  # noqa: ANN001
+            _ = cwd, env, timeout, stdout_target, stderr_target
+            command = [str(part) for part in cmd]
+            self.calls.append(command)
+            if command[:3] == ["tmux", "has-session", "-t"]:
+                return self._result(command, returncode=0 if self._session_created else 1)
+            if command[:3] == ["tmux", "new-session", "-d"]:
+                self._session_created = True
+                return self._result(command)
+            if command[:3] == ["tmux", "new-window", "-d"]:
+                return self._result(command)
+            if command[:3] == ["tmux", "list-sessions", "-F"]:
+                return self._result(command, stdout="")
+            if command[:3] == ["tmux", "list-windows", "-t"]:
+                return self._result(command, stdout=f"{self._window_name}\n")
+            if command[:3] == ["tmux", "send-keys", "-t"]:
+                return self._result(command)
+            if command[:3] == ["tmux", "capture-pane", "-p"]:
+                return self._result(command, stdout="ask anything\n/status\n> ")
+            return self._result(command)
+
+        def run(self, cmd, *, cwd=None, env=None, timeout=None, stdin=None):  # noqa: ANN001
+            _ = stdin
+            return self.run_probe(cmd, cwd=cwd, env=env, timeout=timeout)
 
     def test_disabled_startup_writes_dashboard_state_without_starting_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -402,6 +440,60 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertNotIn("Planning mode complete; skipping service startup", rendered)
             self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_headless_plan_real_tmux_launch_stays_detached_and_prints_attach_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            runner = self._TmuxProbeRunner(window_name="feature-a-1")
+            setattr(engine, "process_runner", runner)
+
+            with (
+                patch.object(engine, "_command_exists", side_effect=lambda command: command in {"tmux", "opencode", "zsh"}),
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
+            session_name = next(call[3] for call in runner.calls if call[:3] == ["tmux", "has-session", "-t"])
+            rendered = out.getvalue()
+            self.assertIn(f"attach: tmux attach-session -t {session_name}", rendered)
+            self.assertIn(f"kill: tmux kill-session -t {session_name}", rendered)
+            self.assertIn(
+                ["tmux", "new-session", "-d", "-s", session_name, "-n", "feature-a-1", "-c", str(context.root), "zsh"],
+                runner.calls,
+            )
+            self.assertIn(
+                ["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", f"cd {context.root}"],
+                runner.calls,
+            )
+            self.assertIn(["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", "opencode"], runner.calls)
 
     def test_resume_reuse_failure_falls_back_to_fresh_run_id_before_failure_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
