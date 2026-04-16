@@ -121,6 +121,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--no-auto-resume",
     "--tmux",
     "--opencode",
+    "--tmux-new-session",
     "--with-codex-skills",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
@@ -238,16 +239,12 @@ _COMMAND_ALIAS_PAIRS = (
     ("list-targets", "list-targets"),
     ("--list-trees", "list-trees"),
     ("list-trees", "list-trees"),
-    ("--session", "session"),
-    ("session", "session"),
     ("--show-config", "show-config"),
     ("show-config", "show-config"),
     ("--show-state", "show-state"),
     ("show-state", "show-state"),
     ("--explain-startup", "explain-startup"),
     ("explain-startup", "explain-startup"),
-    ("--preflight", "preflight"),
-    ("preflight", "preflight"),
     ("--help", "help"),
     ("-h", "help"),
     ("help", "help"),
@@ -304,10 +301,6 @@ _COMMAND_ALIAS_PAIRS = (
     ("blast-worktree", "blast-worktree"),
     ("blast-worktrees", "blast-worktree"),
     ("blastworktree", "blast-worktree"),
-    ("self-destruct-worktree", "self-destruct-worktree"),
-    ("--self-destruct-worktree", "self-destruct-worktree"),
-    ("delete-current-worktree", "self-destruct-worktree"),
-    ("--delete-current-worktree", "self-destruct-worktree"),
     ("--pr", "pr"),
     ("--prs", "pr"),
     ("pr", "pr"),
@@ -334,14 +327,11 @@ _COMMAND_ALIAS_PAIRS = (
     ("--install-prompts", "install-prompts"),
     ("codex-tmux", "codex-tmux"),
     ("--codex-tmux", "codex-tmux"),
-    ("ensure-worktree", "ensure-worktree"),
-    ("--ensure-worktree", "ensure-worktree"),
     ("dash", "dashboard"),
     ("d", "doctor"),
     ("r", "restart"),
 )
 COMMAND_ALIASES = _unique_mapping(registry_name="COMMAND_ALIASES", pairs=_COMMAND_ALIAS_PAIRS)
-_INSPECTION_OVERRIDE_COMMANDS = {"explain-startup", "preflight"}
 
 SUPPORTED_COMMANDS = sorted(
     {
@@ -365,7 +355,6 @@ SUPPORTED_COMMANDS = sorted(
         "errors",
         "delete-worktree",
         "blast-worktree",
-        "self-destruct-worktree",
         "pr",
         "commit",
         "review",
@@ -373,15 +362,12 @@ SUPPORTED_COMMANDS = sorted(
         "migrate-hooks",
         "install-prompts",
         "codex-tmux",
-        "ensure-worktree",
         "list-commands",
         "list-targets",
         "list-trees",
-        "session",
         "show-config",
         "show-state",
         "explain-startup",
-        "preflight",
         "help",
     }
 )
@@ -561,9 +547,9 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
-                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
+                if mapped == "explain-startup":
                     state.explain_startup_requested = True
-                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
+                if mapped == "explain-startup" or not state.explain_startup_requested:
                     state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
@@ -616,9 +602,9 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
                 mapped = COMMAND_ALIASES.get(command_token)
                 if mapped is None:
                     raise RouteError(f"Unsupported command in Python runtime: {command_token}")
-                if mapped in _INSPECTION_OVERRIDE_COMMANDS:
+                if mapped == "explain-startup":
                     state.explain_startup_requested = True
-                if mapped in _INSPECTION_OVERRIDE_COMMANDS or not state.explain_startup_requested:
+                if mapped == "explain-startup" or not state.explain_startup_requested:
                     state.command = mapped
                 state.command_explicit = True
                 forced_mode = apply_command_policy(state.flags, command=mapped, token=token)
@@ -950,6 +936,7 @@ def _boolean_flag_name(token: str) -> str:
         "--no-auto-resume": "no_resume",
         "--tmux": "tmux",
         "--opencode": "opencode",
+        "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",
     }
     return mapping[token]
@@ -988,8 +975,6 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--timeout": "timeout",
         "--debug-capture": "debug_capture",
         "--debug-auto-pack": "debug_auto_pack",
-        "--session-action": "session_action",
-        "--session-id-override": "session_id_override",
     }
     key = mapping[token]
     if key in {"services", "include_existing_worktrees", "set_values"}:

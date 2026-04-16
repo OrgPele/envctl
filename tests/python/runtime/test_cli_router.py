@@ -47,6 +47,14 @@ class CliRouterTests(unittest.TestCase):
             self.assertEqual(route.command, "dashboard")
             self.assertTrue(route.flags.get("batch"), msg=token)
 
+    def test_tmux_and_opencode_flags_are_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--tmux-new-session", "--headless"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("tmux_new_session"))
+        self.assertTrue(route.flags.get("batch"))
+
     def test_list_trees_alias_routes_to_list_trees_command(self) -> None:
         route = parse_route(["--list-trees"], env={})
         self.assertEqual(route.command, "list-trees")
@@ -64,15 +72,6 @@ class CliRouterTests(unittest.TestCase):
             self.assertEqual(route.command, "explain-startup")
             self.assertEqual(route.mode, "trees")
             self.assertEqual(route.passthrough_args, ["feature-a"])
-            self.assertTrue(bool(route.flags.get("json")))
-
-    def test_preflight_alias_routes_to_explain_startup(self) -> None:
-        for argv in (
-            ["preflight", "--json"],
-            ["--preflight", "--plan", "feature-a", "--json"],
-        ):
-            route = parse_route(argv, env={})
-            self.assertEqual(route.command, "preflight")
             self.assertTrue(bool(route.flags.get("json")))
 
 
