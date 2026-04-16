@@ -502,6 +502,59 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             )
             self.assertIn(["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", "opencode"], runner.calls)
 
+    def test_headless_plan_inside_tmux_does_not_switch_client_and_prints_manual_attach_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            engine.env["TMUX"] = "/tmp/tmux-1000/default,123,0"
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            runner = self._TmuxProbeRunner(window_name="feature-a-1")
+            setattr(engine, "process_runner", runner)
+
+            with (
+                patch.object(engine, "_command_exists", side_effect=lambda command: command in {"tmux", "opencode", "zsh"}),
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
+            session_name = next(call[3] for call in runner.calls if call[:3] == ["tmux", "has-session", "-t"])
+            rendered = out.getvalue()
+            self.assertIn(f"attach: tmux switch-client -t {session_name}", rendered)
+            self.assertIn(f"kill: tmux kill-session -t {session_name}", rendered)
+            self.assertIn(
+                ["tmux", "new-session", "-d", "-s", session_name, "-n", "feature-a-1", "-c", str(context.root), "zsh"],
+                runner.calls,
+            )
+            self.assertFalse(any(call[:2] == ["tmux", "attach"] for call in runner.calls))
+            self.assertFalse(any(call[:2] == ["tmux", "attach-session"] for call in runner.calls))
+            self.assertFalse(any(call[:2] == ["tmux", "switch-client"] for call in runner.calls))
+
     def test_headless_plan_with_existing_tmux_session_prints_attach_instructions_without_attaching(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

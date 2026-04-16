@@ -953,6 +953,7 @@ def _find_existing_tmux_attach_target(
     repo_root: Path,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> PlanAgentAttachTarget | None:
+    attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     separator = "|||ENVCTL_TMUX_PATH|||"
     targets = [Path(worktree.root).expanduser().resolve(strict=False) for worktree in created_worktrees]
     if not targets:
@@ -987,8 +988,8 @@ def _find_existing_tmux_attach_target(
                     repo_root=repo_root,
                     session_name=session_name,
                     window_name=window_name,
-                    attach_via="attach-session",
-                    attach_command=("tmux", "attach-session", "-t", session_name),
+                    attach_via=attach_via,
+                    attach_command=("tmux", attach_via, "-t", session_name),
                 )
     return None
 
