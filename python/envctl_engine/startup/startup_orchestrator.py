@@ -370,15 +370,15 @@ class StartupOrchestrator:
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
-        if self._headless_plan_output_only(session):
-            self._print_headless_plan_session_summary(session)
-            return 0
-        enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
         if route.command == "plan":
             print(
                 "Planning mode complete; skipping service startup because "
                 f"envctl runs are disabled for {session.runtime_mode}."
             )
+        if self._headless_plan_output_only(session):
+            self._print_headless_plan_session_summary(session)
+            return 0
+        enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
         attach_code = self._maybe_attach_plan_agent_terminal(session)
         if attach_code is not None:
             return attach_code
@@ -796,6 +796,17 @@ class StartupOrchestrator:
                                         else None,
                                     )
                                 except RuntimeError as exc:
+                                    if self._should_continue_ai_plan_without_local_startup(session, error=str(exc)):
+                                        self._warn_ai_plan_without_local_startup(
+                                            project_name=context.name,
+                                            error=str(exc),
+                                        )
+                                        if use_project_spinner_group:
+                                            project_spinner_group.mark_success(
+                                                context.name,
+                                                "AI run continuing without startup",
+                                            )
+                                        continue
                                     failures.append(str(exc))
                                     rt._emit("startup.project.failed", project=context.name, error=str(exc))
                                     if use_project_spinner_group:
@@ -809,12 +820,26 @@ class StartupOrchestrator:
                             raise RuntimeError("; ".join(failures))
                     else:
                         for context in session.contexts_to_start:
-                            result = rt._start_project_context(
-                                context=context,
-                                mode=session.runtime_mode,
-                                route=route_for_execution,
-                                run_id=self._resolved_run_id(session),
-                            )
+                            try:
+                                result = rt._start_project_context(
+                                    context=context,
+                                    mode=session.runtime_mode,
+                                    route=route_for_execution,
+                                    run_id=self._resolved_run_id(session),
+                                )
+                            except RuntimeError as exc:
+                                if self._should_continue_ai_plan_without_local_startup(session, error=str(exc)):
+                                    self._warn_ai_plan_without_local_startup(
+                                        project_name=context.name,
+                                        error=str(exc),
+                                    )
+                                    if use_project_spinner_group:
+                                        project_spinner_group.mark_success(
+                                            context.name,
+                                            "AI run continuing without startup",
+                                        )
+                                    continue
+                                raise
                             self._record_project_startup(session, context, result)
                             self._render_project_startup_warnings(
                                 context=context,
@@ -1044,6 +1069,26 @@ class StartupOrchestrator:
         session.requirements_by_project[context.name] = result.requirements
         session.services_by_project[context.name] = result.services
         session.started_context_names.append(context.name)
+
+    def _should_continue_ai_plan_without_local_startup(self, session: StartupSession, *, error: str) -> bool:
+        route = session.effective_route
+        if route.command != "plan":
+            return False
+        if not bool(route.flags.get("batch")):
+            return False
+        if not bool(getattr(self.runtime.config, "plan_agent_terminals_enable", False)):
+            return False
+        return "missing_service_start_command" in error
+
+    def _warn_ai_plan_without_local_startup(self, *, project_name: str, error: str) -> None:
+        message = f"{project_name}: continuing AI run without local startup ({error})"
+        print(message)
+        self.runtime._emit(
+            "startup.project.warning",
+            project=project_name,
+            warning=message,
+            reason="ai_plan_local_start_failed",
+        )
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
         self.runtime._emit(
