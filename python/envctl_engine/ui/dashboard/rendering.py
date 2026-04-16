@@ -330,7 +330,8 @@ def _print_dashboard_tests_row(
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
     rendered_path = render_path_for_terminal(summary_path, env=getattr(self, "env", {}), stream=sys.stdout)
     print(f"      {color}{icon}{reset} tests: {rendered_path} {dim}({timestamp}){reset}")
-    for line in summary_excerpt_from_entry(entry, max_lines=3):
+    excerpt_lines = summary_excerpt_from_entry(entry)
+    for line in excerpt_lines:
         print(f"        {line}")
 
 
