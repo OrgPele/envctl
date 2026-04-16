@@ -479,6 +479,39 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(rt.process_runner.calls[0], ["tmux", "list-sessions", "-F", "#{session_name}"])
             self.assertEqual(rt.process_runner.calls[1], ["tmux", "list-windows", "-t", "envctl-existing", "-F", "#{window_name}|||ENVCTL_TMUX_PATH|||#{pane_current_path}"])
 
+    def test_tmux_launch_reuses_existing_session_with_switch_client_inside_tmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"TMUX": "/tmp/tmux-1000/default,123,0"})
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="envctl-existing\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout=f"feature-a-1|||ENVCTL_TMUX_PATH|||{worktree_root}\n",
+                        stderr="",
+                    ),
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIsNotNone(result.attach_target)
+            assert result.attach_target is not None
+            self.assertEqual(result.attach_target.session_name, "envctl-existing")
+            self.assertEqual(result.attach_target.attach_via, "switch-client")
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "switch-client", "-t", "envctl-existing"))
+
     def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
