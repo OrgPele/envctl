@@ -27,6 +27,7 @@ from envctl_engine.runtime.prompt_install_support import (
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
+_CODEX_BYPASS_FLAGS = "--dangerously-bypass-approvals-and-sandbox"
 _PROMPT_SHAPING_COMMAND_TOKEN_RE = re.compile(r"^/[A-Za-z][A-Za-z0-9:_-]*$")
 _DEFAULT_PRESET = "implement_task"
 _DEFAULT_SHELL = "zsh"
@@ -88,6 +89,7 @@ class CreatedPlanWorktree:
     name: str
     root: Path
     plan_file: str
+    cli: str = ""
 
 
 @dataclass(slots=True)
@@ -276,15 +278,19 @@ def resolve_plan_agent_launch_config(
         "opencode"
         if bool(route_flags.get("opencode"))
         else (
+            "codex"
+            if bool(route_flags.get("codex"))
+            else (
             env_map.get("ENVCTL_PLAN_AGENT_CLI")
             or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
             or "codex"
+            )
         )
     ).strip().lower() or "codex"
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or cli
+        or _default_plan_agent_cli_command(cli)
     ).strip() or cli
     preset = str(
         env_map.get("ENVCTL_PLAN_AGENT_PRESET")
@@ -345,6 +351,13 @@ def resolve_plan_agent_launch_config(
         ulw_loop_prefix=ulw_loop_prefix,
         ulw_suffix=ulw_suffix,
     )
+
+
+def _default_plan_agent_cli_command(cli: str) -> str:
+    normalized = str(cli).strip().lower()
+    if normalized == "codex":
+        return f"codex {_CODEX_BYPASS_FLAGS}"
+    return normalized or "codex"
 
 
 def plan_agent_launch_prereq_commands(
@@ -887,6 +900,8 @@ def _new_session_command_for_route(
     ]
     if launch_config.cli == "opencode":
         command.append("--opencode")
+    elif launch_config.cli == "codex":
+        command.append("--codex")
     command.append("--tmux-new-session")
     command.append("--headless")
     return tuple(command)
@@ -2189,6 +2204,28 @@ def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path
     if len(matches) == 1:
         return matches[0]
     return None
+
+
+def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str | None:
+    planning_root = repo_root / _PLANNING_ROOT
+    try:
+        selector = str(plan_path.relative_to(planning_root)).replace("\\", "/")
+    except ValueError:
+        return None
+    selector = selector.strip()
+    if not selector:
+        return None
+    return selector
+
+
+def resolve_plan_agent_launch_command(*, project_name: str, project_root: Path, repo_root: Path) -> str | None:
+    plan_path = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
+    if plan_path is None:
+        return None
+    selector = _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
+    if not selector:
+        return None
+    return f"envctl --plan {shlex.quote(selector)} --tmux"
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:

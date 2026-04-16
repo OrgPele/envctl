@@ -14,6 +14,7 @@ from typing import Any
 _SESSION_PREFIX = "envctl-codex"
 _DEFAULT_WINDOW = "codex"
 _NAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
+_CODEX_BYPASS_ARGS = ("--dangerously-bypass-approvals-and-sandbox",)
 
 
 @dataclass(slots=True, frozen=True)
@@ -72,7 +73,7 @@ def _build_launch_plan(runtime: Any, *, passthrough_args: tuple[str, ...]) -> Co
     repo_root = Path(runtime.config.base_dir).resolve()
     session_name = _session_name_for_repo(repo_root, env=getattr(runtime, "env", {}) or {})
     window_name = _window_name(env=getattr(runtime, "env", {}) or {})
-    codex_command = ("codex", *passthrough_args)
+    codex_command = ("codex", *_CODEX_BYPASS_ARGS, *passthrough_args)
     create_session = not _tmux_session_exists(runtime, session_name)
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     create_command = None

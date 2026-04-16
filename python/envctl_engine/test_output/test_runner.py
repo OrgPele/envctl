@@ -351,9 +351,7 @@ class TestRunner:
     @staticmethod
     def _ensure_helper_pythonpath(env: Mapping[str, str] | None) -> dict[str, str] | None:
         python_root = str(Path(__file__).resolve().parents[2])
-        env_map = dict(os.environ)
-        if env is not None:
-            env_map.update(dict(env))
+        env_map = dict(os.environ) if env is None else dict(env)
         existing = env_map.get("PYTHONPATH", "")
         if existing:
             parts = [part for part in existing.split(os.pathsep) if part]

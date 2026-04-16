@@ -45,6 +45,14 @@ def launcher_usage_text() -> str:
 
 
 def resolve_envctl_version(*, project_root: Path | None = None) -> str:
+    if project_root is None:
+        try:
+            return str(importlib_metadata.version("envctl"))
+        except importlib_metadata.PackageNotFoundError:
+            pass
+        except Exception as exc:
+            raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
+
     preferred_paths = _candidate_version_files(project_root)
     for pyproject_path in preferred_paths:
         if not pyproject_path.is_file():
@@ -90,7 +98,7 @@ def _candidate_version_files(project_root: Path | None) -> list[Path]:
 
 
 def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     current_resolved = _resolved_path(current_binary)
     seen: set[Path] = {current_resolved}
     for candidate in _path_envctl_candidates(env_map):
@@ -149,7 +157,7 @@ def is_explicit_wrapper_path(
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
 ) -> bool:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
     if not invocation:
         return False
@@ -182,9 +190,17 @@ def select_envctl_reexec_target(
     cwd: Path | None = None,
     alternate: Path | None = None,
 ) -> Path | None:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     if env_map.get("ENVCTL_USE_REPO_WRAPPER") == "1":
         return None
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    invocation = _effective_invocation_argv0(current_binary, argv0, env=env_map)
+    if invocation and not any(separator in invocation for separator in separators):
+        if alternate is not None:
+            return alternate
+        return find_shadowed_installed_envctl(current_binary, env=env_map)
     if is_explicit_wrapper_path(current_binary, argv0, env=env_map, cwd=cwd):
         return None
     if alternate is not None:

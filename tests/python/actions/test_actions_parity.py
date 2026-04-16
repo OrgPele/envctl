@@ -793,6 +793,40 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT"), str(expected_root))
             self.assertEqual(env.get("ENVCTL_ACTION_RUNTIME_ROOT"), str(engine.state_repository.runtime_root))
 
+    def test_action_env_strips_repo_wrapper_launcher_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_USE_REPO_WRAPPER": "1",
+                    "ENVCTL_WRAPPER_ORIGINAL_ARGV0": "envctl",
+                    "ENVCTL_WRAPPER_PYTHON_REEXEC": "1",
+                },
+            )
+            route = parse_route(
+                ["test", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "test",
+                [target],
+                route=route,
+                target=target,
+                extra=None,
+            )
+
+            self.assertNotIn("ENVCTL_USE_REPO_WRAPPER", env)
+            self.assertNotIn("ENVCTL_WRAPPER_ORIGINAL_ARGV0", env)
+            self.assertNotIn("ENVCTL_WRAPPER_PYTHON_REEXEC", env)
+
     def test_action_explicit_main_mode_does_not_fallback_to_tree_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

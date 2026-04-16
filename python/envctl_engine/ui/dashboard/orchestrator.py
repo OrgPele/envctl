@@ -100,22 +100,33 @@ class DashboardOrchestrator:
     def _run_interactive_command(self, raw: str, state: RunState, rt: object) -> tuple[bool, RunState]:
         runtime_any = cast(Any, rt)
         """Process a single interactive command."""
+        raw_input = raw
         raw = self._sanitize_interactive_input(raw)
-        if not raw:
+        recovered_command = self._recover_single_letter_command_from_escape_fragment(raw_input)
+        if not raw and not recovered_command:
             return True, state
 
         command_tokens = self._parse_interactive_command(raw)
         if command_tokens is None:
             return True, state
         if not command_tokens:
+            if recovered_command:
+                command_tokens = [recovered_command]
+            else:
+                return True, state
+
+        if not command_tokens:
             return True, state
 
         command = command_tokens[0]
+        if recovered_command:
+            command = recovered_command
+            command_tokens[0] = recovered_command
         if command in {"q", "quit", "exit"}:
             return False, state
         if command in {"help", "?"}:
             return True, state
-        if command in {"s", "session", "sessions"}:
+        if command in {"session", "sessions"} or (command == "s" and not recovered_command):
             self._dispatch_session_command(runtime_any)
             return True, state
         if command in {"k", "kill-session"}:

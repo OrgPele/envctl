@@ -34,7 +34,7 @@ def _preserve_original_wrapper_argv0() -> str:
         if preserved:
             original = preserved
     else:
-        os.environ.pop(ORIGINAL_WRAPPER_ARGV0_ENVVAR, None)
+        os.environ[ORIGINAL_WRAPPER_ARGV0_ENVVAR] = original
     os.environ.pop(WRAPPER_REEXEC_ENVVAR, None)
     return original
 

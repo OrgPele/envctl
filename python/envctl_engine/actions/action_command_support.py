@@ -80,6 +80,9 @@ def build_action_env(
 ) -> dict[str, str]:
     env = dict(process_env)
     env.update(runtime_env)
+    env.pop("ENVCTL_USE_REPO_WRAPPER", None)
+    env.pop("ENVCTL_WRAPPER_ORIGINAL_ARGV0", None)
+    env.pop("ENVCTL_WRAPPER_PYTHON_REEXEC", None)
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
     env.setdefault("GH_PROMPT_DISABLED", "1")
     env.setdefault("GCM_INTERACTIVE", "Never")

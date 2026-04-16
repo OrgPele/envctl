@@ -10,7 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import IO, Any, Callable, Mapping, Sequence, TextIO
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
 from envctl_engine.ui.spinner_service import resolve_spinner_policy
 
@@ -55,6 +55,12 @@ class ProcessRunner:
         self._launch_records: list[LaunchRecord] = []
 
     @staticmethod
+    def _normalize_output_line(line: str | bytes) -> str:
+        if isinstance(line, bytes):
+            return line.decode("utf-8", errors="replace")
+        return line
+
+    @staticmethod
     def _timeout_result(
         command: Sequence[str],
         *,
@@ -93,6 +99,8 @@ class ProcessRunner:
                 cwd=str(cwd) if cwd is not None else None,
                 env=dict(env) if env is not None else None,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=stdin,
@@ -190,6 +198,8 @@ class ProcessRunner:
                     cwd=str(cwd) if cwd is not None else None,
                     env=env_map,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=stdin,
@@ -234,7 +244,7 @@ class ProcessRunner:
                                 stderr="",
                             )
 
-                    line_stripped = line.rstrip("\n")
+                    line_stripped = self._normalize_output_line(line).rstrip("\n")
                     output_lines.append(line_stripped)
                     if callback is not None:
                         try:
@@ -313,10 +323,10 @@ class ProcessRunner:
         *,
         stdout_path: str | Path | None,
         stderr_path: str | Path | None,
-    ) -> tuple[object, object, list[object]]:
-        stdout_target: object
-        stderr_target: object
-        opened_handles: list[object] = []
+    ) -> tuple[int | IO[str], int | IO[str], list[IO[str]]]:
+        stdout_target: int | IO[str]
+        stderr_target: int | IO[str]
+        opened_handles: list[IO[str]] = []
 
         if stdout_path is not None:
             stdout_file = Path(stdout_path)
@@ -361,6 +371,8 @@ class ProcessRunner:
                 cwd=str(cwd) if cwd is not None else None,
                 env=dict(env) if env is not None else None,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 start_new_session=True,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_target,
@@ -408,15 +420,17 @@ class ProcessRunner:
         *,
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
-        stdin: object | None = None,
-        stdout: object | None = None,
-        stderr: object | None = None,
+        stdin: int | TextIO | None = None,
+        stdout: int | TextIO | None = None,
+        stderr: int | TextIO | None = None,
     ) -> subprocess.Popen[str]:
         process = subprocess.Popen(
             list(cmd),
             cwd=str(cwd) if cwd is not None else None,
             env=dict(env) if env is not None else None,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
@@ -441,8 +455,8 @@ class ProcessRunner:
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        stdout_target: object = subprocess.PIPE,
-        stderr_target: object = subprocess.PIPE,
+        stdout_target: int | TextIO | None = subprocess.PIPE,
+        stderr_target: int | TextIO | None = subprocess.PIPE,
     ) -> subprocess.CompletedProcess[str]:
         command = list(cmd)
         self._record_launch(
@@ -462,6 +476,8 @@ class ProcessRunner:
                 cwd=str(cwd) if cwd is not None else None,
                 env=dict(env) if env is not None else None,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_target,
                 stderr=stderr_target,
