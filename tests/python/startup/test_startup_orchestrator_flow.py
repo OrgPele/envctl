@@ -495,6 +495,57 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             )
             self.assertIn(["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", "opencode"], runner.calls)
 
+    def test_headless_plan_with_existing_tmux_session_prints_attach_instructions_without_attaching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            existing_session_name = "envctl-existing"
+            existing_attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name=existing_session_name,
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", existing_session_name),
+            )
+
+            with (
+                patch.object(engine, "_command_exists", side_effect=lambda command: command in {"tmux", "opencode", "zsh"}),
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target",
+                    return_value=existing_attach_target,
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
+            rendered = out.getvalue()
+            self.assertIn(f"attach: tmux attach-session -t {existing_session_name}", rendered)
+            self.assertIn(f"kill: tmux kill-session -t {existing_session_name}", rendered)
+
     def test_resume_reuse_failure_falls_back_to_fresh_run_id_before_failure_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
