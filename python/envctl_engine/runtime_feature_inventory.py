@@ -187,6 +187,23 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         rollout_risk="Partial tree cleanup can leave stale containers or listeners that later break planning or startup.",
         wave="Wave B",
     ),
+    "self-destruct-worktree": FeatureDefinition(
+        area="planning",
+        feature="Command: destroy the current worktree after scoped cleanup using the active run context",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/actions/action_command_orchestrator.py",
+            "python/envctl_engine/actions/action_worktree_runner.py",
+        ),
+        evidence_tests=(
+            "tests/python/actions/test_action_worktree_runner.py",
+            "tests/python/runtime/test_command_router_contract.py",
+            "tests/python/runtime/test_command_dispatch_matrix.py",
+        ),
+        parity_status="verified_python",
+        notes="Self-destruct-worktree is Python-owned and routes through the action orchestrator using existing scoped cleanup behavior.",
+    ),
     "test": FeatureDefinition(
         area="actions",
         feature="Command: run tests for selected projects and service scopes",
@@ -640,6 +657,22 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         parity_status="verified_python",
         notes="Ensure-worktree is Python-owned and intentionally reuses existing planning/worktree creation mechanics without starting runtime services.",
+    ),
+    "session": FeatureDefinition(
+        area="inspection",
+        feature="Command: inspect, attach to, or terminate saved runtime sessions",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/session_management.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_command_dispatch_matrix.py",
+        ),
+        parity_status="verified_python",
+        notes="Session inspection and session-management helpers are Python-owned direct inspection flows.",
     ),
     "list-targets": FeatureDefinition(
         area="cli",
