@@ -83,6 +83,8 @@ Current runtime-dependency gate boundary:
 - launcher-safe commands such as `--version`, `--help`, `doctor --repo`, `install`, and `uninstall` stay outside that gate
 - inspection/utility commands such as `show-config`, `show-state`, `explain-startup`, and `list-commands` also stay outside that gate
 
+For the full command boundary, including launcher-owned commands, bootstrap-safe inspection or utility commands, and operational runtime commands, see [Commands](../reference/commands.md).
+
 ## 2. Pick a Repository
 
 `envctl` operates on a git repository root.
