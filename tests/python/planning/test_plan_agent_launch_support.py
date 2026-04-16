@@ -327,7 +327,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "rename-tab", "--workspace", "workspace:7", "--surface", "surface:9", "feature-a-1"], rt.process_runner.calls)
             self.assertIn(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", "codex"], rt.process_runner.calls)
+            self.assertIn(
+                [
+                    "cmux",
+                    "send",
+                    "--workspace",
+                    "workspace:7",
+                    "--surface",
+                    "surface:9",
+                    "codex --dangerously-bypass-approvals-and-sandbox",
+                ],
+                rt.process_runner.calls,
+            )
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
@@ -386,6 +397,30 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(launch_config.transport, "tmux")
         self.assertEqual(launch_config.cli, "opencode")
+        self.assertTrue(launch_config.enabled)
+
+    def test_resolve_plan_agent_launch_config_accepts_explicit_codex_route_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--codex"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "tmux")
+        self.assertEqual(launch_config.cli, "codex")
+        self.assertEqual(launch_config.cli_command, "codex --dangerously-bypass-approvals-and-sandbox")
         self.assertTrue(launch_config.enabled)
 
     def test_launch_sequence_uses_tmux_commands_for_opencode(self) -> None:
@@ -2001,7 +2036,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 rt.process_runner.calls,
             )
             self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", f"cd {repo}"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", "codex"], rt.process_runner.calls)
+            self.assertIn(
+                [
+                    "cmux",
+                    "send",
+                    "--workspace",
+                    "workspace:9",
+                    "--surface",
+                    "surface:77",
+                    "codex --dangerously-bypass-approvals-and-sandbox",
+                ],
+                rt.process_runner.calls,
+            )
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-77"]

@@ -72,7 +72,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PORT_AVAILABILITY_MODE": "auto",
         "ENVCTL_PLAN_STRICT_SELECTION": "false",
         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "false",
-        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+        "ENVCTL_PLAN_AGENT_CLI": "codex",
         "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
         "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
@@ -508,7 +508,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         ),
         plan_strict_selection=parse_bool(resolved.get("ENVCTL_PLAN_STRICT_SELECTION"), False),
         plan_agent_terminals_enable=plan_agent_terminals_enable,
-        plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "opencode") or "opencode").strip().lower() or "opencode",
+        plan_agent_cli=str(resolved.get("ENVCTL_PLAN_AGENT_CLI", "codex") or "codex").strip().lower() or "codex",
         plan_agent_preset=str(resolved.get("ENVCTL_PLAN_AGENT_PRESET", "implement_task") or "implement_task").strip()
         or "implement_task",
         plan_agent_codex_cycles=max(parse_int(resolved.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES"), 0), 0),

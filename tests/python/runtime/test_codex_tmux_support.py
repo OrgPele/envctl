@@ -84,7 +84,7 @@ class CodexTmuxSupportTests(unittest.TestCase):
                     "codex",
                     "-c",
                     str(repo_root.resolve()),
-                    "codex review",
+                    "codex --dangerously-bypass-approvals-and-sandbox review",
                 ],
             )
             self.assertEqual(runner.interactive_calls, [["tmux", "attach-session", "-t", runner.probe_calls[0][3]]])
@@ -126,6 +126,7 @@ class CodexTmuxSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn('"create_session": true', stdout.getvalue())
             self.assertIn('"codex_command": [', stdout.getvalue())
+            self.assertIn('--dangerously-bypass-approvals-and-sandbox', stdout.getvalue())
             self.assertEqual(runner.interactive_calls, [])
 
     def test_codex_tmux_missing_executable_fails_cleanly(self) -> None:
