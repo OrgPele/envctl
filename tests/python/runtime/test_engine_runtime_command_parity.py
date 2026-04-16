@@ -818,6 +818,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "errors",
             "delete-worktree",
             "blast-worktree",
+            "self-destruct-worktree",
             "pr",
             "commit",
             "review",
@@ -828,6 +829,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "show-config",
             "show-state",
             "explain-startup",
@@ -839,7 +841,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 36, "Should have exactly 36 commands")
+        self.assertEqual(len(lines), 38, "Should have exactly 38 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -877,10 +879,12 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "errors",
                 "delete-worktree",
                 "blast-worktree",
+                "self-destruct-worktree",
                 "stop",
                 "restart",
                 "stop-all",
                 "blast-all",
+                "session",
             },
         )
 
