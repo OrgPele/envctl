@@ -375,7 +375,20 @@ class RichSpinnerOperation:
                         pass
                 elif not ok:
                     # Failure should still be visible when spinner stayed deferred.
-                    print(f"! {message}", file=self._stream)
+                    try:
+                        write = getattr(self._stream, "write", None)
+                        if callable(write):
+                            write(f"! {message}\n")
+                            flush = getattr(self._stream, "flush", None)
+                            if callable(flush):
+                                flush()
+                        else:
+                            print(f"! {message}", file=sys.stderr)
+                    except Exception:
+                        try:
+                            print(f"! {message}", file=sys.stderr)
+                        except Exception:
+                            pass
             self._emit_lifecycle("stop", self._final_state[1] if self._final_state else self._message)
             self._stopped = True
             self._started = False
