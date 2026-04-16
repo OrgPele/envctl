@@ -271,6 +271,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target)),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -279,9 +280,60 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     code = engine.dispatch(parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
 
             self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
             rendered = out.getvalue()
             self.assertNotIn("session_id:", rendered)
             self.assertNotIn("run_id:", rendered)
+            self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
+            self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_disabled_startup_headless_plan_prints_attach_command_without_attaching_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-test-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
+            rendered = out.getvalue()
+            self.assertNotIn("Planning mode complete; skipping service startup", rendered)
             self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
@@ -335,6 +387,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                         state_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
                     ),
                 ),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal") as attach_mock,
                 patch.object(engine.state_repository, "save_resume_state", return_value={}),
             ):
                 out = StringIO()
@@ -344,6 +397,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     )
 
             self.assertEqual(code, 0)
+            attach_mock.assert_not_called()
             rendered = out.getvalue()
             self.assertNotIn("Planning mode complete; skipping service startup", rendered)
             self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
