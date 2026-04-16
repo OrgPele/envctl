@@ -109,6 +109,10 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             _ = stdin
             return self.run_probe(cmd, cwd=cwd, env=env, timeout=timeout)
 
+        def start_interactive_child(self, *args, **kwargs):  # noqa: ANN001
+            _ = args, kwargs
+            raise AssertionError("headless startup must not attach an interactive tmux child")
+
     def test_disabled_startup_writes_dashboard_state_without_starting_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -489,6 +493,9 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 ["tmux", "new-session", "-d", "-s", session_name, "-n", "feature-a-1", "-c", str(context.root), "zsh"],
                 runner.calls,
             )
+            self.assertFalse(any(call[:2] == ["tmux", "attach"] for call in runner.calls))
+            self.assertFalse(any(call[:2] == ["tmux", "attach-session"] for call in runner.calls))
+            self.assertFalse(any(call[:2] == ["tmux", "switch-client"] for call in runner.calls))
             self.assertIn(
                 ["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", f"cd {context.root}"],
                 runner.calls,
