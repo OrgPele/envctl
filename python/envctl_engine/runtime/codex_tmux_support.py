@@ -31,6 +31,7 @@ class CodexTmuxLaunchPlan:
 def run_codex_tmux_command(runtime: Any, route: object) -> int:
     flags = getattr(route, "flags", {}) or {}
     passthrough_args = tuple(str(token) for token in (getattr(route, "passthrough_args", []) or []) if str(token))
+    headless = bool(flags.get("batch"))
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
 
@@ -58,6 +59,10 @@ def run_codex_tmux_command(runtime: Any, route: object) -> int:
             f"Reusing existing tmux session '{plan.session_name}'; extra Codex arguments were ignored.",
             file=sys.stderr,
         )
+
+    if headless:
+        print(f"attach: {shlex.join(plan.attach_command)}")
+        return 0
 
     if plan.attach_via == "switch-client":
         attach_result = _run_probe(runtime, plan.attach_command, cwd=plan.repo_root)
