@@ -2709,4 +2709,10 @@ if result.returncode != 0:
 
     def _test_target_contexts(self, targets: list[object]) -> list[TestTargetContext]:
         rt = self.runtime
-        return build_test_target_contexts(targets, repo_root=rt.config.base_dir)  # type: ignore[attr-defined]
+        repo_root = Path(rt.config.base_dir)  # type: ignore[attr-defined]
+        run_repo_root_raw = str(getattr(rt, "env", {}).get("RUN_REPO_ROOT", "")).strip()  # type: ignore[attr-defined]
+        if run_repo_root_raw:
+            candidate = Path(run_repo_root_raw).expanduser()
+            if candidate.exists():
+                repo_root = candidate.resolve()
+        return build_test_target_contexts(targets, repo_root=repo_root)
