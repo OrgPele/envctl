@@ -3235,14 +3235,12 @@ def _spawn_omx_session_for_worktree(
     worktree: CreatedPlanWorktree,
 ) -> str | None:
     cli_command = shlex.split(launch_config.cli_command) if str(launch_config.cli_command).strip() else []
-    wants_bypass = any(token == _CODEX_BYPASS_FLAGS for token in cli_command[1:])
-    passthrough = [token for token in cli_command[1:] if token != _CODEX_BYPASS_FLAGS]
     command = ["omx", "--tmux"]
-    if wants_bypass:
+    # OMX-managed launches always enter through the managed Codex surface. Preserve
+    # approval-bypass parity via --madmax, but ignore custom CLI passthrough flags
+    # because envctl submits the prompt after OMX finishes bootstrapping the session.
+    if any(token == _CODEX_BYPASS_FLAGS for token in cli_command[1:]):
         command.append("--madmax")
-    if passthrough:
-        command.append("--")
-        command.extend(passthrough)
     env = dict(getattr(runtime, "env", {}))
     for key in list(env):
         if key.startswith("OMX_"):
