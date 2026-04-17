@@ -33,6 +33,35 @@ envctl doctor --repo /absolute/path/to/repo --json
 
 `--version` does not add a runtime command and does not appear in `list-commands`.
 
+## Command Boundary
+
+Use this section when you need to know which `envctl` commands are safe before repo bootstrap or full runtime startup.
+
+| Command family | What it covers today | Boundary |
+| --- | --- | --- |
+| launcher-owned commands | `--help`, `--version`, launcher `doctor`, `install`, `uninstall` | handled by the launcher before the normal runtime path |
+| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`, `codex-tmux` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
+| operational runtime commands | `start`, `plan`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
+
+This boundary is grounded in the current launcher and Python runtime behavior, not a separate documentation-only model.
+
+- launcher-owned commands are handled before the runtime forwards into the normal command router path
+- bootstrap-safe inspection or utility commands are the right choice when you want to inspect config, state, startup decisions, or install local AI presets before changing `.envctl` or starting services
+- the full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`, so not every non-launcher command is prereq-gated the same way
+
+Examples:
+
+```bash
+envctl --help
+envctl --version
+envctl doctor --repo /absolute/path/to/repo
+envctl show-config --json
+envctl explain-startup --json
+envctl install-prompts --cli codex
+envctl codex-tmux --dry-run
+envctl --plan
+```
+
 ## Inspection Commands
 
 These commands are safe to use before a repo-local `.envctl` exists:
@@ -91,6 +120,26 @@ Behavior:
 - Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
 - experimental Codex skill mirrors are available only when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true` and you pass `--with-codex-skills`
 - when enabled, envctl also installs explicit-only Codex skills under `~/.codex/skills/envctl-*`
+
+## `codex-tmux`
+
+`codex-tmux` is a supported utility command.
+
+Use it when you want `envctl` to launch or reuse a repo-scoped tmux session for `codex` without going through the normal runtime startup path.
+
+```bash
+envctl codex-tmux
+envctl codex-tmux review
+envctl codex-tmux --dry-run --json
+```
+
+Behavior:
+
+- launches a new tmux session when the repo does not already have one
+- reuses the existing repo-scoped session when one already exists
+- requires `tmux` and `codex`
+- supports `--json` only together with `--dry-run`
+- is distinct from the optional post-`--plan` cmux-based plan-agent launch flow documented in the AI playbooks
 
 ## Main Runtime Commands
 
