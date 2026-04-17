@@ -61,7 +61,7 @@ def run_codex_tmux_command(runtime: Any, route: object) -> int:
         )
 
     if headless:
-        print(f"attach: {shlex.join(plan.attach_command)}")
+        print(f"attach: {shlex.join(("tmux", "attach-session", "-t", plan.session_name))}")
         return 0
 
     if plan.attach_via == "switch-client":

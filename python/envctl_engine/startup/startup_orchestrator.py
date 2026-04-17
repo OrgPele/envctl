@@ -976,10 +976,15 @@ class StartupOrchestrator:
         resolved_target = attach_target or session.plan_agent_attach_target
         if resolved_target is None:
             return
-        attach_command = " ".join(
-            str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
-        )
         session_name = str(getattr(resolved_target, "session_name", "")).strip()
+        attach_parts: tuple[str, ...]
+        if session_name:
+            attach_parts = ("tmux", "attach-session", "-t", session_name)
+        else:
+            attach_parts = tuple(
+                str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
+            )
+        attach_command = shlex.join(attach_parts) if attach_parts else ""
         if attach_command:
             print(f"attach: {attach_command}")
         if session_name:

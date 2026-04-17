@@ -502,7 +502,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             )
             self.assertIn(["tmux", "send-keys", "-t", f"{session_name}:feature-a-1", "-l", "opencode"], runner.calls)
 
-    def test_headless_plan_inside_tmux_does_not_switch_client_and_prints_manual_attach_command(self) -> None:
+    def test_headless_plan_inside_tmux_does_not_switch_client_and_prints_attach_session_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = self._repo(root)
@@ -545,7 +545,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             attach_mock.assert_not_called()
             session_name = next(call[3] for call in runner.calls if call[:3] == ["tmux", "has-session", "-t"])
             rendered = out.getvalue()
-            self.assertIn(f"attach: tmux switch-client -t {session_name}", rendered)
+            self.assertIn(f"attach: tmux attach-session -t {session_name}", rendered)
             self.assertIn(f"kill: tmux kill-session -t {session_name}", rendered)
             self.assertIn(
                 ["tmux", "new-session", "-d", "-s", session_name, "-n", "feature-a-1", "-c", str(context.root), "zsh"],

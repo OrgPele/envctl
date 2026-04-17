@@ -162,7 +162,7 @@ class CodexTmuxSupportTests(unittest.TestCase):
             self.assertEqual(runner.interactive_calls, [])
             self.assertIn(f"attach: tmux attach-session -t {runner.probe_calls[0][3]}", stdout.getvalue())
 
-    def test_codex_tmux_headless_inside_tmux_prints_manual_attach_without_switching_client(self) -> None:
+    def test_codex_tmux_headless_inside_tmux_prints_attach_session_without_switching_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
@@ -183,7 +183,7 @@ class CodexTmuxSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(runner.probe_calls, [["tmux", "has-session", "-t", runner.probe_calls[0][3]]])
             self.assertEqual(runner.interactive_calls, [])
-            self.assertIn(f"attach: tmux switch-client -t {runner.probe_calls[0][3]}", stdout.getvalue())
+            self.assertIn(f"attach: tmux attach-session -t {runner.probe_calls[0][3]}", stdout.getvalue())
 
     def test_codex_tmux_missing_executable_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
