@@ -262,7 +262,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `1`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
 - OpenCode launches send `/<preset>`
 - Codex resolves the preset from `~/.config/envctl/codex/prompts/<preset>.md` and submits that prompt body directly
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
@@ -277,8 +277,9 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`), envctl submits `implement_task` and then queues `finalize_task` in the same Codex tab
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `finalize_task`
 
 Optional dashboard review-tab launch:
 

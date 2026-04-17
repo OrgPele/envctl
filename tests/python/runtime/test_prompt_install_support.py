@@ -607,8 +607,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
-        self.assertIn("you may suggest `CYCLES=2` as an optional override for this follow-up", plan_prompt.body)
-        self.assertIn("the current runtime default remains `1`", plan_prompt.body)
+        self.assertIn("the current runtime default is `2`", plan_prompt.body)
         self.assertIn("if the selected CLI is not Codex, say that the Codex cycle count setting is ignored", plan_prompt.body)
         self.assertNotIn("CMUX=true", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_CLI=", plan_prompt.body)
