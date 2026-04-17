@@ -208,10 +208,10 @@ def _hyperlinks_enabled(
     if not is_tty:
         return False
 
-    if str(merged.get("TERM", "")).strip().lower() == "dumb":
-        return False
     if mode == "on":
         return True
+    if str(merged.get("TERM", "")).strip().lower() == "dumb":
+        return False
     return _terminal_supports_hyperlinks(merged)
 
 

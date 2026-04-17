@@ -45,6 +45,9 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `--setup-worktree <FEATURE> <ITER>` | Create one worktree iteration directly. |
 | `--include-existing-worktrees <a,b>` | Include specific existing iterations. |
 | `--keep-plan` | Keep planning files in place after execution. |
+| `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly. |
+| `--ralph` | OMX-only modifier for `--plan --omx`; starts the Ralph workflow inside the OMX-managed Codex session. |
+| `--team` | OMX-only modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session. |
 
 ## Performance and Reliability
 | Flag | Purpose |

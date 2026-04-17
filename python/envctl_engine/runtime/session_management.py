@@ -29,6 +29,7 @@ def list_sessions(runtime_root: Path) -> list[dict[str, str]]:
 
 
 def list_tmux_sessions(prefix: str = "envctl-") -> list[dict[str, str]]:
+    allowed_prefixes = (prefix, "omx-")
     try:
         result = subprocess.run(
             ["tmux", "list-sessions", "-F", "#{session_name}"],
@@ -43,7 +44,7 @@ def list_tmux_sessions(prefix: str = "envctl-") -> list[dict[str, str]]:
     sessions: list[dict[str, str]] = []
     for name in result.stdout.strip().splitlines():
         name = name.strip()
-        if name.startswith(prefix):
+        if any(name.startswith(item) for item in allowed_prefixes):
             windows_result = subprocess.run(
                 ["tmux", "list-windows", "-t", name, "-F", "#{window_name}"],
                 capture_output=True,

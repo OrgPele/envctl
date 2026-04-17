@@ -177,6 +177,73 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertIn("cmux", str(reason))
             self.assertIn("opencode", str(reason))
 
+    def test_plan_omx_team_route_requires_omx_tmux_script_and_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config({
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime),
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "N8N_ENABLE": "false",
+            })
+            route = parse_route(["--plan", "feature-a", "--omx", "--team", "--codex"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"omx", "tmux", "script", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which), patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True)):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("omx", str(reason))
+            self.assertIn("tmux", str(reason))
+            self.assertIn("script", str(reason))
+            self.assertIn("codex", str(reason))
+
+    def test_plan_omx_route_requires_omx_tmux_and_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--plan", "feature-a", "--omx", "--codex"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"omx", "tmux", "script", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("omx", str(reason))
+            self.assertIn("tmux", str(reason))
+            self.assertIn("script", str(reason))
+            self.assertIn("codex", str(reason))
+
     def test_plan_workspace_override_implies_plan_agent_prereqs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

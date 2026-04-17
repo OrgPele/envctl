@@ -61,6 +61,20 @@ class CliRouterTests(unittest.TestCase):
         self.assertTrue(route.flags.get("tmux"))
         self.assertTrue(route.flags.get("codex"))
 
+    def test_omx_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--omx", "--codex"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("omx"))
+        self.assertTrue(route.flags.get("codex"))
+
+    def test_omx_ralph_and_team_flags_are_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--omx", "--ralph", "--team", "--codex"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("omx"))
+        self.assertTrue(route.flags.get("ralph"))
+        self.assertTrue(route.flags.get("team"))
+        self.assertTrue(route.flags.get("codex"))
+
     def test_list_trees_alias_routes_to_list_trees_command(self) -> None:
         route = parse_route(["--list-trees"], env={})
         self.assertEqual(route.command, "list-trees")
