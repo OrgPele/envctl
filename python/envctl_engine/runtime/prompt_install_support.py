@@ -17,6 +17,8 @@ _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
 _CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
 _PROMPT_ARGUMENT_PLACEHOLDER = "$ARGUMENTS"
+_CODEX_SKILL_BODY_START = "<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->"
+_CODEX_SKILL_BODY_END = "<!-- ENVCTL_DIRECT_PROMPT_BODY_END -->"
 
 
 @dataclass(slots=True)
@@ -118,27 +120,6 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             ],
         )
 
-    if with_codex_skills and not _codex_skill_feature_enabled(env):
-        return _print_install_results(
-            preset=preset_label,
-            dry_run=dry_run,
-            json_output=json_output,
-            env=env,
-            results=[
-                PromptInstallResult(
-                    cli="codex",
-                    path="",
-                    status="failed",
-                    backup_path=None,
-                    message=(
-                        f"Codex skill installation is experimental; set {_CODEX_SKILL_FEATURE_FLAG}=true to use "
-                        "--with-codex-skills."
-                    ),
-                    kind="skill",
-                )
-            ],
-        )
-
     home = _user_home(runtime)
     selected_clis, invalid_results = _normalize_cli_targets(raw_cli)
     if not selected_clis and not invalid_results:
@@ -151,21 +132,11 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
                 message="No valid CLI targets were provided",
             )
         )
-    if with_codex_skills and "codex" not in selected_clis:
-        invalid_results.append(
-            PromptInstallResult(
-                cli="codex",
-                path="",
-                status="failed",
-                backup_path=None,
-                message="Codex skill installation requires --cli codex or --cli all.",
-                kind="skill",
-            )
-        )
     results: list[PromptInstallResult] = list(invalid_results)
     skill_results: list[PromptInstallResult] = []
+    prompt_target_clis = [cli_name for cli_name in selected_clis if cli_name != "codex"]
     plans, planning_failures = _build_install_plans(
-        selected_clis=selected_clis,
+        selected_clis=prompt_target_clis,
         presets=presets,
         home=home,
         env=env,
@@ -180,7 +151,7 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
             results=results,
         )
     skill_plans: list[CodexSkillInstallPlan] = []
-    if with_codex_skills and "codex" in selected_clis:
+    if "codex" in selected_clis:
         skill_plans, skill_failures = _build_codex_skill_install_plans(presets=presets, home=home, env=env)
         if skill_failures:
             skill_results.extend(skill_failures)
@@ -436,8 +407,12 @@ def resolve_codex_direct_prompt_body(
     if not codex_preset_uses_direct_submission(normalized_preset):
         raise LookupError(f"Preset is not configured for direct Codex submission: {normalized_preset}")
     home = _user_home_from_env(env)
+    skill_path = _codex_skill_markdown_path(preset=normalized_preset, home=home)
     target_path = _target_path(cli_name="codex", preset=normalized_preset, home=home, env=env)
     legacy_path = _legacy_codex_prompt_path(preset=normalized_preset, home=home)
+    if skill_path.is_file():
+        body = _extract_codex_skill_prompt_body(skill_path.read_text(encoding="utf-8"), preset=normalized_preset)
+        return _render_direct_prompt_arguments(body, arguments=arguments)
     if target_path.is_file():
         raw = target_path.read_text(encoding="utf-8")
         template = _parse_template(name=normalized_preset, raw=raw)
@@ -476,6 +451,22 @@ def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = Non
 
 def _legacy_codex_prompt_path(*, preset: str, home: Path) -> Path:
     return home / ".codex" / "prompts" / f"{preset}.md"
+
+
+def _codex_skill_markdown_path(*, preset: str, home: Path) -> Path:
+    metadata = _codex_skill_metadata(preset)
+    return _codex_skill_root(home=home) / metadata.skill_name / "SKILL.md"
+
+
+def _extract_codex_skill_prompt_body(raw: str, *, preset: str) -> str:
+    start = raw.find(_CODEX_SKILL_BODY_START)
+    end = raw.find(_CODEX_SKILL_BODY_END)
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"Installed Codex skill for {preset} is missing prompt body markers")
+    body = raw[start + len(_CODEX_SKILL_BODY_START):end].strip("\n")
+    if not body.strip():
+        raise ValueError(f"Installed Codex skill for {preset} is missing prompt body")
+    return body + "\n"
 
 
 def _user_home(runtime: Any) -> Path:
@@ -755,7 +746,9 @@ def _render_codex_skill_markdown(*, template: PromptTemplate, metadata: CodexSki
         f"# {metadata.display_name}\n\n"
         f"Use this skill explicitly with `{invocation}`.\n\n"
         f"{invocation_note}\n\n"
+        f"{_CODEX_SKILL_BODY_START}\n"
         f"{body}"
+        f"{_CODEX_SKILL_BODY_END}\n"
     )
 
 

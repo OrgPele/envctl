@@ -48,7 +48,7 @@ Current built-in presets:
 
 `implement_task` is the default preset used by the optional post-`--plan` cmux launch flow. For Codex, envctl resolves the preset from the envctl-owned Codex prompt directory and submits the prompt body directly. `implement_plan` remains available as a backward-compatible preset.
 
-All Codex presets now use the same direct-submission path. Install them with `envctl install-prompts --cli codex`, then edit the generated files in `~/.config/envctl/codex/prompts/` before launching them through envctl.
+All Codex presets now install as explicit-only skills. Run `envctl install-prompts --cli codex`, then edit the generated `SKILL.md` files under `~/.codex/skills/envctl-*` if you want to customize them for manual Codex use.
 
 If you want to compare the same workflows as Codex skills, enable the experimental flag and install the skill mirrors:
 

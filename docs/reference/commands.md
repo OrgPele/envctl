@@ -108,7 +108,7 @@ Behavior:
   - `create_plan`
   - `ship_release`
 - target roots:
-  - Codex: `~/.config/envctl/codex/prompts`
+  - Codex: `~/.codex/skills/envctl-*`
   - Claude Code: `~/.claude/commands`
   - OpenCode: `~/.config/opencode/commands`
 - existing files are overwritten in place after one confirmation prompt for the command
@@ -316,7 +316,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
 - OpenCode launches send `/<preset>`
-- Codex resolves the preset from `~/.config/envctl/codex/prompts/<preset>.md` and submits that prompt body directly
+- Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session

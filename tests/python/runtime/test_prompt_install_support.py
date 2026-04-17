@@ -44,7 +44,20 @@ class PromptInstallSupportTests(unittest.TestCase):
             skill_name = "envctl-review-task"
         if preset == "review_worktree_imp":
             skill_name = "envctl-review-worktree"
-        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+        return home / ".codex" / "skills" / skill_name / "SKILL.md"
+
+    @staticmethod
+    def _skill_body_wrapper(body: str) -> str:
+        return (
+            '---\n'
+            'name: "envctl-test"\n'
+            'description: "test"\n'
+            '---\n\n'
+            '# Test\n\n'
+            '<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->\n'
+            + body
+            + '\n<!-- ENVCTL_DIRECT_PROMPT_BODY_END -->\n'
+        )
 
     def test_install_prompts_dry_run_json_reports_all_targets_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -65,8 +78,6 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(payload["dry_run"])
             expected_presets = sorted(_available_presets())
             expected_paths = [
-                str(self._target(cli="codex", preset=preset, home=Path(tmpdir))) for preset in expected_presets
-            ] + [
                 str(self._target(cli="claude", preset=preset, home=Path(tmpdir))) for preset in expected_presets
             ] + [
                 str(self._target(cli="opencode", preset=preset, home=Path(tmpdir))) for preset in expected_presets
@@ -74,12 +85,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual([item["path"] for item in payload["results"]], expected_paths)
             self.assertEqual(
                 [item["cli"] for item in payload["results"]],
-                ["codex"] * len(expected_presets)
-                + ["claude"] * len(expected_presets)
+                ["claude"] * len(expected_presets)
                 + ["opencode"] * len(expected_presets),
             )
             self.assertTrue(all(item["status"] == "planned" for item in payload["results"]))
-            self.assertFalse(self._target(cli="codex", preset="implement_task", home=Path(tmpdir)).exists())
+            self.assertFalse(self._skill_target(home=Path(tmpdir), preset="implement_task").exists())
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
@@ -99,13 +109,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             payload = json.loads(buffer.getvalue())
             expected_presets = sorted(_available_presets())
             self.assertEqual(payload["preset"], "all")
+            self.assertEqual(payload["results"], [])
+            self.assertIn("skill_results", payload)
             self.assertEqual(
-                [item["path"] for item in payload["results"]],
-                [str(self._target(cli="codex", preset=preset, home=Path(tmpdir))) for preset in expected_presets],
-            )
-            self.assertEqual(
-                [item["message"] for item in payload["results"]],
-                [f"Would install {preset} for codex" for preset in expected_presets],
+                [item["path"] for item in payload["skill_results"]],
+                [str(self._skill_target(home=Path(tmpdir), preset=preset)) for preset in expected_presets],
             )
 
     def test_install_prompts_positional_all_installs_every_preset_for_selected_cli(self) -> None:
@@ -122,15 +130,15 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             rendered = buffer.getvalue()
-            self.assertIn("Would install implement_task for codex", rendered)
-            self.assertIn("Would install review_task_imp for codex", rendered)
-            self.assertIn("Would install review_worktree_imp for codex", rendered)
-            self.assertIn("Would install continue_task for codex", rendered)
-            self.assertIn("Would install finalize_task for codex", rendered)
-            self.assertIn("Would install merge_trees_into_dev for codex", rendered)
-            self.assertIn("Would install create_plan for codex", rendered)
-            self.assertIn("Would install implement_plan for codex", rendered)
-            self.assertIn("Would install ship_release for codex", rendered)
+            self.assertIn("Would install envctl-implement-task for codex from preset implement_task", rendered)
+            self.assertIn("Would install envctl-review-task for codex from preset review_task_imp", rendered)
+            self.assertIn("Would install envctl-review-worktree for codex from preset review_worktree_imp", rendered)
+            self.assertIn("Would install envctl-continue-task for codex from preset continue_task", rendered)
+            self.assertIn("Would install envctl-finalize-task for codex from preset finalize_task", rendered)
+            self.assertIn("Would install envctl-merge-trees-into-dev for codex from preset merge_trees_into_dev", rendered)
+            self.assertIn("Would install envctl-create-plan for codex from preset create_plan", rendered)
+            self.assertIn("Would install envctl-implement-plan for codex from preset implement_plan", rendered)
+            self.assertIn("Would install envctl-ship-release for codex from preset ship_release", rendered)
             self.assertEqual(rendered.count("codex: planned "), 9)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
@@ -150,23 +158,13 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(payload["preset"], "all")
             self.assertEqual(
                 [item["path"] for item in payload["results"]],
-                [
-                    str(self._target(cli="codex", preset="continue_task", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="create_plan", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="finalize_task", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="implement_plan", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="implement_task", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="merge_trees_into_dev", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="review_task_imp", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="review_worktree_imp", home=Path(tmpdir))),
-                    str(self._target(cli="codex", preset="ship_release", home=Path(tmpdir))),
-                ],
+                []
             )
 
     def test_install_prompts_prompts_once_and_overwrites_all_existing_targets_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = self._target(cli="codex", preset="implement_task", home=home)
+            codex_target = self._skill_target(home=home, preset="implement_task")
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             claude_target.parent.mkdir(parents=True, exist_ok=True)
@@ -186,14 +184,14 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             rendered = buffer.getvalue()
-            self.assertIn("codex: overwritten", rendered)
+            self.assertIn("codex: written", rendered)
             self.assertIn("claude: overwritten", rendered)
             self.assertEqual(prompt_mock.call_count, 1)
             prompt_text = prompt_mock.call_args.args[0]
             self.assertIn("Overwrite 2 existing prompt file(s)?", prompt_text)
-            self.assertIn("codex", prompt_text)
             self.assertIn("claude", prompt_text)
-            for target in (codex_target, claude_target):
+            self.assertIn("codex", prompt_text)
+            for target in (claude_target,):
                 written = target.read_text(encoding="utf-8")
                 self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
                 self.assertIn("Before any implementation work, run `git add .`", written)
@@ -202,7 +200,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old codex prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir, "ENVCTL_UI_HYPERLINK_MODE": "on"})
@@ -227,7 +225,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_decline_aborts_before_any_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            codex_target = self._target(cli="codex", preset="implement_task", home=home)
+            codex_target = self._skill_target(home=home, preset="implement_task")
             claude_target = home / ".claude" / "commands" / "implement_task.md"
             codex_target.parent.mkdir(parents=True, exist_ok=True)
             codex_target.write_text("old codex prompt\n", encoding="utf-8")
@@ -252,7 +250,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_yes_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -266,16 +264,16 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            by_path = {item["path"]: item for item in payload["results"]}
+            by_path = {item["path"]: item for item in payload["skill_results"]}
             self.assertEqual(by_path[str(target)]["status"], "overwritten")
             self.assertIsNone(by_path[str(target)]["backup_path"])
-            self.assertTrue((target.parent / "review_task_imp.md").exists())
-            self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
+            self.assertTrue((target.parent.parent / "envctl-review-task" / "SKILL.md").exists())
+            self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", target.read_text(encoding="utf-8"))
 
     def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -289,15 +287,15 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            by_path = {item["path"]: item for item in payload["results"]}
+            by_path = {item["path"]: item for item in payload["skill_results"]}
             self.assertEqual(by_path[str(target)]["status"], "overwritten")
             self.assertIsNone(by_path[str(target)]["backup_path"])
-            self.assertTrue((target.parent / "review_worktree_imp.md").exists())
+            self.assertTrue((target.parent.parent / "envctl-review-worktree" / "SKILL.md").exists())
 
     def test_install_prompts_json_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -344,7 +342,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -367,7 +365,7 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_install_prompts_dry_run_existing_target_does_not_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            target = self._target(cli="codex", preset="implement_task", home=home)
+            target = self._skill_target(home=home, preset="implement_task")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
             runtime = SimpleNamespace(env={"HOME": tmpdir})
@@ -381,7 +379,7 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            by_path = {item["path"]: item for item in payload["results"]}
+            by_path = {item["path"]: item for item in payload["skill_results"]}
             self.assertEqual(by_path[str(target)]["status"], "planned")
             self.assertIsNone(by_path[str(target)]["backup_path"])
             self.assertEqual(target.read_text(encoding="utf-8"), "old prompt\n")
@@ -403,8 +401,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             results = payload["results"]
             self.assertEqual(results[0]["cli"], "unknown")
             self.assertEqual(results[0]["status"], "failed")
-            self.assertEqual(results[1]["cli"], "codex")
-            self.assertEqual(results[1]["status"], "planned")
+            self.assertEqual(payload["skill_results"][0]["cli"], "codex")
+            self.assertEqual(payload["skill_results"][0]["status"], "planned")
 
     def test_install_prompts_rejects_missing_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -442,7 +440,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})
             route = parse_route(
-                ["install-prompts", "--cli", "codex", "--with-codex-skills", "--json"],
+                ["install-prompts", "--cli", "codex", "--json"],
                 env={},
             )
 
@@ -450,10 +448,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 code = run_install_prompts_command(runtime, route)
 
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["results"][0]["kind"], "skill")
-            self.assertIn("ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true", payload["results"][0]["message"])
+            self.assertIn("skill_results", payload)
+            self.assertEqual(payload["results"], [])
+            self.assertEqual(payload["skill_results"][0]["kind"], "skill")
 
     def test_install_prompts_can_install_feature_gated_codex_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -464,7 +463,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 }
             )
             route = parse_route(
-                ["install-prompts", "--cli", "codex", "--preset", "implement_task", "--with-codex-skills", "--json"],
+                ["install-prompts", "--cli", "codex", "--preset", "implement_task", "--json"],
                 env={},
             )
 
@@ -483,6 +482,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn('name: "envctl-implement-task"', written)
             self.assertIn("Use this skill explicitly with `$envctl-implement-task`.", written)
+            self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", written)
             self.assertIn("You are implementing real code, end-to-end.", written)
             openai_yaml = target.parent / "agents" / "openai.yaml"
             self.assertTrue(openai_yaml.exists())
@@ -516,7 +516,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["preset"], "implement_plan")
-            self.assertEqual(payload["results"][0]["message"], "Would install implement_plan for codex")
+            self.assertEqual(payload["results"], [])
+            self.assertEqual(payload["skill_results"][0]["message"], "Would install envctl-implement-plan for codex from preset implement_plan")
 
     def test_renderers_produce_expected_target_shapes(self) -> None:
         template = _load_template("implement_task")
@@ -630,8 +631,8 @@ class PromptInstallSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             payload = json.loads(buffer.getvalue())
-            expected = self._target(cli="codex", preset="ship_release", home=Path(tmpdir))
-            self.assertEqual(payload["results"][0]["path"], str(expected))
+            expected = self._skill_target(home=Path(tmpdir), preset="ship_release")
+            self.assertEqual(payload["skill_results"][0]["path"], str(expected))
             self.assertTrue(expected.exists())
             self.assertIn("shipping a production release end-to-end", expected.read_text(encoding="utf-8"))
 
