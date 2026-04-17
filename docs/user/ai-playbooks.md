@@ -128,6 +128,8 @@ Then run:
 
 ```bash
 envctl --plan backend/checkout
+# or, for an OMX-managed Codex session that creates its own tmux session/HUD:
+envctl --plan backend/checkout --omx
 ```
 
 ## Compare Implementations

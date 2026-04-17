@@ -1,5 +1,7 @@
 from __future__ import annotations
 import json
+import os
+import pty
 import re
 import shlex
 import subprocess
@@ -8,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
@@ -20,7 +22,6 @@ from envctl_engine.runtime.codex_tmux_support import (
     _tmux_session_exists,
 )
 from envctl_engine.runtime.prompt_install_support import (
-    codex_preset_uses_direct_submission,
     resolve_codex_direct_prompt_body,
     resolve_opencode_direct_prompt_body,
 )
@@ -45,6 +46,9 @@ _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
 _TMUX_WINDOW_READY_TIMEOUT_SECONDS = 1.0
 _TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS = 0.05
+_OMX_SESSION_READY_TIMEOUT_SECONDS = 12.0
+_OMX_SESSION_READY_POLL_INTERVAL_SECONDS = 0.1
+_OMX_SESSION_STATE_RELATIVE_PATH = Path(".omx") / "state" / "session.json"
 _CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
@@ -116,7 +120,7 @@ class PlanSelectionResult:
 @dataclass(slots=True, frozen=True)
 class PlanAgentLaunchConfig:
     enabled: bool
-    transport: Literal["cmux", "tmux"]
+    transport: Literal["cmux", "tmux", "omx"]
     cli: str
     cli_command: str
     preset: str
@@ -273,7 +277,11 @@ def resolve_plan_agent_launch_config(
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
-    transport: Literal["cmux", "tmux"] = "tmux" if bool(route_flags.get("tmux")) else "cmux"
+    transport: Literal["cmux", "tmux", "omx"] = (
+        "omx"
+        if bool(route_flags.get("omx"))
+        else ("tmux" if bool(route_flags.get("tmux")) else "cmux")
+    )
     cli = str(
         "opencode"
         if bool(route_flags.get("opencode"))
@@ -316,7 +324,7 @@ def resolve_plan_agent_launch_config(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or transport == "tmux"
+    ) or bool(cmux_workspace) or transport in {"tmux", "omx"}
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
@@ -369,6 +377,8 @@ def plan_agent_launch_prereq_commands(
     launch_config = resolve_plan_agent_launch_config(config, env, route=route)
     if not launch_config.enabled:
         return ()
+    if launch_config.transport == "omx":
+        return ("omx", "tmux", "script", "codex")
     cli_executable = _command_executable(launch_config.cli_command)
     launcher = "tmux" if launch_config.transport == "tmux" else "cmux"
     if not cli_executable:
@@ -411,7 +421,10 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         return payload
     if not launch_config.enabled:
         return payload
-    if _missing_required_cmux_context(runtime, launch_config):
+    if launch_config.transport == "omx" and launch_config.cli != "codex":
+        payload["reason"] = "unsupported_omx_cli"
+        return payload
+    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
         payload["reason"] = "missing_cmux_context"
         return payload
     payload["reason"] = "awaiting_new_worktrees"
@@ -560,6 +573,16 @@ def launch_plan_agent_terminals(
             **base_payload,
         )
         return PlanAgentLaunchResult(status="failed", reason="missing_executables")
+    if launch_config.transport == "omx":
+        return _launch_plan_agent_omx_terminals(
+            runtime,
+            route=route,
+            launch_config=launch_config,
+            workflow=workflow,
+            created_worktrees=created_worktrees,
+            base_payload=base_payload,
+            prompt_on_existing=not bool(getattr(route, "flags", {}).get("batch")),
+        )
     if launch_config.transport == "tmux":
         return _launch_plan_agent_tmux_terminals(
             runtime,
@@ -645,7 +668,7 @@ def _launch_plan_agent_tmux_terminals(
     launch_config: PlanAgentLaunchConfig,
     workflow: _PlanAgentWorkflow,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
-    base_payload: dict[str, object],
+    base_payload: Mapping[str, object],
     prompt_on_existing: bool,
 ) -> PlanAgentLaunchResult:
     repo_root = Path(runtime.config.base_dir).resolve()
@@ -756,6 +779,215 @@ def _launch_plan_agent_tmux_terminals(
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
     _print_launch_summary(f"Plan agent launch prepared {len(launched)} tmux session(s).")
+    return PlanAgentLaunchResult(
+        status="launched",
+        reason="launched",
+        outcomes=tuple(outcomes),
+        attach_target=attach_target,
+    )
+
+
+def _launch_plan_agent_omx_terminals(
+    runtime: Any,
+    *,
+    route: object,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    created_worktrees: tuple[CreatedPlanWorktree, ...],
+    base_payload: Mapping[str, object],
+    prompt_on_existing: bool,
+) -> PlanAgentLaunchResult:
+    if launch_config.cli != "codex":
+        runtime._emit("planning.agent_launch.failed", reason="unsupported_omx_cli", **base_payload)
+        return PlanAgentLaunchResult(status="failed", reason="unsupported_omx_cli")
+    repo_root = Path(runtime.config.base_dir).resolve()
+    attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
+    route_flags = getattr(route, "flags", {}) or {}
+    create_new_session = bool(route_flags.get("tmux_new_session"))
+    existing_attach_target = _find_existing_omx_attach_target(
+        runtime,
+        repo_root=repo_root,
+        created_worktrees=created_worktrees,
+    )
+    if existing_attach_target is not None:
+        if not create_new_session and _should_prompt_existing_tmux_session(runtime, prompt_on_existing=prompt_on_existing):
+            action = _prompt_existing_tmux_session_action(runtime, attach_target=existing_attach_target)
+            if action == "attach":
+                runtime._emit(
+                    "planning.agent_launch.skipped",
+                    reason="existing_omx_session_attach",
+                    session_name=existing_attach_target.session_name,
+                    attach_command=" ".join(existing_attach_target.attach_command),
+                    **base_payload,
+                )
+                return PlanAgentLaunchResult(
+                    status="failed",
+                    reason="existing_omx_session_attach",
+                    outcomes=(),
+                    attach_target=existing_attach_target,
+                )
+            create_new_session = True
+        attach_command = " ".join(existing_attach_target.attach_command)
+        if not create_new_session:
+            reason = f"An OMX-managed tmux session already exists for this plan. Attach with: {attach_command}"
+            runtime._emit(
+                "planning.agent_launch.skipped",
+                reason="existing_omx_session",
+                session_name=existing_attach_target.session_name,
+                attach_command=attach_command,
+                **base_payload,
+            )
+            return PlanAgentLaunchResult(
+                status="failed",
+                reason=reason,
+                outcomes=(),
+                attach_target=PlanAgentAttachTarget(
+                    repo_root=existing_attach_target.repo_root,
+                    session_name=existing_attach_target.session_name,
+                    window_name=existing_attach_target.window_name,
+                    attach_via=existing_attach_target.attach_via,
+                    attach_command=existing_attach_target.attach_command,
+                    new_session_command=_new_session_command_for_route(
+                        runtime,
+                        route=route,
+                        launch_config=launch_config,
+                        created_worktrees=created_worktrees,
+                    ),
+                ),
+            )
+    runtime._emit(
+        "planning.agent_launch.evaluate",
+        reason="ready",
+        preset=launch_config.preset,
+        **base_payload,
+    )
+    runtime._emit(
+        "planning.agent_launch.workflow_selected",
+        warning=launch_config.codex_cycles_warning,
+        **base_payload,
+    )
+    outcomes: list[PlanAgentLaunchOutcome] = []
+    first_attach_target: PlanAgentAttachTarget | None = None
+    for worktree in created_worktrees:
+        previous_session_id = "" if create_new_session else _read_omx_session_id(worktree.root)
+        spawn_error = _spawn_omx_session_for_worktree(runtime, launch_config=launch_config, worktree=worktree)
+        if spawn_error is not None:
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason="omx_launch_failed",
+                worktree=worktree.name,
+                error=spawn_error,
+                transport="omx",
+            )
+            outcomes.append(
+                PlanAgentLaunchOutcome(
+                    worktree_name=worktree.name,
+                    worktree_root=worktree.root,
+                    surface_id=None,
+                    status="failed",
+                    reason=spawn_error,
+                )
+            )
+            continue
+        attach_target = _wait_for_omx_attach_target(
+            runtime,
+            repo_root=repo_root,
+            worktree=worktree,
+            previous_session_id=previous_session_id,
+            attach_via=attach_via,
+        )
+        if attach_target is None:
+            reason = "omx_session_unavailable"
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason=reason,
+                worktree=worktree.name,
+                transport="omx",
+            )
+            outcomes.append(
+                PlanAgentLaunchOutcome(
+                    worktree_name=worktree.name,
+                    worktree_root=worktree.root,
+                    surface_id=None,
+                    status="failed",
+                    reason=reason,
+                )
+            )
+            continue
+        runtime._emit(
+            "planning.agent_launch.surface_created",
+            session_name=attach_target.session_name,
+            window_name=attach_target.window_name,
+            worktree=worktree.name,
+            source="omx_session",
+            transport="omx",
+        )
+        error = _run_tmux_existing_session_workflow(
+            runtime,
+            session_name=attach_target.session_name,
+            window_name=attach_target.window_name,
+            launch_config=launch_config,
+            workflow=workflow,
+            worktree=worktree,
+        )
+        if error is not None:
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason="bootstrap_failed",
+                session_name=attach_target.session_name,
+                window_name=attach_target.window_name,
+                worktree=worktree.name,
+                error=error,
+                transport="omx",
+            )
+            outcomes.append(
+                PlanAgentLaunchOutcome(
+                    worktree_name=worktree.name,
+                    worktree_root=worktree.root,
+                    surface_id=None,
+                    status="failed",
+                    reason=error,
+                )
+            )
+            continue
+        runtime._emit(
+            "planning.agent_launch.command_sent",
+            session_name=attach_target.session_name,
+            window_name=attach_target.window_name,
+            worktree=worktree.name,
+            preset=launch_config.preset,
+            workflow_mode=workflow.mode,
+            codex_cycles=workflow.codex_cycles,
+            transport="omx",
+        )
+        outcomes.append(
+            PlanAgentLaunchOutcome(
+                worktree_name=worktree.name,
+                worktree_root=worktree.root,
+                surface_id=None,
+                status="launched",
+            )
+        )
+        if first_attach_target is None:
+            first_attach_target = attach_target
+    _persist_runtime_events_snapshot(runtime)
+    launched = [item for item in outcomes if item.status == "launched"]
+    failed = [item for item in outcomes if item.status == "failed"]
+    attach_target = first_attach_target or existing_attach_target
+    if failed and launched:
+        _print_launch_summary(
+            f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}."
+        )
+        return PlanAgentLaunchResult(
+            status="partial",
+            reason="partial_failure",
+            outcomes=tuple(outcomes),
+            attach_target=attach_target,
+        )
+    if failed:
+        _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
+        return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
+    _print_launch_summary(f"Plan agent launch prepared {len(launched)} OMX-managed tmux session(s).")
     return PlanAgentLaunchResult(
         status="launched",
         reason="launched",
@@ -896,7 +1128,7 @@ def _new_session_command_for_route(
         str(Path(runtime.config.base_dir).resolve() / "bin" / "envctl"),
         "--plan",
         selector,
-        "--tmux",
+        "--omx" if launch_config.transport == "omx" else "--tmux",
     ]
     if launch_config.cli == "opencode":
         command.append("--opencode")
@@ -997,7 +1229,10 @@ def _tmux_window_name_for_worktree(worktree: CreatedPlanWorktree) -> str:
 
 
 def _tmux_target(session_name: str, window_name: str) -> str:
-    return f"{session_name}:{window_name}"
+    normalized_window = str(window_name).strip()
+    if not normalized_window:
+        return session_name
+    return f"{session_name}:{normalized_window}"
 
 
 def _ensure_tmux_window(
@@ -1206,6 +1441,72 @@ def _read_tmux_screen(runtime: Any, *, session_name: str, window_name: str) -> s
         if result.returncode == 0:
             return str(getattr(result, "stdout", ""))
     return ""
+
+
+def _run_tmux_existing_session_workflow(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    prompt_text, resolution_error = _workflow_step_prompt_text(
+        runtime,
+        launch_config=launch_config,
+        cli=launch_config.cli,
+        step=workflow.steps[0],
+    )
+    if resolution_error is not None:
+        return resolution_error
+    submit_error = _submit_tmux_prompt_workflow_step(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        prompt_text=prompt_text,
+        cli=launch_config.cli,
+    )
+    if submit_error is not None:
+        return submit_error
+    queued_steps = workflow.steps[1:]
+    if queued_steps and launch_config.cli == "codex":
+        queue_error_reason = _queue_tmux_codex_workflow_steps(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree,
+            workflow=workflow,
+            queued_steps=queued_steps,
+            launch_config=launch_config,
+            cli=launch_config.cli,
+        )
+        if queue_error_reason is not None:
+            runtime._emit(
+                "planning.agent_launch.workflow_queue_failed",
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+                transport="omx",
+            )
+            runtime._emit(
+                "planning.agent_launch.workflow_fallback",
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+                transport="omx",
+            )
+            return None
+    return None
 
 
 def _launch_tmux_cli_bootstrap_commands(
@@ -2774,15 +3075,18 @@ def _command_executable(raw_command: str) -> str | None:
 
 
 def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig) -> list[str]:
-    required = ["tmux" if launch_config.transport == "tmux" else "cmux"]
-    cli_executable = _command_executable(launch_config.cli_command)
-    shell_executable = _command_executable(launch_config.shell)
-    if cli_executable:
-        required.append(cli_executable)
-    if shell_executable:
-        required.append(shell_executable)
-    if launch_config.cli not in _SUPPORTED_PLAN_AGENT_CLIS and not _command_executable(launch_config.cli_command):
-        required.append(launch_config.cli)
+    if launch_config.transport == "omx":
+        required = ["omx", "tmux", "script", "codex"]
+    else:
+        required = ["tmux" if launch_config.transport == "tmux" else "cmux"]
+        cli_executable = _command_executable(launch_config.cli_command)
+        shell_executable = _command_executable(launch_config.shell)
+        if cli_executable:
+            required.append(cli_executable)
+        if shell_executable:
+            required.append(shell_executable)
+        if launch_config.cli not in _SUPPORTED_PLAN_AGENT_CLIS and not _command_executable(launch_config.cli_command):
+            required.append(launch_config.cli)
     missing: list[str] = []
     for command in required:
         if command in missing:
@@ -2791,6 +3095,184 @@ def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig)
             continue
         missing.append(command)
     return missing
+
+
+def _omx_session_state_path(worktree_root: Path) -> Path:
+    return Path(worktree_root).resolve() / _OMX_SESSION_STATE_RELATIVE_PATH
+
+
+def _read_omx_session_payload(worktree_root: Path) -> dict[str, object] | None:
+    path = _omx_session_state_path(worktree_root)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _read_omx_session_id(worktree_root: Path) -> str:
+    payload = _read_omx_session_payload(worktree_root) or {}
+    value = payload.get("session_id")
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def _sanitize_omx_tmux_token(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", str(value).strip().lower()).strip("-")
+    return cleaned or "unknown"
+
+
+def _git_branch_name(cwd: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(cwd),
+        env=dict(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=2.0,
+    )
+    if result.returncode != 0:
+        return None
+    branch = str(result.stdout).strip()
+    return branch or None
+
+
+def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
+    cwd = Path(worktree_root).resolve()
+    parent_path = cwd.parent
+    parent_dir = parent_path.name
+    dir_name = cwd.name
+    grandparent_path = parent_path.parent
+    grandparent_dir = grandparent_path.name
+    if parent_dir.endswith(".omx-worktrees"):
+        repo_dir = parent_dir[: -len(".omx-worktrees")]
+    elif parent_dir == "worktrees" and grandparent_dir == ".omx":
+        repo_dir = grandparent_path.parent.name
+    else:
+        repo_dir = None
+    dir_token = (
+        _sanitize_omx_tmux_token(f"{repo_dir}-{dir_name}") if repo_dir else _sanitize_omx_tmux_token(dir_name)
+    )
+    branch_token = _sanitize_omx_tmux_token(_git_branch_name(cwd) or "detached")
+    session_token = _sanitize_omx_tmux_token(str(session_id).replace("omx-", "", 1))
+    prefix = f"omx-{dir_token}-{branch_token}"
+    name = f"{prefix}-{session_token}"
+    if len(name) <= 120:
+        return name
+    prefix_budget = max(4, 120 - len(session_token) - 1)
+    trimmed_prefix = prefix[:prefix_budget].rstrip("-")
+    return f"{trimmed_prefix}-{session_token}"[:120]
+
+
+def _spawn_omx_session_for_worktree(
+    runtime: Any,
+    *,
+    launch_config: PlanAgentLaunchConfig,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    cli_command = shlex.split(launch_config.cli_command) if str(launch_config.cli_command).strip() else []
+    wants_bypass = any(token == _CODEX_BYPASS_FLAGS for token in cli_command[1:])
+    passthrough = [token for token in cli_command[1:] if token != _CODEX_BYPASS_FLAGS]
+    command = ["omx", "--tmux"]
+    if wants_bypass:
+        command.append("--madmax")
+    if passthrough:
+        command.append("--")
+        command.extend(passthrough)
+    env = dict(getattr(runtime, "env", {}))
+    for key in list(env):
+        if key.startswith("OMX_"):
+            env.pop(key, None)
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
+    wrapped_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
+    master_fd, slave_fd = pty.openpty()
+    try:
+        subprocess.Popen(
+            wrapped_command,
+            cwd=str(Path(worktree.root).resolve()),
+            env=env,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        os.close(master_fd)
+        os.close(slave_fd)
+        return str(exc)
+    os.close(master_fd)
+    os.close(slave_fd)
+    return None
+
+
+def _find_existing_omx_attach_target(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    created_worktrees: tuple[CreatedPlanWorktree, ...],
+) -> PlanAgentAttachTarget | None:
+    attach_via = "attach-session"
+    for worktree in created_worktrees:
+        payload = _read_omx_session_payload(worktree.root) or {}
+        session_id = str(payload.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        candidates = []
+        native_session_id = str(payload.get("native_session_id") or "").strip()
+        if native_session_id:
+            candidates.append(native_session_id)
+        candidates.append(_omx_tmux_session_name(worktree.root, session_id))
+        for candidate in candidates:
+            if not candidate or not _tmux_session_exists(runtime, candidate):
+                continue
+            return PlanAgentAttachTarget(
+                repo_root=repo_root,
+                session_name=candidate,
+                window_name="",
+                attach_via=attach_via,
+                attach_command=("tmux", attach_via, "-t", candidate),
+            )
+    return None
+
+
+def _wait_for_omx_attach_target(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    worktree: CreatedPlanWorktree,
+    previous_session_id: str,
+    attach_via: str,
+) -> PlanAgentAttachTarget | None:
+    deadline = time.monotonic() + _OMX_SESSION_READY_TIMEOUT_SECONDS
+    previous = str(previous_session_id).strip()
+    while time.monotonic() < deadline:
+        payload = _read_omx_session_payload(worktree.root) or {}
+        session_id = str(payload.get("session_id") or "").strip()
+        if not session_id or (previous and session_id == previous):
+            time.sleep(_OMX_SESSION_READY_POLL_INTERVAL_SECONDS)
+            continue
+        candidates = []
+        native_session_id = str(payload.get("native_session_id") or "").strip()
+        if native_session_id:
+            candidates.append(native_session_id)
+        candidates.append(_omx_tmux_session_name(worktree.root, session_id))
+        for candidate in candidates:
+            if not candidate or not _tmux_session_exists(runtime, candidate):
+                continue
+            return PlanAgentAttachTarget(
+                repo_root=repo_root,
+                session_name=candidate,
+                window_name="",
+                attach_via=attach_via,
+                attach_command=("tmux", attach_via, "-t", candidate),
+            )
+        time.sleep(_OMX_SESSION_READY_POLL_INTERVAL_SECONDS)
+    return None
 
 
 def _cli_ready_delay_seconds(cli: str) -> float:

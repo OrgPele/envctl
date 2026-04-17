@@ -260,14 +260,15 @@ Commit defaults:
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
 - OpenCode launches send `/<preset>`
 - Codex resolves the preset from `~/.config/envctl/codex/prompts/<preset>.md` and submits that prompt body directly
-- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
+- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
-- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text
+- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session
 - when enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123` targets an explicit cmux workspace and also enables the feature
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title
