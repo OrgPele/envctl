@@ -32,7 +32,7 @@ Notes:
 - this command is intentionally unavailable inside dashboard interactive mode
 - the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
 - `--with-codex-skills` is experimental and only works when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true`
-- the experimental Codex skill mirrors install as explicit-only skills under `~/.agents/skills/envctl-*`
+- the experimental Codex skill mirrors install as explicit-only skills under `~/.codex/skills/envctl-*`
 
 Current built-in presets:
 

@@ -44,7 +44,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             skill_name = "envctl-review-task"
         if preset == "review_worktree_imp":
             skill_name = "envctl-review-worktree"
-        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+        return home / ".codex" / "skills" / skill_name / "SKILL.md"
 
     def test_install_prompts_dry_run_json_reports_all_targets_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -454,6 +454,32 @@ class PromptInstallSupportTests(unittest.TestCase):
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["results"][0]["kind"], "skill")
             self.assertIn("ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true", payload["results"][0]["message"])
+
+    def test_install_prompts_dry_run_reports_codex_skill_targets_under_codex_skills_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(
+                env={
+                    "HOME": tmpdir,
+                    "ENVCTL_EXPERIMENTAL_CODEX_SKILLS": "true",
+                }
+            )
+            route = parse_route(
+                ["install-prompts", "--cli", "codex", "--preset", "implement_task", "--with-codex-skills", "--dry-run", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertIn("skill_results", payload)
+            self.assertEqual(len(payload["skill_results"]), 1)
+            skill_result = payload["skill_results"][0]
+            self.assertEqual(skill_result["kind"], "skill")
+            self.assertEqual(skill_result["status"], "planned")
+            self.assertEqual(skill_result["path"], str(self._skill_target(home=Path(tmpdir), preset="implement_task")))
 
     def test_install_prompts_can_install_feature_gated_codex_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
