@@ -90,7 +90,7 @@ Behavior:
 - interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
 - Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
 - experimental Codex skill mirrors are available only when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true` and you pass `--with-codex-skills`
-- when enabled, envctl also installs explicit-only Codex skills under `~/.agents/skills/envctl-*`
+- when enabled, envctl also installs explicit-only Codex skills under `~/.codex/skills/envctl-*`
 
 ## Main Runtime Commands
 
@@ -260,14 +260,19 @@ Commit defaults:
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
+- `envctl --plan <selector> --omx --ralph` enters the Ralph OMX workflow inside that OMX-managed Codex session
+- `envctl --plan <selector> --omx --team` enters the Team OMX workflow inside that OMX-managed Codex session
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
 - OpenCode launches send `/<preset>`
 - Codex resolves the preset from `~/.config/envctl/codex/prompts/<preset>.md` and submits that prompt body directly
-- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface
+- `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
-- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text
+- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session
+- `--ralph` and `--team` are OMX-only launch modifiers; using them without `--omx` fails fast
+- OMX-managed Team launches force `OMX_TEAM_WORKER_LAUNCH_ARGS=--dangerously-bypass-approvals-and-sandbox` so the worker lanes stay non-sandboxed too
 - when enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123` targets an explicit cmux workspace and also enables the feature
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title

@@ -644,7 +644,7 @@ def _install_codex_skill(*, plan: CodexSkillInstallPlan, dry_run: bool) -> Promp
 
 
 def _codex_skill_root(*, home: Path) -> Path:
-    return home / ".agents" / "skills"
+    return home / ".codex" / "skills"
 
 
 def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:

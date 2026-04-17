@@ -25,7 +25,7 @@ class CommandExitCodeTests(unittest.TestCase):
             skill_name = "envctl-review-task"
         if preset == "review_worktree_imp":
             skill_name = "envctl-review-worktree"
-        return home / ".agents" / "skills" / skill_name / "SKILL.md"
+        return home / ".codex" / "skills" / skill_name / "SKILL.md"
 
     def test_help_returns_zero(self) -> None:
         with (
