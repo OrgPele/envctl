@@ -1,0 +1,1 @@
+This is a tracked dummy file for repository structure tests.
