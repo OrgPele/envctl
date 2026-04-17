@@ -115,6 +115,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 [item["path"] for item in payload["skill_results"]],
                 [str(self._skill_target(home=Path(tmpdir), preset=preset)) for preset in expected_presets],
             )
+            self.assertIn("guidance", payload)
+            self.assertTrue(all(entry["installed_as"] == "skill" for entry in payload["guidance"]))
 
     def test_install_prompts_positional_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -338,6 +340,32 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("\x1b]8;;file://", rendered)
         self.assertIn("/tmp/prompt.md", strip_ansi(rendered))
         self.assertIn("/tmp/prompt.md.bak", strip_ansi(rendered))
+
+    def test_non_json_install_results_print_guidance_for_codex_skills(self) -> None:
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = _print_install_results(
+                preset="implement_task",
+                dry_run=False,
+                json_output=False,
+                env={},
+                results=[],
+                skill_results=[
+                    PromptInstallResult(
+                        cli="codex",
+                        kind="skill",
+                        path="/tmp/.codex/skills/envctl-implement-task/SKILL.md",
+                        status="written",
+                        backup_path=None,
+                        message="Installed skill",
+                    )
+                ],
+            )
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("manual invocation $envctl-implement-task", rendered)
+        self.assertIn("envctl-managed plan launches submit the rendered workflow automatically", rendered)
 
     def test_install_prompts_non_tty_overwrite_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -672,6 +700,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("one Codex command and one OpenCode command", plan_prompt.body)
         self.assertIn("one tmux Codex command and one OMX-managed Codex command", plan_prompt.body)
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
+        self.assertIn("keep research narrow", plan_prompt.body)
+        self.assertIn("CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH", plan_prompt.body)
+        self.assertIn("Do not run parent-directory or sibling-repo searches such as `find ..`", plan_prompt.body)
+        self.assertIn("If the user explicitly asks for a light/quick/minimal planning pass", plan_prompt.body)
+        self.assertIn("Review todo/plans/README.md if it exists", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

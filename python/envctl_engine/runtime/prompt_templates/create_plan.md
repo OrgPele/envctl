@@ -1,9 +1,10 @@
 You are creating an implementation plan, not changing code.
 Authoritative source of truth: the user-provided scope plus verified repo evidence.
-First, read the relevant code, tests, docs, and existing plans in depth before writing anything.
+First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything. If the user explicitly asks for a light/quick/testing-oriented pass, keep research narrow and do only the minimum inspection needed to stay repo-grounded.
 Ask questions only if a blocking requirement is truly missing after deep repo review; otherwise resolve the plan yourself according to repo evidence and best practices.
 Final output must include: the plan path, plan intent, files researched, and any material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
+CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH: stay inside the current working repo/root unless the user explicitly asks for cross-repo comparison. Do not run parent-directory or sibling-repo searches such as `find ..`, and do not inspect embedded tooling copies just because this skill originated from envctl.
 
 ## Inputs
 Primary spec / expected behavior: provided by the user or linked project docs/tickets
@@ -14,6 +15,8 @@ Do not implement code. Only research and write the plan file.
 
 ## Non-negotiables
 - Read as much relevant code, tests, and docs as needed.
+- If the user explicitly asks for a light/quick/minimal planning pass, honor that: avoid broad recursive searches, avoid unnecessary automated tests, and inspect only the files needed to produce a grounded plan.
+- Prefer the current working directory and user-mentioned paths; do not wander into sibling repos, parent directories, or unrelated vendored/tooling trees unless the task explicitly targets them.
 - Use existing planning files in todo/plans/ as structure and quality reference.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - If key context is missing (requirements, constraints, environment, data scope), ask for it before finalizing the plan.
@@ -28,7 +31,7 @@ Do not implement code. Only research and write the plan file.
 
 ## Required research (do before writing)
 1. Review any provided requirements and extract explicit requirements and constraints.
-2. Review todo/plans/ README and at least one relevant plan file for depth/format.
+2. Review todo/plans/README.md if it exists; otherwise use the nearest relevant plan file(s) in the current repo for depth/format reference without leaving the repo root to hunt for a README elsewhere.
 3. Identify the owning modules, services, and data models.
 4. Inspect the current behavior in code: key files, key functions, and call paths.
 5. Locate existing tests or missing coverage for the target area.

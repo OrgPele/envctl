@@ -9,10 +9,11 @@ from typing import Any
 from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state, managed_values_to_payload
 from envctl_engine.planning import (
+    PlanProjectPrediction,
     filter_projects_for_plan,
     list_planning_files,
+    predict_plan_projects,
     resolve_planning_files,
-    select_projects_for_plan_files,
 )
 from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
 from envctl_engine.runtime.command_router import list_supported_commands, parse_route
@@ -73,7 +74,8 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
         return 0
 
     preselected: set[str] = set()
-    running: set[str] = set()
+    state_present: set[str] = set()
+    services_running: set[str] = set()
     if mode == "trees":
         startup = getattr(runtime, "startup_orchestrator", None)
         if startup is not None:
@@ -82,7 +84,8 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
             )
         state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
         if state is not None:
-            running = set(_state_project_names_impl(runtime=runtime, state=state))
+            state_present = set(_state_project_names_impl(runtime=runtime, state=state))
+            services_running = _running_tree_project_names(runtime=runtime, state=state)
 
     payload = {
         "mode": mode,
@@ -93,8 +96,11 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
                 "name": project.name,
                 "root": str(getattr(project, "root", "")),
                 "ports": {name: int(plan.final) for name, plan in getattr(project, "ports", {}).items()},
+                "selected": project.name in preselected,
                 "preselected": project.name in preselected,
-                "running": project.name in running,
+                "state_present": project.name in state_present,
+                "services_running": project.name in services_running,
+                "running": project.name in services_running,
             },
         ),
     }
@@ -111,6 +117,52 @@ def _parallel_project_payloads(projects: list[object], fn) -> list[dict[str, obj
         for future in concurrent.futures.as_completed(future_map):
             results[future_map[future]] = future.result()
     return [result for result in results if isinstance(result, dict)]
+
+
+def _running_tree_project_names(*, runtime: Any, state: Any) -> set[str]:
+    running: set[str] = set()
+    services = getattr(state, "services", {})
+    if not isinstance(services, dict):
+        return running
+    for service_name, record in services.items():
+        project_name = runtime._project_name_from_service(str(service_name))
+        normalized = str(project_name).strip()
+        if not normalized:
+            continue
+        status = str(getattr(record, "status", "") or "").strip().lower()
+        if status not in {"running", "healthy"}:
+            continue
+        running.add(normalized)
+    return running
+
+
+def _prediction_payloads(
+    runtime: Any,
+    predictions: list[PlanProjectPrediction],
+) -> tuple[list[dict[str, object]], list[object]]:
+    if not predictions:
+        return [], []
+    raw_projects = [(prediction.name, prediction.root) for prediction in predictions]
+    contexts = runtime._contexts_from_raw_projects(raw_projects)
+    by_name = {str(getattr(context, "name", "")): context for context in contexts}
+    payloads: list[dict[str, object]] = []
+    ordered_contexts: list[object] = []
+    for prediction in predictions:
+        context = by_name.get(prediction.name)
+        if context is None:
+            continue
+        ordered_contexts.append(context)
+        payloads.append(
+            {
+                "name": prediction.name,
+                "root": str(prediction.root),
+                "plan_file": prediction.plan_file,
+                "action": prediction.action,
+                "exists": prediction.action == "reuse",
+                "ports": {name: int(plan.final) for name, plan in getattr(context, "ports", {}).items()},
+            }
+        )
+    return payloads, ordered_contexts
 
 
 def _print_config(runtime: Any, *, json_output: bool) -> int:
@@ -235,6 +287,7 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         "preselected_projects": [],
     }
 
+    predicted_contexts: list[object] = []
     if getattr(startup_route, "command", "") == "plan":
         planning_files = list_planning_files(runtime.config.planning_dir)
         selection_raw = ",".join(getattr(startup_route, "passthrough_args", [])).strip()
@@ -246,21 +299,26 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
                         planning_files=planning_files,
                         base_dir=runtime.config.base_dir,
                         planning_dir=runtime.config.planning_dir,
-                        requested_cli=str(runtime.env.get("ENVCTL_PLAN_AGENT_CLI") or runtime.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""),
+                        requested_cli=str(
+                            runtime.env.get("ENVCTL_PLAN_AGENT_CLI")
+                            or runtime.config.raw.get("ENVCTL_PLAN_AGENT_CLI")
+                            or ""
+                        ),
                     )
-                    filtered = select_projects_for_plan_files(
+                    predictions = predict_plan_projects(
                         projects=[(project.name, project.root) for project in projects],
                         plan_counts=plan_counts,
+                        base_dir=runtime.config.base_dir,
+                        trees_dir_name=runtime.config.trees_dir_name,
                     )
-                    selected_names = {name for name, _ in filtered}
+                    predicted_payloads, predicted_contexts = _prediction_payloads(runtime, predictions)
                     selection_info.update(
                         {
                             "required": False,
                             "reason": "explicit_plan_selectors",
-                            "selected_projects": [
-                                project.name for project in projects if project.name in selected_names
-                            ],
+                            "selected_projects": [payload["name"] for payload in predicted_payloads],
                             "planning_files": list(plan_counts.keys()),
+                            "predicted_projects": predicted_payloads,
                         }
                     )
                 except ValueError as exc:
@@ -337,7 +395,10 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         "will_resume": False,
         "reason": None,
     }
-    selected_contexts = [project for project in projects if project.name in set(selection_info["selected_projects"])]
+    selected_names = set(selection_info["selected_projects"])
+    selected_contexts = predicted_contexts or [
+        project for project in projects if project.name in selected_names
+    ]
     run_reuse_decision = evaluate_run_reuse(
         runtime,
         runtime_mode=runtime_mode,
@@ -379,7 +440,11 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         "run_reuse": {
             "decision_kind": run_reuse_decision.decision_kind,
             "reason": run_reuse_decision.reason,
-            "run_id": run_reuse_decision.candidate_state.run_id if run_reuse_decision.candidate_state is not None else None,
+            "run_id": (
+                run_reuse_decision.candidate_state.run_id
+                if run_reuse_decision.candidate_state is not None
+                else None
+            ),
             "will_reuse_run": run_reuse_decision.will_reuse_run,
             "will_resume_services": run_reuse_decision.will_resume_services,
             "selected_projects": run_reuse_decision.selected_projects,
@@ -418,7 +483,8 @@ def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool
     print(f"auto_resume: {auto_resume['will_resume']} ({auto_resume['reason']})")
     print(
         "run_reuse: "
-        f"{payload['run_reuse']['will_reuse_run']} ({payload['run_reuse']['decision_kind']}: {payload['run_reuse']['reason']})"
+        f"{payload['run_reuse']['will_reuse_run']} ("
+        f"{payload['run_reuse']['decision_kind']}: {payload['run_reuse']['reason']})"
     )
     deps = ", ".join(enabled_dependencies) or "none"
     print(f"dependencies: {deps}")

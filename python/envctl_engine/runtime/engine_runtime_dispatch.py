@@ -11,7 +11,7 @@ def dispatch_command(runtime: Any, route: object) -> int:
     command = str(getattr(route, "command", "")).strip()
     family = dispatch_family_for_command(command)
     if family == "help":
-        runtime._print_help()
+        runtime._print_help(route)
         return 0
     if family == "direct_inspection":
         return dispatch_direct_inspection(runtime, route)
