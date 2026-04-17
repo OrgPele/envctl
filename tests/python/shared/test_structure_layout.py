@@ -5,6 +5,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class StructureLayoutTests(unittest.TestCase):
+    def test_dummy_file_exists_with_expected_content(self) -> None:
+        dummy_file = REPO_ROOT / "docs" / "dummy-file.txt"
+        self.assertTrue(dummy_file.is_file())
+        self.assertEqual(dummy_file.read_text(encoding="utf-8"), "This is a dummy file for envctl plan validation.\n")
+
     def test_python_domain_directories_exist(self) -> None:
         expected = [
             "python/envctl_engine/actions",
