@@ -849,7 +849,7 @@ def _should_prompt_existing_tmux_session(runtime: Any, *, prompt_on_existing: bo
 def _prompt_existing_tmux_session_action(runtime: Any, *, attach_target: PlanAgentAttachTarget) -> Literal["attach", "new"]:
     prompt = (
         f"An envctl tmux session already exists for this plan/workspace ({attach_target.session_name}). "
-        f"Attach to it? (Y/n): "
+        f"Attach to it? (Y=attach / n=create new session): "
     )
     read_interactive = getattr(runtime, "_read_interactive_command_line", None)
     if callable(read_interactive):
@@ -1315,13 +1315,142 @@ def _run_tmux_worktree_bootstrap(
     )
     if resolution_error is not None:
         return resolution_error
-    return _submit_tmux_prompt_workflow_step(
+    submit_error = _submit_tmux_prompt_workflow_step(
         runtime,
         session_name=session_name,
         window_name=window_name,
         prompt_text=prompt_text,
         cli=launch_config.cli,
     )
+    if submit_error is not None:
+        return submit_error
+    queued_steps = workflow.steps[1:]
+    if queued_steps and launch_config.cli == "codex":
+        queue_error_reason = _queue_tmux_codex_workflow_steps(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree,
+            workflow=workflow,
+            queued_steps=queued_steps,
+            launch_config=launch_config,
+            cli=launch_config.cli,
+        )
+        if queue_error_reason is not None:
+            runtime._emit(
+                "planning.agent_launch.workflow_queue_failed",
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+                transport="tmux",
+            )
+            runtime._emit(
+                "planning.agent_launch.workflow_fallback",
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                cli=launch_config.cli,
+                workflow_mode=workflow.mode,
+                codex_cycles=workflow.codex_cycles,
+                reason=queue_error_reason,
+                transport="tmux",
+            )
+            return None
+    return None
+
+
+def _queue_tmux_codex_workflow_steps(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    worktree: CreatedPlanWorktree,
+    workflow: _PlanAgentWorkflow,
+    queued_steps: tuple[_PlanAgentWorkflowStep, ...],
+    launch_config: PlanAgentLaunchConfig,
+    cli: str,
+) -> str | None:
+    for step in queued_steps:
+        queued_text, resolution_error = _workflow_step_prompt_text(
+            runtime,
+            launch_config=launch_config,
+            cli=cli,
+            step=step,
+        )
+        if resolution_error is not None:
+            return "queue_prompt_resolution_failed"
+        if step.kind == "queue_direct_prompt":
+            send_error = _send_tmux_prompt(
+                runtime,
+                session_name=session_name,
+                window_name=window_name,
+                text=queued_text,
+            )
+        else:
+            send_error = _send_tmux_text(
+                runtime,
+                session_name=session_name,
+                window_name=window_name,
+                text=queued_text,
+                emit_failure_event=False,
+            )
+        if send_error is not None:
+            return "queue_send_failed"
+        if not _queue_tmux_codex_message(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=queued_text,
+            require_text_match=step.kind != "queue_direct_prompt",
+        ):
+            return "queue_not_ready"
+    runtime._emit(
+        "planning.agent_launch.workflow_queued",
+        session_name=session_name,
+        window_name=window_name,
+        worktree=worktree.name,
+        cli=cli,
+        workflow_mode=workflow.mode,
+        codex_cycles=workflow.codex_cycles,
+        queued_steps=len(queued_steps),
+        transport="tmux",
+    )
+    return None
+
+
+def _queue_tmux_codex_message(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    text: str,
+    require_text_match: bool = True,
+) -> bool:
+    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+    tab_sent = False
+    while time.monotonic() < deadline:
+        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
+            tab_error = _send_tmux_key(
+                runtime,
+                session_name=session_name,
+                window_name=window_name,
+                key="tab",
+                emit_failure_event=False,
+            )
+            if tab_error is not None:
+                return False
+            tab_sent = True
+            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+            continue
+        if tab_sent:
+            return True
+        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
@@ -1887,7 +2016,7 @@ def _queue_codex_workflow_steps(
             workspace_id=workspace_id,
             surface_id=surface_id,
             text=queued_text,
-            require_text_match=True,
+            require_text_match=step.kind != "queue_direct_prompt",
         ):
             return "queue_not_ready"
     runtime._emit(
@@ -1981,9 +2110,11 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
         return False
     if normalized_text in normalized_screen:
         return True
-    if not require_text_match:
-        return False
     first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not require_text_match:
+        return "pasted content" in normalized_screen or (
+            bool(first_visible_line) and _normalized_screen_text(first_visible_line) in normalized_screen
+        )
     if not first_visible_line:
         return False
     return _normalized_screen_text(first_visible_line) in normalized_screen
@@ -2189,21 +2320,29 @@ def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path
     normalized_feature = str(feature_name).strip()
     if not normalized_feature:
         return None
-    matches: list[Path] = []
-    for planning_root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
-        root = repo_root / planning_root
-        if not root.is_dir():
-            continue
-        for candidate in sorted(root.glob("*/*.md")):
-            if candidate.name == "README.md":
-                continue
-            relative = candidate.relative_to(root)
-            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
-                continue
-            matches.append(candidate.resolve())
-    if len(matches) == 1:
-        return matches[0]
+    active_matches = _plan_matches_for_feature(repo_root / _PLANNING_ROOT, feature_name=normalized_feature)
+    if len(active_matches) == 1:
+        return active_matches[0]
+    if active_matches:
+        return None
+    archived_matches = _plan_matches_for_feature(repo_root / _DONE_PLANNING_ROOT, feature_name=normalized_feature)
+    if len(archived_matches) == 1:
+        return archived_matches[0]
     return None
+
+
+def _plan_matches_for_feature(planning_root: Path, *, feature_name: str) -> list[Path]:
+    if not planning_root.is_dir():
+        return []
+    matches: list[Path] = []
+    for candidate in sorted(planning_root.glob("*/*.md")):
+        if candidate.name == "README.md":
+            continue
+        relative = candidate.relative_to(planning_root)
+        if planning_feature_name(str(relative).replace("\\", "/")) != feature_name:
+            continue
+        matches.append(candidate.resolve())
+    return matches
 
 
 def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str | None:

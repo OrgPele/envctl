@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kfiramar/envctl/releases/tag/1.6.4"><img src="https://img.shields.io/badge/release-1.6.4-2ea043" alt="Release 1.6.4"></a>
+  <a href="https://github.com/kfiramar/envctl/releases/tag/1.6.5"><img src="https://img.shields.io/badge/release-1.6.5-2ea043" alt="Release 1.6.5"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12--3.14-3776AB" alt="Python 3.12-3.14"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-readable-0969DA" alt="Documentation"></a>
   <a href="docs/changelog/main_changelog.md"><img src="https://img.shields.io/badge/changelog-main-7A3EFF" alt="Changelog"></a>

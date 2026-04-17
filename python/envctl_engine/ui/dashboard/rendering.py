@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 from datetime import datetime
 import json
+import shlex
 import shutil
 import sys
 import time
@@ -629,6 +630,8 @@ def _print_dashboard_ai_session_row(
         if project_root is not None and repo_root is not None
         else None
     )
+    if not launch_command:
+        launch_command = f"envctl --project {shlex.quote(project)} --tmux"
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -651,14 +654,12 @@ def _print_dashboard_ai_session_row(
                 f"    {dim}○{reset} {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}"
             )
         return
-    if not launch_command:
-        return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
 
 
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:
-    if project_root is not None:
-        return _dashboard_session_matches_project_root(project_root=project_root, session=session)
+    if project_root is not None and _dashboard_session_matches_project_root(project_root=project_root, session=session):
+        return True
     return _dashboard_window_matches_project(project=project, window_name=str(session.get("windows", "") or ""))
 
 
@@ -699,10 +700,30 @@ def _dashboard_project_root_from_state(*, state: RunState, project: str) -> Path
 def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | None:
     if project_root is None:
         return None
+    provenance_repo_root = _dashboard_repo_root_from_provenance(project_root=project_root)
+    if provenance_repo_root is not None:
+        return provenance_repo_root
     current = project_root.resolve(strict=False)
     for candidate in (current, *current.parents):
         if (candidate / ".git").exists() or (candidate / "todo").is_dir():
             return candidate
+    return None
+
+
+def _dashboard_repo_root_from_provenance(*, project_root: Path) -> Path | None:
+    provenance_path = project_root / ".envctl-state" / "worktree-provenance.json"
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(provenance, dict):
+        return None
+    repo_root_raw = str(provenance.get("created_from_repo", "") or "").strip()
+    if not repo_root_raw:
+        return None
+    repo_root = Path(repo_root_raw).expanduser().resolve(strict=False)
+    if (repo_root / ".git").exists() or (repo_root / "todo").is_dir():
+        return repo_root
     return None
 
 

@@ -1307,7 +1307,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
         self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
         self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
-        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 1)
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")

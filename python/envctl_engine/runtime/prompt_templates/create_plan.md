@@ -100,7 +100,7 @@ Use this structure (adapt section names only if truly necessary):
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
     - AI CLI choice: `codex`, `opencode`, or `both` (where `both` means show two separate commands)
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
-  - if the selected CLI includes Codex, offer to configure the Codex cycle count and you may suggest `CYCLES=2` as an optional override for this follow-up, but make clear that the current runtime default remains `1` unless the user chooses another value
+  - if the selected CLI includes Codex, offer to configure the Codex cycle count and make clear that the current runtime default is `2` unless the user chooses another value
   - if the selected CLI is not Codex, say that the Codex cycle count setting is ignored
 
 ## Final response format

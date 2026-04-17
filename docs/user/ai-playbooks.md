@@ -95,7 +95,7 @@ To auto-open one AI terminal per newly created planning worktree in your current
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
-ENVCTL_PLAN_AGENT_CODEX_CYCLES=1
+ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ```
 
 Shorthand aliases:
@@ -113,7 +113,7 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 
 Codex-only cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1`, which queues `implement_task` plus `finalize_task`
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `finalize_task`
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `finalize_task`
