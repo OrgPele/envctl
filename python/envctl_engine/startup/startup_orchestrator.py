@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 from contextlib import nullcontext
 from pathlib import Path
 import shlex
@@ -276,6 +277,9 @@ class StartupOrchestrator:
         runtime_mode = session.runtime_mode
         selection_started = time.monotonic()
         project_contexts = rt._discover_projects(mode=runtime_mode)
+        if route.command == "plan" and bool(route.flags.get("dry_run")):
+            self._emit_phase(session, "project_selection", selection_started, status="preview")
+            return self._preview_plan_dry_run(session)
         if route.command == "plan":
             project_contexts = rt._select_plan_projects(route, project_contexts)
         elif self._trees_start_selection_required(route=route, runtime_mode=runtime_mode):
@@ -343,6 +347,41 @@ class StartupOrchestrator:
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
+
+    def _preview_plan_dry_run(self, session: StartupSession) -> int:
+        rt = self.runtime
+        route = session.effective_route
+        from envctl_engine.runtime.inspection_support import _build_startup_explanation_payload  # noqa: PLC0415
+
+        payload = _build_startup_explanation_payload(rt, route)
+        payload["dry_run"] = True
+        selection = payload.get("selection", {}) if isinstance(payload, dict) else {}
+        predicted_projects = selection.get("predicted_projects", []) if isinstance(selection, dict) else []
+        if bool(route.flags.get("json")):
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
+
+        print("Dry run: no worktrees, git state, or services were modified.")
+        if isinstance(predicted_projects, list) and predicted_projects:
+            print(f"Planning files: {', '.join(selection.get('planning_files', []))}")
+            print("Predicted worktrees:")
+            for project in predicted_projects:
+                name = str(project.get("name", "")).strip()
+                action = str(project.get("action", "")).strip() or "preview"
+                root = str(project.get("root", "")).strip()
+                print(f"  - {name}: {action} -> {root}")
+        elif selection.get("message"):
+            print(str(selection.get("message")))
+        else:
+            print("No worktrees would be selected.")
+        plan_launch = payload.get("plan_agent_launch", {}) if isinstance(payload, dict) else {}
+        if isinstance(plan_launch, dict) and bool(plan_launch.get("enabled")):
+            print(
+                "Launch preview: "
+                f"transport={plan_launch.get('transport')} cli={plan_launch.get('cli')} "
+                f"omx_mode={plan_launch.get('omx_mode')} workflow={plan_launch.get('workflow_mode')}"
+            )
+        return 0
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime
@@ -614,7 +653,8 @@ class StartupOrchestrator:
                         return attach_code
                 elif not enter_interactive_dashboard:
                     print(
-                        f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
+                        f"envctl runs are disabled for {session.runtime_mode}; "
+                        "opening dashboard without starting services."
                     )
                 if enter_interactive_dashboard:
                     return rt._run_interactive_dashboard_loop(candidate_state)
@@ -997,7 +1037,12 @@ class StartupOrchestrator:
             return 0
         return attach_code
 
-    def _print_headless_plan_session_summary(self, session: StartupSession, *, attach_target: object | None = None) -> None:
+    def _print_headless_plan_session_summary(
+        self,
+        session: StartupSession,
+        *,
+        attach_target: object | None = None,
+    ) -> None:
         resolved_target = attach_target or session.plan_agent_attach_target
         if resolved_target is None:
             return
@@ -1009,7 +1054,10 @@ class StartupOrchestrator:
         )
         session_name = str(getattr(resolved_target, "session_name", "")).strip()
         if new_session_command:
-            print("existing session: envctl did not create a new tmux session because one already exists for this plan/workspace/CLI.")
+            print(
+                "existing session: envctl did not create a new tmux session because one already exists "
+                "for this plan/workspace/CLI."
+            )
         if attach_command:
             print(f"attach: {attach_command}")
         if new_session_command:

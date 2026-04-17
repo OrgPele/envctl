@@ -81,7 +81,6 @@ def run_install_prompts_command(runtime: Any, route: object) -> int:
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
     overwrite_approved = bool(flags.get("yes")) or bool(flags.get("force"))
-    with_codex_skills = bool(flags.get("with_codex_skills"))
     raw_cli = str(flags.get("cli") or "").strip()
     preset_label, presets, preset_error = _resolve_presets(flags=flags, passthrough_args=passthrough_args)
     env = getattr(runtime, "env", {})
@@ -307,11 +306,13 @@ def _require_overwrite_approval(
 ) -> PromptInstallResult | None:
     if json_output:
         return _overwrite_failure(
-            "Overwrite approval required for existing prompt files; rerun with --yes or --force because --json mode cannot prompt.",
+            "Overwrite approval required for existing prompt files; rerun with --yes or --force "
+            "because --json mode cannot prompt.",
         )
     if not _interactive_stdio():
         return _overwrite_failure(
-            "Overwrite approval required for existing prompt files; rerun with --yes or --force because no interactive TTY is available.",
+            "Overwrite approval required for existing prompt files; rerun with --yes or --force "
+            "because no interactive TTY is available.",
         )
     response = input(_overwrite_prompt(overwrite_candidates, env=env)).strip().lower()
     if response in {"y", "yes"}:
@@ -763,6 +764,45 @@ def _render_codex_skill_openai_yaml(*, metadata: CodexSkillMetadata) -> str:
     )
 
 
+def _install_guidance(
+    *,
+    results: list[PromptInstallResult],
+    skill_results: list[PromptInstallResult] | None,
+) -> list[dict[str, object]]:
+    guidance: list[dict[str, object]] = []
+    for result in skill_results or []:
+        if result.cli != "codex" or result.kind != "skill" or not result.path:
+            continue
+        skill_name = Path(result.path).parent.name
+        guidance.append(
+            {
+                "cli": "codex",
+                "installed_as": "skill",
+                "path": result.path,
+                "recommended_invocation": f"${skill_name}",
+                "applies_to": ["codex", "omx"],
+                "managed_launch_behavior": (
+                    "envctl-managed plan launches submit the rendered workflow automatically; "
+                    "no manual in-session command is required after launch"
+                ),
+            }
+        )
+    for result in results:
+        if result.cli != "codex" or result.kind != "prompt" or not result.path:
+            continue
+        preset = Path(result.path).stem
+        guidance.append(
+            {
+                "cli": "codex",
+                "installed_as": "prompt",
+                "path": result.path,
+                "recommended_invocation": f"/prompts:{preset}",
+                "applies_to": ["codex"],
+            }
+        )
+    return guidance
+
+
 def _print_install_results(
     *,
     preset: str,
@@ -773,6 +813,7 @@ def _print_install_results(
     skill_results: list[PromptInstallResult] | None = None,
 ) -> int:
     combined_results = [*results, *(skill_results or [])]
+    guidance = _install_guidance(results=results, skill_results=skill_results)
     payload = {
         "command": "install-prompts",
         "preset": preset,
@@ -781,6 +822,8 @@ def _print_install_results(
     }
     if skill_results is not None:
         payload["skill_results"] = [asdict(result) for result in skill_results]
+    if guidance:
+        payload["guidance"] = guidance
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -794,4 +837,14 @@ def _print_install_results(
             if result.message:
                 line += f" - {result.message}"
             print(line)
+        for entry in guidance:
+            print(
+                "guidance: "
+                f"{entry['cli']} installed as {entry['installed_as']} at "
+                f"{render_path_for_terminal(str(entry['path']), env=env, stream=sys.stdout)}; "
+                f"manual invocation {entry['recommended_invocation']}"
+            )
+            managed = entry.get('managed_launch_behavior')
+            if managed:
+                print(f"guidance: {managed}")
     return 0 if all(result.status not in {"failed"} for result in combined_results) else 1

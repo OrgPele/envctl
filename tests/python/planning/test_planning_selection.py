@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.planning import (
     list_planning_files,
+    predict_plan_projects,
     planning_existing_counts,
     planning_feature_name,
     resolve_planning_files,
@@ -99,6 +100,56 @@ class PlanningSelectionTests(unittest.TestCase):
         selected = select_projects_for_plan_files(projects=projects, plan_counts=plan_counts)
 
         self.assertEqual([name for name, _root in selected], ["feature_a_task-1", "feature_b_task-1"])
+
+    def test_predict_plan_projects_reuses_existing_before_creating_next_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            projects = [
+                ("feature_a_task-2", repo / "trees" / "feature_a_task" / "2"),
+                ("feature_a_task-1", repo / "trees" / "feature_a_task" / "1"),
+                ("feature_b_task-1", repo / "trees" / "feature_b_task" / "1"),
+            ]
+            plan_counts = OrderedDict(
+                [
+                    ("feature-a/task.md", 3),
+                    ("feature-b/task.md", 1),
+                ]
+            )
+
+            predicted = predict_plan_projects(
+                projects=projects,
+                plan_counts=plan_counts,
+                base_dir=repo,
+                trees_dir_name="trees",
+            )
+
+        self.assertEqual(
+            [(item.name, item.action, str(item.root)) for item in predicted],
+            [
+                ("feature_a_task-1", "reuse", str(repo / "trees" / "feature_a_task" / "1")),
+                ("feature_a_task-2", "reuse", str(repo / "trees" / "feature_a_task" / "2")),
+                ("feature_a_task-3", "create", str(repo / "trees" / "feature_a_task" / "3")),
+                ("feature_b_task-1", "reuse", str(repo / "trees" / "feature_b_task" / "1")),
+            ],
+        )
+
+    def test_predict_plan_projects_prefers_flat_tree_root_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            flat_root = repo / "trees-feature_a_task"
+            flat_root.mkdir(parents=True, exist_ok=True)
+
+            predicted = predict_plan_projects(
+                projects=[],
+                plan_counts=OrderedDict([("feature-a/task.md", 1)]),
+                base_dir=repo,
+                trees_dir_name="trees",
+            )
+
+        self.assertEqual(len(predicted), 1)
+        self.assertEqual(predicted[0].name, "feature_a_task-1")
+        self.assertEqual(predicted[0].action, "create")
+        self.assertEqual(predicted[0].root, flat_root / "1")
 
     def test_planning_feature_name_matches_shell_slugify_underscore_shape(self) -> None:
         self.assertEqual(

@@ -904,6 +904,43 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("Mode flags: --main, --tree, --trees, trees=true, main=true", lines[2])
         self.assertIn("Non-interactive: --headless (preferred), --batch (compatibility alias)", lines[3])
 
+    def test_help_output_for_plan_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--plan", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl plan", output)
+        self.assertIn("--dry-run", output)
+        self.assertIn("--omx --ralph", output)
+        self.assertIn("preview selected/reused/created worktrees without mutating", output)
+
+    def test_help_output_for_codex_tmux_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["codex-tmux", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl codex-tmux", output)
+        self.assertIn("--dry-run [--json]", output)
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", output)
+
+    def test_help_output_for_install_prompts_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["install-prompts", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl install-prompts", output)
+        self.assertIn("~/.codex/skills", output)
+        self.assertIn("manual $envctl-", output)
+
     def test_generated_parity_manifest_matches_repository_file(self) -> None:
         manifest_path = REPO_ROOT / "contracts" / "python_engine_parity_manifest.json"
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -984,7 +1021,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         lines = [line.strip() for line in buffer.getvalue().strip().split("\n") if line.strip()]
         self.assertGreater(len(lines), 0, "Should discover at least one project via --list-trees")
 
-    def test_list_trees_json_includes_preselected_and_running(self) -> None:
+    def test_list_trees_json_reports_selected_state_presence_and_service_truth(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         repo = Path(tmpdir.name) / "repo"
@@ -1001,9 +1038,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             state=RunState(
                 run_id="run-prev",
                 mode="trees",
-                services={"feature-1 Backend": ServiceRecord(name="feature-1 Backend", type="backend", cwd=".")},
+                services={"feature-1 Backend": ServiceRecord(name="feature-1 Backend", type="backend", cwd=".", status="unknown")},
                 requirements={},
-                metadata={"repo_scope_id": config.runtime_scope_id},
+                metadata={"repo_scope_id": config.runtime_scope_id, "project_roots": {"feature-1": str(feature_dir)}},
             ),
             emit=lambda *args, **kwargs: None,
             runtime_map_builder=lambda _state: {},
@@ -1016,7 +1053,12 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["mode"], "trees")
         self.assertGreaterEqual(payload["count"], 1)
-        self.assertTrue(any(project["preselected"] for project in payload["projects"]))
+        feature = payload["projects"][0]
+        self.assertTrue(feature["selected"])
+        self.assertTrue(feature["preselected"])
+        self.assertTrue(feature["state_present"])
+        self.assertFalse(feature["services_running"])
+        self.assertFalse(feature["running"])
 
     def test_show_config_json_prints_effective_payload(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1280,6 +1322,58 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["command"], "plan")
         self.assertEqual(payload["selection"]["reason"], "no_planning_files")
         self.assertEqual(payload["selection"]["selected_projects"], [])
+
+    def test_explain_startup_json_predicts_plan_worktrees_before_creation(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["selection"]["selected_projects"], ["feature_task-1"])
+        self.assertEqual(payload["selection"]["predicted_projects"][0]["action"], "create")
+        self.assertTrue(payload["selection"]["predicted_projects"][0]["root"].endswith("trees/feature_task/1"))
+        self.assertEqual(payload["run_reuse"]["selected_projects"][0]["name"], "feature_task-1")
+
+    def test_plan_dry_run_previews_without_creating_worktrees(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "TREES_STARTUP_ENABLE": "false",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--plan", "feature/task", "--headless", "--dry-run"], env={}))
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("Dry run: no worktrees, git state, or services were modified.", rendered)
+        self.assertIn("feature_task-1: create", rendered)
+        self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
 
     def test_explain_startup_json_reports_plan_agent_launch_state(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
