@@ -599,23 +599,79 @@ class PromptInstallSupportTests(unittest.TestCase):
             "cd <repo> && envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
+        self.assertIn(
+            "cd <repo> && envctl --plan <selector> --omx",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "cd <repo> && envctl --plan <selector> --omx --ralph",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "cd <repo> && envctl --plan <selector> --omx --team",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "envctl creates or reuses the tmux session/window itself",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "envctl asks OMX to create the managed detached tmux/Codex session",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "same OMX-managed launch, but the first submitted prompt enters the Ralph workflow",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "same OMX-managed launch, but the first submitted prompt enters the Team workflow",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "attachable existing tmux/OMX session already exists and the user explicitly wants another one",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "whenever you show a follow-up command, also explain in plain language what happens when that exact command runs",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "whether envctl only prints guidance or actually launches a session",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "spell out what envctl creates/syncs, what CLI/session it starts, what prompt preset it submits",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "`opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only",
+            plan_prompt.body,
+        )
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --headless", plan_prompt.body)
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --headless", plan_prompt.body)
         self.assertIn("--tmux-new-session", plan_prompt.body)
-        self.assertIn("run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
+        self.assertIn("if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
+        self.assertIn("if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn(
-            "AI CLI choice: `codex`, `opencode`, or `both` (where `both` means show two separate commands)",
+            "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean show the separate repo-scoped commands explicitly)",
             plan_prompt.body,
         )
         self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
+        self.assertIn("selected launch choice includes Codex or OMX-managed Codex", plan_prompt.body)
         self.assertIn("the current runtime default is `2`", plan_prompt.body)
-        self.assertIn("if the selected CLI is not Codex, say that the Codex cycle count setting is ignored", plan_prompt.body)
+        self.assertIn("if the selected launch choice does not involve Codex, say that the Codex cycle count setting is ignored", plan_prompt.body)
         self.assertNotIn("CMUX=true", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_CLI=", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE", plan_prompt.body)
         self.assertIn("--tmux --opencode", plan_prompt.body)
         self.assertNotIn("--tmux --codex", plan_prompt.body)
         self.assertIn("one Codex command and one OpenCode command", plan_prompt.body)
+        self.assertIn("one tmux Codex command and one OMX-managed Codex command", plan_prompt.body)
+        self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
