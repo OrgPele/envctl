@@ -726,6 +726,109 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(len(popen_calls), 1)
             self.assertEqual(popen_calls[0]["cmd"], ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
 
+    def test_omx_launch_reuses_existing_session_from_session_state_without_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            session_path = worktree_root / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-session-123",
+                        "native_session_id": "omx-feature-session",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+
+            with patch(
+                "envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree",
+                side_effect=AssertionError("should not spawn a new OMX session"),
+            ) as spawn_mock:
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIn("An OMX-managed tmux session already exists for this plan.", result.reason)
+            spawn_mock.assert_not_called()
+            self.assertIsNotNone(result.attach_target)
+            assert result.attach_target is not None
+            self.assertEqual(result.attach_target.session_name, "omx-feature-session")
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", "omx-feature-session"))
+            self.assertEqual(
+                result.attach_target.new_session_command,
+                (
+                    "ENVCTL_USE_REPO_WRAPPER=1",
+                    str(repo / "bin" / "envctl"),
+                    "--plan",
+                    "feature-a",
+                    "--omx",
+                    "--codex",
+                    "--tmux-new-session",
+                    "--headless",
+                ),
+            )
+
+    def test_omx_launch_reports_session_unavailable_when_session_state_never_appears(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+
+            class _DummyPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    _ = cmd, kwargs
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=6.1)),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "launch_failed")
+            self.assertEqual(len(result.outcomes), 1)
+            self.assertEqual(result.outcomes[0].reason, "omx_session_unavailable")
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.failed"),
+                [
+                    {
+                        "event": "planning.agent_launch.failed",
+                        "reason": "omx_session_unavailable",
+                        "worktree": "feature-a-1",
+                        "transport": "omx",
+                    }
+                ],
+            )
+            self.assertIn("Plan agent launch failed for 1 worktree(s).", buffer.getvalue())
+
     def test_tmux_launch_reuses_existing_session_for_matching_worktree_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

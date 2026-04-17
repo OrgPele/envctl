@@ -10,6 +10,7 @@ from io import StringIO
 from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -2436,6 +2437,72 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(first_code, 0)
             self.assertEqual(second_code, 0)
             self.assertEqual(launches, [["feature_task-1"], []])
+
+    def test_plan_feature_omx_launch_uses_managed_bootstrap_without_custom_passthrough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI_CMD": "codex --model gpt-5.4 --dangerously-bypass-approvals-and-sandbox",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            popen_calls: list[dict[str, object]] = []
+
+            class _DummyPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    session_path = Path(str(kwargs["cwd"])) / ".omx" / "state" / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    session_path.write_text(
+                        json.dumps(
+                            {
+                                "session_id": "omx-session-123",
+                                "native_session_id": "omx-feature-session",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+                def poll(self):
+                    return 0
+
+                def wait(self, timeout=None):  # noqa: ANN001
+                    return 0
+
+            with (
+                patch.object(engine, "_command_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen),
+                patch("envctl_engine.planning.plan_agent_launch_support._git_branch_name", return_value="feature/task"),
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(parse_route(["--plan", "feature/task", "--omx", "--codex", "--headless"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(popen_calls), 1)
+            cmd = cast(list[str], popen_calls[0]["cmd"])
+            self.assertEqual(cmd, ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
+            self.assertNotIn("--model", " ".join(str(part) for part in cmd))
+            self.assertTrue((repo / "trees" / "feature_task" / "1" / ".omx" / "state" / "session.json").is_file())
+            rendered = out.getvalue()
+            self.assertIn("attach: tmux attach-session -t omx-feature-session", rendered)
+            self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
     def test_plan_planning_prs_does_not_invoke_plan_agent_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
