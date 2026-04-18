@@ -70,6 +70,7 @@ Behavior:
 
 - only runs for `--plan`
 - only launches for worktrees created during the current reconciliation
+- current planning follow-ups choose one launch surface per invocation; do not assume a later second launch can attach to the same reconciliation unless envctl explicitly says it created or recovered the target worktree(s)
 - skips `--planning-prs`
 - skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
 - when enabled without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
@@ -85,7 +86,7 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `1`, so Codex launches queue `implement_task` plus `finalize_task`
+- default/unset is `2`, so Codex launches first queue a commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` keeps the current one-shot launch behavior
 - `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `finalize_task`

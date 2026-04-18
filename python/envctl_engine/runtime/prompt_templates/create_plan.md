@@ -89,14 +89,14 @@ Use this structure (adapt section names only if truly necessary):
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
-    - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow
+    - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
     - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph workflow
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
-    - `--tmux-new-session`: only use when an attachable existing tmux/OMX session already exists and the user explicitly wants another one
+    - `--tmux-new-session`: only use when an attachable existing tmux or OMX session already exists and the user explicitly wants another one for the same selected worktree(s)
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
-  - keep the wording operational rather than marketing: spell out what envctl creates/syncs, what CLI/session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
+  - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode`
   - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux`
@@ -106,9 +106,9 @@ Use this structure (adapt section names only if truly necessary):
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --headless`
   - if you show a headless Codex tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --headless`
   - if an existing tmux session may already exist and the user wants another one without being prompted, include `--tmux-new-session` in the shown command
-  - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex command and one OpenCode command
-  - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one tmux Codex command and one OMX-managed Codex command
-  - do not claim that envctl can launch multiple CLIs or launch surfaces in one combined command; multi-launch follow-up means executing the separate commands one after another behind the scenes
+  - do not offer combined launch choices such as `codex + opencode` or `codex + omx` in the final approval question
+  - do not claim that envctl can launch multiple CLIs or launch surfaces in one combined command; the current create-plan follow-up must choose one launch surface per invocation
+  - if the user asks for multiple AI runs, explain that current envctl planning launches only attach to worktrees created during that reconciliation, so you must not silently create extra worktrees/iterations or run a second launch against the same worktree unless the user explicitly asks for another session on that same worktree
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
   - default the launch preset to `implement_task`
   - if you mention Codex behavior, be accurate: envctl launches the CLI and submits the rendered `implement_task` prompt body (and optional rendered follow-up prompts/messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
@@ -116,7 +116,7 @@ Use this structure (adapt section names only if truly necessary):
   - the final question must mention only the launch settings that should be surfaced to the user
   - do not ask the user to provide or confirm cmux workspace, cmux context, shell, or custom CLI command override unless a task-specific repo constraint makes the default tmux launch example insufficient
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
-    - AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean show the separate repo-scoped commands explicitly)
+    - AI launch choice: `codex`, `opencode`, or `omx`
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
   - if the selected launch choice includes Codex or OMX-managed Codex, offer to configure the Codex cycle count and make clear that the current runtime default is `2` unless the user chooses another value
   - if the selected launch choice does not involve Codex, say that the Codex cycle count setting is ignored
