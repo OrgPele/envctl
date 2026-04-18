@@ -683,7 +683,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --headless", plan_prompt.body)
         self.assertIn("--tmux-new-session", plan_prompt.body)
         self.assertIn("create another tmux or OMX-managed session instead of attaching to an existing one", plan_prompt.body)
-        self.assertIn("when you execute envctl launch commands yourself from an AI session, prefer adding `--tmux-new-session`", plan_prompt.body)
+        self.assertIn("when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session`", plan_prompt.body)
         self.assertIn("do not surface the internal `--tmux-new-session` default in the user-facing approval question", plan_prompt.body)
         self.assertIn("if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn("if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)

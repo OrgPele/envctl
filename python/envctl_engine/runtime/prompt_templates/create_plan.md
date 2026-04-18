@@ -105,10 +105,11 @@ Use this structure (adapt section names only if truly necessary):
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team`
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --headless`
   - if you show a headless Codex tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --headless`
-  - when you execute envctl launch commands yourself from an AI session, prefer adding `--tmux-new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
+  - when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
   - if an existing tmux session may already exist and the user wants another one without being prompted, include `--tmux-new-session` in the shown command
   - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex tmux command and one OpenCode tmux command
   - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one tmux Codex command and one OMX-managed Codex command
+  - when the user selects multiple AI launch choices, state clearly that each command creates its own separate session; do not describe them as one shared session
   - do not claim that envctl can launch multiple CLIs or launch surfaces in one combined command; multi-launch follow-up means executing the separate repo-scoped commands one after another behind the scenes
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
   - default the launch preset to `implement_task`
@@ -117,6 +118,9 @@ Use this structure (adapt section names only if truly necessary):
   - the final question must mention only the launch settings that should be surfaced to the user
   - do not surface the internal `--tmux-new-session` default in the user-facing approval question unless the task specifically requires explaining it
   - do not ask the user to provide or confirm cmux workspace, cmux context, shell, or custom CLI command override unless a task-specific repo constraint makes the default tmux launch example insufficient
+  - keep the closing concise: do not write a long prose paragraph explaining the commands when short operational phrasing is enough
+  - after the one approval question, offer the manual path as exactly three standalone command lines: one for `codex`, one for `opencode`, and one for `omx`
+  - when you show those manual commands, keep them bare and copy-pastable, and always use the `cd <repo> && envctl ...` form; do not append explanatory prose to the same lines
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
     - AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean run the separate repo-scoped commands one after another)
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
@@ -128,7 +132,8 @@ Use this structure (adapt section names only if truly necessary):
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
 4. Risk register (only if non-empty).
-5. One final approval question asking whether you should run the envctl worktree-and-prompt follow-up now, with all launch defaults listed inline and overrides invited.
+5. One short approval question asking whether you should run the envctl worktree-and-prompt follow-up now or whether the user wants to run it manually.
+6. If you include manual commands, print exactly three standalone command lines: `codex`, `opencode`, `omx`.
 
 ## Self-check (before responding)
 - Plan matches existing todo/plans/ quality and depth.
