@@ -48,10 +48,11 @@ class CliRouterTests(unittest.TestCase):
             self.assertTrue(route.flags.get("batch"), msg=token)
 
     def test_tmux_and_opencode_flags_are_parsed(self) -> None:
-        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--tmux-new-session", "--headless"], env={})
+        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw", "--tmux-new-session", "--headless"], env={})
         self.assertEqual(route.command, "plan")
         self.assertTrue(route.flags.get("tmux"))
         self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("ulw"))
         self.assertTrue(route.flags.get("tmux_new_session"))
         self.assertTrue(route.flags.get("batch"))
 

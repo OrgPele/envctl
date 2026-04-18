@@ -341,6 +341,10 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
         False,
     )
+    if bool(route_flags.get("ulw")):
+        ulw_loop_prefix = True
+        if transport == "tmux" and cli == "opencode":
+            direct_prompt_enabled = True
     return PlanAgentLaunchConfig(
         enabled=enabled,
         transport=transport,
@@ -367,6 +371,18 @@ def _default_plan_agent_cli_command(cli: str) -> str:
     if normalized == "codex":
         return f"codex {_CODEX_BYPASS_FLAGS}"
     return normalized or "codex"
+
+
+def _route_requests_ulw(route: object | None) -> bool:
+    return bool(getattr(route, "flags", {}).get("ulw"))
+
+
+def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
+    return launch_config.transport == "tmux" and launch_config.cli == "opencode"
+
+
+def _guidance_attach_command(session_name: str) -> tuple[str, ...]:
+    return ("tmux", "attach", "-t", session_name)
 
 
 def plan_agent_launch_prereq_commands(
@@ -424,6 +440,9 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         return payload
     if launch_config.transport == "omx" and launch_config.cli != "codex":
         payload["reason"] = "unsupported_omx_cli"
+        return payload
+    if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
+        payload["reason"] = "unsupported_ulw_flag"
         return payload
     if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
         payload["reason"] = "missing_cmux_context"
@@ -550,6 +569,10 @@ def launch_plan_agent_terminals(
     if not launch_config.enabled:
         runtime._emit("planning.agent_launch.skipped", reason="disabled", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="disabled")
+    if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
+        _print_launch_summary("Plan agent launch skipped: --ulw requires --tmux --opencode.")
+        runtime._emit("planning.agent_launch.failed", reason="unsupported_ulw_flag", **base_payload)
+        return PlanAgentLaunchResult(status="failed", reason="unsupported_ulw_flag")
     if not created_worktrees:
         _print_launch_summary("Plan agent launch skipped: no new worktrees were created.")
         runtime._emit("planning.agent_launch.skipped", reason="no_new_worktrees", **base_payload)
@@ -761,7 +784,7 @@ def _launch_plan_agent_tmux_terminals(
                 session_name=session_name,
                 window_name=window_name,
                 attach_via=attach_via,
-                attach_command=("tmux", attach_via, "-t", session_name),
+                attach_command=_guidance_attach_command(session_name),
             )
     launched = [item for item in outcomes if item.status == "launched"]
     failed = [item for item in outcomes if item.status == "failed"]
@@ -947,7 +970,7 @@ def _launch_plan_agent_omx_terminals(
             session_name=session_name,
             window_name=window_name,
             attach_via=attach_via,
-            attach_command=("tmux", attach_via, "-t", session_name),
+            attach_command=_guidance_attach_command(session_name),
         )
         runtime._emit(
             "planning.agent_launch.surface_created",
@@ -1267,6 +1290,8 @@ def _new_session_command_for_route(
         command.append("--opencode")
     elif launch_config.cli == "codex":
         command.append("--codex")
+    if bool(getattr(route, "flags", {}).get("ulw")):
+        command.append("--ulw")
     command.append("--tmux-new-session")
     command.append("--headless")
     return tuple(command)
@@ -1463,7 +1488,7 @@ def _resolve_tmux_attach_target(
         session_name=session_name,
         window_name=window_name or "",
         attach_via=attach_via,
-        attach_command=("tmux", attach_via, "-t", session_name),
+        attach_command=_guidance_attach_command(session_name),
     )
 
 
@@ -1482,7 +1507,7 @@ def _find_existing_tmux_attach_target(
             session_name=_tmux_session_name_for_worktree(repo_root, worktree, cli=cli),
             window_name=_tmux_window_name_for_worktree(worktree),
             attach_via="attach-session",
-            attach_command=("tmux", "attach-session", "-t", _tmux_session_name_for_worktree(repo_root, worktree, cli=cli)),
+            attach_command=_guidance_attach_command(_tmux_session_name_for_worktree(repo_root, worktree, cli=cli)),
         )
         for worktree in created_worktrees
     }
@@ -1513,7 +1538,7 @@ def _find_existing_tmux_attach_target(
                     session_name=session_name,
                     window_name=window_name,
                     attach_via="attach-session",
-                    attach_command=("tmux", "attach-session", "-t", session_name),
+                    attach_command=_guidance_attach_command(session_name),
                 )
     return None
 
@@ -1915,7 +1940,11 @@ def _queue_tmux_codex_message(
 
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
     if attach_target.attach_via == "switch-client":
-        result = _run_tmux_probe(runtime, attach_target.attach_command, cwd=attach_target.repo_root)
+        result = _run_tmux_probe(
+            runtime,
+            ("tmux", "switch-client", "-t", attach_target.session_name),
+            cwd=attach_target.repo_root,
+        )
         if result.returncode != 0:
             print(_tmux_completed_process_error_text(result), file=sys.stderr)
             return 1
@@ -3410,7 +3439,7 @@ def _find_existing_omx_attach_target(
                 session_name=candidate,
                 window_name=_tmux_active_pane_id(runtime, candidate),
                 attach_via=attach_via,
-                attach_command=("tmux", attach_via, "-t", candidate),
+                attach_command=_guidance_attach_command(candidate),
             )
     return None
 
@@ -3444,7 +3473,7 @@ def _wait_for_omx_attach_target(
                 session_name=candidate,
                 window_name=_tmux_active_pane_id(runtime, candidate),
                 attach_via=attach_via,
-                attach_command=("tmux", attach_via, "-t", candidate),
+                attach_command=_guidance_attach_command(candidate),
             )
         time.sleep(_OMX_SESSION_READY_POLL_INTERVAL_SECONDS)
     return None
