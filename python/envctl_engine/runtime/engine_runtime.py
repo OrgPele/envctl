@@ -310,7 +310,7 @@ Command-specific help: envctl --plan --help | envctl codex-tmux --help | envctl 
 
 _PLAN_HELP_TEXT = """envctl plan
 Usage:
-  envctl --plan <selector> [--headless] [--dry-run] [--tmux|--omx] [--codex|--opencode]
+  envctl --plan <selector> [--headless] [--dry-run] [--tmux|--omx] [--codex|--opencode] [--ulw]
   envctl --plan <selector> [--omx --ralph | --omx --team]
 
 What it does:
@@ -327,6 +327,7 @@ Useful flags:
   --team              OMX-only: start the launched Codex session in Team mode
   --codex             force Codex for tmux launches
   --opencode          force OpenCode for tmux launches
+  --ulw               tmux + OpenCode only: prepend `/ulw_loop` to the launched prompt
   --tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one
 
 Examples:
@@ -334,6 +335,7 @@ Examples:
   envctl --plan feature/task --headless --dry-run
   envctl --plan feature/task --tmux --codex
   envctl --plan feature/task --tmux --opencode --headless
+  envctl --plan feature/task --tmux --opencode --ulw --headless
   envctl --plan feature/task --omx
   envctl --plan feature/task --omx --ralph
   envctl --plan feature/task --omx --team"""

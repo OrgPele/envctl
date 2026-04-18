@@ -914,6 +914,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("envctl plan", output)
         self.assertIn("--dry-run", output)
+        self.assertIn("--ulw", output)
         self.assertIn("--omx --ralph", output)
         self.assertIn("preview selected/reused/created worktrees without mutating", output)
 

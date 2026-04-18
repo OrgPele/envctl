@@ -624,6 +624,10 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
+            "cd <repo> && envctl --plan <selector> --tmux --opencode --ulw",
+            plan_prompt.body,
+        )
+        self.assertIn(
             "cd <repo> && envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
@@ -680,8 +684,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --headless", plan_prompt.body)
+        self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --ulw --headless", plan_prompt.body)
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --headless", plan_prompt.body)
         self.assertIn("--tmux-new-session", plan_prompt.body)
+        self.assertIn("envctl prepends `/ulw_loop` to the first submitted prompt", plan_prompt.body)
+        self.assertIn("use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`", plan_prompt.body)
         self.assertIn("create another tmux or OMX-managed session instead of attaching to an existing one", plan_prompt.body)
         self.assertIn("when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session`", plan_prompt.body)
         self.assertIn("do not surface the internal `--tmux-new-session` default in the user-facing approval question", plan_prompt.body)

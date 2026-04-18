@@ -489,6 +489,11 @@ def _select_plan_projects(
                     planning_dir=self.config.planning_dir,
                     requested_cli=str(self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""),
                 )
+                plan_counts = _adjust_plan_counts_for_fresh_ai_launch(
+                    raw_projects=raw_projects,
+                    plan_counts=plan_counts,
+                    route=route,
+                )
             except ValueError as exc:
                 self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
                 print(str(exc))
@@ -533,6 +538,9 @@ def _select_plan_projects(
                 )
                 return []
             filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
+            if _route_requests_fresh_ai_worktree(route) and sync_result.created_worktrees:
+                created_names = {item.name for item in sync_result.created_worktrees}
+                filtered = [project for project in filtered if project[0] in created_names]
             if filtered:
                 self._emit(
                     "planning.selection.resolved",
@@ -738,6 +746,30 @@ def _prompt_planning_selection(
     if chosen:
         self._save_plan_selection_memory(chosen)
     return chosen
+
+
+def _route_requests_fresh_ai_worktree(route: Route) -> bool:
+    flags = getattr(route, "flags", {}) or {}
+    if not bool(flags.get("tmux_new_session")):
+        return False
+    if bool(flags.get("dry_run")):
+        return False
+    return bool(flags.get("tmux") or flags.get("omx"))
+
+
+def _adjust_plan_counts_for_fresh_ai_launch(
+    *,
+    raw_projects: list[tuple[str, Path]],
+    plan_counts: OrderedDict[str, int],
+    route: Route,
+) -> OrderedDict[str, int]:
+    if not _route_requests_fresh_ai_worktree(route):
+        return plan_counts
+    existing_counts = planning_existing_counts(projects=raw_projects, planning_files=list(plan_counts.keys()))
+    adjusted: OrderedDict[str, int] = OrderedDict()
+    for plan_file, requested_count in plan_counts.items():
+        adjusted[plan_file] = int(requested_count) + int(existing_counts.get(plan_file, 0))
+    return adjusted
 
 
 def _initial_plan_selected_counts(

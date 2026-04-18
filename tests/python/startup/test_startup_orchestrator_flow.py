@@ -259,7 +259,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 session_name="envctl-test-session",
                 window_name="feature-a-1",
                 attach_via="attach-session",
-                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+                attach_command=("tmux", "attach", "-t", "envctl-test-session"),
                 new_session_command=(
                     "ENVCTL_USE_REPO_WRAPPER=1",
                     "/tmp/repo/bin/envctl",
@@ -296,7 +296,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 "existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.",
                 rendered,
             )
-            self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
+            self.assertIn("attach: tmux attach -t envctl-test-session", rendered)
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --tmux-new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
@@ -319,7 +319,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 session_name="omx-feature-session",
                 window_name="",
                 attach_via="attach-session",
-                attach_command=("tmux", "attach-session", "-t", "omx-feature-session"),
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
                 new_session_command=(
                     "ENVCTL_USE_REPO_WRAPPER=1",
                     "/tmp/repo/bin/envctl",
@@ -362,7 +362,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 "existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.",
                 rendered,
             )
-            self.assertIn("attach: tmux attach-session -t omx-feature-session", rendered)
+            self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --tmux-new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
@@ -384,7 +384,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 session_name="envctl-test-session",
                 window_name="feature-a-1",
                 attach_via="attach-session",
-                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+                attach_command=("tmux", "attach", "-t", "envctl-test-session"),
             )
             existing_state = RunState(
                 run_id="run-dashboard",
@@ -427,7 +427,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = out.getvalue()
             self.assertNotIn("Planning mode complete; skipping service startup", rendered)
-            self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
+            self.assertIn("attach: tmux attach -t envctl-test-session", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
     def test_resume_reuse_failure_falls_back_to_fresh_run_id_before_failure_write(self) -> None:

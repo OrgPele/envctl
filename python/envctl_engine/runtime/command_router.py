@@ -125,6 +125,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--team",
     "--codex",
     "--opencode",
+    "--ulw",
     "--tmux-new-session",
     "--with-codex-skills",
 )
@@ -956,6 +957,7 @@ def _boolean_flag_name(token: str) -> str:
         "--team": "team",
         "--codex": "codex",
         "--opencode": "opencode",
+        "--ulw": "ulw",
         "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",
     }

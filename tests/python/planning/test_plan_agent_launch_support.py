@@ -402,6 +402,44 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.cli, "opencode")
         self.assertTrue(launch_config.enabled)
 
+    def test_resolve_plan_agent_launch_config_ulw_route_enables_direct_prompt_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_DIRECT_PROMPT": "false",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw"], env={}),
+            )
+
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertTrue(launch_config.ulw_loop_prefix)
+
+    def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--tmux", "--codex", "--ulw"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "unsupported_ulw_flag")
+
     def test_plan_agent_launch_prereqs_switch_to_omx_for_omx_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -499,7 +537,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 session_name="envctl-test-session",
                 window_name="feature-a-1",
                 attach_via="attach-session",
-                attach_command=("tmux", "attach-session", "-t", "envctl-test-session"),
+                attach_command=("tmux", "attach", "-t", "envctl-test-session"),
             )
 
             with (
@@ -522,7 +560,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
                 cli="opencode",
             )
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", expected_attach_session))
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_attach_session))
             expected_session_name = next(call[3] for call in rt.process_runner.calls if call[:3] == ["tmux", "has-session", "-t"])
             self.assertIn(["tmux", "has-session", "-t", expected_session_name], rt.process_runner.calls)
             self.assertEqual(expected_session_name, expected_attach_session)
@@ -656,7 +694,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             assert result.attach_target is not None
             self.assertEqual(result.attach_target.session_name, expected_session)
             self.assertEqual(result.attach_target.window_name, "feature-a-1")
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", expected_session))
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
 
     def test_find_existing_omx_attach_target_records_active_pane_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -791,7 +829,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 cli="opencode",
             )
             self.assertEqual(result.attach_target.session_name, expected_session)
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", expected_session))
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
             self.assertEqual(rt.process_runner.calls[0], ["tmux", "has-session", "-t", expected_session])
             self.assertEqual(rt.process_runner.calls[1], ["tmux", "list-windows", "-t", expected_session, "-F", "#{window_name}|||ENVCTL_TMUX_PATH|||#{pane_current_path}"])
 
@@ -833,7 +871,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 cli="opencode",
             )
             self.assertEqual(result.attach_target.session_name, expected_session)
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", expected_session))
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
             self.assertEqual(len(rt.process_runner.calls), 2)
 
     def test_existing_tmux_session_prompt_explains_no_creates_new_session(self) -> None:
@@ -842,7 +880,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             session_name="envctl-existing",
             window_name="feature-a-1",
             attach_via="attach-session",
-            attach_command=("tmux", "attach-session", "-t", "envctl-existing"),
+            attach_command=("tmux", "attach", "-t", "envctl-existing"),
         )
         captured: list[str] = []
         runtime = self._runtime(Path("/tmp/repo"), Path("/tmp/runtime"))
@@ -875,7 +913,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 session_name=base_session,
                 window_name="feature-a-1",
                 attach_via="attach-session",
-                attach_command=("tmux", "attach-session", "-t", base_session),
+                attach_command=("tmux", "attach", "-t", base_session),
             )
             launched_sessions: list[str] = []
 
@@ -905,7 +943,50 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIsNotNone(result.attach_target)
             assert result.attach_target is not None
             self.assertEqual(result.attach_target.session_name, new_session)
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach-session", "-t", new_session))
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", new_session))
+
+    def test_new_session_command_preserves_ulw_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
+            command = launch_support._new_session_command_for_route(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw", "--headless"], env={}),
+                launch_config=launch_support.PlanAgentLaunchConfig(
+                    enabled=True,
+                    transport="tmux",
+                    cli="opencode",
+                    cli_command="opencode",
+                    preset="implement_task",
+                    codex_cycles=0,
+                    codex_cycles_warning=None,
+                    shell="zsh",
+                    require_cmux_context=True,
+                    cmux_workspace="",
+                    direct_prompt_enabled=True,
+                    ulw_loop_prefix=True,
+                    ulw_suffix=False,
+                ),
+                created_worktrees=(worktree,),
+            )
+
+        self.assertEqual(
+            command,
+            (
+                "ENVCTL_USE_REPO_WRAPPER=1",
+                str(repo.resolve() / "bin" / "envctl"),
+                "--plan",
+                "feature-a",
+                "--tmux",
+                "--opencode",
+                "--ulw",
+                "--tmux-new-session",
+                "--headless",
+            ),
+        )
 
     def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
