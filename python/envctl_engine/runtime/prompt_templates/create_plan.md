@@ -94,7 +94,7 @@ Use this structure (adapt section names only if truly necessary):
     - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph workflow
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
-    - `--tmux-new-session`: only use when an attachable existing tmux or OMX session already exists and the user explicitly wants another one for the same selected worktree(s)
+    - `--tmux-new-session`: create another tmux or OMX-managed session instead of attaching to an existing one
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
