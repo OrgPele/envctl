@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
-import json
 from io import StringIO
 import tempfile
 import unittest
@@ -127,7 +126,6 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             saved_states: list[RunState] = []
 
             with (
-                patch.object(engine, "_command_exists", return_value=True),
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_try_load_existing_state", return_value=existing_state),
                 patch.object(engine, "_write_artifacts", side_effect=AssertionError("fresh dashboard state should not be written")),
@@ -242,62 +240,6 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("failure_message", written_state.metadata)
             self.assertIn("Main Backend", written_state.services)
 
-    def test_headless_plan_omx_existing_session_prints_attach_command_from_recovered_context(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            repo = self._repo(root)
-            runtime = root / "runtime"
-            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
-            context = self._tree_context(
-                repo,
-                "feature-a-1",
-                "feature-a/1",
-                backend_port=8200,
-                frontend_port=9200,
-            )
-            session_path = context.root / ".omx" / "state" / "session.json"
-            session_path.parent.mkdir(parents=True, exist_ok=True)
-            session_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": "omx-session-123",
-                        "native_session_id": "omx-feature-session",
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            with (
-                patch.object(engine, "_discover_projects", return_value=[context]),
-                patch.object(engine, "_select_plan_projects", return_value=[context]),
-                patch.object(
-                    engine.planning_worktree_orchestrator,
-                    "last_plan_selection_result",
-                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
-                ),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch.object(engine, "_write_artifacts"),
-                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
-            ):
-                out = StringIO()
-                with redirect_stdout(out):
-                    code = engine.dispatch(
-                        parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-                    )
-
-            self.assertEqual(code, 0)
-            rendered = out.getvalue()
-            self.assertIn(
-                "existing session: envctl did not create a new tmux session because one already exists for this plan/workspace/CLI.",
-                rendered,
-            )
-            self.assertIn("attach: tmux attach-session -t omx-feature-session", rendered)
-            self.assertIn(
-                f"new session: ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --omx --codex --tmux-new-session --headless",
-                rendered,
-            )
-            self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
-
     def test_headless_plan_prints_attach_command_from_plan_agent_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -351,12 +293,78 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertNotIn("session_id:", rendered)
             self.assertNotIn("run_id:", rendered)
             self.assertIn(
-                "existing session: envctl did not create a new tmux session because one already exists for this plan/workspace/CLI.",
+                "existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.",
                 rendered,
             )
             self.assertIn("attach: tmux attach-session -t envctl-test-session", rendered)
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --tmux-new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_existing_omx_plan_session_summary_reuses_selected_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach-session", "-t", "omx-feature-session"),
+                new_session_command=(
+                    "ENVCTL_USE_REPO_WRAPPER=1",
+                    "/tmp/repo/bin/envctl",
+                    "--plan",
+                    "feature-a",
+                    "--omx",
+                    "--codex",
+                    "--tmux-new-session",
+                    "--headless",
+                ),
+            )
+
+            captured_created_worktrees: list[list[str]] = []
+
+            def _record_launch(_runtime: object, *, route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]):
+                _ = route
+                captured_created_worktrees.append([item.name for item in created_worktrees])
+                return PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target)
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_record_launch),
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(captured_created_worktrees, [["feature-a-1"]])
+            rendered = out.getvalue()
+            self.assertIn(
+                "existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.",
+                rendered,
+            )
+            self.assertIn("attach: tmux attach-session -t omx-feature-session", rendered)
+            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --tmux-new-session --headless", rendered)
+            self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
     def test_resume_dashboard_exact_headless_plan_prints_attach_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -660,7 +660,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "attachable existing tmux/OMX session already exists and the user explicitly wants another one",
+            "create another tmux or OMX-managed session instead of attaching to an existing one",
             plan_prompt.body,
         )
         self.assertIn(
@@ -672,7 +672,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "spell out what envctl creates/syncs, what CLI/session it starts, what prompt preset it submits",
+            "spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits",
             plan_prompt.body,
         )
         self.assertIn(
@@ -682,10 +682,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --headless", plan_prompt.body)
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --headless", plan_prompt.body)
         self.assertIn("--tmux-new-session", plan_prompt.body)
+        self.assertIn("create another tmux or OMX-managed session instead of attaching to an existing one", plan_prompt.body)
+        self.assertIn("when you execute envctl launch commands yourself from an AI session, prefer adding `--tmux-new-session`", plan_prompt.body)
+        self.assertIn("do not surface the internal `--tmux-new-session` default in the user-facing approval question", plan_prompt.body)
         self.assertIn("if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn("if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn(
-            "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean show the separate repo-scoped commands explicitly)",
+            "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean run the separate repo-scoped commands one after another)",
             plan_prompt.body,
         )
         self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
@@ -697,7 +700,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertNotIn("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE", plan_prompt.body)
         self.assertIn("--tmux --opencode", plan_prompt.body)
         self.assertNotIn("--tmux --codex", plan_prompt.body)
-        self.assertIn("one Codex command and one OpenCode command", plan_prompt.body)
+        self.assertNotIn("AI CLI choice: `codex`, `opencode`, or `both`", plan_prompt.body)
         self.assertIn("one tmux Codex command and one OMX-managed Codex command", plan_prompt.body)
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
         self.assertIn("keep research narrow", plan_prompt.body)
