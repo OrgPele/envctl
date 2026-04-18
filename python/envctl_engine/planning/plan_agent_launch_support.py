@@ -49,6 +49,7 @@ _OMX_SESSION_READY_TIMEOUT_SECONDS = 12.0
 _OMX_SESSION_READY_POLL_INTERVAL_SECONDS = 0.1
 _OMX_SESSION_STATE_RELATIVE_PATH = Path(".omx") / "state" / "session.json"
 _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH = Path(".omx") / "state" / "tmux-extended-keys"
+_OMX_TMUX_LOCK_STALE_SECONDS = 30.0
 _CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
@@ -1024,8 +1025,15 @@ def _cleanup_stale_omx_tmux_locks(runtime: Any, *, worktree_root: Path) -> None:
     if not lock_root.is_dir():
         return
     removed_any = False
+    now = time.time()
     for child in lock_root.iterdir():
         if not child.name.endswith('.lock'):
+            continue
+        try:
+            age_seconds = max(0.0, now - child.stat().st_mtime)
+        except OSError:
+            continue
+        if age_seconds < _OMX_TMUX_LOCK_STALE_SECONDS:
             continue
         if child.is_dir():
             shutil.rmtree(child, ignore_errors=True)

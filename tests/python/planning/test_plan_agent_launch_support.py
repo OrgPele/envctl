@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -687,6 +689,38 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_tmux_target_accepts_pane_id_directly(self) -> None:
         self.assertEqual(launch_support._tmux_target("omx-feature-session", "%42"), "%42")
+
+    def test_cleanup_stale_omx_tmux_locks_ignores_fresh_lock_and_removes_old_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_root = Path(tmpdir) / "worktree"
+            lock_root = worktree_root / ".omx" / "state" / "tmux-extended-keys"
+            fresh_lock = lock_root / "fresh.lock"
+            stale_lock = lock_root / "stale.lock"
+            fresh_lock.mkdir(parents=True, exist_ok=True)
+            stale_lock.mkdir(parents=True, exist_ok=True)
+
+            now = time.time()
+            stale_time = now - (launch_support._OMX_TMUX_LOCK_STALE_SECONDS + 10.0)
+            fresh_time = now - 1.0
+            os.utime(stale_lock, (stale_time, stale_time))
+            os.utime(fresh_lock, (fresh_time, fresh_time))
+
+            runtime = self._runtime(Path(tmpdir) / "repo", Path(tmpdir) / "runtime")
+
+            launch_support._cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree_root)
+
+            self.assertFalse(stale_lock.exists())
+            self.assertTrue(fresh_lock.exists())
+            self.assertEqual(
+                self._events(runtime, "planning.agent_launch.omx_lock_cleanup"),
+                [
+                    {
+                        "event": "planning.agent_launch.omx_lock_cleanup",
+                        "worktree": str(worktree_root.resolve()),
+                        "transport": "omx",
+                    }
+                ],
+            )
 
     def test_omx_launch_reports_tmux_window_creation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
