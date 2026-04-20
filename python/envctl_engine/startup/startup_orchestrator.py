@@ -371,6 +371,7 @@ class StartupOrchestrator:
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
         if route.command == "plan":
+            self._print_plan_dry_run_preview(session)
             print(
                 "Planning mode complete; skipping service startup because "
                 f"envctl runs are disabled for {session.runtime_mode}."
@@ -605,6 +606,7 @@ class StartupOrchestrator:
                     return 0
                 enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
                 if route.command == "plan":
+                    self._print_plan_dry_run_preview(session)
                     print(
                         "Planning mode complete; skipping service startup because "
                         f"envctl runs are disabled for {session.runtime_mode}."
@@ -985,6 +987,23 @@ class StartupOrchestrator:
     def _headless_plan_output_only(self, session: StartupSession) -> bool:
         route = session.effective_route
         return route.command == "plan" and bool(route.flags.get("batch"))
+
+    def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
+        route = session.effective_route
+        if route.command != "plan" or not bool(route.flags.get("dry_run")):
+            return
+        planning_orchestrator = getattr(self.runtime, "planning_worktree_orchestrator", None)
+        selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
+        selection_result = selection_getter() if callable(selection_getter) else None
+        created_names = {
+            worktree.name
+            for worktree in getattr(selection_result, "created_worktrees", ())
+            if isinstance(worktree, CreatedPlanWorktree)
+        }
+        print("Dry run: no worktrees, git state, or services were modified.")
+        for context in session.selected_contexts:
+            action = "create" if context.name in created_names else "reuse"
+            print(f"{context.name}: {action}")
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
         attach_target = session.plan_agent_attach_target
