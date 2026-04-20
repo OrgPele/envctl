@@ -26,6 +26,7 @@ from envctl_engine.planning import (
     list_planning_files,
     planning_existing_counts,
     planning_feature_name,
+    predict_plan_projects,
     resolve_planning_files,
     select_projects_for_plan_files,
 )
@@ -494,6 +495,34 @@ def _select_plan_projects(
                     plan_counts=plan_counts,
                     route=route,
                 )
+                if bool(getattr(route, "flags", {}).get("dry_run")):
+                    predictions = predict_plan_projects(
+                        projects=raw_projects,
+                        plan_counts=plan_counts,
+                        base_dir=self.config.base_dir,
+                        trees_dir_name=self.config.trees_dir_name,
+                    )
+                    predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
+                    selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
+                    created_worktrees = tuple(
+                        CreatedPlanWorktree(
+                            name=prediction.name,
+                            root=Path(prediction.root),
+                            plan_file=prediction.plan_file,
+                        )
+                        for prediction in predictions
+                        if prediction.action == "create"
+                    )
+                    setattr(
+                        self,
+                        "_last_plan_selection_result",
+                        PlanSelectionResult(
+                            raw_projects=predicted_raw_projects,
+                            selected_contexts=selected_contexts,
+                            created_worktrees=created_worktrees,
+                        ),
+                    )
+                    return selected_contexts
             except ValueError as exc:
                 self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
                 print(str(exc))
