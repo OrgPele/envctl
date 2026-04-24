@@ -282,7 +282,14 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
             print("RESULT_CANCELLED=" + str(selection.cancelled))
             """
         )
-        output = _run_in_pty(script, b"\x1b[B" * 10 + b"\r", selector_impl=None, warmup_seconds=0.2)
+        output = _run_in_pty_timed(
+            script,
+            [
+                (0.2, b"\x1b[B" * 10),
+                (1.0, b"\r"),
+            ],
+            selector_impl=None,
+        )
         self.assertRegex(output, r"RESULT_CANCELLED=False")
         self.assertRegex(output, r"RESULT_PROJECTS=Main")
 
