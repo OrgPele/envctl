@@ -1147,8 +1147,8 @@ def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
                 f"or set TREES_BACKEND_ENABLE=false in .envctl to skip bootstrap."
             )
         return (
-            f"\nTip: Poetry install failed. Check that the project is configured for Poetry.\n"
-            f"If this project uses pip/setuptools instead, add TREES_BACKEND_ENABLE=false to .envctl."
+            "\nTip: Poetry install failed. Check that the project is configured for Poetry.\n"
+            "If this project uses pip/setuptools instead, add TREES_BACKEND_ENABLE=false to .envctl."
         )
     if "pip install" in lower_error or "pip" in lower_error:
         return (

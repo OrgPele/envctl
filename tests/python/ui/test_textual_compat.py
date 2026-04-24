@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import importlib
 import os
-import select
 import unittest
 from unittest.mock import patch
 
