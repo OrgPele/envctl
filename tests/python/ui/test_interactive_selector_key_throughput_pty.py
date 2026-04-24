@@ -20,7 +20,8 @@ def _pty_test_env(*, selector_impl: str | None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PYTHON_ROOT)
     env["PYTHONUNBUFFERED"] = "1"
-    env["TERM"] = str(env.get("TERM") or "xterm-256color")
+    if selector_impl == "planning_style":
+        env["TERM"] = "xterm-256color"
     for key in (
         "ENVCTL_UI_SIMPLE_MENUS",
         "ENVCTL_UI_SELECTOR_BACKEND",
@@ -281,7 +282,14 @@ class SelectorKeyThroughputPtyTests(unittest.TestCase):
             print("RESULT_CANCELLED=" + str(selection.cancelled))
             """
         )
-        output = _run_in_pty(script, b"\x1b[B" * 10 + b"\r", selector_impl=None, warmup_seconds=0.2)
+        output = _run_in_pty_timed(
+            script,
+            [
+                (0.2, b"\x1b[B" * 10),
+                (1.0, b"\r"),
+            ],
+            selector_impl=None,
+        )
         self.assertRegex(output, r"RESULT_CANCELLED=False")
         self.assertRegex(output, r"RESULT_PROJECTS=Main")
 
