@@ -318,10 +318,10 @@ Optional plan-agent launch config for `--plan`:
 - `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
 - `envctl --plan <selector> --omx --ralph` enters the Ralph OMX workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --team` enters the Team OMX workflow inside that OMX-managed Codex session
-- `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI
+- `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
-- OpenCode launches send `/<preset>`
+- OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`

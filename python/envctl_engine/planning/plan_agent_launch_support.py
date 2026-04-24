@@ -289,7 +289,7 @@ def resolve_plan_agent_launch_config(
         if bool(route_flags.get("opencode"))
         else (
             "codex"
-            if bool(route_flags.get("codex"))
+            if bool(route_flags.get("codex")) or transport == "omx"
             else (
             env_map.get("ENVCTL_PLAN_AGENT_CLI")
             or config.raw.get("ENVCTL_PLAN_AGENT_CLI")

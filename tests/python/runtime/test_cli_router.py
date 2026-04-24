@@ -88,6 +88,17 @@ class CliRouterTests(unittest.TestCase):
                 with self.assertRaises(RouteError):
                     parse_route(args, env={})
 
+
+    def test_plan_agent_cli_flags_reject_conflicting_or_unsupported_combinations(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--codex", "--opencode"],
+            ["--plan", "feature-a", "--tmux", "--codex", "--opencode"],
+            ["--plan", "feature-a", "--omx", "--opencode"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
+
     def test_list_trees_alias_routes_to_list_trees_command(self) -> None:
         route = parse_route(["--list-trees"], env={})
         self.assertEqual(route.command, "list-trees")

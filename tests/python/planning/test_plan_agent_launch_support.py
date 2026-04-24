@@ -539,6 +539,29 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(workflow.codex_cycles, 0)
                     self.assertEqual(len(workflow.steps), 1)
 
+    def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--omx"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "omx")
+        self.assertEqual(launch_config.cli, "codex")
+        self.assertEqual(launch_config.cli_command, "codex --dangerously-bypass-approvals-and-sandbox")
+
     def test_resolve_plan_agent_launch_config_accepts_explicit_codex_route_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -694,29 +717,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     }
                 ],
             )
-
-    def test_omx_transport_rejects_opencode(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
-            repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(
-                repo,
-                runtime,
-                env={
-                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
-                },
-            )
-
-            result = launch_plan_agent_terminals(
-                rt,
-                route=parse_route(["--plan", "feature-a", "--omx", "--opencode"], env={}),
-                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
-            )
-
-            self.assertEqual(result.status, "failed")
-            self.assertEqual(result.reason, "unsupported_omx_cli")
 
     def test_omx_launch_spawns_managed_session_and_bootstraps_existing_tmux_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
