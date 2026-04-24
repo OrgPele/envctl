@@ -268,7 +268,7 @@ Cycle mode notes:
 ## Experimental
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_EXPERIMENTAL_CODEX_SKILLS` | `false` | Enable the Codex install-prompts path that installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`. |
+| `ENVCTL_EXPERIMENTAL_CODEX_SKILLS` | `false` | Legacy compatibility toggle; Codex install-prompts now installs explicit-only skills under `~/.codex/skills/envctl-*` by default. |
 
 Selector implementation is controlled separately from dashboard backend policy:
 

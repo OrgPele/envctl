@@ -352,7 +352,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = self._codex_target(home=home, preset="implement_task")
+            target = self._codex_skill_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
@@ -383,7 +383,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = self._codex_target(home=home, preset="implement_task")
+            target = self._codex_skill_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("old prompt\n", encoding="utf-8")
@@ -400,14 +400,14 @@ class CommandExitCodeTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
-            self.assertTrue(target.read_text(encoding="utf-8").startswith("You are implementing real code, end-to-end."))
+            self.assertIn("You are implementing real code, end-to-end.", target.read_text(encoding="utf-8"))
 
     def test_install_prompts_cli_run_writes_then_overwrites_without_backup_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = self._codex_target(home=home, preset="implement_task")
+            target = self._codex_skill_target(home=home, preset="implement_task")
             repo.mkdir(parents=True, exist_ok=True)
             first_stdout = StringIO()
             second_stdout = StringIO()
@@ -444,7 +444,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertTrue(all(item["status"] == "written" for item in first_payload["results"]))
             self.assertTrue(all(item["status"] == "overwritten" for item in second_payload["results"]))
             self.assertTrue(target.exists())
-            self.assertTrue((target.parent / "review_worktree_imp.md").exists())
+            self.assertTrue(self._codex_skill_target(home=home, preset="review_worktree_imp").exists())
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
     def test_install_prompts_cli_run_installs_review_worktree_prompt_with_origin_review_contract(self) -> None:
@@ -452,7 +452,7 @@ class CommandExitCodeTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             home = Path(tmpdir) / "home"
-            target = self._codex_target(home=home, preset="review_worktree_imp")
+            target = self._codex_skill_target(home=home, preset="review_worktree_imp")
             repo.mkdir(parents=True, exist_ok=True)
 
             with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
@@ -470,7 +470,7 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("current local repo directory is the unedited baseline", written)
             self.assertIn("defaults to the worktree created from the current plan file", written)
-            self.assertIn("Launch arguments: `$ARGUMENTS`", written)
+            self.assertIn("Launch arguments: `additional user instructions supplied with the invoking prompt`", written)
             self.assertIn("Treat only the first path-like token as the explicit worktree override", written)
             self.assertIn("use that bundle as the primary review guide", written)
             self.assertIn("original plan file", written)
@@ -506,7 +506,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
             self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
 
-    def test_install_prompts_cli_run_can_install_feature_gated_codex_skills(self) -> None:
+    def test_install_prompts_cli_run_keeps_with_codex_skills_as_compatibility_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -530,7 +530,6 @@ class CommandExitCodeTests(unittest.TestCase):
                         "RUN_REPO_ROOT": str(repo),
                         "RUN_SH_RUNTIME_DIR": str(runtime),
                         "HOME": str(home),
-                        "ENVCTL_EXPERIMENTAL_CODEX_SKILLS": "true",
                     },
                 )
 

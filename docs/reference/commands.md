@@ -93,12 +93,11 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
-ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Behavior:
 
-- installs built-in prompt files into user-local AI CLI directories
+- installs built-in workflows into user-local AI CLI directories
 - omitting `--preset` installs all built-in presets
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex-specific guidance
 - built-in presets:
@@ -121,10 +120,9 @@ Behavior:
 - this command is available from the normal CLI, but not from dashboard interactive mode
 - `review_worktree_imp` is intended for manual origin-side review from the local repo CLI; it defaults to the worktree created from the current plan file, and `$ARGUMENTS` can override that target with a specific worktree path or name
 - interactive dashboard `review` can optionally offer one origin-side AI review tab after a successful single-worktree review; this reuses `review_worktree_imp` instead of changing review bundle generation
-- Codex presets are user-editable markdown files owned by envctl; envctl reads the file and submits its body instead of relying on a Codex slash alias
+- Codex presets are user-editable skill markdown files owned by envctl; envctl reads the embedded direct prompt body when it needs to submit a preset itself instead of relying on a Codex slash alias
 - envctl-managed `--plan` launches submit the rendered workflow automatically; manual `$envctl-*` invocation is only for direct Codex or OMX use
-- experimental Codex skill mirrors are available only when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true` and you pass `--with-codex-skills`
-- when enabled, envctl also installs explicit-only Codex skills under `~/.codex/skills/envctl-*`
+- Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` is kept as a compatibility no-op for older scripts
 
 ## `codex-tmux`
 
