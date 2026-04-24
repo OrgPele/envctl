@@ -12,7 +12,6 @@ envctl install-prompts --cli claude --dry-run
 envctl install-prompts --cli codex,opencode --json
 envctl install-prompts --cli all
 envctl install-prompts --cli all --preset all
-ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
 ```
 
 Use this when you want `envctl` to install built-in prompt presets into your user-local AI CLI directories.
@@ -32,8 +31,7 @@ Notes:
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex guidance
 - this command is intentionally unavailable inside dashboard interactive mode
 - the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
-- `--with-codex-skills` is experimental and only works when `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true`
-- the experimental Codex skill mirrors install as explicit-only skills under `~/.codex/skills/envctl-*`
+- Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` remains accepted as a compatibility no-op for older scripts
 - envctl-managed `--plan` launches submit the rendered workflow automatically; the `$envctl-*` skill names are for direct manual Codex/OMX use
 
 Current built-in presets:
@@ -50,15 +48,7 @@ Current built-in presets:
 
 `implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use. `implement_plan` remains available as a backward-compatible preset.
 
-All Codex presets now install as explicit-only skills. Run `envctl install-prompts --cli codex`, then edit the generated `SKILL.md` files under `~/.codex/skills/envctl-*` if you want to customize them for manual Codex use.
-
-If you want to compare the same workflows as Codex skills, enable the experimental flag and install the skill mirrors:
-
-```bash
-ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills
-```
-
-The installed skill mirrors are explicit-only and use names such as:
+All Codex presets now install as explicit-only skills. Run `envctl install-prompts --cli codex`, then edit the generated `SKILL.md` files under `~/.codex/skills/envctl-*` if you want to customize them for manual Codex use. The installed skills are explicit-only and use names such as:
 
 - `$envctl-implement-task`
 - `$envctl-continue-task`
@@ -76,7 +66,7 @@ Dashboard review follow-up:
 - during interactive `envctl dashboard` -> `review` setup for exactly one non-`Main` worktree, envctl can offer one origin-side AI review tab through the same selector UI used for dashboard target selection
 - the opened tab starts in the current repo root, not the target worktree
 - the submitted prompt includes reviewer notes pointing at the generated full review bundle, the target worktree directory, and the original plan file that created the worktree when provenance can resolve it
-- Codex receives the rendered `review_worktree_imp` prompt body with the reviewer notes injected, and OpenCode receives `/review_worktree_imp <worktree>`
+- Codex receives the rendered `review_worktree_imp` prompt body with the reviewer notes injected. OpenCode cmux launches receive `/review_worktree_imp <worktree>`, while tmux OpenCode direct-prompt launches submit the rendered prompt body.
 - choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the existing markdown bundle-only behavior
 - this optional review-tab launch reuses the same `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` transport settings as the post-`--plan` launcher, but it does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`
 

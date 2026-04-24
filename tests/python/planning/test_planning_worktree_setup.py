@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -62,6 +63,54 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
 
             self.assertEqual(selected, [])
             self.assertIn("Planning file not found", out.getvalue())
+
+
+    def test_interactive_plan_dry_run_previews_without_syncing_worktrees_or_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime)
+            orchestrator = engine.planning_worktree_orchestrator
+            route = parse_route(["--plan", "--dry-run"], env={})
+            sync_calls: list[dict[str, int]] = []
+            save_calls: list[dict[str, int]] = []
+
+            def fake_menu(
+                planning_files: list[str],
+                selected_counts: dict[str, int],
+                existing_counts: dict[str, int],
+            ) -> dict[str, int]:
+                self.assertEqual(planning_files, ["feature/task.md"])
+                self.assertEqual(existing_counts, {"feature/task.md": 0})
+                return {"feature/task.md": 1}
+
+            def fake_sync(**kwargs: object) -> object:
+                sync_calls.append(dict(kwargs["plan_counts"]))  # type: ignore[index,arg-type]
+                return engine._sync_plan_worktrees_from_plan_counts(**kwargs)  # type: ignore[arg-type]
+
+            def fake_save(chosen: dict[str, int]) -> None:
+                save_calls.append(dict(chosen))
+
+            with (
+                patch.object(orchestrator, "_run_planning_selection_menu", side_effect=fake_menu),
+                patch.object(orchestrator, "_sync_plan_worktrees_from_plan_counts", side_effect=fake_sync),
+                patch.object(orchestrator, "_save_plan_selection_memory", side_effect=fake_save),
+                patch.object(sys.stdin, "isatty", return_value=True),
+                patch.object(sys.stdout, "isatty", return_value=True),
+            ):
+                selected = engine._select_plan_projects(route, [])
+
+            self.assertEqual([ctx.name for ctx in selected], ["feature_task-1"])
+            self.assertEqual(sync_calls, [])
+            self.assertEqual(save_calls, [])
+            self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+            result = orchestrator.last_plan_selection_result()
+            self.assertEqual([worktree.name for worktree in result.created_worktrees], ["feature_task-1"])
 
     def test_plan_selection_creates_missing_worktrees_for_requested_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

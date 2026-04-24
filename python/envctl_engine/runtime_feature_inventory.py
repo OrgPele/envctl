@@ -514,22 +514,6 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Hook migration is Python-owned and provides an explicit path away from executable shell hooks.",
     ),
-    "codex-tmux": FeatureDefinition(
-        area="cli",
-        feature="Command: launch or attach a repo-scoped Codex tmux session",
-        user_visible=True,
-        shell_source_of_truth=(),
-        python_source_of_truth=(
-            "python/envctl_engine/runtime/codex_tmux_support.py",
-            "python/envctl_engine/runtime/utility_command_support.py",
-        ),
-        evidence_tests=(
-            "tests/python/runtime/test_codex_tmux_support.py",
-            "tests/python/runtime/test_engine_runtime_dispatch.py",
-        ),
-        parity_status="verified_python",
-        notes="Codex tmux launch and attach behavior is Python-owned and covered by focused runtime tests.",
-    ),
     "debug-pack": FeatureDefinition(
         area="diagnostics",
         feature="Command: create a debug bundle pack from the Python runtime",

@@ -464,7 +464,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Unsupported preset", payload["results"][0]["message"])
             self.assertIn("implement_task", payload["results"][0]["message"])
 
-    def test_install_prompts_rejects_codex_skills_without_feature_flag(self) -> None:
+    def test_install_prompts_installs_codex_skills_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})
             route = parse_route(
@@ -482,7 +482,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(payload["results"], [])
             self.assertEqual(payload["skill_results"][0]["kind"], "skill")
 
-    def test_install_prompts_can_install_feature_gated_codex_skills(self) -> None:
+    def test_install_prompts_installs_codex_skills_with_legacy_feature_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(
                 env={

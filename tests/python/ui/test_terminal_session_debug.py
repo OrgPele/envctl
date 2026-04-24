@@ -26,6 +26,7 @@ class TerminalSessionDebugTests(unittest.TestCase):
         master_fd, slave_fd = pty.openpty()
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PYTHON_ROOT)
+        env["TERM"] = "xterm-256color"
         proc = subprocess.Popen(  # noqa: S603
             [sys.executable, "-c", script],
             stdin=slave_fd,

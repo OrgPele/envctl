@@ -1361,7 +1361,6 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             {
                 "RUN_REPO_ROOT": str(repo),
                 "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
-                "TREES_STARTUP_ENABLE": "false",
             }
         )
         runtime = PythonEngineRuntime(config, env={})
@@ -1374,6 +1373,36 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         rendered = buffer.getvalue()
         self.assertIn("Dry run: no worktrees, git state, or services were modified.", rendered)
         self.assertIn("feature_task-1: create", rendered)
+        self.assertNotIn("Starting project", rendered)
+        self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+
+    def test_plan_dry_run_with_omx_ralph_does_not_launch_agent_or_start_services(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_ENABLED": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(
+                parse_route(["--plan", "feature/task", "--headless", "--dry-run", "--omx", "--ralph"], env={})
+            )
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("Dry run: no worktrees, git state, or services were modified.", rendered)
+        self.assertNotIn("Plan agent launch", rendered)
+        self.assertNotIn("Starting project", rendered)
         self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
 
     def test_explain_startup_json_reports_plan_agent_launch_state(self) -> None:
@@ -1514,6 +1543,38 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_omx_workflow_modifier(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+
+        for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+            with self.subTest(token=token):
+                runtime = PythonEngineRuntime(config, env={})
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(
+                        parse_route(["--explain-startup", "--plan", "feature/task", "--omx", token, "--json"], env={})
+                    )
+
+                self.assertEqual(code, 0)
+                payload = json.loads(buffer.getvalue())
+                self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
+                self.assertEqual(payload["plan_agent_launch"]["omx_workflow"], workflow_name)
+                self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+                self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 0)
 
     def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()

@@ -89,7 +89,7 @@ envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
 envctl install-prompts --cli codex --dry-run
-ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true envctl install-prompts --cli codex --with-codex-skills --dry-run
+envctl install-prompts --cli codex --dry-run
 ```
 
 What they are for:
@@ -104,7 +104,7 @@ What they are for:
   - omitting `--preset` installs all built-in presets for the selected CLI targets
   - overwrites prompt files in place after one confirmation prompt
   - use `--yes` or `--force` for non-interactive approval when existing files must be replaced
-  - `--with-codex-skills` is an experimental Codex-only mirror install that requires `ENVCTL_EXPERIMENTAL_CODEX_SKILLS=true`
+  - Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` remains accepted as a compatibility no-op for older scripts
 
 Compatibility note:
 

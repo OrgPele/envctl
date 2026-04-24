@@ -7,7 +7,6 @@ import hashlib
 import concurrent.futures
 import os
 from pathlib import Path
-import os
 import tempfile
 import re
 import subprocess
@@ -52,7 +51,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
 )
 from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
@@ -420,7 +419,6 @@ class ActionCommandOrchestrator:
         return selected, None
 
     def run_self_destruct_worktree_action(self, route: Route) -> int:
-        rt = self.runtime
         targets, error = self.resolve_targets(route, trees_only=True)
         if error is not None:
             print(error)
@@ -2685,8 +2683,12 @@ if result.returncode != 0:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
+                    summary_env = dict(getattr(self.runtime, "env", {}))
+                    hyperlink_mode = str(summary_env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+                    if hyperlink_mode not in {"off", "false", "no", "0"}:
+                        summary_env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
                     rendered_path = render_path_for_terminal(
-                        summary_path, env=getattr(self.runtime, "env", {}), stream=sys.stdout
+                        summary_path, env=summary_env, stream=sys.stdout
                     )
                     print(f"{prefix}{rendered_path}")
             if multi_project:

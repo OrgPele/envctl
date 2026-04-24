@@ -460,6 +460,8 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
+    _validate_plan_agent_cli_flags(state)
+    _validate_plan_agent_workflow_flags(state)
 
     # Phase 5: Route Finalization - build final Route object
     return _phase_finalize(state, argv)
@@ -878,6 +880,26 @@ def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:
         projects=state.projects,
         flags=state.flags,
     )
+
+
+def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
+    if not bool(state.flags.get("codex")) and not bool(state.flags.get("opencode")):
+        return
+    if bool(state.flags.get("codex")) and bool(state.flags.get("opencode")):
+        raise RouteError("Use only one of --codex or --opencode.")
+    if bool(state.flags.get("omx")) and bool(state.flags.get("opencode")):
+        raise RouteError("--opencode is only supported with cmux or --tmux plan-agent launches; --omx uses Codex.")
+
+
+def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
+    ralph = bool(state.flags.get("ralph"))
+    team = bool(state.flags.get("team"))
+    if not (ralph or team):
+        return
+    if ralph and team:
+        raise RouteError("Use only one of --ralph or --team.")
+    if not bool(state.flags.get("omx")):
+        raise RouteError("--ralph and --team are only supported with --omx.")
 
 
 def _default_mode(env: Mapping[str, str]) -> str:

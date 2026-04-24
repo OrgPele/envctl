@@ -2501,7 +2501,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertNotIn("--model", " ".join(str(part) for part in cmd))
             self.assertTrue((repo / "trees" / "feature_task" / "1" / ".omx" / "state" / "session.json").is_file())
             rendered = out.getvalue()
-            self.assertIn("attach: tmux attach-session -t omx-feature-session", rendered)
+            self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
     def test_plan_planning_prs_does_not_invoke_plan_agent_launch(self) -> None:
