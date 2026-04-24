@@ -847,6 +847,11 @@ def _launch_plan_agent_omx_terminals(
         runtime,
         repo_root=repo_root,
         created_worktrees=created_worktrees,
+    ) or _find_existing_tmux_attach_target(
+        runtime,
+        repo_root=repo_root,
+        created_worktrees=created_worktrees,
+        cli="omx",
     )
     if existing_attach_target is not None:
         if not create_new_session and _should_prompt_existing_tmux_session(runtime, prompt_on_existing=prompt_on_existing):

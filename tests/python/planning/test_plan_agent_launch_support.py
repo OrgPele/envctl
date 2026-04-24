@@ -829,6 +829,57 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.attach_target.window_name, "%42")
             self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", "omx-feature-session"))
 
+    def test_omx_launch_detects_legacy_envctl_owned_tmux_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            legacy_attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-legacy-omx-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-legacy-omx-session"),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target",
+                    return_value=legacy_attach_target,
+                ) as legacy_find_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree") as spawn_mock,
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIn("already exists", result.reason)
+            self.assertIsNotNone(result.attach_target)
+            assert result.attach_target is not None
+            self.assertEqual(result.attach_target.session_name, legacy_attach_target.session_name)
+            self.assertEqual(result.attach_target.window_name, legacy_attach_target.window_name)
+            self.assertEqual(result.attach_target.attach_command, legacy_attach_target.attach_command)
+            self.assertIn("--tmux-new-session", result.attach_target.new_session_command)
+            legacy_find_mock.assert_called_once_with(
+                rt,
+                repo_root=repo.resolve(),
+                created_worktrees=(worktree,),
+                cli="omx",
+            )
+            spawn_mock.assert_not_called()
+
     def test_omx_workflow_launch_wraps_initial_prompt_with_workflow_keyword(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
