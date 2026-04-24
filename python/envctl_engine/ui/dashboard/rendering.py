@@ -15,7 +15,6 @@ from typing import Any, Mapping, cast
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
 
@@ -331,6 +330,11 @@ def _print_dashboard_tests_row(
     timestamp = datetime.fromtimestamp(summary_path.stat().st_mtime).strftime("%b %d %H:%M")
     rendered_path = render_path_for_terminal(summary_path, env=getattr(self, "env", {}), stream=sys.stdout)
     print(f"      {color}{icon}{reset} tests: {rendered_path} {dim}({timestamp}){reset}")
+    raw_excerpt = entry.get("summary_excerpt")
+    if isinstance(raw_excerpt, list):
+        rendered_excerpt = [str(line).strip() for line in raw_excerpt if str(line).strip()]
+        for line in rendered_excerpt[:3]:
+            print(f"        {line}")
 
 
 def _dashboard_project_pr(self: Any, *, state: RunState, project: str) -> tuple[str, str] | None:
