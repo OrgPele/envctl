@@ -69,12 +69,24 @@ class CliRouterTests(unittest.TestCase):
         self.assertTrue(route.flags.get("codex"))
 
     def test_omx_ralph_and_team_flags_are_parsed(self) -> None:
-        route = parse_route(["--plan", "feature-a", "--omx", "--ralph", "--team", "--codex"], env={})
-        self.assertEqual(route.command, "plan")
-        self.assertTrue(route.flags.get("omx"))
-        self.assertTrue(route.flags.get("ralph"))
-        self.assertTrue(route.flags.get("team"))
-        self.assertTrue(route.flags.get("codex"))
+        for token, flag_name in (("--ralph", "ralph"), ("--team", "team")):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", "--omx", token, "--codex"], env={})
+                self.assertEqual(route.command, "plan")
+                self.assertTrue(route.flags.get("omx"))
+                self.assertTrue(route.flags.get(flag_name))
+                self.assertTrue(route.flags.get("codex"))
+
+    def test_omx_workflow_flags_require_omx_and_are_mutually_exclusive(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--ralph"],
+            ["--plan", "feature-a", "--team"],
+            ["--plan", "feature-a", "--tmux", "--team"],
+            ["--plan", "feature-a", "--omx", "--ralph", "--team"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
 
     def test_list_trees_alias_routes_to_list_trees_command(self) -> None:
         route = parse_route(["--list-trees"], env={})

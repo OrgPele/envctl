@@ -91,7 +91,7 @@ class _RuntimeHarness:
         self._persist_events_snapshot_calls = 0
 
     def _command_exists(self, command: str) -> bool:
-        return command in {"cmux", "codex", "omx", "opencode", "tmux", "zsh"}
+        return command in {"cmux", "codex", "omx", "opencode", "script", "tmux", "zsh"}
 
     def _emit(self, event: str, **payload: object) -> None:
         self._plan_agent_events.append({"event": event, **payload})
@@ -458,7 +458,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
             )
 
-        self.assertEqual(prereqs, ("omx", "tmux", "codex"))
+        self.assertEqual(prereqs, ("omx", "tmux", "script", "codex"))
 
     def test_resolve_plan_agent_launch_config_accepts_omx_route_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -481,6 +481,63 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.transport, "omx")
         self.assertEqual(launch_config.cli, "codex")
         self.assertTrue(launch_config.enabled)
+
+    def test_resolve_plan_agent_launch_config_records_omx_workflow_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+                with self.subTest(token=token):
+                    launch_config = launch_support.resolve_plan_agent_launch_config(
+                        config,
+                        {},
+                        route=parse_route(["--plan", "feature-a", "--omx", token], env={}),
+                    )
+
+                    self.assertEqual(launch_config.transport, "omx")
+                    self.assertEqual(launch_config.cli, "codex")
+                    self.assertEqual(launch_config.omx_workflow, workflow_name)
+                    self.assertEqual(launch_config.codex_cycles, 0)
+
+    def test_resolve_plan_agent_launch_config_disables_codex_cycles_for_omx_workflows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3",
+                }
+            )
+
+            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+                with self.subTest(token=token):
+                    launch_config = launch_support.resolve_plan_agent_launch_config(
+                        config,
+                        {},
+                        route=parse_route(["--plan", "feature-a", "--omx", token], env={}),
+                    )
+                    workflow = _build_plan_agent_workflow(
+                        cli=launch_config.cli,
+                        preset=launch_config.preset,
+                        codex_cycles=launch_config.codex_cycles,
+                        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+                    )
+
+                    self.assertEqual(launch_config.omx_workflow, workflow_name)
+                    self.assertEqual(launch_config.codex_cycles, 0)
+                    self.assertEqual(workflow.codex_cycles, 0)
+                    self.assertEqual(len(workflow.steps), 1)
 
     def test_resolve_plan_agent_launch_config_accepts_explicit_codex_route_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -661,7 +718,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.reason, "unsupported_omx_cli")
 
-    def test_omx_launch_creates_tmux_session_and_bootstraps_omx_cli(self) -> None:
+    def test_omx_launch_spawns_managed_session_and_bootstraps_existing_tmux_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -674,12 +731,19 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 },
             )
             worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
-            expected_session = launch_support._tmux_session_name_for_worktree(repo.resolve(), worktree, cli="omx")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None) as ensure_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_omx_worktree_bootstrap", return_value=None) as bootstrap_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None) as spawn_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target) as wait_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None) as workflow_mock,
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -688,13 +752,173 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            ensure_mock.assert_called_once()
-            bootstrap_mock.assert_called_once()
+            spawn_mock.assert_called_once()
+            wait_mock.assert_called_once()
+            workflow_mock.assert_called_once()
             self.assertIsNotNone(result.attach_target)
             assert result.attach_target is not None
-            self.assertEqual(result.attach_target.session_name, expected_session)
-            self.assertEqual(result.attach_target.window_name, "feature-a-1")
-            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
+            self.assertEqual(result.attach_target.session_name, "omx-feature-session")
+            self.assertEqual(result.attach_target.window_name, "%42")
+            self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", "omx-feature-session"))
+
+    def test_omx_workflow_launch_wraps_initial_prompt_with_workflow_keyword(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            for workflow_name in ("ralph", "team"):
+                with self.subTest(workflow_name=workflow_name):
+                    rt = self._runtime(repo, runtime)
+                    worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+                    launch_config = launch_support.PlanAgentLaunchConfig(
+                        enabled=True,
+                        transport="omx",
+                        cli="codex",
+                        cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                        preset="implement_task",
+                        codex_cycles=0,
+                        codex_cycles_warning=None,
+                        shell="zsh",
+                        require_cmux_context=True,
+                        cmux_workspace="",
+                        direct_prompt_enabled=False,
+                        ulw_loop_prefix=False,
+                        ulw_suffix=False,
+                        omx_workflow=workflow_name,
+                    )
+                    workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+                    submitted_prompts: list[str] = []
+
+                    with (
+                        patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
+                        patch(
+                            "envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step",
+                            side_effect=lambda *_args, prompt_text, **_kwargs: submitted_prompts.append(prompt_text) or None,
+                        ),
+                    ):
+                        error = launch_support._run_tmux_existing_session_workflow(
+                            rt,
+                            session_name="omx-feature-session",
+                            window_name="%42",
+                            launch_config=launch_config,
+                            workflow=workflow,
+                            worktree=worktree,
+                        )
+
+                    self.assertIsNone(error)
+                    self.assertEqual(submitted_prompts, [f"${workflow_name}\n\nIMPLEMENT TASK BODY"])
+
+    def test_omx_workflow_launch_does_not_double_wrap_existing_keyword(self) -> None:
+        for workflow_name in ("ralph", "team"):
+            with self.subTest(workflow_name=workflow_name):
+                prompt = f"${workflow_name}\n\nIMPLEMENT TASK BODY"
+                self.assertEqual(
+                    launch_support._wrap_omx_initial_prompt_for_workflow(prompt, workflow=workflow_name),
+                    prompt,
+                )
+
+    def test_omx_new_session_wait_uses_previous_session_id_to_avoid_stale_attach(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            session_path = repo / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text('{"session_id":"old-session","native_session_id":"old-native"}\n', encoding="utf-8")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-new-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-new-session"),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target",
+                    return_value=attach_target,
+                ) as wait_mock,
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--tmux-new-session"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertEqual(wait_mock.call_args.kwargs["previous_session_id"], "old-session")
+
+    def test_missing_launch_commands_includes_script_for_omx(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                rt.config,
+                rt.env,
+                route=parse_route(["--plan", "feature-a", "--omx"], env={}),
+            )
+
+            with patch.object(rt, "_command_exists", side_effect=lambda command: command != "script"):
+                missing = launch_support._missing_launch_commands(rt, launch_config)
+
+            self.assertEqual(missing, ["script"])
+
+    def test_omx_team_spawn_forces_worker_bypass_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex --model gpt-5.4 --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="team",
+            )
+            popen_calls: list[dict[str, object]] = []
+
+            class _DummyPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    session_path = Path(str(kwargs["cwd"])) / ".omx" / "state" / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    session_path.write_text('{"session_id":"omx-abc123"}\n', encoding="utf-8")
+
+                def poll(self):
+                    return 0
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen):
+                error = launch_support._spawn_omx_session_for_worktree(
+                    rt,
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(popen_calls[0]["cmd"], ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
+            self.assertEqual(
+                cast(dict[str, str], popen_calls[0]["env"])["OMX_TEAM_WORKER_LAUNCH_ARGS"],
+                "--dangerously-bypass-approvals-and-sandbox",
+            )
 
     def test_find_existing_omx_attach_target_records_active_pane_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -760,7 +984,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ],
             )
 
-    def test_omx_launch_reports_tmux_window_creation_failure(self) -> None:
+    def test_omx_launch_reports_spawn_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -776,11 +1000,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             buffer = StringIO()
             with (
                 redirect_stdout(buffer),
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
-                patch(
-                    "envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window",
-                    return_value="tmux_window_unavailable: can't find window: feature-a-1",
-                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value="omx exited before creating a managed session"),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -791,8 +1012,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.reason, "launch_failed")
             self.assertEqual(len(result.outcomes), 1)
-            self.assertEqual(result.outcomes[0].reason, "tmux_window_unavailable: can't find window: feature-a-1")
-            self.assertIn("can't find window: feature-a-1", buffer.getvalue())
+            self.assertEqual(result.outcomes[0].reason, "omx exited before creating a managed session")
+            self.assertIn("omx exited before creating a managed session", buffer.getvalue())
 
     def test_tmux_launch_reuses_existing_session_for_matching_worktree_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -987,6 +1208,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "--headless",
             ),
         )
+
+    def test_new_session_command_preserves_omx_workflow_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
+            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+                with self.subTest(token=token):
+                    command = launch_support._new_session_command_for_route(
+                        rt,
+                        route=parse_route(["--plan", "feature-a", "--omx", token, "--headless"], env={}),
+                        launch_config=launch_support.PlanAgentLaunchConfig(
+                            enabled=True,
+                            transport="omx",
+                            cli="codex",
+                            cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                            preset="implement_task",
+                            codex_cycles=0,
+                            codex_cycles_warning=None,
+                            shell="zsh",
+                            require_cmux_context=True,
+                            cmux_workspace="",
+                            direct_prompt_enabled=False,
+                            ulw_loop_prefix=False,
+                            ulw_suffix=False,
+                            omx_workflow=workflow_name,
+                        ),
+                        created_worktrees=(worktree,),
+                    )
+
+                    self.assertIn(token, command)
+                    self.assertLess(command.index(token), command.index("--tmux-new-session"))
 
     def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1399,8 +1654,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={"HOME": tmpdir},
                 process_runner=_RecordingRunner(),
             )
-            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="review_worktree_imp")
-
             prompt_text, error = launch_support._resolve_preset_submission_text(
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
