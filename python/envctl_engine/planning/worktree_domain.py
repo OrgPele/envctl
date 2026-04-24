@@ -652,7 +652,8 @@ def _select_plan_projects(
         )
         return []
 
-    plan_counts = self._prompt_planning_selection(planning_files, raw_projects)
+    dry_run = bool(getattr(route, "flags", {}).get("dry_run"))
+    plan_counts = self._prompt_planning_selection(planning_files, raw_projects, persist_memory=not dry_run)
     if plan_counts is None:
         print("Planning selection cancelled.")
         setattr(
@@ -669,6 +670,38 @@ def _select_plan_projects(
             PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files selected."),
         )
         return []
+
+    positive_plan_counts: OrderedDict[str, int] = OrderedDict(
+        (plan_file, int(count)) for plan_file, count in plan_counts.items() if int(count) > 0
+    )
+    if dry_run:
+        predictions = predict_plan_projects(
+            projects=raw_projects,
+            plan_counts=positive_plan_counts,
+            base_dir=self.config.base_dir,
+            trees_dir_name=self.config.trees_dir_name,
+        )
+        predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
+        selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
+        created_worktrees = tuple(
+            CreatedPlanWorktree(
+                name=prediction.name,
+                root=Path(prediction.root),
+                plan_file=prediction.plan_file,
+            )
+            for prediction in predictions
+            if prediction.action == "create"
+        )
+        setattr(
+            self,
+            "_last_plan_selection_result",
+            PlanSelectionResult(
+                raw_projects=predicted_raw_projects,
+                selected_contexts=selected_contexts,
+                created_worktrees=created_worktrees,
+            ),
+        )
+        return selected_contexts
 
     sync_result = self._sync_plan_worktrees_from_plan_counts(
         plan_counts=plan_counts,
@@ -705,9 +738,6 @@ def _select_plan_projects(
         )
         return []
 
-    positive_plan_counts: OrderedDict[str, int] = OrderedDict(
-        (plan_file, int(count)) for plan_file, count in plan_counts.items() if int(count) > 0
-    )
     if not positive_plan_counts:
         print("Planning counts scaled to zero; no worktrees remain.")
         setattr(
@@ -761,6 +791,8 @@ def _prompt_planning_selection(
     self: Any,
     planning_files: list[str],
     raw_projects: list[tuple[str, Path]],
+    *,
+    persist_memory: bool = True,
 ) -> dict[str, int]:
     existing_counts = planning_existing_counts(projects=raw_projects, planning_files=planning_files)
     selected_counts = self._initial_plan_selected_counts(
@@ -772,7 +804,7 @@ def _prompt_planning_selection(
         selected_counts=selected_counts,
         existing_counts=existing_counts,
     )
-    if chosen:
+    if chosen and persist_memory:
         self._save_plan_selection_memory(chosen)
     return chosen
 
