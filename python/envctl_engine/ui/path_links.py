@@ -210,8 +210,6 @@ def _hyperlinks_enabled(
 
     if mode == "on":
         return True
-    if str(merged.get("TERM", "")).strip().lower() == "dumb":
-        return False
     return _terminal_supports_hyperlinks(merged)
 
 
