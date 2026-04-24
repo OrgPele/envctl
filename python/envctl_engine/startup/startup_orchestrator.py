@@ -78,6 +78,7 @@ class StartupOrchestrator:
                 self._validate_route_contract,
                 self._handle_restart_prestop,
                 self._select_contexts,
+                self._resolve_plan_dry_run,
                 self._resolve_run_reuse,
                 self._resolve_disabled_startup_mode,
             ):
@@ -316,7 +317,7 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
-        if route.command == "plan" and not bool(route.flags.get("planning_prs")):
+        if route.command == "plan" and not bool(route.flags.get("planning_prs")) and not bool(route.flags.get("dry_run")):
             planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
             selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
             if callable(selection_getter):
@@ -343,6 +344,13 @@ class StartupOrchestrator:
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
+
+    def _resolve_plan_dry_run(self, session: StartupSession) -> int | None:
+        route = session.effective_route
+        if route.command != "plan" or not bool(route.flags.get("dry_run")):
+            return None
+        self._print_plan_dry_run_preview(session)
+        return 0
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime
