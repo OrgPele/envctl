@@ -20,7 +20,8 @@ def _pty_test_env(*, selector_impl: str | None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PYTHON_ROOT)
     env["PYTHONUNBUFFERED"] = "1"
-    env["TERM"] = str(env.get("TERM") or "xterm-256color")
+    if selector_impl == "planning_style":
+        env["TERM"] = "xterm-256color"
     for key in (
         "ENVCTL_UI_SIMPLE_MENUS",
         "ENVCTL_UI_SELECTOR_BACKEND",
