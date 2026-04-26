@@ -267,6 +267,7 @@
       "--test-parallel",
       "--test-parallel-max",
       "--test-sequential",
+      "--tmux",
       "--tree",
       "--trees",
       "--untested",

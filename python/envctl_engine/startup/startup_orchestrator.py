@@ -27,7 +27,7 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.session import ProjectStartupResult, StartupSession
+from envctl_engine.startup.session import LocalStartupFailure, ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -340,7 +340,9 @@ class StartupOrchestrator:
                         )
                     created_worktrees = tuple(recovered_worktrees)
                 launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+                session.plan_agent_launch_result = launch_result
                 session.plan_agent_attach_target = launch_result.attach_target
+                self._emit_plan_agent_launch_state(session, launch_result)
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
@@ -806,15 +808,16 @@ class StartupOrchestrator:
                                         else None,
                                     )
                                 except RuntimeError as exc:
-                                    if self._should_continue_ai_plan_without_local_startup(session, error=str(exc)):
-                                        self._warn_ai_plan_without_local_startup(
+                                    if self._should_degrade_to_plan_agent_handoff(session, error=str(exc)):
+                                        self._record_plan_agent_handoff_local_startup_failure(
+                                            session,
                                             project_name=context.name,
                                             error=str(exc),
                                         )
                                         if use_project_spinner_group:
                                             project_spinner_group.mark_success(
                                                 context.name,
-                                                "AI run continuing without startup",
+                                                "AI session running; local startup failed",
                                             )
                                         continue
                                     failures.append(str(exc))
@@ -838,15 +841,16 @@ class StartupOrchestrator:
                                     run_id=self._resolved_run_id(session),
                                 )
                             except RuntimeError as exc:
-                                if self._should_continue_ai_plan_without_local_startup(session, error=str(exc)):
-                                    self._warn_ai_plan_without_local_startup(
+                                if self._should_degrade_to_plan_agent_handoff(session, error=str(exc)):
+                                    self._record_plan_agent_handoff_local_startup_failure(
+                                        session,
                                         project_name=context.name,
                                         error=str(exc),
                                     )
                                     if use_project_spinner_group:
                                         project_spinner_group.mark_success(
                                             context.name,
-                                            "AI run continuing without startup",
+                                            "AI session running; local startup failed",
                                         )
                                     continue
                                 raise
@@ -875,13 +879,18 @@ class StartupOrchestrator:
                     )
                 raise
             if use_single_spinner:
-                active_spinner.succeed("Startup complete")
+                success_message = (
+                    "AI session running; local startup failed"
+                    if session.plan_agent_handoff_degraded
+                    else "Startup complete"
+                )
+                active_spinner.succeed(success_message)
                 rt._emit(
                     "ui.spinner.lifecycle",
                     component="startup_orchestrator",
                     op_id="startup.execute",
                     state="success",
-                    message="Startup complete",
+                    message=success_message,
                 )
                 rt._emit(
                     "ui.spinner.lifecycle",
@@ -893,6 +902,25 @@ class StartupOrchestrator:
     def _reconcile_strict_truth(self, session: StartupSession) -> None:
         rt = self.runtime
         if rt.config.runtime_truth_mode != "strict":
+            return
+        if session.plan_agent_handoff_degraded:
+            reconcile_started = time.monotonic()
+            self._emit_phase(
+                session,
+                "post_start_reconcile",
+                reconcile_started,
+                status="skipped_degraded_handoff",
+                missing_count=0,
+            )
+            rt._emit(
+                "state.reconcile",
+                run_id=session.run_id,
+                source="start.post_start",
+                missing_count=0,
+                missing_services=[],
+                skipped=True,
+                reason="plan_agent_handoff_degraded",
+            )
             return
         run_state = build_success_run_state(rt, session)
         reconcile_started = time.monotonic()
@@ -917,6 +945,8 @@ class StartupOrchestrator:
             raise RuntimeError("service truth degraded after startup: " + ", ".join(unique_services))
 
     def _finalize_success(self, session: StartupSession) -> int:
+        if session.plan_agent_handoff_degraded:
+            return self._finalize_plan_agent_degraded_handoff(session)
         rt = self.runtime
         self._ensure_run_id(session)
         run_state = build_success_run_state(rt, session)
@@ -1024,10 +1054,40 @@ class StartupOrchestrator:
             return 0
         return attach_code
 
-    def _print_headless_plan_session_summary(self, session: StartupSession, *, attach_target: object | None = None) -> None:
+    def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
+        rt = self.runtime
+        self._ensure_run_id(session)
+        run_state = build_success_run_state(rt, session)
+        artifacts_started = time.monotonic()
+        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+        self._emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
+        self._render_plan_agent_degraded_handoff(session)
+        if self._headless_plan_output_only(session):
+            return 0
+        attach_code = self._maybe_attach_plan_agent_terminal(session)
+        if attach_code is not None:
+            return attach_code
+        return 0
+
+    def _print_headless_plan_session_summary(
+        self,
+        session: StartupSession,
+        *,
+        attach_target: object | None = None,
+    ) -> None:
+        for line in self._plan_session_summary_lines(session, attach_target=attach_target):
+            print(line)
+
+    def _plan_session_summary_lines(
+        self,
+        session: StartupSession,
+        *,
+        attach_target: object | None = None,
+    ) -> list[str]:
         resolved_target = attach_target or session.plan_agent_attach_target
         if resolved_target is None:
-            return
+            return []
+        lines: list[str] = []
         attach_command = " ".join(
             str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
         )
@@ -1036,13 +1096,78 @@ class StartupOrchestrator:
         )
         session_name = str(getattr(resolved_target, "session_name", "")).strip()
         if new_session_command:
-            print("existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.")
+            lines.append(
+                "existing session: envctl did not create a new AI session because one already exists for this "
+                "plan/workspace/CLI."
+            )
         if attach_command:
-            print(f"attach: {attach_command}")
+            lines.append(f"attach: {attach_command}")
         if new_session_command:
-            print(f"new session: {new_session_command}")
+            lines.append(f"new session: {new_session_command}")
         if session_name:
-            print(f"kill: tmux kill-session -t {shlex.quote(session_name)}")
+            lines.append(f"kill: tmux kill-session -t {shlex.quote(session_name)}")
+        return lines
+
+    def _render_plan_agent_degraded_handoff(self, session: StartupSession) -> None:
+        lines = [
+            "Implementation session is running, but local app startup failed.",
+            "",
+            "AI session:",
+        ]
+        session_lines = self._plan_session_summary_lines(session)
+        if session_lines:
+            lines.extend(f"  {line}" for line in session_lines)
+        else:
+            lines.append("  status: running (attach guidance unavailable for this launch transport)")
+        failures = list(session.local_startup_failures)
+        if failures:
+            lines.append("")
+            if len(failures) == 1:
+                failure = failures[0]
+                lines.extend(
+                    [
+                        "Local app startup:",
+                        f"  project: {failure.project}",
+                        f"  error: {failure.error}",
+                        (
+                            "  effect: backend/frontend services were not started; the AI implementation session "
+                            "can continue."
+                        ),
+                        (
+                            "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if this "
+                            "worktree should start services, or disable tree startup when you only want AI "
+                            "implementation sessions."
+                        ),
+                    ]
+                )
+            else:
+                lines.append("Local app startup:")
+                for failure in failures:
+                    lines.extend(
+                        [
+                            f"  project: {failure.project}",
+                            f"  error: {failure.error}",
+                            (
+                                "  effect: backend/frontend services were not started; the AI implementation "
+                                "session can continue."
+                            ),
+                        ]
+                    )
+                lines.append(
+                    "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if these worktrees "
+                    "should start services, or disable tree startup when you only want AI implementation sessions."
+                )
+        text = "\n".join(lines)
+        link_mode = str(self.runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+        print(
+            render_paths_in_terminal_text(
+                text,
+                paths=local_paths_in_text(text),
+                env=self.runtime.env,
+                stream=sys.stdout,
+                interactive_tty=(True if link_mode == "on" else None),
+            )
+        )
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
         rt = self.runtime
@@ -1097,24 +1222,90 @@ class StartupOrchestrator:
         session.services_by_project[context.name] = result.services
         session.started_context_names.append(context.name)
 
-    def _should_continue_ai_plan_without_local_startup(self, session: StartupSession, *, error: str) -> bool:
+    def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
         route = session.effective_route
         if route.command != "plan":
             return False
-        if not bool(route.flags.get("batch")):
+        if self._local_startup_failure_reason(error) is None:
             return False
-        if not bool(getattr(self.runtime.config, "plan_agent_terminals_enable", False)):
+        if not session.plan_agent_session_started:
             return False
-        return "missing_service_start_command" in error
+        if bool(route.flags.get("batch")):
+            return True
+        return session.plan_agent_attach_target is not None
 
-    def _warn_ai_plan_without_local_startup(self, *, project_name: str, error: str) -> None:
-        message = f"{project_name}: continuing AI run without local startup ({error})"
-        print(message)
+    @staticmethod
+    def _local_startup_failure_reason(error: str) -> str | None:
+        if "missing_service_start_command" in error:
+            return "missing_service_start_command"
+        return None
+
+    def _record_plan_agent_handoff_local_startup_failure(
+        self,
+        session: StartupSession,
+        *,
+        project_name: str,
+        error: str,
+    ) -> None:
+        reason = self._local_startup_failure_reason(error) or "local_startup_failed"
+        failure = LocalStartupFailure(project=project_name, error=error, reason=reason)
+        session.local_startup_failures.append(failure)
+        session.plan_agent_handoff_degraded = True
+        warning = f"Implementation session is running, but local app startup failed for {project_name}: {error}"
+        session.warnings.append(warning)
+        launch_result = session.plan_agent_launch_result
+        attach_target = session.plan_agent_attach_target
+        session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
+        route = session.effective_route
+        route_transport = (
+            "omx" if bool(route.flags.get("omx")) else ("tmux" if bool(route.flags.get("tmux")) else "cmux")
+        )
+        omx_workflow = (
+            "ralph" if bool(route.flags.get("ralph")) else ("team" if bool(route.flags.get("team")) else None)
+        )
         self.runtime._emit(
             "startup.project.warning",
             project=project_name,
-            warning=message,
-            reason="ai_plan_local_start_failed",
+            warning=warning,
+            reason="plan_agent_handoff_local_startup_failed",
+            implementation_session_running=True,
+            local_startup_failed=True,
+            session_name=session_name or None,
+        )
+        self.runtime._emit(
+            "startup.plan_agent_handoff.degraded",
+            project=project_name,
+            error=error,
+            reason=reason,
+            implementation_session_running=True,
+            session_name=session_name or None,
+            route_transport=route_transport,
+            omx_workflow=omx_workflow,
+            launch_status=str(getattr(launch_result, "status", "")).strip() if launch_result is not None else None,
+        )
+
+    def _emit_plan_agent_launch_state(self, session: StartupSession, launch_result: object) -> None:
+        attach_target = getattr(launch_result, "attach_target", None)
+        session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
+        launched_worktrees: list[str] = []
+        failed_worktrees: list[str] = []
+        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+            status = str(getattr(outcome, "status", "")).strip().lower()
+            worktree_name = str(getattr(outcome, "worktree_name", "")).strip()
+            if status == "launched" and worktree_name:
+                launched_worktrees.append(worktree_name)
+            elif status == "failed" and worktree_name:
+                failed_worktrees.append(worktree_name)
+        self.runtime._emit(
+            "startup.plan_agent_launch_state",
+            command=session.effective_route.command,
+            mode=session.runtime_mode,
+            status=str(getattr(launch_result, "status", "")).strip(),
+            reason=str(getattr(launch_result, "reason", "")).strip(),
+            launched_worktrees=launched_worktrees,
+            failed_worktrees=failed_worktrees,
+            session_name=session_name or None,
+            implementation_session_running=session.plan_agent_session_started,
         )
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:

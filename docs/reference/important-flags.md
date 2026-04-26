@@ -49,6 +49,8 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `--ralph` | OMX-only modifier for `--plan --omx`; starts the Ralph workflow inside the OMX-managed Codex session. |
 | `--team` | OMX-only modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session. |
 
+Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. Non-plan commands and plan runs without a running AI session remain fatal.
+
 ## Performance and Reliability
 | Flag | Purpose |
 | --- | --- |
