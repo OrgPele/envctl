@@ -44,6 +44,16 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
             file_text="",
         )
 
+    async def _advance_to_step(self, app, pilot, step: str) -> None:  # noqa: ANN001
+        for _ in range(12):
+            if app._current_step() == step:  # noqa: SLF001
+                return
+            if app._current_step() in {"directories", "commands", "ports"}:  # noqa: SLF001
+                app.query_one("#btn-next").focus()
+            await pilot.press("enter")
+            await pilot.pause()
+        self.fail(f"wizard did not reach step {step!r}; current step is {app._current_step()!r}")  # noqa: SLF001
+
     async def test_wizard_builds_with_canonical_port_fields(self) -> None:
         if importlib.util.find_spec("textual") is None:
             self.skipTest("textual is not installed")
@@ -456,6 +466,88 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 )
                 frontend_test_command = app.query_one("#directory-frontend_test_cmd")
                 self.assertEqual(getattr(frontend_test_command, "value", None), "npm run test")
+                backend_hint = app.query_one("#directory-hint-backend_test_cmd")
+                frontend_hint = app.query_one("#directory-hint-frontend_test_cmd")
+                self.assertIn("Detected: Backend pytest", backend_hint.render().plain)
+                self.assertIn("Detected: Frontend package test", frontend_hint.render().plain)
+                app.exit(None)
+
+    async def test_commands_step_cycles_alternate_backend_test_suggestion_without_overwriting_frontend(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            root_tests = repo / "tests"
+            root_tests.mkdir(parents=True, exist_ok=True)
+            (root_tests / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"app","scripts":{"dev":"vite","test":"vitest"}}\n',
+                encoding="utf-8",
+            )
+            local_state = discover_local_config_state(repo)
+            initial_values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                backend_start_cmd="python backend/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
+            )
+            app = run_config_wizard_textual(local_state=local_state, initial_values=initial_values, build_only=True)
+
+            async with app.run_test() as pilot:
+                await self._advance_to_step(app, pilot, "commands")
+                backend_input = app.query_one("#directory-backend_test_cmd")
+                frontend_input = app.query_one("#directory-frontend_test_cmd")
+                self.assertIn(" -m pytest ", str(getattr(backend_input, "value", "")))
+                self.assertEqual(getattr(frontend_input, "value", None), "npm run test")
+                backend_input.focus()
+                await pilot.pause()
+
+                app.action_cycle_command_suggestion()
+                await pilot.pause()
+
+                self.assertTrue(
+                    str(getattr(backend_input, "value", "")).endswith(
+                        " -m unittest discover -s tests -t . -p test_*.py"
+                    )
+                )
+                self.assertEqual(getattr(frontend_input, "value", None), "npm run test")
+                hint = app.query_one("#directory-hint-backend_test_cmd")
+                self.assertIn("Multiple suggestions available", hint.render().plain)
+                app.exit(None)
+
+    async def test_existing_envctl_test_command_is_labeled_existing_and_not_overwritten(self) -> None:
+        if importlib.util.find_spec("textual") is None:
+            self.skipTest("textual is not installed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            (repo / ".envctl").write_text("ENVCTL_BACKEND_TEST_CMD=custom test command\n", encoding="utf-8")
+            local_state = discover_local_config_state(repo)
+            initial_values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, False, False, False, False, False),
+                trees_profile=StartupProfile(True, True, False, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                backend_start_cmd="python backend/main.py",
+                backend_test_cmd="custom test command",
+            )
+            app = run_config_wizard_textual(local_state=local_state, initial_values=initial_values, build_only=True)
+
+            async with app.run_test() as pilot:
+                await self._advance_to_step(app, pilot, "commands")
+                test_command = app.query_one("#directory-backend_test_cmd")
+                self.assertEqual(getattr(test_command, "value", None), "custom test command")
+                hint = app.query_one("#directory-hint-backend_test_cmd")
+                self.assertIn("Existing value from .envctl", hint.render().plain)
                 app.exit(None)
 
     async def test_commands_step_shows_frontend_entrypoint_for_frontend_projects(self) -> None:
@@ -494,6 +586,8 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
                 frontend_test_path = app.query_one("#directory-frontend_test_path")
                 self.assertEqual(getattr(frontend_test_path, "value", None), "")
+                hint = app.query_one("#directory-hint-frontend_test_path")
+                self.assertIn("No frontend test directory detected", hint.render().plain)
                 app.query_one("#btn-next").focus()
                 await pilot.pause()
                 await pilot.press("enter")
@@ -541,6 +635,8 @@ class TextualConfigWizardAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app._current_step(), "directories")  # noqa: SLF001
                 frontend_test_path = app.query_one("#directory-frontend_test_path")
                 self.assertEqual(getattr(frontend_test_path, "value", None), "frontend/src")
+                hint = app.query_one("#directory-hint-frontend_test_path")
+                self.assertIn("Detected: frontend/src", hint.render().plain)
                 app.exit(None)
 
     async def test_enter_on_back_button_goes_back_instead_of_next(self) -> None:

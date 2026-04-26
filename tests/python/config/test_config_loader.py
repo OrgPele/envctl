@@ -144,6 +144,19 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.raw["ENVCTL_BACKEND_TEST_CMD"], "")
             self.assertTrue(config.backend_test_cmd.endswith(" -m unittest discover -s tests -t . -p test_*.py"))
 
+    def test_load_config_prefers_root_pytest_when_pytest_config_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            tests_dir = repo / "tests"
+            tests_dir.mkdir(parents=True, exist_ok=True)
+            (tests_dir / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            (repo / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+            (repo / ".envctl").write_text("", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertTrue(config.backend_test_cmd.endswith(" -m pytest tests"), msg=config.backend_test_cmd)
+
     def test_load_config_autodetects_frontend_test_path_when_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

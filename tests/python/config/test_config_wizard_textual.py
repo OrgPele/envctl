@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from typing import cast
+from typing import Any, cast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,7 +43,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
             app = run_config_wizard_textual(local_state=local_state, build_only=True)
             if app is None:
                 self.skipTest("Textual is not available in this environment")
-            app = cast(object, app)
+            app = cast(Any, app)
             self.assertEqual(  # noqa: SLF001
                 getattr(app, "_steps"),
                 ["welcome", "default_mode", "components", "directories", "commands", "ports", "review"],
@@ -164,3 +164,24 @@ class ConfigWizardTextualTests(unittest.TestCase):
             _directory_validation_message(repo, "Backend directory", ""),
             "Backend directory must not be empty.",
         )
+
+    def test_command_validation_requires_entrypoints_but_not_test_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            local_state = discover_local_config_state(repo)
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, False, False, False, False, False),
+                trees_profile=StartupProfile(True, True, False, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+            app = run_config_wizard_textual(local_state=local_state, initial_values=values, build_only=True)
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(object, app)
+
+            self.assertEqual(  # noqa: SLF001
+                app._directory_validation_error("backend_start_cmd", raw=""),
+                "Backend entrypoint must not be empty.",
+            )
+            self.assertIsNone(app._directory_validation_error("backend_test_cmd", raw=""))  # noqa: SLF001

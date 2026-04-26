@@ -2194,6 +2194,8 @@ if result.returncode != 0:
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
         if source == "backend_pytest":
             return "Backend (pytest, failed only)" if failed_only else "Backend (pytest)"
+        if source == "root_pytest":
+            return "Repository tests (pytest, failed only)" if failed_only else "Repository tests (pytest)"
         if source == "configured_backend":
             return "Backend (failed only)" if failed_only else "Backend"
         if source == "frontend_package_test":

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
 
@@ -17,6 +17,33 @@ class TestCommandSpec:
     command: list[str]
     cwd: Path
     source: str
+
+
+SuggestionConfidence = Literal["high", "medium", "low"]
+SuggestionTarget = Literal["backend", "frontend", "action"]
+
+
+@dataclass(frozen=True)
+class TestCommandSuggestion:
+    command_text: str
+    command: list[str]
+    cwd: Path
+    source: str
+    label: str
+    confidence: SuggestionConfidence
+    reason: str
+    target: SuggestionTarget
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
+class TestPathSuggestion:
+    path: str
+    source: str
+    label: str
+    confidence: SuggestionConfidence
+    reason: str
+    is_default: bool = False
 
 
 def default_test_command(base_dir: Path) -> list[str] | None:
@@ -48,17 +75,115 @@ def suggest_frontend_test_command(base_dir: Path) -> str | None:
 
 
 def suggest_frontend_test_path(base_dir: Path) -> str | None:
+    for suggestion in frontend_test_path_suggestions(base_dir):
+        if suggestion.confidence == "high":
+            return suggestion.path
+    return None
+
+
+def test_command_suggestions(
+    base_dir: Path,
+    *,
+    include_backend: bool = True,
+    include_frontend: bool = True,
+    frontend_test_path: str | None = None,
+) -> list[TestCommandSuggestion]:
+    suggestions: list[TestCommandSuggestion] = []
+    if include_backend:
+        backend_pytest = _backend_pytest_command(base_dir)
+        if backend_pytest is not None:
+            suggestions.append(
+                _test_command_suggestion(
+                    TestCommandSpec(command=backend_pytest, cwd=base_dir, source="backend_pytest"),
+                    target="backend",
+                    is_default=True,
+                )
+            )
+        root_pytest = _root_pytest_command(base_dir)
+        if root_pytest is not None:
+            suggestions.append(
+                _test_command_suggestion(
+                    TestCommandSpec(command=root_pytest, cwd=base_dir, source="root_pytest"),
+                    target="backend",
+                    is_default=not suggestions,
+                )
+            )
+        elif (base_dir / "tests").is_dir():
+            root_unittest = _root_unittest_discover_command(base_dir)
+            if root_unittest is not None:
+                suggestions.append(
+                    _test_command_suggestion(
+                        TestCommandSpec(command=root_unittest, cwd=base_dir, source="root_unittest"),
+                        target="backend",
+                        is_default=not suggestions,
+                    )
+                )
+    if include_frontend:
+        frontend_package_test = _frontend_package_manager_test_command(base_dir)
+        if frontend_package_test is not None:
+            suggestions.append(
+                _test_command_suggestion(
+                    TestCommandSpec(
+                        command=append_frontend_test_path(
+                            frontend_package_test,
+                            frontend_test_path,
+                            project_root=base_dir,
+                            command_cwd=base_dir / "frontend",
+                        ),
+                        cwd=base_dir / "frontend",
+                        source="frontend_package_test",
+                    ),
+                    target="frontend",
+                    is_default=True,
+                )
+            )
+        elif _frontend_test_package_root(base_dir) is None:
+            root_package_test = _root_package_manager_test_command(base_dir)
+            if root_package_test is not None:
+                suggestions.append(
+                    _test_command_suggestion(
+                        TestCommandSpec(
+                            command=append_frontend_test_path(
+                                root_package_test,
+                                frontend_test_path,
+                                project_root=base_dir,
+                                command_cwd=base_dir,
+                            ),
+                            cwd=base_dir,
+                            source="package_test",
+                        ),
+                        target="frontend",
+                        is_default=True,
+                    )
+                )
+    return suggestions
+
+
+def frontend_test_path_suggestions(base_dir: Path) -> list[TestPathSuggestion]:
     package_root = _frontend_test_package_root(base_dir)
     if package_root is None:
-        return None
-    suggested = _suggest_frontend_test_path_for_package_root(package_root)
-    if not suggested:
-        return None
-    return canonicalize_frontend_test_path(
-        suggested,
-        project_root=base_dir,
-        frontend_dir_name=_frontend_dir_name_from_package_root(base_dir, package_root),
-    )
+        return []
+    frontend_dir_name = _frontend_dir_name_from_package_root(base_dir, package_root)
+    suggestions: list[TestPathSuggestion] = []
+    for relative_path, source, label, confidence, reason in _frontend_test_path_candidates(package_root):
+        canonical = canonicalize_frontend_test_path(
+            relative_path,
+            project_root=base_dir,
+            frontend_dir_name=frontend_dir_name,
+        )
+        if canonical is None:
+            continue
+        suggestions.append(
+            TestPathSuggestion(
+                path=canonical,
+                source=source,
+                label=label,
+                confidence=confidence,
+                reason=reason,
+                is_default=confidence == "high" and not any(item.confidence == "high" for item in suggestions),
+            )
+        )
+    return suggestions
 
 
 def default_test_commands(
@@ -96,9 +221,13 @@ def default_test_commands(
     if include_backend:
         tests_dir = base_dir / "tests"
         if tests_dir.is_dir():
-            root_unittest = _root_unittest_discover_command(base_dir)
-            if root_unittest is not None:
-                commands.append(TestCommandSpec(command=root_unittest, cwd=base_dir, source="root_unittest"))
+            root_pytest = _root_pytest_command(base_dir)
+            if root_pytest is not None:
+                commands.append(TestCommandSpec(command=root_pytest, cwd=base_dir, source="root_pytest"))
+            else:
+                root_unittest = _root_unittest_discover_command(base_dir)
+                if root_unittest is not None:
+                    commands.append(TestCommandSpec(command=root_unittest, cwd=base_dir, source="root_unittest"))
 
     if not commands and include_frontend:
         package_test = _package_manager_test_command(base_dir)
@@ -117,6 +246,53 @@ def default_test_commands(
                 )
             )
     return commands
+
+
+def _command_text(command: Sequence[str]) -> str:
+    return " ".join(str(part) for part in command)
+
+
+def _test_command_suggestion(
+    spec: TestCommandSpec,
+    *,
+    target: SuggestionTarget,
+    is_default: bool,
+) -> TestCommandSuggestion:
+    labels = {
+        "backend_pytest": "Backend pytest",
+        "root_pytest": "Root pytest",
+        "root_unittest": "Root unittest discover",
+        "frontend_package_test": "Frontend package test",
+        "package_test": "Root package test",
+        "configured": "Configured test command",
+    }
+    confidence_by_source: dict[str, SuggestionConfidence] = {
+        "backend_pytest": "high",
+        "root_pytest": "high",
+        "root_unittest": "medium",
+        "frontend_package_test": "high",
+        "package_test": "medium",
+        "configured": "high",
+    }
+    reasons = {
+        "backend_pytest": "Detected backend pytest from backend/tests plus backend Python metadata.",
+        "root_pytest": "Detected root pytest from tests/ plus pytest configuration.",
+        "root_unittest": "Detected root tests/ without pytest metadata; unittest discover is the safe fallback.",
+        "frontend_package_test": "Detected frontend package test script from frontend/package.json.",
+        "package_test": "Detected root package test script from package.json.",
+        "configured": "Configured test command.",
+    }
+    return TestCommandSuggestion(
+        command_text=_command_text(spec.command),
+        command=list(spec.command),
+        cwd=spec.cwd,
+        source=spec.source,
+        label=labels.get(spec.source, "Test command"),
+        confidence=confidence_by_source.get(spec.source, "medium"),
+        reason=reasons.get(spec.source, "Detected from local project files."),
+        target=target,
+        is_default=is_default,
+    )
 
 
 def ensure_repo_local_test_prereqs(
@@ -370,6 +546,43 @@ def _root_unittest_discover_command(base_dir: Path) -> list[str] | None:
     ]
 
 
+def _root_pytest_command(base_dir: Path) -> list[str] | None:
+    if not (base_dir / "tests").is_dir():
+        return None
+    if not _root_has_pytest_config(base_dir):
+        return None
+    python_exe = detect_python_bin(base_dir, base_dir)
+    if not python_exe:
+        return None
+    return [python_exe, "-m", "pytest", "tests"]
+
+
+def _root_has_pytest_config(base_dir: Path) -> bool:
+    pyproject = base_dir / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            payload = {}
+        tool = payload.get("tool") if isinstance(payload, dict) else None
+        if isinstance(tool, dict) and "pytest" in tool:
+            return True
+    if (base_dir / "pytest.ini").is_file():
+        return True
+    for name in ("tox.ini", "setup.cfg"):
+        path = base_dir / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        normalized = text.lower()
+        if "[pytest]" in normalized or "[tool:pytest]" in normalized:
+            return True
+    return False
+
+
 def _backend_pytest_command(base_dir: Path) -> list[str] | None:
     backend_dir = base_dir / "backend"
     if not backend_dir.is_dir():
@@ -386,22 +599,9 @@ def _backend_pytest_command(base_dir: Path) -> list[str] | None:
 
 def _package_manager_test_command(base_dir: Path) -> list[str] | None:
     for package_root in (base_dir, base_dir / "frontend"):
-        package_json = package_root / "package.json"
-        if not package_json.is_file():
-            continue
-        payload = load_package_json(package_json)
-        if payload is None:
-            continue
-        scripts = payload.get("scripts")
-        if not isinstance(scripts, dict):
-            continue
-        test_script = scripts.get("test")
-        if not isinstance(test_script, str) or not test_script.strip():
-            continue
-        manager = detect_package_manager(package_root)
-        if manager is None:
-            continue
-        return [manager, "run", "test"]
+        command = _package_manager_test_command_for_root(package_root)
+        if command is not None:
+            return command
     return None
 
 
@@ -409,7 +609,17 @@ def _frontend_package_manager_test_command(base_dir: Path) -> list[str] | None:
     package_root = _frontend_test_package_root(base_dir)
     if package_root is None:
         return None
+    return _package_manager_test_command_for_root(package_root)
+
+
+def _root_package_manager_test_command(base_dir: Path) -> list[str] | None:
+    return _package_manager_test_command_for_root(base_dir)
+
+
+def _package_manager_test_command_for_root(package_root: Path) -> list[str] | None:
     package_json = package_root / "package.json"
+    if not package_json.is_file():
+        return None
     payload = load_package_json(package_json)
     if payload is None:
         return None
@@ -451,18 +661,43 @@ def _frontend_dir_name_from_package_root(project_root: Path, package_root: Path)
 
 
 def _suggest_frontend_test_path_for_package_root(package_root: Path) -> str | None:
+    for relative_name, _source, _label, confidence, _reason in _frontend_test_path_candidates(package_root):
+        if confidence == "high":
+            return relative_name
+    return None
+
+
+def _frontend_test_path_candidates(
+    package_root: Path,
+) -> list[tuple[str, str, str, SuggestionConfidence, str]]:
     preferred = ("tests", "test", "__tests__", "src", "app", "ui", "client")
+    high_confidence: list[tuple[str, str, str, SuggestionConfidence, str]] = []
+    low_confidence: list[tuple[str, str, str, SuggestionConfidence, str]] = []
     for relative_name in preferred:
         candidate = package_root / relative_name
         if not candidate.is_dir():
             continue
         if _directory_contains_test_files(candidate):
-            return relative_name
-    for fallback in ("src", "app", "ui", "client", "tests", "test", "__tests__"):
-        candidate = package_root / fallback
-        if candidate.is_dir():
-            return fallback
-    return None
+            high_confidence.append(
+                (
+                    relative_name,
+                    "frontend_test_files",
+                    f"{relative_name} test files",
+                    "high",
+                    f"Detected test/spec files under frontend/{relative_name}.",
+                )
+            )
+        elif relative_name in {"tests", "test", "__tests__", "src"}:
+            low_confidence.append(
+                (
+                    relative_name,
+                    "frontend_common_test_root",
+                    f"{relative_name} directory",
+                    "low",
+                    f"Detected common frontend test root frontend/{relative_name}, but no test/spec files.",
+                )
+            )
+    return [*high_confidence, *low_confidence]
 
 
 def _directory_contains_test_files(path: Path) -> bool:

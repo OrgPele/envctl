@@ -149,13 +149,15 @@ If `.envctl` is missing, the wizard opens and guides you through:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
 
 The wizard:
 
 - writes the repo-local `.envctl`
-- validates directories and ports before save
+- validates directories, command entrypoints, and ports before save
+- suggests backend/frontend test commands and optional frontend test paths without running tests
 - configures services and dependencies for `main` and `trees`
 - seeds user-owned backend/frontend launch env sections into `.envctl`
 - checks whether Git global excludes is configured for envctl-owned local artifacts

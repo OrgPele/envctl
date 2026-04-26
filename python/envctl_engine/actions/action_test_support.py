@@ -64,7 +64,7 @@ class FailedTestManifest:
 
 
 def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]) -> tuple[tuple[str, ...], int]:
-    if source != "backend_pytest":
+    if source not in {"backend_pytest", "root_pytest"}:
         if source == "root_unittest":
             kept: list[str] = []
             invalid = 0
@@ -507,13 +507,18 @@ def _failed_rerun_spec_for_entry(
     target_obj: object | None,
 ) -> TestExecutionSpec | str | None:
     source = entry.source
-    if source == "backend_pytest":
+    if source in {"backend_pytest", "root_pytest"}:
         if not entry.failed_tests:
             return None
-        python_exe = detect_python_bin(project_root / "backend", project_root, repo_root)
+        python_roots = (project_root / "backend", project_root, repo_root) if source == "backend_pytest" else (
+            project_root,
+            repo_root,
+        )
+        python_exe = detect_python_bin(*python_roots)
         if not python_exe:
+            suite_name = "backend pytest" if source == "backend_pytest" else "root pytest"
             return (
-                f"Failed-only reruns are unavailable for {project_name} backend pytest "
+                f"Failed-only reruns are unavailable for {project_name} {suite_name} "
                 "because no Python interpreter was found."
             )
         return TestExecutionSpec(
@@ -756,7 +761,7 @@ class TestSuiteSpinnerGroup:
 
     def _suite_color(self, source: str) -> str:
         normalized = str(source).strip().lower()
-        if normalized in {"backend_pytest", "root_unittest"}:
+        if normalized in {"backend_pytest", "root_pytest", "root_unittest"}:
             return "cyan"
         if normalized == "frontend_package_test":
             return "magenta"

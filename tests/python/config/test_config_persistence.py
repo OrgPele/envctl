@@ -28,6 +28,7 @@ from envctl_engine.config.persistence import (
     ManagedConfigValues,
     ensure_global_ignore_status,
     ensure_local_config_ignored,
+    managed_values_from_payload,
     managed_values_from_mapping,
     managed_values_to_mapping,
     merge_managed_block,
@@ -396,6 +397,59 @@ class ConfigPersistenceTests(unittest.TestCase):
             )
 
             self.assertEqual(values.frontend_test_path, "frontend/src")
+
+    def test_payload_shared_test_command_expands_without_managed_action_key(self) -> None:
+        values = managed_values_from_payload(
+            {
+                "directories": {
+                    "test_command": "python -m pytest",
+                },
+            }
+        )
+
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.backend_test_cmd, "python -m pytest")
+        self.assertEqual(values.frontend_test_cmd, "python -m pytest")
+        self.assertEqual(values.action_test_cmd, "python -m pytest")
+        self.assertEqual(rendered["ENVCTL_BACKEND_TEST_CMD"], "python -m pytest")
+        self.assertEqual(rendered["ENVCTL_FRONTEND_TEST_CMD"], "python -m pytest")
+        self.assertNotIn("ENVCTL_ACTION_TEST_CMD", rendered)
+
+    def test_accepted_test_suggestions_render_backend_frontend_and_path_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                backend_start_cmd="python backend/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
+                backend_test_cmd="python -m pytest backend/tests",
+                frontend_test_cmd="pnpm run test",
+                frontend_test_path="src",
+            )
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+
+            result = save_local_config(local_state=local_state, values=values)
+            written = result.path.read_text(encoding="utf-8")
+
+            self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m pytest backend/tests", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_CMD=pnpm run test", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_PATH=frontend/src", written)
+            self.assertNotIn("ENVCTL_ACTION_TEST_CMD", written)
 
     def test_parse_dependency_env_section_reads_entries_and_line_numbers(self) -> None:
         text = (
