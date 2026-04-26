@@ -42,6 +42,13 @@ class FrontendProjectionTests(unittest.TestCase):
 
         self.assertEqual(env["VITE_BACKEND_URL"], "http://localhost:8111")
 
+    def test_backend_final_port_projects_to_frontend_env_with_custom_host(self) -> None:
+        state = self._state()
+
+        env = frontend_env_for_project(state, "Tree Alpha", host="203.0.113.10")
+
+        self.assertEqual(env["VITE_BACKEND_URL"], "http://203.0.113.10:8111")
+
     def test_runtime_map_tracks_actual_frontend_rebound_port(self) -> None:
         state = self._state()
 
@@ -105,6 +112,14 @@ class FrontendProjectionTests(unittest.TestCase):
         self.assertEqual(beta_env["VITE_BACKEND_URL"], "http://localhost:8200")
         self.assertEqual(projection["Tree Alpha"]["frontend_url"], "http://localhost:9100")
         self.assertEqual(projection["Tree Beta"]["frontend_url"], "http://localhost:9200")
+
+    def test_runtime_projection_uses_custom_host(self) -> None:
+        state = self._state()
+
+        projection = build_runtime_projection(state, host="203.0.113.10")
+
+        self.assertEqual(projection["Tree Alpha"]["backend_url"], "http://203.0.113.10:8111")
+        self.assertEqual(projection["Tree Alpha"]["frontend_url"], "http://203.0.113.10:9122")
 
     def test_project_name_match_is_exact_not_prefix_based(self) -> None:
         state = RunState(

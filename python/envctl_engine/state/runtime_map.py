@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
+from envctl_engine.runtime.network_exposure import format_url_host
 from envctl_engine.shared.services import project_name_from_service_name
 from envctl_engine.state.models import RunState
 
@@ -41,8 +43,9 @@ def write_runtime_map(path: str, state: RunState) -> None:
 
 def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dict[str, dict[str, object]]:
     runtime_map = build_runtime_map_without_projection(state)
+    url_host = format_url_host(host)
     projection: dict[str, dict[str, object]] = {}
-    projects = runtime_map["projects"]
+    projects = cast(dict[str, dict[str, object]], runtime_map["projects"])
     service_records = state.services
     for project, ports in projects.items():
         backend_port = ports.get("backend_port")
@@ -54,9 +57,11 @@ def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dic
         projection[project] = {
             "backend_port": backend_port,
             "frontend_port": frontend_port,
-            "backend_url": (f"http://{host}:{backend_port}" if backend_port is not None and backend_ready else None),
+            "backend_url": (
+                f"http://{url_host}:{backend_port}" if backend_port is not None and backend_ready else None
+            ),
             "frontend_url": (
-                f"http://{host}:{frontend_port}" if frontend_port is not None and frontend_ready else None
+                f"http://{url_host}:{frontend_port}" if frontend_port is not None and frontend_ready else None
             ),
             "backend_status": getattr(backend_service, "status", "unknown")
             if backend_service is not None

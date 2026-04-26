@@ -110,7 +110,30 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertIn("-m", result.command)
             self.assertIn("uvicorn", result.command)
             self.assertIn("app.main:app", result.command)
+            self.assertIn("127.0.0.1", result.command)
             self.assertIn("8000", result.command)
+
+    def test_service_resolution_autodetected_fastapi_backend_uses_public_bind_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            (backend / "app").mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+            (backend / "app" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+            (root / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={"ENVCTL_PUBLIC_HOST": "203.0.113.10"},
+                command_exists=lambda exe: True,
+            )
+
+            self.assertEqual(result.source, "autodetected")
+            self.assertIn("0.0.0.0", result.command)
 
     def test_service_resolution_autodetects_vite_frontend_from_package_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -135,6 +158,29 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.source, "autodetected")
             self.assertEqual(result.command[:3], ["bun", "run", "dev"])
             self.assertEqual(result.command[3:], ["--", "--port", "9000", "--host", "127.0.0.1"])
+
+    def test_service_resolution_autodetected_vite_frontend_uses_public_bind_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frontend = root / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="frontend",
+                project_root=root,
+                port=9000,
+                env={},
+                config_raw={"ENVCTL_PUBLIC_HOST": "203.0.113.10"},
+                command_exists=lambda exe: True,
+            )
+
+            self.assertEqual(result.source, "autodetected")
+            self.assertEqual(result.command[3:], ["--", "--port", "9000", "--host", "0.0.0.0"])
 
     def test_service_resolution_autodetects_plain_python_backend_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -174,7 +220,7 @@ class CommandResolutionTests(unittest.TestCase):
 
             self.assertEqual(
                 command,
-                shlex.join(["python", "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "{port}"]),
+                shlex.join(["python", "-m", "uvicorn", "main:app", "--host", "{bind_host}", "--port", "{port}"]),
             )
 
     def test_suggest_service_directory_prefers_src_for_python_backend(self) -> None:
@@ -232,8 +278,115 @@ class CommandResolutionTests(unittest.TestCase):
 
             self.assertEqual(
                 command,
-                shlex.join(["bun", "run", "dev", "--", "--port", "{port}", "--host", "127.0.0.1"]),
+                shlex.join(["bun", "run", "dev", "--", "--port", "{port}", "--host", "{bind_host}"]),
             )
+
+    def test_configured_command_interpolates_bind_public_and_url_host_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "ENVCTL_PUBLIC_HOST": "2001:db8::1",
+                    "ENVCTL_BACKEND_START_CMD": "python3 app.py --bind {bind_host} --public {public_host} --url {url_host} --port {port}",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertEqual(
+                result.command,
+                [
+                    "python3",
+                    "app.py",
+                    "--bind",
+                    "0.0.0.0",
+                    "--public",
+                    "2001:db8::1",
+                    "--url",
+                    "[2001:db8::1]",
+                    "--port",
+                    "8000",
+                ],
+            )
+
+    def test_configured_loopback_host_is_normalized_when_public_exposure_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "ENVCTL_PUBLIC_HOST": "203.0.113.10",
+                    "ENVCTL_BACKEND_START_CMD": "python3 -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertIn("--host", result.command)
+            self.assertIn("0.0.0.0", result.command)
+            self.assertNotIn("127.0.0.1", result.command)
+
+    def test_configured_loopback_host_is_normalized_when_bind_host_override_is_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "ENVCTL_SERVICE_BIND_HOST": "0.0.0.0",
+                    "ENVCTL_BACKEND_START_CMD": "python3 -m uvicorn app.main:app --host=localhost --port {port}",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertIn("--host=0.0.0.0", result.command)
+            self.assertNotIn("--host=localhost", result.command)
+
+    def test_configured_non_loopback_host_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "ENVCTL_PUBLIC_HOST": "203.0.113.10",
+                    "ENVCTL_BACKEND_START_CMD": "python3 app.py --host 192.0.2.10 --port {port}",
+                },
+                command_exists=lambda exe: exe == "python3",
+            )
+
+            self.assertIn("192.0.2.10", result.command)
+            self.assertNotIn("0.0.0.0", result.command)
+
+    def test_configured_command_rejects_unsupported_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            with self.assertRaises(CommandResolutionError) as cm:
+                resolve_service_start_command(
+                    service_name="backend",
+                    project_root=root,
+                    port=8000,
+                    env={},
+                    config_raw={"ENVCTL_BACKEND_START_CMD": "python3 app.py --host {bindhost}"},
+                    command_exists=lambda exe: exe == "python3",
+                )
+
+            self.assertEqual(cm.exception.code, "invalid_command_placeholder")
+            self.assertIn("{bindhost}", str(cm.exception))
 
     def test_service_resolution_raises_when_unresolvable_and_synthetic_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

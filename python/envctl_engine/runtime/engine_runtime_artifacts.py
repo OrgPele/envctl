@@ -5,18 +5,19 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.runtime.runtime_readiness import (
     FEATURE_MATRIX_RELATIVE_PATH,
     GAP_REPORT_RELATIVE_PATH,
+    RuntimeReadinessResult,
     build_runtime_readiness_report,
     evaluate_runtime_readiness,
 )
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime
 
 
-def write_artifacts(runtime: Any, state: object, contexts: list[object], *, errors: list[str]) -> None:
+def write_artifacts(runtime: Any, state: object, contexts: list[Any], *, errors: list[str]) -> None:
     started = time.monotonic()
     cached = _cached_runtime_readiness_payload(runtime)
     paths = runtime.state_repository.save_run(
@@ -25,7 +26,7 @@ def write_artifacts(runtime: Any, state: object, contexts: list[object], *, erro
         errors=list(errors),
         events=list(runtime.events),
         emit=runtime._emit,
-        runtime_map_builder=build_runtime_map,
+        runtime_map_builder=runtime_map_builder_for_runtime(runtime),
         write_runtime_readiness_report=(
             (lambda run_dir: _write_cached_runtime_readiness_payload(runtime, run_dir=run_dir, cached=cached))
             if cached is not None
@@ -64,7 +65,11 @@ def write_runtime_readiness_report(
             )
         return
 
-    readiness = readiness_result or evaluate_runtime_readiness(runtime.config.base_dir)
+    readiness = (
+        cast(RuntimeReadinessResult, readiness_result)
+        if readiness_result is not None
+        else evaluate_runtime_readiness(runtime.config.base_dir)
+    )
     report_payload = build_runtime_readiness_report(readiness)
     report_text = json.dumps(report_payload, indent=2, sort_keys=True)
     _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
@@ -205,7 +210,7 @@ def _runtime_readiness_async_enabled(runtime: Any) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def print_summary(_runtime: Any, state: object, contexts: list[object]) -> None:
+def print_summary(_runtime: Any, state: object, contexts: list[Any]) -> None:
     _ = state
     print("envctl Python engine run summary")
     for context in contexts:

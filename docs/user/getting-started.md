@@ -218,6 +218,10 @@ Use this flow when you want:
 
 For more on planning layout and worktree flows, see [Planning and Worktrees](planning-and-worktrees.md).
 
+## Remote development note
+
+If envctl runs on a remote VM or LAN dev box and you need to open the managed backend/frontend from another machine, set `ENVCTL_PUBLIC_HOST=<host-or-ip>` in `.envctl`. Envctl will keep dependency services local, but backend/frontend URLs and launch env will use that public host and the dev servers will bind externally by default. You still need to configure firewall/security groups, authentication, TLS, DNS, and app CORS yourself.
+
 ## 7. Where to Go Next
 
 - Need the exact wizard behavior: [First-Run Wizard](first-run-wizard.md)

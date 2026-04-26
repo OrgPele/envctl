@@ -4,8 +4,10 @@ import shlex
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Callable, Mapping
 
+from envctl_engine.runtime.network_exposure import NetworkExposure, command_replacements, resolve_network_exposure
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
 
 CommandExists = Callable[[str], bool]
@@ -87,6 +89,7 @@ def resolve_service_start_command(
     command_exists: CommandExists | None = None,
 ) -> CommandResolutionResult:
     exists = command_exists or _default_command_exists
+    exposure = resolve_network_exposure(env, config_raw)
     env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
@@ -99,6 +102,8 @@ def resolve_service_start_command(
             command=_split_and_validate(
                 raw,
                 port=port,
+                exposure=exposure,
+                normalize_loopback_host=True,
                 command_exists=exists,
                 search_roots=[service_root, project_root],
             ),
@@ -109,6 +114,7 @@ def resolve_service_start_command(
         service_name=service_name,
         project_root=project_root,
         port=port,
+        exposure=exposure,
         command_exists=exists,
     )
     if autodetected is not None:
@@ -129,12 +135,23 @@ def _autodetect_service_command(
     service_name: str,
     project_root: Path,
     port: int,
+    exposure: NetworkExposure,
     command_exists: CommandExists,
 ) -> list[str] | None:
     if service_name == "backend":
-        return _autodetect_backend(project_root=project_root, port=port, command_exists=command_exists)
+        return _autodetect_backend(
+            project_root=project_root,
+            port=port,
+            exposure=exposure,
+            command_exists=command_exists,
+        )
     if service_name == "frontend":
-        return _autodetect_frontend(project_root=project_root, port=port, command_exists=command_exists)
+        return _autodetect_frontend(
+            project_root=project_root,
+            port=port,
+            exposure=exposure,
+            command_exists=command_exists,
+        )
     return None
 
 
@@ -157,7 +174,7 @@ def _suggest_backend_start_command(*, project_root: Path, command_exists: Comman
                         "uvicorn",
                         app_ref,
                         "--host",
-                        "127.0.0.1",
+                        "{bind_host}",
                         "--port",
                         "{port}",
                     ]
@@ -193,6 +210,7 @@ def _suggest_frontend_start_command(*, project_root: Path, command_exists: Comma
             package_json=package_json,
             service_name="frontend",
             port=0,
+            bind_host="{bind_host}",
             command_exists=command_exists,
         )
         if command is not None:
@@ -229,7 +247,13 @@ def _suggest_frontend_directory(*, project_root: Path) -> str | None:
     return None
 
 
-def _autodetect_backend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
+def _autodetect_backend(
+    *,
+    project_root: Path,
+    port: int,
+    exposure: NetworkExposure,
+    command_exists: CommandExists,
+) -> list[str] | None:
     backend_dir = project_root / "backend"
     search_roots = [backend_dir, project_root] if backend_dir.is_dir() else [project_root]
 
@@ -249,7 +273,7 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
             "uvicorn",
             app_ref,
             "--host",
-            "127.0.0.1",
+            exposure.bind_host,
             "--port",
             str(port),
         ]
@@ -270,6 +294,7 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
                 package_json=package_json,
                 service_name="backend",
                 port=port,
+                bind_host=exposure.bind_host,
                 command_exists=command_exists,
             )
             if command is not None:
@@ -277,7 +302,13 @@ def _autodetect_backend(*, project_root: Path, port: int, command_exists: Comman
     return None
 
 
-def _autodetect_frontend(*, project_root: Path, port: int, command_exists: CommandExists) -> list[str] | None:
+def _autodetect_frontend(
+    *,
+    project_root: Path,
+    port: int,
+    exposure: NetworkExposure,
+    command_exists: CommandExists,
+) -> list[str] | None:
     frontend_dir = project_root / "frontend"
     search_roots = [frontend_dir, project_root] if frontend_dir.is_dir() else [project_root]
 
@@ -289,6 +320,7 @@ def _autodetect_frontend(*, project_root: Path, port: int, command_exists: Comma
             package_json=package_json,
             service_name="frontend",
             port=port,
+            bind_host=exposure.bind_host,
             command_exists=command_exists,
         )
         if command is not None:
@@ -302,6 +334,7 @@ def _npm_like_dev_command(
     service_name: str,
     port: int,
     command_exists: CommandExists,
+    bind_host: str = "127.0.0.1",
 ) -> list[str] | None:
     payload = load_package_json(package_json)
     if payload is None:
@@ -321,12 +354,12 @@ def _npm_like_dev_command(
     if manager == "bun":
         command = ["bun", "run", "dev"]
         if "vite" in lowered_dev and service_name == "frontend":
-            command.extend(["--", "--port", str(port), "--host", "127.0.0.1"])
+            command.extend(["--", "--port", str(port), "--host", bind_host])
         return command
     if manager in {"npm", "pnpm", "yarn"}:
         command = [manager, "run", "dev"]
         if "vite" in lowered_dev and service_name == "frontend":
-            command.extend(["--", "--port", str(port), "--host", "127.0.0.1"])
+            command.extend(["--", "--port", str(port), "--host", bind_host])
         return command
     return None
 
@@ -434,10 +467,28 @@ def _split_and_validate(
     port: int,
     command_exists: CommandExists,
     search_roots: list[Path] | None = None,
+    exposure: NetworkExposure | None = None,
+    normalize_loopback_host: bool = False,
 ) -> list[str]:
-    parsed = shlex.split(raw.replace("{port}", str(port)))
+    resolved_exposure = exposure or resolve_network_exposure({}, {})
+    replacements = command_replacements(port, resolved_exposure)
+    placeholders = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", raw))
+    unsupported = sorted(placeholders - set(replacements))
+    if unsupported:
+        rendered = ", ".join(f"{{{name}}}" for name in unsupported)
+        raise CommandResolutionError(
+            "invalid_command_placeholder",
+            f"Unsupported command placeholder(s): {rendered}. Supported placeholders: "
+            "{port}, {bind_host}, {public_host}, {url_host}.",
+        )
+    value = raw
+    for key, replacement in replacements.items():
+        value = value.replace(f"{{{key}}}", replacement)
+    parsed = shlex.split(value)
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
+    if normalize_loopback_host and (resolved_exposure.enabled or resolved_exposure.bind_host != "127.0.0.1"):
+        parsed = _normalize_loopback_host_flags(parsed, bind_host=resolved_exposure.bind_host)
     executable = parsed[0]
     if not _command_exists_for_roots(executable, command_exists=command_exists, search_roots=search_roots or []):
         raise CommandResolutionError(
@@ -445,6 +496,17 @@ def _split_and_validate(
             f"Resolved command executable not found: {executable}",
         )
     return parsed
+
+
+def _normalize_loopback_host_flags(command: list[str], *, bind_host: str) -> list[str]:
+    normalized = list(command)
+    for index, token in enumerate(list(normalized)):
+        if token == "--host" and index + 1 < len(normalized) and normalized[index + 1] in {"127.0.0.1", "localhost"}:
+            normalized[index + 1] = bind_host
+            continue
+        if token in {"--host=127.0.0.1", "--host=localhost"}:
+            normalized[index] = f"--host={bind_host}"
+    return normalized
 
 
 def _default_command_exists(executable: str) -> bool:

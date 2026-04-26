@@ -32,6 +32,7 @@ class PortPlanner:
         time_provider: Callable[[], float] | None = None,
         event_handler: Callable[[str, dict[str, object]], None] | None = None,
         availability_mode: str = "auto",
+        availability_bind_host: str = "127.0.0.1",
         preferred_port_strategy: str = "project_slot",
         scope_key: str | None = None,
     ) -> None:
@@ -51,6 +52,7 @@ class PortPlanner:
         self.time_provider = time_provider or time.time
         self.event_handler = event_handler
         self.availability_mode = availability_mode.strip().lower() or "auto"
+        self.availability_bind_host = str(availability_bind_host or "127.0.0.1").strip() or "127.0.0.1"
         strategy = preferred_port_strategy.strip().lower()
         if strategy not in {"project_slot", "legacy_spacing"}:
             strategy = "project_slot"
@@ -372,9 +374,10 @@ class PortPlanner:
         return self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
 
     def _is_port_available_via_socket_bind(self, port: int, *, allow_permission_fallback: bool = True) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        family = socket.AF_INET6 if ":" in self.availability_bind_host else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
             try:
-                sock.bind(("127.0.0.1", port))
+                sock.bind((self.availability_bind_host, port))
             except PermissionError:
                 if allow_permission_fallback:
                     return self._is_port_available_via_listener_query(port)

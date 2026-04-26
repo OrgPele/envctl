@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
+from envctl_engine.runtime.network_exposure import backend_api_url, resolve_network_exposure, service_url
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -378,8 +379,9 @@ def _prepare_frontend_runtime(
     api_url = ""
     manager = ""
     if backend_port > 0:
-        backend_url = f"http://localhost:{backend_port}"
-        api_url = f"{backend_url}/api/v1"
+        exposure = resolve_network_exposure(self.env, self.config.raw)
+        backend_url = service_url(backend_port, exposure)
+        api_url = backend_api_url(backend_port, exposure)
 
     package_json = frontend_cwd / "package.json"
     if not package_json.is_file():
@@ -599,7 +601,7 @@ def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
 
 def _backend_dependency_install_required(*, backend_cwd: Path, manager: str) -> tuple[bool, str, dict[str, object]]:
     fingerprint = _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager)
-    state = {"manager": manager, "fingerprint": fingerprint}
+    state: dict[str, object] = {"manager": manager, "fingerprint": fingerprint}
     env_artifact = backend_cwd / "venv"
     alt_env_artifact = backend_cwd / ".venv"
     if not env_artifact.exists() and not alt_env_artifact.exists():
@@ -620,7 +622,7 @@ def _backend_runtime_prep_required(
     skip_local_db_env: bool,
     migrations_enabled: bool,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "dependency_fingerprint": _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager),
         "runtime_fingerprint": _backend_runtime_fingerprint(
@@ -754,7 +756,7 @@ def _frontend_runtime_prep_required(
     env: Mapping[str, str],
     dev_script: str,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "runtime_fingerprint": _frontend_runtime_fingerprint(
             frontend_cwd=frontend_cwd,

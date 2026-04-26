@@ -29,11 +29,14 @@ from envctl_engine.config.persistence import (
     ensure_global_ignore_status,
     ensure_local_config_ignored,
     managed_values_from_mapping,
+    managed_values_from_payload,
     managed_values_to_mapping,
+    managed_values_to_payload,
     merge_managed_block,
     render_managed_block,
     save_local_config,
     save_local_config_with_ignore_policy,
+    validate_managed_values,
 )
 
 
@@ -270,6 +273,52 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertNotIn("PORT_SPACING=20", rendered)
         self.assertNotIn("MAIN_BACKEND_ENABLE=true", rendered)
         self.assertNotIn("TREES_BACKEND_ENABLE=true", rendered)
+        self.assertNotIn("ENVCTL_PUBLIC_HOST=", rendered)
+        self.assertNotIn("ENVCTL_SERVICE_BIND_HOST=", rendered)
+
+    def test_managed_network_values_round_trip_mapping_and_payload(self) -> None:
+        values = managed_values_from_mapping(
+            {
+                "ENVCTL_PUBLIC_HOST": "203.0.113.10",
+                "ENVCTL_SERVICE_BIND_HOST": "0.0.0.0",
+            }
+        )
+
+        mapping = managed_values_to_mapping(values)
+        payload = managed_values_to_payload(values)
+        from_payload = managed_values_from_payload({"network": payload["network"]})
+
+        self.assertEqual(values.public_host, "203.0.113.10")
+        self.assertEqual(values.service_bind_host, "0.0.0.0")
+        self.assertEqual(mapping["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(mapping["ENVCTL_SERVICE_BIND_HOST"], "0.0.0.0")
+        self.assertEqual(payload["network"]["public_host"], "203.0.113.10")
+        self.assertEqual(payload["network"]["service_bind_host"], "0.0.0.0")
+        self.assertEqual(from_payload.public_host, "203.0.113.10")
+        self.assertEqual(from_payload.service_bind_host, "0.0.0.0")
+
+    def test_render_managed_block_includes_network_section_only_when_non_empty(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, False, False, False),
+            trees_profile=StartupProfile(True, True, True, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            public_host="203.0.113.10",
+            service_bind_host="0.0.0.0",
+        )
+
+        rendered = render_managed_block(values)
+
+        self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", rendered)
+        self.assertIn("ENVCTL_SERVICE_BIND_HOST=0.0.0.0", rendered)
+
+    def test_validation_rejects_full_url_public_host(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_PUBLIC_HOST": "http://203.0.113.10:8000"})
+
+        validation = validate_managed_values(values, require_directories=False, require_entrypoints=False)
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("host/IP only, not a full URL" in error for error in validation.errors))
 
     def test_render_managed_block_includes_backend_listener_expectation_when_disabled(self) -> None:
         values = ManagedConfigValues(

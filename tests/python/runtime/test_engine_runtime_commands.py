@@ -47,6 +47,31 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(env["PORT"], "9000")
         self.assertEqual(env["A"], "1")
         self.assertEqual(env["B"], "2")
+        self.assertNotIn("ENVCTL_PUBLIC_HOST", env)
+
+    def test_command_env_includes_network_metadata_only_when_public_host_configured(self) -> None:
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={"ENVCTL_PUBLIC_HOST": "203.0.113.10"}),
+        )
+
+        env = command_env(runtime, port=9000)
+
+        self.assertEqual(env["PORT"], "9000")
+        self.assertEqual(env["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(env["ENVCTL_SERVICE_BIND_HOST"], "0.0.0.0")
+        self.assertEqual(env["ENVCTL_URL_HOST"], "203.0.113.10")
+        self.assertEqual(env["HOST"], "0.0.0.0")
+
+    def test_command_env_does_not_override_explicit_host(self) -> None:
+        runtime = SimpleNamespace(
+            env={"HOST": "app-host"},
+            config=SimpleNamespace(raw={"ENVCTL_PUBLIC_HOST": "203.0.113.10"}),
+        )
+
+        env = command_env(runtime, port=9000)
+
+        self.assertEqual(env["HOST"], "app-host")
 
     def test_default_python_executable_prefers_runtime_override(self) -> None:
         runtime = SimpleNamespace(

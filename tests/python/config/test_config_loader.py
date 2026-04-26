@@ -14,7 +14,7 @@ class ConfigLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text(
-                'ENVCTL_DEFAULT_MODE="main"\nBACKEND_PORT_BASE=8000\n',
+                'ENVCTL_DEFAULT_MODE="main"\nBACKEND_PORT_BASE=8000\nENVCTL_PUBLIC_HOST=203.0.113.10\n',
                 encoding="utf-8",
             )
 
@@ -23,11 +23,13 @@ class ConfigLoaderTests(unittest.TestCase):
                     "RUN_REPO_ROOT": str(repo),
                     "ENVCTL_DEFAULT_MODE": "trees",
                     "BACKEND_PORT_BASE": "8100",
+                    "ENVCTL_PUBLIC_HOST": "dev.example.com",
                 }
             )
 
             self.assertEqual(config.default_mode, "trees")
             self.assertEqual(config.backend_port_base, 8100)
+            self.assertEqual(config.public_host, "dev.example.com")
 
     def test_envctl_sh_is_parsed_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -103,7 +105,7 @@ class ConfigLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text(
-                "BACKEND_DIR=api\nFRONTEND_DIR=web\n",
+                "BACKEND_DIR=api\nFRONTEND_DIR=web\nENVCTL_PUBLIC_HOST=203.0.113.10\nENVCTL_SERVICE_BIND_HOST=0.0.0.0\n",
                 encoding="utf-8",
             )
 
@@ -111,6 +113,18 @@ class ConfigLoaderTests(unittest.TestCase):
 
             self.assertEqual(config.backend_dir_name, "api")
             self.assertEqual(config.frontend_dir_name, "web")
+            self.assertEqual(config.public_host, "203.0.113.10")
+            self.assertEqual(config.service_bind_host, "0.0.0.0")
+
+    def test_load_config_defaults_network_exposure_fields_to_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text("", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.public_host, "")
+            self.assertEqual(config.service_bind_host, "")
 
     def test_load_config_autodetects_backend_and_frontend_dirs_when_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

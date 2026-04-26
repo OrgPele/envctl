@@ -9,10 +9,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 from envctl_engine.config import PortDefaults, StartupProfile, discover_local_config_state
 from envctl_engine.config.persistence import ManagedConfigValues, config_review_text
 from envctl_engine.ui.textual.screens.config_wizard import (
+    _clone_values,
     _directory_validation_message,
     _visible_command_fields,
     _visible_directory_fields,
+    _visible_network_fields,
     _visible_port_fields,
+    _wizard_steps,
     run_config_wizard_textual,
 )
 
@@ -46,7 +49,7 @@ class ConfigWizardTextualTests(unittest.TestCase):
             app = cast(object, app)
             self.assertEqual(  # noqa: SLF001
                 getattr(app, "_steps"),
-                ["welcome", "default_mode", "components", "directories", "commands", "ports", "review"],
+                ["welcome", "default_mode", "components", "directories", "commands", "network", "ports", "review"],
             )
 
     def test_build_only_flow_includes_service_startup_for_backend_only_projects(self) -> None:
@@ -72,10 +75,43 @@ class ConfigWizardTextualTests(unittest.TestCase):
                     "service_startup",
                     "directories",
                     "commands",
+                    "network",
                     "ports",
                     "review",
                 ],
             )
+
+    def test_network_step_is_visible_when_backend_or_frontend_runs(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, False, False, False, False, False),
+            trees_profile=StartupProfile(False, False, False, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+        )
+
+        self.assertIn("network", _wizard_steps(values, include_service_startup=False))
+        self.assertEqual(
+            _visible_network_fields(values),
+            (
+                ("public_host", "Public host"),
+                ("service_bind_host", "Service bind host"),
+            ),
+        )
+
+    def test_clone_values_preserves_network_fields(self) -> None:
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, False, False, False),
+            trees_profile=StartupProfile(True, True, True, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            public_host="203.0.113.10",
+            service_bind_host="0.0.0.0",
+        )
+
+        clone = _clone_values(values)
+
+        self.assertEqual(clone.public_host, "203.0.113.10")
+        self.assertEqual(clone.service_bind_host, "0.0.0.0")
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:
         values = ManagedConfigValues(

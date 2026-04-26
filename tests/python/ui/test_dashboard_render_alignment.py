@@ -15,12 +15,15 @@ from envctl_engine.state.models import RunState, ServiceRecord
 
 
 class DashboardRenderAlignmentTests(unittest.TestCase):
-    def _runtime(self, repo: Path, runtime: Path) -> PythonEngineRuntime:
+    def _runtime(self, repo: Path, runtime: Path, *, extra: dict[str, str] | None = None) -> PythonEngineRuntime:
+        env = {
+            "RUN_REPO_ROOT": str(repo),
+            "RUN_SH_RUNTIME_DIR": str(runtime),
+        }
+        if extra:
+            env.update(extra)
         config = load_config(
-            {
-                "RUN_REPO_ROOT": str(repo),
-                "RUN_SH_RUNTIME_DIR": str(runtime),
-            }
+            env
         )
         return PythonEngineRuntime(config, env={})
 
@@ -64,6 +67,46 @@ class DashboardRenderAlignmentTests(unittest.TestCase):
 
             rendered = out.getvalue()
             self.assertIn("...", rendered)
+
+    def test_dashboard_uses_public_host_for_backend_and_frontend_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = self._runtime(repo, runtime, extra={"ENVCTL_PUBLIC_HOST": "203.0.113.10"})
+            engine._dashboard_reconcile_for_snapshot = lambda _state: []  # type: ignore[assignment]
+            state = RunState(
+                run_id="run-remote",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/backend",
+                        pid=123,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    ),
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd="/tmp/frontend",
+                        pid=456,
+                        requested_port=9000,
+                        actual_port=9000,
+                        status="running",
+                    ),
+                },
+            )
+
+            out = StringIO()
+            with redirect_stdout(out):
+                engine._print_dashboard_snapshot(state)
+
+            rendered = out.getvalue()
+            self.assertIn("http://203.0.113.10:8000", rendered)
+            self.assertIn("http://203.0.113.10:9000", rendered)
 
     def test_dashboard_respects_no_color(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

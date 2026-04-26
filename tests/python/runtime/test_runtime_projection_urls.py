@@ -68,6 +68,55 @@ class RuntimeProjectionUrlsTests(unittest.TestCase):
         self.assertEqual(projection["Main"]["backend_url"], "http://localhost:8105")
         self.assertEqual(projection["Main"]["frontend_url"], "http://localhost:9106")
 
+    def test_projection_supports_public_ipv4_host(self) -> None:
+        state = RunState(
+            run_id="run-remote",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main/backend",
+                    requested_port=8000,
+                    actual_port=8105,
+                    status="running",
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd="/tmp/main/frontend",
+                    requested_port=9000,
+                    actual_port=9106,
+                    status="running",
+                ),
+            },
+        )
+
+        projection = build_runtime_projection(state, host="203.0.113.10")
+
+        self.assertEqual(projection["Main"]["backend_url"], "http://203.0.113.10:8105")
+        self.assertEqual(projection["Main"]["frontend_url"], "http://203.0.113.10:9106")
+
+    def test_projection_brackets_ipv6_host(self) -> None:
+        state = RunState(
+            run_id="run-remote-v6",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main/backend",
+                    requested_port=8000,
+                    actual_port=8105,
+                    status="running",
+                ),
+            },
+        )
+
+        projection = build_runtime_projection(state, host="2001:db8::1")
+
+        self.assertEqual(projection["Main"]["backend_url"], "http://[2001:db8::1]:8105")
+
     def test_projection_hides_urls_for_unreachable_services(self) -> None:
         state = RunState(
             run_id="run-3",

@@ -7,6 +7,7 @@ from typing import Protocol
 from envctl_engine.config import EngineConfig
 from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
@@ -27,6 +28,7 @@ class StartupRuntime(Protocol):
     process_runner: ProcessRuntime
     port_planner: PortAllocator
     runtime_root: Path
+    services: ServiceManager
     _conflict_remaining: dict[str, int]
 
     def _emit(self, event: str, **payload: object) -> None: ...

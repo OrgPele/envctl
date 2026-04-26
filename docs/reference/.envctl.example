@@ -30,6 +30,20 @@ FRONTEND_PORT_BASE=9000
 PORT_SPACING=20
 
 # ==========================================
+# Network exposure
+# ==========================================
+
+# Leave blank for localhost-only backend/frontend services.
+# Set to a remote VM/LAN IP or DNS host to publish browser-openable URLs.
+# When set to a non-loopback host, envctl binds backend/frontend dev servers
+# to 0.0.0.0 by default. Firewalls, auth, TLS, DNS, and app CORS remain app/user-owned.
+ENVCTL_PUBLIC_HOST=
+
+# Advanced override for the address passed to backend/frontend start commands.
+# Leave blank to use 127.0.0.1 locally and 0.0.0.0 when ENVCTL_PUBLIC_HOST is public.
+ENVCTL_SERVICE_BIND_HOST=
+
+# ==========================================
 # Dependency base ports
 # ==========================================
 

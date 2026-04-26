@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.runtime.network_exposure import format_url_host
 from envctl_engine.state.models import RunState
 
 
@@ -13,8 +14,9 @@ def frontend_env_for_project(state: RunState, project: str, *, host: str = "loca
         backend_port = service.actual_port if service.actual_port is not None else service.requested_port
     if backend_port is None:
         return {}
+    url_host = format_url_host(host)
     return {
-        "VITE_BACKEND_URL": f"http://{host}:{backend_port}",
+        "VITE_BACKEND_URL": f"http://{url_host}:{backend_port}",
     }
 
 

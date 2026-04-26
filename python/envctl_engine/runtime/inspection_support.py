@@ -4,10 +4,10 @@ import concurrent.futures
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.config import discover_local_config_state
-from envctl_engine.config.persistence import managed_values_from_local_state, managed_values_to_payload
+from envctl_engine.config.persistence import managed_values_from_mapping, managed_values_to_payload
 from envctl_engine.planning import (
     PlanProjectPrediction,
     filter_projects_for_plan,
@@ -16,7 +16,7 @@ from envctl_engine.planning import (
     resolve_planning_files,
 )
 from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
-from envctl_engine.runtime.command_router import list_supported_commands, parse_route
+from envctl_engine.runtime.command_router import Route, list_supported_commands, parse_route
 from envctl_engine.runtime.engine_runtime_startup_support import (
     auto_resume_start_enabled,
     evaluate_run_reuse,
@@ -167,8 +167,8 @@ def _prediction_payloads(
 
 def _print_config(runtime: Any, *, json_output: bool) -> int:
     local_state = discover_local_config_state(runtime.config.base_dir, runtime.env.get("ENVCTL_CONFIG_FILE"))
-    values = managed_values_from_local_state(local_state)
-    payload = {
+    values = managed_values_from_mapping(runtime.config.raw, base_dir=runtime.config.base_dir)
+    payload: dict[str, Any] = {
         "base_dir": str(runtime.config.base_dir),
         "config_file": str(local_state.config_file_path),
         "config_exists": local_state.config_file_exists,
@@ -219,7 +219,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    effective = payload["effective"]
+    effective = cast(dict[str, Any], payload["effective"])
     print(f"config_file: {render_path_for_terminal(payload['config_file'], env=getattr(runtime, 'env', {}))}")
     print(f"config_exists: {payload['config_exists']}")
     print(f"config_source: {payload['config_source']}")
@@ -231,14 +231,17 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"backend_port_base: {effective['ports']['backend']}")
     print(f"frontend_port_base: {effective['ports']['frontend']}")
     print(f"port_spacing: {effective['ports']['spacing']}")
+    print(f"public_host: {effective['network']['public_host']}")
+    print(f"service_bind_host: {effective['network']['service_bind_host']}")
     preferred_strategy = (
         runtime.env.get("ENVCTL_PORT_PREFERRED_STRATEGY")
         or runtime.config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY")
         or "project_slot"
     )
     print(f"preferred_port_strategy: {preferred_strategy}")
-    print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
-    print(f"plan_agent_codex_cycles: {payload['plan_agent']['codex_cycles']}")
+    plan_agent = cast(dict[str, Any], payload["plan_agent"])
+    print(f"plan_agent_terminals_enabled: {plan_agent['enabled']}")
+    print(f"plan_agent_codex_cycles: {plan_agent['codex_cycles']}")
     return 0
 
 
@@ -252,7 +255,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
             print("No previous state found.")
         return 1
 
-    payload = {
+    payload: dict[str, Any] = {
         "found": True,
         "runtime_root": str(runtime.runtime_root),
         "run_state_path": str(runtime._run_state_path()),
@@ -262,7 +265,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    state_payload = payload["state"]
+    state_payload = cast(dict[str, Any], payload["state"])
     print(f"run_id: {state_payload['run_id']}")
     print(f"mode: {state_payload['mode']}")
     print(f"services: {len(state_payload['services'])}")
@@ -272,14 +275,15 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     return 0
 
 
-def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str, object]:
+def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str, Any]:
     startup_route = _startup_route_for_explanation(runtime, route)
-    runtime_mode = effective_start_mode(runtime, route)
+    inspection_route = cast(Route, route)
+    runtime_mode = effective_start_mode(runtime, inspection_route)
     batch = runtime._batch_mode_requested(startup_route)
     can_tty = runtime._can_interactive_tty()
     projects = runtime._discover_projects(mode=runtime_mode)
     startup = runtime.startup_orchestrator
-    selection_info: dict[str, object] = {
+    selection_info: dict[str, Any] = {
         "required": False,
         "reason": None,
         "selected_projects": [project.name for project in projects],
@@ -387,7 +391,7 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         )
 
     selected_project_count = len(selection_info.get("selected_projects", []))
-    auto_resume = {
+    auto_resume: dict[str, Any] = {
         "eligible": auto_resume_start_enabled(startup_route),
         "existing_state_found": False,
         "exact_match": False,
@@ -427,10 +431,10 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
     parallel_trees_enabled, parallel_trees_workers = tree_parallel_startup_config(
         runtime,
         mode=runtime_mode,
-        route=route,
+        route=inspection_route,
         project_count=max(selected_project_count, len(projects)),
     )
-    payload = {
+    payload: dict[str, Any] = {
         "command": getattr(startup_route, "command", "start"),
         "mode": runtime_mode,
         "headless": batch or not can_tty,
@@ -468,9 +472,9 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
 
 def _print_startup_explanation(runtime: Any, route: object, *, json_output: bool) -> int:
     payload = _build_startup_explanation_payload(runtime, route)
-    selection_info = payload["selection"]
-    auto_resume = payload["auto_resume"]
-    enabled_dependencies = payload["dependencies"]
+    selection_info = cast(dict[str, Any], payload["selection"])
+    auto_resume = cast(dict[str, Any], payload["auto_resume"])
+    enabled_dependencies = cast(list[str], payload["dependencies"])
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -521,7 +525,7 @@ def _print_preflight(runtime: Any, route: object, *, json_output: bool) -> int:
     return _print_startup_explanation(runtime, route, json_output=False)
 
 
-def _startup_route_for_explanation(runtime: Any, route: object) -> object:
+def _startup_route_for_explanation(runtime: Any, route: object) -> Route:
     raw_args = [
         str(token)
         for token in list(getattr(route, "raw_args", []) or [])
@@ -531,7 +535,7 @@ def _startup_route_for_explanation(runtime: Any, route: object) -> object:
     try:
         return parse_route(raw_args or ["start"], env=env)
     except Exception:
-        return type(route)(
+        return Route(
             command="start",
             mode=getattr(route, "mode", "main"),
             raw_args=getattr(route, "raw_args", []),

@@ -20,6 +20,7 @@ These are the highest-value flags for daily use.
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
 Allowed values are `main` and `trees` (default: `main`).
+Remote-dev note: `ENVCTL_PUBLIC_HOST=<host-or-ip>` in `.envctl` makes envctl-managed backend/frontend URLs use that host and binds those dev servers externally by default; dependencies stay local.
 Engine note: Python runtime is the only supported runtime path.
 Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
 Launcher note: `--version` is launcher-owned and intentionally stays out of the runtime supported-command inventory.
@@ -64,6 +65,8 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `ENVCTL_DOCKER_PREWARM=0\|1` | Enable/disable one-shot Docker daemon prewarm before requirements startup (default: `1`). |
 | `ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS=<n>` | Timeout for Docker prewarm command (default: `10`). |
 | `ENVCTL_REQUIREMENTS_PORT_MISMATCH_POLICY=adopt_existing\|recreate` | On existing container port mismatch, adopt existing mapping (default) or force recreate. |
+| `ENVCTL_PUBLIC_HOST=<host-or-ip>` | Publish backend/frontend URLs with this host and opt those dev servers into external bind. Use a host/IP only, not a full URL. |
+| `ENVCTL_SERVICE_BIND_HOST=<bind-address>` | Advanced backend/frontend bind override. Defaults to `127.0.0.1` locally and `0.0.0.0` when public exposure is enabled. |
 
 ## Logs and Debugging
 | Flag | Purpose |

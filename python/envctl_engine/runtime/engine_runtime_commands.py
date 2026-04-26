@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from envctl_engine.runtime.command_resolution import resolve_requirement_start_command, resolve_service_start_command
+from envctl_engine.runtime.network_exposure import resolve_network_exposure
 
 
 def requirement_command(
@@ -141,6 +143,15 @@ def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = No
     env = dict(os.environ)
     env.update(runtime.env)
     env["PORT"] = str(port)
+    config = getattr(runtime, "config", None)
+    config_raw = getattr(config, "raw", {}) if config is not None else {}
+    if isinstance(config_raw, Mapping):
+        exposure = resolve_network_exposure(getattr(runtime, "env", {}), config_raw)
+        if exposure.enabled:
+            env["ENVCTL_PUBLIC_HOST"] = exposure.public_host
+            env["ENVCTL_SERVICE_BIND_HOST"] = exposure.bind_host
+            env["ENVCTL_URL_HOST"] = exposure.url_host
+            env.setdefault("HOST", exposure.bind_host)
     if extra:
         env.update(extra)
     return env

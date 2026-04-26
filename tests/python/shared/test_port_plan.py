@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -165,6 +166,29 @@ class PortPlanTests(unittest.TestCase):
 
         self.assertEqual(planner.preferred_port_strategy, "project_slot")
         self.assertEqual(redis_slot, backend_slot)
+
+    def test_socket_availability_uses_configured_bind_host(self) -> None:
+        planner = PortPlanner(availability_bind_host="0.0.0.0")
+        mocked_socket = MagicMock()
+        socket_cm = MagicMock()
+        socket_cm.__enter__.return_value = mocked_socket
+        socket_cm.__exit__.return_value = None
+
+        with patch("envctl_engine.shared.ports.socket.socket", return_value=socket_cm):
+            self.assertTrue(planner._is_port_available_via_socket_bind(8123))
+
+        mocked_socket.bind.assert_called_once_with(("0.0.0.0", 8123))
+
+    def test_injected_availability_checker_bypasses_socket_bind_host(self) -> None:
+        planner = PortPlanner(
+            availability_bind_host="0.0.0.0",
+            availability_checker=lambda port: port == 8123,
+        )
+
+        with patch("envctl_engine.shared.ports.socket.socket") as socket_factory:
+            self.assertTrue(planner._is_port_available(8123))
+
+        socket_factory.assert_not_called()
 
 
 if __name__ == "__main__":

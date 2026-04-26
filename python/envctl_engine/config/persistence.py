@@ -31,6 +31,7 @@ from envctl_engine.actions.actions_test import (
     suggest_frontend_test_path,
 )
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from envctl_engine.runtime.network_exposure import NetworkExposureError, resolve_network_exposure
 from envctl_engine.shared.parsing import parse_int
 
 
@@ -50,6 +51,8 @@ class ManagedConfigValues:
     frontend_test_cmd: str = ""
     action_test_cmd: str = ""
     frontend_test_path: str = ""
+    public_host: str = ""
+    service_bind_host: str = ""
 
 
 @dataclass(slots=True)
@@ -131,6 +134,8 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
         frontend_test_cmd=_resolved_frontend_test_cmd(values=values, base_dir=base_dir),
         action_test_cmd=_resolved_action_test_cmd(values=values, base_dir=base_dir),
         frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
+        public_host=str(values.get("ENVCTL_PUBLIC_HOST") or "").strip(),
+        service_bind_host=str(values.get("ENVCTL_SERVICE_BIND_HOST") or "").strip(),
         main_profile=main_profile,
         trees_profile=trees_profile,
         port_defaults=port_defaults,
@@ -147,6 +152,8 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "ENVCTL_BACKEND_TEST_CMD": values.backend_test_cmd,
         "ENVCTL_FRONTEND_TEST_CMD": values.frontend_test_cmd,
         "ENVCTL_FRONTEND_TEST_PATH": values.frontend_test_path,
+        "ENVCTL_PUBLIC_HOST": values.public_host,
+        "ENVCTL_SERVICE_BIND_HOST": values.service_bind_host,
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
         "PORT_SPACING": str(values.port_defaults.port_spacing),
@@ -197,6 +204,10 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 }
                 for definition in dependency_definitions()
             },
+        },
+        "network": {
+            "public_host": values.public_host,
+            "service_bind_host": values.service_bind_host,
         },
         "profiles": {
             "main": {
@@ -283,6 +294,15 @@ def managed_values_from_payload(
                     if resource.name in resource_values:
                         mapping[resource.config_port_keys[0]] = str(resource_values[resource.name])
 
+    network = payload.get("network")
+    if isinstance(network, dict):
+        if network.get("public_host") is not None:
+            mapping["ENVCTL_PUBLIC_HOST"] = str(network["public_host"])
+        if network.get("service_bind_host") is not None:
+            mapping["ENVCTL_SERVICE_BIND_HOST"] = str(network["service_bind_host"])
+        if network.get("bind_host") is not None:
+            mapping["ENVCTL_SERVICE_BIND_HOST"] = str(network["bind_host"])
+
     profiles = payload.get("profiles")
     if isinstance(profiles, dict):
         for mode in ("main", "trees"):
@@ -341,6 +361,16 @@ def validate_managed_values(
     ):
         if int(raw) < 1:
             errors.append(f"{label} must be a positive integer.")
+    try:
+        resolve_network_exposure(
+            {},
+            {
+                "ENVCTL_PUBLIC_HOST": values.public_host,
+                "ENVCTL_SERVICE_BIND_HOST": values.service_bind_host,
+            },
+        )
+    except NetworkExposureError as exc:
+        errors.append(str(exc))
     return ValidationResult(valid=not errors, errors=errors)
 
 
@@ -422,6 +452,12 @@ def _managed_block_sections(
     if port_keys and rendered["PORT_SPACING"] != defaults["PORT_SPACING"]:
         append_once(port_keys, "PORT_SPACING")
     sections.append(port_keys)
+
+    network_keys: list[str] = []
+    for key in ("ENVCTL_PUBLIC_HOST", "ENVCTL_SERVICE_BIND_HOST"):
+        if rendered[key] != defaults[key] and str(rendered[key]).strip():
+            append_once(network_keys, key)
+    sections.append(network_keys)
 
     main_keys = _profile_keys_for_mode(mode="main", values=values, rendered=rendered, defaults=defaults)
     trees_keys = _profile_keys_for_mode(mode="trees", values=values, rendered=rendered, defaults=defaults)
@@ -558,6 +594,8 @@ def save_local_config_with_ignore_policy(
             )
             or ""
         ),
+        public_host=values.public_host,
+        service_bind_host=values.service_bind_host,
     )
     validation = validate_managed_values(canonical_values, require_directories=False, require_entrypoints=False)
     if not validation.valid:

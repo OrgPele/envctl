@@ -33,6 +33,40 @@ Useful commands:
 - `envctl show-config --json` prints the effective config without mutating anything
 - on missing `.envctl`, inspect-only commands still run with defaults
 
+## Backend/Frontend Network Exposure
+
+By default, envctl-managed backend and frontend dev servers stay local: commands bind to loopback and projected URLs use `localhost`.
+
+To make only the managed backend/frontend services browser-openable from a remote VM, dev box, or LAN host, set a host/IP in `.envctl`:
+
+```dotenv
+ENVCTL_PUBLIC_HOST=203.0.113.10
+```
+
+When `ENVCTL_PUBLIC_HOST` is a non-loopback host, envctl:
+
+- passes `0.0.0.0` as the default backend/frontend bind host
+- shows backend/frontend URLs like `http://203.0.113.10:<port>` in runtime artifacts and dashboard output
+- injects `VITE_BACKEND_URL=http://203.0.113.10:<backend-port>` and `VITE_API_URL=http://203.0.113.10:<backend-port>/api/v1` into frontend launches
+- leaves Postgres, Redis, Supabase, n8n, and other dependency services on the existing local-only behavior
+
+`ENVCTL_PUBLIC_HOST` must be a host/IP only, not a full URL and not `host:port`. IPv6 literals are supported and are bracketed in URLs automatically.
+
+Advanced users can override the bind address:
+
+```dotenv
+ENVCTL_SERVICE_BIND_HOST=0.0.0.0
+```
+
+Leave `ENVCTL_SERVICE_BIND_HOST` blank unless your app or environment needs a specific bind address. Newly generated backend/frontend command templates can use these placeholders:
+
+- `{port}`
+- `{bind_host}`
+- `{public_host}`
+- `{url_host}`
+
+Security note: remote exposure is explicit opt-in for development servers. Opening ports, cloud security groups, authentication, TLS, DNS, reverse proxies, and app CORS policies remain your responsibility.
+
 ## Service Launch Env Templates In `.envctl`
 
 `envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
@@ -170,6 +204,7 @@ The current setup/editor wizard covers:
 - services and dependencies
 - optional backend-only long-running service startup
 - backend/frontend directories
+- optional backend/frontend network exposure
 - canonical ports
 
 The current flow is:
@@ -179,8 +214,9 @@ The current flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Network Exposure`
+7. `Ports`
+8. `Review / Save`
 
 There is no simple/advanced split in the current UI.
 
@@ -191,6 +227,8 @@ There is no simple/advanced split in the current UI.
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
+| `ENVCTL_PUBLIC_HOST` | unset | Optional public host/IP used for backend/frontend URLs. Non-loopback values enable external backend/frontend bind by default. |
+| `ENVCTL_SERVICE_BIND_HOST` | unset | Advanced backend/frontend bind host override. Defaults to `127.0.0.1` locally and `0.0.0.0` when `ENVCTL_PUBLIC_HOST` is public. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
 | `ENVCTL_STATE_COMPAT_MODE` | `compat_read_write` | State repository compatibility mode (`compat_read_write`, `compat_read_only`, `scoped_only`). |

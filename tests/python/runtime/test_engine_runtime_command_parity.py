@@ -1066,7 +1066,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.addCleanup(tmpdir.cleanup)
         repo = Path(tmpdir.name) / "repo"
         (repo / ".git").mkdir(parents=True, exist_ok=True)
-        (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\nBACKEND_DIR=api\nMAIN_STARTUP_ENABLE=false\n")
+        (repo / ".envctl").write_text(
+            "ENVCTL_DEFAULT_MODE=trees\nBACKEND_DIR=api\nMAIN_STARTUP_ENABLE=false\nENVCTL_PUBLIC_HOST=203.0.113.10\n"
+        )
         config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
         runtime = PythonEngineRuntime(config, env={})
 
@@ -1078,6 +1080,8 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["effective"]["default_mode"], "trees")
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
+        self.assertEqual(payload["effective"]["network"]["public_host"], "203.0.113.10")
+        self.assertEqual(payload["effective"]["network"]["service_bind_host"], "")
 
     def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1161,6 +1165,8 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--show-config"], env={}))
         self.assertEqual(code, 0)
         self.assertIn("preferred_port_strategy: legacy_spacing", buffer.getvalue())
+        self.assertIn("public_host: ", buffer.getvalue())
+        self.assertIn("service_bind_host: ", buffer.getvalue())
         self.assertIn("main_startup_enabled: True", buffer.getvalue())
         self.assertIn("trees_startup_enabled: True", buffer.getvalue())
 

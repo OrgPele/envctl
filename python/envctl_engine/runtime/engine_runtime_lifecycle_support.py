@@ -16,7 +16,7 @@ from envctl_engine.requirements.common import (
     run_result_error,
 )
 from envctl_engine.requirements.supabase import build_supabase_project_name
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime
 
 container_exists = _container_exists
 
@@ -577,7 +577,7 @@ def blast_worktree_before_delete(
             runtime.state_repository.save_selected_stop_state(
                 state=state,
                 emit=runtime._emit,
-                runtime_map_builder=build_runtime_map,
+                runtime_map_builder=runtime_map_builder_for_runtime(runtime),
             )
         except Exception as exc:  # noqa: BLE001
             warning = f"state update failed for {normalized_project} ({mode}): {exc}"
@@ -600,18 +600,28 @@ def blast_worktree_before_delete(
 
     if blast_mode:
         _blast_tree_listener_ports(runtime, project_name=normalized_project, ports=target_ports, warnings=warnings)
-        _blast_tree_cwd_processes(runtime, project_name=normalized_project, project_root=resolved_root, warnings=warnings)
+        _blast_tree_cwd_processes(
+            runtime,
+            project_name=normalized_project,
+            project_root=resolved_root,
+            warnings=warnings,
+        )
         fingerprint_path_fn = getattr(runtime, "_supabase_fingerprint_path", None)
         if callable(fingerprint_path_fn):
             try:
                 fingerprint_path = fingerprint_path_fn(normalized_project)
                 if isinstance(fingerprint_path, str | os.PathLike):
-                    artifact_paths.add(Path(fingerprint_path))
+                    artifact_paths.add(Path(os.fsdecode(fingerprint_path)))
             except Exception:
                 pass
         _cleanup_artifact_paths(runtime, project_name=normalized_project, paths=artifact_paths, warnings=warnings)
     elif source_command == "self-destruct-worktree":
-        _blast_tree_cwd_processes(runtime, project_name=normalized_project, project_root=resolved_root, warnings=warnings)
+        _blast_tree_cwd_processes(
+            runtime,
+            project_name=normalized_project,
+            project_root=resolved_root,
+            warnings=warnings,
+        )
 
     _remove_tree_containers(
         runtime,

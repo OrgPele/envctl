@@ -7,7 +7,7 @@ import shlex
 import sys
 import threading
 import time
-from typing import cast
+from typing import Callable, cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
@@ -19,7 +19,7 @@ from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime
 from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
@@ -317,7 +317,11 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
-        if route.command == "plan" and not bool(route.flags.get("planning_prs")) and not bool(route.flags.get("dry_run")):
+        if (
+            route.command == "plan"
+            and not bool(route.flags.get("planning_prs"))
+            and not bool(route.flags.get("dry_run"))
+        ):
             planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
             selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
             if callable(selection_getter):
@@ -502,7 +506,11 @@ class StartupOrchestrator:
                 missing_services = rt._reconcile_state_truth(candidate_state)
                 if not missing_services:
                     session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
-                    session.resumed_context_names = [project["name"] for project in decision.state_projects]
+                    session.resumed_context_names = [
+                        name
+                        for project in decision.state_projects
+                        if isinstance((name := project.get("name")), str)
+                    ]
                     session.preserved_services = dict(candidate_state.services)
                     session.preserved_requirements = dict(candidate_state.requirements)
                     resumed_names = {name.lower() for name in session.resumed_context_names}
@@ -584,7 +592,10 @@ class StartupOrchestrator:
                 resolve_state_repository(rt).save_resume_state(
                     state=candidate_state,
                     emit=rt._emit,
-                    runtime_map_builder=cast(object, build_runtime_map),
+                    runtime_map_builder=cast(
+                        Callable[[object], dict[str, object]],
+                        runtime_map_builder_for_runtime(rt),
+                    ),
                 )
                 self._emit_phase(
                     session,
@@ -624,7 +635,8 @@ class StartupOrchestrator:
                         return attach_code
                 elif not enter_interactive_dashboard:
                     print(
-                        f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
+                        f"envctl runs are disabled for {session.runtime_mode}; "
+                        "opening dashboard without starting services."
                     )
                 if enter_interactive_dashboard:
                     return rt._run_interactive_dashboard_loop(candidate_state)
@@ -1024,7 +1036,12 @@ class StartupOrchestrator:
             return 0
         return attach_code
 
-    def _print_headless_plan_session_summary(self, session: StartupSession, *, attach_target: object | None = None) -> None:
+    def _print_headless_plan_session_summary(
+        self,
+        session: StartupSession,
+        *,
+        attach_target: object | None = None,
+    ) -> None:
         resolved_target = attach_target or session.plan_agent_attach_target
         if resolved_target is None:
             return
@@ -1036,7 +1053,10 @@ class StartupOrchestrator:
         )
         session_name = str(getattr(resolved_target, "session_name", "")).strip()
         if new_session_command:
-            print("existing session: envctl did not create a new AI session because one already exists for this plan/workspace/CLI.")
+            print(
+                "existing session: envctl did not create a new AI session because one already exists for this "
+                "plan/workspace/CLI."
+            )
         if attach_command:
             print(f"attach: {attach_command}")
         if new_session_command:

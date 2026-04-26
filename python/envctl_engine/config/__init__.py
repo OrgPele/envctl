@@ -14,6 +14,7 @@ from envctl_engine.actions.actions_test import (
 )
 from envctl_engine.config.profile_defaults import default_profile_settings, managed_dependency_default_enabled
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from envctl_engine.runtime.network_exposure import resolve_network_exposure
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
@@ -53,6 +54,8 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_FRONTEND_TEST_CMD": "",
         "ENVCTL_ACTION_TEST_CMD": "",
         "ENVCTL_FRONTEND_TEST_PATH": "",
+        "ENVCTL_PUBLIC_HOST": "",
+        "ENVCTL_SERVICE_BIND_HOST": "",
         "ENVCTL_PLANNING_DIR": "todo/plans",
         "TREES_DIR_NAME": "trees",
         "RUN_SH_RUNTIME_DIR": "/tmp/envctl-runtime",
@@ -131,6 +134,8 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_BACKEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_PATH",
+    "ENVCTL_PUBLIC_HOST",
+    "ENVCTL_SERVICE_BIND_HOST",
     "BACKEND_PORT_BASE",
     "FRONTEND_PORT_BASE",
     *_MANAGED_DEPENDENCY_PORT_KEYS,
@@ -299,6 +304,8 @@ class EngineConfig:
     frontend_test_cmd: str
     action_test_cmd: str
     frontend_test_path: str
+    public_host: str
+    service_bind_host: str
     runtime_dir: Path
     runtime_scope_id: str
     runtime_scope_dir: Path
@@ -468,6 +475,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
         plan_agent_cmux_workspace
     )
+    resolve_network_exposure({}, resolved)
 
     return EngineConfig(
         base_dir=base_dir,
@@ -484,6 +492,8 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_test_cmd=_resolved_frontend_test_cmd(base_dir=base_dir, resolved=resolved),
         action_test_cmd=_resolved_action_test_cmd(base_dir=base_dir, resolved=resolved),
         frontend_test_path=_resolved_frontend_test_path(base_dir=base_dir, resolved=resolved),
+        public_host=str(resolved.get("ENVCTL_PUBLIC_HOST", "") or "").strip(),
+        service_bind_host=str(resolved.get("ENVCTL_SERVICE_BIND_HOST", "") or "").strip(),
         runtime_scope_id=runtime_scope_id,
         runtime_scope_dir=runtime_scope_dir,
         planning_dir=planning_dir,

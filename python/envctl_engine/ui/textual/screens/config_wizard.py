@@ -21,6 +21,7 @@ from ....config.persistence import (
 )
 from ....requirements.core import dependency_definitions
 from ....runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from ....runtime.network_exposure import NetworkExposureError, resolve_network_exposure
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import (
     apply_textual_driver_compat,
@@ -85,6 +86,11 @@ _PORT_FIELDS: tuple[tuple[str, str], ...] = (
     ("port_spacing", "Port spacing"),
 )
 
+_NETWORK_FIELDS: tuple[tuple[str, str], ...] = (
+    ("public_host", "Public host"),
+    ("service_bind_host", "Service bind host"),
+)
+
 _STEP_TITLES = {
     "welcome": "Welcome / Source",
     "default_mode": "Default Mode",
@@ -92,6 +98,7 @@ _STEP_TITLES = {
     "service_startup": "Long-Running Service",
     "directories": "Directories",
     "commands": "Entrypoints / Commands",
+    "network": "Network Exposure",
     "ports": "Ports",
     "review": "Review / Save",
 }
@@ -113,6 +120,10 @@ _STEP_HELP_TEXT = {
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
     "commands": (
         "Set only the entrypoints and test commands needed by the components currently configured in main or trees."
+    ),
+    "network": (
+        "Optional. Leave blank for localhost-only. Set a remote VM/LAN host to publish backend/frontend URLs; "
+        "firewalls, auth, TLS, and CORS remain your responsibility."
     ),
     "ports": "Set only the ports needed by the components currently configured in main or trees.",
     "review": "Review the generated managed .envctl block before saving it to the repository.",
@@ -143,7 +154,7 @@ def _directory_error_id(field_name: str) -> str:
 
 def _directory_field_name_from_input_id(input_id: str | None) -> str | None:
     normalized = str(input_id or "").strip()
-    for field_name, _label in _DIRECTORY_FIELDS:
+    for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS, *_NETWORK_FIELDS):
         if normalized == _directory_input_id(field_name):
             return field_name
     return None
@@ -183,6 +194,8 @@ def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool)
         steps.append("directories")
     if _visible_command_fields(values):
         steps.append("commands")
+    if _visible_network_fields(values):
+        steps.append("network")
     if _visible_port_fields(values):
         steps.append("ports")
     steps.append("review")
@@ -221,6 +234,8 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
         frontend_test_path=values.frontend_test_path,
+        public_host=values.public_host,
+        service_bind_host=values.service_bind_host,
     )
 
 
@@ -354,6 +369,13 @@ def _visible_port_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], 
     if visible:
         visible.append(("port_spacing", "Port spacing"))
     return tuple(visible)
+
+
+def _visible_network_fields(values: ManagedConfigValues) -> tuple[tuple[str, str], ...]:
+    for profile in (values.main_profile, values.trees_profile):
+        if profile.startup_enable and (profile.backend_enable or profile.frontend_enable):
+            return _NETWORK_FIELDS
+    return ()
 
 
 def run_config_wizard_textual(
@@ -530,7 +552,7 @@ def run_config_wizard_textual(
                     yield ListView(id="config-list")
                     yield Static("", id="config-empty")
                     with VerticalScroll(id="config-directories"):
-                        for field_name, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
+                        for field_name, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS, *_NETWORK_FIELDS):
                             yield Label(label, id=_field_label_id("directory", field_name))
                             yield Input(
                                 value=str(self._field_value(field_name)),
@@ -699,8 +721,8 @@ def run_config_wizard_textual(
             review_scroll = self.query_one("#config-review-scroll", VerticalScroll)
             review = self.query_one("#config-review", Static)
             welcome.display = step == "welcome"
-            list_view.display = step not in {"welcome", "directories", "commands", "ports", "review"}
-            directories.display = step in {"directories", "commands"}
+            list_view.display = step not in {"welcome", "directories", "commands", "network", "ports", "review"}
+            directories.display = step in {"directories", "commands", "network"}
             ports.display = step == "ports"
             review_scroll.display = step == "review"
             empty.display = False
@@ -748,6 +770,13 @@ def run_config_wizard_textual(
                     )
                     empty.display = True
                 return
+            if step == "network":
+                visible_fields = _visible_network_fields(self.values)
+                self._sync_directory_inputs(visible_fields)
+                if not visible_fields:
+                    empty.update("No backend/frontend startup is enabled, so network exposure is not configurable.")
+                    empty.display = True
+                return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 self._sync_port_inputs(visible_fields)
@@ -764,8 +793,9 @@ def run_config_wizard_textual(
                         values=self.values,
                         source_label=source_label,
                         ignore_warning=(
-                            "envctl local artifacts are managed through Git global excludes instead of repo .gitignore. "
-                            "Configure core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
+                            "envctl local artifacts are managed through Git global excludes instead of repo "
+                            ".gitignore. Configure core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, "
+                            "trees/, and trees-* out of git status."
                         ),
                     )
                 )
@@ -873,7 +903,7 @@ def run_config_wizard_textual(
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
-            for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
+            for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS, *_NETWORK_FIELDS):
                 label = self.query_one(f"#{_field_label_id('directory', field_name)}", Label)
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
@@ -966,6 +996,20 @@ def run_config_wizard_textual(
                     status.update("No entrypoints or test commands are needed for the configured components.")
                 self.refresh_bindings()
                 return
+            if step == "network":
+                visible_fields = _visible_network_fields(self.values)
+                if visible_fields:
+                    network_error = self._first_directory_error(visible_fields=visible_fields)
+                    if network_error is not None:
+                        status.update(network_error)
+                    else:
+                        status.update(
+                            "Leave blank for localhost-only, or set a host/IP that browsers should open remotely."
+                        )
+                else:
+                    status.update("No backend/frontend startup is enabled, so network exposure is hidden.")
+                self.refresh_bindings()
+                return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 if visible_fields:
@@ -984,11 +1028,13 @@ def run_config_wizard_textual(
                 if step == "components":
                     list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
                 focus_selectable_list(self, list_view, list_view.index)
-            elif step in {"directories", "commands"}:
+            elif step in {"directories", "commands", "network"}:
                 visible_fields = (
                     _visible_directory_fields(self.values)
                     if step == "directories"
                     else _visible_command_fields(self.values)
+                    if step == "commands"
+                    else _visible_network_fields(self.values)
                 )
                 if visible_fields:
                     self.query_one(f"#{_directory_input_id(visible_fields[0][0])}", Input).focus()
@@ -1020,6 +1066,10 @@ def run_config_wizard_textual(
                 return self.values.frontend_test_cmd
             if field_name == "frontend_test_path":
                 return self.values.frontend_test_path
+            if field_name == "public_host":
+                return self.values.public_host
+            if field_name == "service_bind_host":
+                return self.values.service_bind_host
             if field_name == "backend_port_base":
                 return self.values.port_defaults.backend_port_base
             if field_name == "frontend_port_base":
@@ -1091,7 +1141,7 @@ def run_config_wizard_textual(
             return candidate
 
         def _directory_label(self, field_name: str) -> str:
-            for candidate, label in _DIRECTORY_FIELDS:
+            for candidate, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS, *_NETWORK_FIELDS):
                 if candidate == field_name:
                     return label
             return "Directory"
@@ -1099,6 +1149,8 @@ def run_config_wizard_textual(
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
             label = self._directory_label(field_name)
             value = str(self._field_value(field_name)) if raw is None else str(raw)
+            if field_name in {"public_host", "service_bind_host"}:
+                return self._network_validation_message(field_name, value)
             if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
                 return _entrypoint_validation_message(label, value)
             if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
@@ -1108,6 +1160,25 @@ def run_config_wizard_textual(
                     return None
                 return _directory_validation_message(local_state.base_dir, label, value)
             return _directory_validation_message(local_state.base_dir, label, value)
+
+        def _network_validation_message(self, field_name: str, value: str) -> str | None:
+            public_host = self.values.public_host
+            service_bind_host = self.values.service_bind_host
+            if field_name == "public_host":
+                public_host = value
+            elif field_name == "service_bind_host":
+                service_bind_host = value
+            try:
+                resolve_network_exposure(
+                    {},
+                    {
+                        "ENVCTL_PUBLIC_HOST": public_host,
+                        "ENVCTL_SERVICE_BIND_HOST": service_bind_host,
+                    },
+                )
+            except NetworkExposureError as exc:
+                return str(exc)
+            return None
 
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
             directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
@@ -1340,15 +1411,15 @@ def run_config_wizard_textual(
 
         def _advance(self) -> None:
             step = self._current_step()
-            if step in {"directories", "commands"} and not self._apply_directory_inputs():
+            if step in {"directories", "commands", "network"} and not self._apply_directory_inputs():
                 return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"components", "service_startup", "directories", "commands", "ports", "review"}:
+            if step in {"components", "service_startup", "directories", "commands", "network", "ports", "review"}:
                 validation = validate_managed_values(
                     self.values,
-                    require_directories=step in {"directories", "commands", "ports", "review"},
-                    require_entrypoints=step in {"commands", "ports", "review"},
+                    require_directories=step in {"directories", "commands", "network", "ports", "review"},
+                    require_entrypoints=step in {"commands", "network", "ports", "review"},
                 )
                 if not validation.valid:
                     self._refresh_status(validation.errors[0])
@@ -1366,15 +1437,20 @@ def run_config_wizard_textual(
             self._refresh_all()
 
         def _apply_directory_inputs(self) -> bool:
+            current_step = self._current_step()
             visible_fields = (
                 _visible_directory_fields(self.values)
-                if self._current_step() == "directories"
+                if current_step == "directories"
                 else _visible_command_fields(self.values)
+                if current_step == "commands"
+                else _visible_network_fields(self.values)
             )
             for field_name, label in visible_fields:
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 raw = directory_input.value.strip()
-                if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
+                if field_name in {"public_host", "service_bind_host"}:
+                    directory_error = self._network_validation_message(field_name, raw)
+                elif field_name in {"backend_start_cmd", "frontend_start_cmd"}:
                     directory_error = _entrypoint_validation_message(label, raw)
                 elif field_name in {"backend_test_cmd", "frontend_test_cmd"}:
                     directory_error = None

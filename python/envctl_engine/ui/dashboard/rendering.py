@@ -14,7 +14,7 @@ from typing import Any, Mapping, cast
 
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime, runtime_url_host_for_runtime
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
 
@@ -32,7 +32,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         missing_count=len(failing_services),
         missing_services=failing_services,
     )
-    runtime_map = build_runtime_map(state)
+    url_host = runtime_url_host_for_runtime(self)
+    runtime_map = runtime_map_builder_for_runtime(self)(state)
     projection = runtime_map.get("projection", {})
     if not isinstance(projection, dict):
         projection = {}
@@ -121,6 +122,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 label="Backend",
                 service=backend_service,
                 url=str(backend_url) if backend_url else None,
+                url_host=url_host,
                 configured_not_running=bool(
                     runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types
                 ),
@@ -136,6 +138,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 label="Frontend",
                 service=frontend_service,
                 url=str(frontend_url) if frontend_url else None,
+                url_host=url_host,
                 configured_not_running=bool(
                     runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types
                 ),
@@ -181,6 +184,7 @@ def _print_dashboard_service_row(
     label: str,
     service: object | None,
     url: str | None,
+    url_host: str,
     configured_not_running: bool,
     ok_color: str,
     warn_color: str,
@@ -212,7 +216,7 @@ def _print_dashboard_service_row(
     if not url and status.lower() == "unreachable":
         fallback_port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
         if isinstance(fallback_port, int) and fallback_port > 0 and isinstance(pid, int) and pid > 0:
-            url_text = f"http://localhost:{fallback_port}"
+            url_text = f"http://{url_host}:{fallback_port}"
     label_text = f"{label_color}{label}{reset}"
     print(
         f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}"

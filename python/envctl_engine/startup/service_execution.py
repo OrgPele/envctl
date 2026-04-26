@@ -5,8 +5,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 import time
+from typing import Mapping, Protocol, cast
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.network_exposure import backend_api_url as exposure_backend_api_url
+from envctl_engine.runtime.network_exposure import resolve_network_exposure, service_url
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
@@ -33,12 +36,16 @@ class LaunchedServiceRuntime:
     log_path: str
 
 
-def _resolve_command_env_builder(rt: object):
+class CommandEnvBuilder(Protocol):
+    def __call__(self, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]: ...
+
+
+def _resolve_command_env_builder(rt: object) -> CommandEnvBuilder:
     builder = getattr(rt, "_command_env", None)
     if callable(builder):
-        return builder
+        return cast(CommandEnvBuilder, builder)
 
-    def build_command_env(*, port: int, extra: dict[str, str] | None = None) -> dict[str, str]:
+    def build_command_env(*, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         _ = port
         return dict(extra or {})
 
@@ -135,6 +142,7 @@ def start_project_services(
         project_env_internal = project_env_internal_builder(context, requirements=requirements, route=route)
     else:
         project_env_internal = rt._project_service_env(context, requirements=requirements, route=route)
+    exposure = resolve_network_exposure(rt.env, rt.config.raw)
 
     def project_env_for_service(service_name: str) -> dict[str, str]:
         try:
@@ -169,9 +177,24 @@ def start_project_services(
         env_file=frontend_env_file,
         include_app_env_file=False,
     )
-    backend_url = f"http://localhost:{backend_plan.final}"
+    backend_url = service_url(backend_plan.final, exposure)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
-    frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
+    frontend_env_extra["VITE_API_URL"] = exposure_backend_api_url(backend_plan.final, exposure)
+    if exposure.enabled:
+        public_urls = {
+            "ENVCTL_PUBLIC_BACKEND_URL": backend_url,
+            "ENVCTL_PUBLIC_FRONTEND_URL": service_url(frontend_plan.final, exposure),
+        }
+        backend_env_extra.update(public_urls)
+        frontend_env_extra.update(public_urls)
+        rt._emit(
+            "network.exposure.enabled",
+            public_host=exposure.public_host,
+            url_host=exposure.url_host,
+            bind_host=exposure.bind_host,
+            backend_enabled=rt._service_enabled_for_mode(effective_mode, "backend"),
+            frontend_enabled=rt._service_enabled_for_mode(effective_mode, "frontend"),
+        )
     configured_service_types = {
         service_name
         for service_name in ("backend", "frontend")

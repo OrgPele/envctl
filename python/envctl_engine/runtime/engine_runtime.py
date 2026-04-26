@@ -211,6 +211,7 @@ from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
+from envctl_engine.runtime.network_exposure import resolve_network_exposure
 from envctl_engine.shared.ports import PortPlanner
 from envctl_engine.shared.process_probe import (
     ProcessProbe,
@@ -505,6 +506,7 @@ class PythonEngineRuntime:
         self.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self._ensure_legacy_lock_view()
+        exposure = resolve_network_exposure(self.env, config.raw)
         self.port_planner = PortPlanner(
             backend_base=config.backend_port_base,
             frontend_base=config.frontend_port_base,
@@ -515,6 +517,7 @@ class PythonEngineRuntime:
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,
+            availability_bind_host=exposure.bind_host,
             preferred_port_strategy=self.env.get(
                 "ENVCTL_PORT_PREFERRED_STRATEGY",
                 config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),

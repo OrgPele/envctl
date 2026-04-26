@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
 from envctl_engine.state.models import RunState
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -147,12 +147,17 @@ class ResumeOrchestrator:
         runtime_map = state_repository.save_resume_state(  # type: ignore[attr-defined]
             state=state,
             emit=rt._emit,
-            runtime_map_builder=build_runtime_map,
+            runtime_map_builder=runtime_map_builder_for_runtime(rt),
         )
+        projection_count = 0
+        if isinstance(runtime_map, dict):
+            projection = runtime_map.get("projection", {})
+            if isinstance(projection, dict):
+                projection_count = len(projection)
         emit_phase(
             "save_resume_state",
             save_started,
-            project_count=len(runtime_map.get("projection", {})) if isinstance(runtime_map, dict) else 0,
+            project_count=projection_count,
         )
         enter_interactive = bool(rt._should_enter_resume_interactive(route))  # type: ignore[attr-defined]
 
@@ -206,8 +211,8 @@ class ResumeOrchestrator:
             missing_services,
             route=route,
             spinner_factory=spinner,
-            spinner_enabled_fn=spinner_enabled,
-            use_spinner_policy_fn=use_spinner_policy,
+            spinner_enabled_fn=cast(Any, spinner_enabled),
+            use_spinner_policy_fn=cast(Any, use_spinner_policy),
             emit_spinner_policy_fn=emit_spinner_policy,
             resolve_spinner_policy_fn=resolve_spinner_policy,
             project_spinner_group_cls=_ResumeProjectSpinnerGroup,

@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 
-from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.runtime_map_support import runtime_map_builder_for_runtime
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_int
@@ -121,7 +121,7 @@ class LifecycleCleanupOrchestrator:
             self._state_repository(self.runtime).save_selected_stop_state(  # type: ignore[attr-defined]
                 state=state,
                 emit=self.runtime._emit,  # type: ignore[attr-defined]
-                runtime_map_builder=build_runtime_map,
+                runtime_map_builder=runtime_map_builder_for_runtime(self.runtime),
             )
             print("Stopped selected services.")
             return 0
@@ -157,7 +157,7 @@ class LifecycleCleanupOrchestrator:
         project_names = {name.lower() for name in route.projects}
         selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
         if callable(selectors_from_passthrough):
-            project_names.update(selectors_from_passthrough(route.passthrough_args))
+            project_names.update(cast(set[str], selectors_from_passthrough(route.passthrough_args)))
         has_selectors = has_selectors or bool(project_names)
         if project_names:
             for name in state.services:

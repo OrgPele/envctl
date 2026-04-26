@@ -1396,6 +1396,69 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(frontend_envs[0].get("VITE_BACKEND_URL"), expected_backend_url)
             self.assertEqual(frontend_envs[0].get("VITE_API_URL"), expected_api_url)
 
+    def test_public_host_startup_projects_remote_urls_and_external_bind_for_autodetected_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            frontend_dir = repo / "frontend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend_dir / "app").mkdir(parents=True, exist_ok=True)
+            (backend_dir / "pyproject.toml").write_text("[project]\nname='demo-backend'\n", encoding="utf-8")
+            (backend_dir / "app" / "main.py").write_text(
+                "from fastapi import FastAPI\napp = FastAPI()\n",
+                encoding="utf-8",
+            )
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "package.json").write_text(
+                json.dumps({"name": "frontend", "scripts": {"dev": "vite"}}),
+                encoding="utf-8",
+            )
+            (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            config = self._config(
+                repo,
+                runtime,
+                include_commands=False,
+                extra={
+                    "ENVCTL_PUBLIC_HOST": "203.0.113.10",
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "TREES_POSTGRES_ENABLE": "false",
+                    "TREES_REDIS_ENABLE": "false",
+                    "TREES_SUPABASE_ENABLE": "false",
+                    "TREES_N8N_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine._command_exists = lambda _executable: True  # type: ignore[method-assign]
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            code = engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            commands = [cmd for cmd, _cwd in fake_runner.start_background_calls]
+            self.assertTrue(any("--host" in cmd and "0.0.0.0" in cmd and "uvicorn" in cmd for cmd in commands))
+            self.assertTrue(any("--host" in cmd and "0.0.0.0" in cmd and "run" in cmd and "dev" in cmd for cmd in commands))
+            frontend_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if str(cwd).endswith("/frontend") and isinstance(env, dict)
+            ]
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[0].get("VITE_BACKEND_URL"), "http://203.0.113.10:8000")
+            self.assertEqual(frontend_envs[0].get("VITE_API_URL"), "http://203.0.113.10:8000/api/v1")
+            runtime_map = json.loads((runtime / "python-engine" / "runtime_map.json").read_text(encoding="utf-8"))
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://203.0.113.10:8000")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://203.0.113.10:9000")
+
     def test_frontend_bootstrap_installs_dependencies_when_node_modules_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

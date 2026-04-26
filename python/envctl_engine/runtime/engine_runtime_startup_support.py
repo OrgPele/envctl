@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
+    RunReuseDecision,
     build_startup_identity_metadata as build_startup_identity_metadata_impl,
     evaluate_run_reuse as evaluate_run_reuse_impl,
     mark_run_reused as mark_run_reused_impl,
@@ -14,13 +16,13 @@ from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import discover_tree_projects
 
 
-def effective_start_mode(runtime: Any, route: object) -> str:
+def effective_start_mode(runtime: Any, route: Route) -> str:
     if route.mode == "main" and runtime._setup_worktree_requested(route):
         return "trees"
     return route.mode
 
 
-def auto_resume_start_enabled(route: object) -> bool:
+def auto_resume_start_enabled(route: Route) -> bool:
     if route.command not in {"start", "plan"}:
         return False
     if bool(route.flags.get("no_resume")):
@@ -36,7 +38,7 @@ def build_startup_identity_metadata(
     runtime: Any,
     *,
     runtime_mode: str,
-    project_contexts: list[object],
+    project_contexts: list[Any],
     base_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return build_startup_identity_metadata_impl(
@@ -47,7 +49,7 @@ def build_startup_identity_metadata(
     )
 
 
-def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: object, contexts: list[object]) -> object:
+def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: Route, contexts: list[Any]) -> RunReuseDecision:
     return evaluate_run_reuse_impl(runtime, runtime_mode=runtime_mode, route=route, contexts=contexts)
 
 
@@ -70,7 +72,7 @@ def load_auto_resume_state(runtime: Any, runtime_mode: str) -> RunState | None:
     return state
 
 
-def tree_parallel_startup_config(runtime: Any, *, mode: str, route: object, project_count: int) -> tuple[bool, int]:
+def tree_parallel_startup_config(runtime: Any, *, mode: str, route: Route, project_count: int) -> tuple[bool, int]:
     if mode != "trees" or project_count <= 1:
         return False, 1
 
@@ -106,15 +108,15 @@ def contexts_from_raw_projects(
     raw_projects: list[tuple[str, Path]],
     *,
     context_factory: Callable[..., object],
-) -> list[object]:
-    contexts: list[object] = []
+) -> list[Any]:
+    contexts: list[Any] = []
     for index, (name, tree_dir) in enumerate(raw_projects):
         plans = runtime.port_planner.plan_project_stack(name, index=index)
         contexts.append(context_factory(name=name, root=tree_dir, ports=plans))
     return contexts
 
 
-def duplicate_project_context_error(contexts: list[object]) -> str | None:
+def duplicate_project_context_error(contexts: list[Any]) -> str | None:
     grouped: dict[str, list[str]] = {}
     for context in contexts:
         grouped.setdefault(context.name.lower(), []).append(str(context.root))
@@ -161,12 +163,12 @@ def set_plan_port_from_component(plan: PortPlan, component: Mapping[str, object]
         set_plan_port(plan, port)
 
 
-def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[..., object]) -> list[object]:
+def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[..., object]) -> list[Any]:
     if mode == "main":
         ports = runtime.port_planner.plan_project_stack("Main", index=0)
         return [context_factory(name="Main", root=runtime.config.base_dir, ports=ports)]
 
-    contexts: list[object] = []
+    contexts: list[Any] = []
     projects = discover_tree_projects(runtime.config.base_dir, runtime.config.trees_dir_name)
     for index, (name, tree_dir) in enumerate(projects):
         plans = runtime.port_planner.plan_project_stack(name, index=index)
@@ -180,7 +182,7 @@ def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[...,
     return contexts
 
 
-def reserve_project_ports(runtime: Any, context: object) -> None:
+def reserve_project_ports(runtime: Any, context: Any) -> None:
     for service_name, plan in context.ports.items():
         owner = f"{context.name}:{service_name}"
         try:
