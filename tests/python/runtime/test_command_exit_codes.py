@@ -506,6 +506,63 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
             self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
 
+    def test_install_prompts_cli_run_installs_create_plan_auto_codex_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = self._codex_skill_target(home=home, preset="create_plan_auto_codex")
+            repo.mkdir(parents=True, exist_ok=True)
+            stdout = StringIO()
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap, redirect_stdout(stdout):
+                code = cli.run(
+                    ["install-prompts", "--cli", "codex", "--preset", "create_plan_auto_codex", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["skill_results"][0]["path"], str(target))
+            self.assertTrue(target.exists())
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("$envctl-create-plan-auto-codex", written)
+            self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4", written)
+            self.assertIn("--tmux-new-session", written)
+
+    def test_install_prompts_cli_run_installs_create_plan_auto_opencode_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = home / ".config" / "opencode" / "commands" / "create_plan_auto_opencode.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            stdout = StringIO()
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap, redirect_stdout(stdout):
+                code = cli.run(
+                    ["install-prompts", "--cli", "opencode", "--preset", "create_plan_auto_opencode", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["results"][0]["path"], str(target))
+            self.assertTrue(target.exists())
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session", written)
+            self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
+
     def test_install_prompts_cli_run_keeps_with_codex_skills_as_compatibility_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

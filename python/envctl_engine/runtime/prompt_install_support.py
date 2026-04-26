@@ -713,6 +713,33 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "implementation work. Invoke it explicitly as $envctl-create-plan."
             ),
         ),
+        "create_plan_auto_codex": CodexSkillMetadata(
+            skill_name="envctl-create-plan-auto-codex",
+            display_name="Envctl Create Plan Auto Codex",
+            short_description="Create a plan and auto-launch Codex implementation",
+            description=(
+                "Use only when you explicitly invoke $envctl-create-plan-auto-codex to create an envctl "
+                "implementation plan and automatically launch the Codex implementation workflow."
+            ),
+        ),
+        "create_plan_auto_opencode": CodexSkillMetadata(
+            skill_name="envctl-create-plan-auto-opencode",
+            display_name="Envctl Create Plan Auto OpenCode",
+            short_description="Create a plan and auto-launch OpenCode ULW implementation",
+            description=(
+                "Use only when you explicitly invoke $envctl-create-plan-auto-opencode to create an envctl "
+                "implementation plan and automatically launch the OpenCode ULW implementation workflow."
+            ),
+        ),
+        "create_plan_auto_omx": CodexSkillMetadata(
+            skill_name="envctl-create-plan-auto-omx",
+            display_name="Envctl Create Plan Auto OMX",
+            short_description="Create a plan and auto-launch OMX Ralph implementation",
+            description=(
+                "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
+                "implementation plan and automatically launch the OMX Ralph implementation workflow."
+            ),
+        ),
         "ship_release": CodexSkillMetadata(
             skill_name="envctl-ship-release",
             display_name="Envctl Ship Release",

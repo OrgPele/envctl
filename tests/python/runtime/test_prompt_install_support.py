@@ -29,6 +29,13 @@ from envctl_engine.runtime.prompt_install_support import (  # noqa: E402
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
+_CREATE_PLAN_AUTO_PRESETS = (
+    "create_plan_auto_codex",
+    "create_plan_auto_opencode",
+    "create_plan_auto_omx",
+)
+
+
 class _TtyStringIO(StringIO):
     def isatty(self) -> bool:
         return True
@@ -139,9 +146,15 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Would install envctl-finalize-task for codex from preset finalize_task", rendered)
             self.assertIn("Would install envctl-merge-trees-into-dev for codex from preset merge_trees_into_dev", rendered)
             self.assertIn("Would install envctl-create-plan for codex from preset create_plan", rendered)
+            self.assertIn("Would install envctl-create-plan-auto-codex for codex from preset create_plan_auto_codex", rendered)
+            self.assertIn(
+                "Would install envctl-create-plan-auto-opencode for codex from preset create_plan_auto_opencode",
+                rendered,
+            )
+            self.assertIn("Would install envctl-create-plan-auto-omx for codex from preset create_plan_auto_omx", rendered)
             self.assertIn("Would install envctl-implement-plan for codex from preset implement_plan", rendered)
             self.assertIn("Would install envctl-ship-release for codex from preset ship_release", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 9)
+            self.assertEqual(rendered.count("codex: planned "), 12)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -525,9 +538,70 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("finalize_task", _available_presets())
         self.assertIn("merge_trees_into_dev", _available_presets())
         self.assertIn("create_plan", _available_presets())
+        self.assertIn("create_plan_auto_codex", _available_presets())
+        self.assertIn("create_plan_auto_opencode", _available_presets())
+        self.assertIn("create_plan_auto_omx", _available_presets())
         self.assertIn("implement_plan", _available_presets())
         self.assertIn("ship_release", _available_presets())
-        self.assertEqual(len(_available_presets()), 9)
+        self.assertEqual(len(_available_presets()), 12)
+
+    def test_create_plan_auto_templates_lock_launch_commands(self) -> None:
+        expected = {
+            "create_plan_auto_codex": {
+                "command": (
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 "
+                    "envctl --plan <category>/<slug> --tmux --headless --tmux-new-session"
+                ),
+                "phrases": (
+                    "uses the `implement_task` preset through the current plan-agent default",
+                    "envctl queues the rendered follow-up prompts/messages",
+                    "envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`",
+                ),
+            },
+            "create_plan_auto_opencode": {
+                "command": "envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session",
+                "phrases": (
+                    "`--ulw` is required for this auto skill",
+                    "Codex cycle settings are intentionally ignored for this surface",
+                    "do not silently fall back to Codex",
+                ),
+            },
+            "create_plan_auto_omx": {
+                "command": "envctl --plan <category>/<slug> --omx --ralph --headless --tmux-new-session",
+                "phrases": (
+                    "OMX-managed launches are Codex-only",
+                    "`--ralph` is the loop mechanism for this surface",
+                    "Codex cycle settings are intentionally not used here",
+                ),
+            },
+        }
+
+        for preset, contract in expected.items():
+            with self.subTest(preset=preset):
+                template = _load_template(preset)
+                body = template.body
+                self.assertIn("This is the auto-launch variant of `create_plan.md`", body)
+                self.assertIn(
+                    "if the base research/planning contract changes, update this file in the same commit",
+                    body,
+                )
+                self.assertIn("Do not implement code. Only research and write the plan file.", body)
+                self.assertIn("Automatic envctl follow-up", body)
+                self.assertIn("todo/plans/<category>/<slug>.md", body)
+                self.assertIn("remove the `todo/plans/` prefix and the `.md` suffix", body)
+                self.assertIn("Confirm `<category>` is one of `broken`, `features`, `refactoring`, or `implementations`", body)
+                self.assertIn("Confirm the file exists on disk", body)
+                self.assertIn("Run the launch command from the repo root", body)
+                self.assertIn("If selector derivation fails", body)
+                self.assertIn("If the envctl launch command exits non-zero", body)
+                self.assertIn("attach/reconnect guidance", body)
+                self.assertIn("must not begin implementing in the original planning session", body)
+                self.assertIn(contract["command"], body)
+                for phrase in contract["phrases"]:
+                    self.assertIn(phrase, body)
+                self.assertIn("--headless", body)
+                self.assertIn("--tmux-new-session", body)
+                self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -735,6 +809,56 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(expected.exists())
             self.assertIn("shipping a production release end-to-end", expected.read_text(encoding="utf-8"))
 
+    def test_install_prompts_writes_create_plan_auto_codex_skills_with_markers(self) -> None:
+        for preset in _CREATE_PLAN_AUTO_PRESETS:
+            with self.subTest(preset=preset), tempfile.TemporaryDirectory() as tmpdir:
+                runtime = SimpleNamespace(env={"HOME": tmpdir})
+                route = parse_route(
+                    ["install-prompts", "--cli", "codex", "--preset", preset, "--json"],
+                    env={},
+                )
+
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = run_install_prompts_command(runtime, route)
+
+                self.assertEqual(code, 0)
+                payload = json.loads(buffer.getvalue())
+                expected = self._skill_target(home=Path(tmpdir), preset=preset)
+                self.assertEqual(payload["skill_results"][0]["path"], str(expected))
+                self.assertTrue(expected.exists())
+                written = expected.read_text(encoding="utf-8")
+                skill_name = f"envctl-{preset.replace('_', '-')}"
+                self.assertIn(f'name: "{skill_name}"', written)
+                self.assertIn(f"Use this skill explicitly with `${skill_name}`.", written)
+                self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", written)
+                self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_END -->", written)
+                self.assertIn("Automatic envctl follow-up", written)
+                openai_yaml = expected.parent / "agents" / "openai.yaml"
+                self.assertTrue(openai_yaml.exists())
+                self.assertIn("allow_implicit_invocation: false", openai_yaml.read_text(encoding="utf-8"))
+
+    def test_install_prompts_writes_create_plan_auto_opencode_command_with_ulw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = SimpleNamespace(env={"HOME": tmpdir})
+            route = parse_route(
+                ["install-prompts", "--cli", "opencode", "--preset", "create_plan_auto_opencode", "--json"],
+                env={},
+            )
+
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                code = run_install_prompts_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buffer.getvalue())
+            expected = self._target(cli="opencode", preset="create_plan_auto_opencode", home=Path(tmpdir))
+            self.assertEqual(payload["results"][0]["path"], str(expected))
+            self.assertTrue(expected.exists())
+            written = expected.read_text(encoding="utf-8")
+            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session", written)
+            self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
+
     def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
@@ -770,6 +894,28 @@ class PromptInstallSupportTests(unittest.TestCase):
             resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
 
             self.assertEqual(resolved, "New envctl prompt\n")
+
+    def test_resolve_codex_direct_prompt_body_supports_create_plan_auto_codex(self) -> None:
+        resolved = resolve_codex_direct_prompt_body(
+            preset="create_plan_auto_codex",
+            env={},
+            arguments="Auto launch Codex after planning",
+        )
+
+        self.assertIn("Automatic envctl follow-up", resolved)
+        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4", resolved)
+        self.assertIn("Auto launch Codex after planning", resolved)
+
+    def test_resolve_opencode_direct_prompt_body_supports_create_plan_auto_opencode(self) -> None:
+        resolved = resolve_opencode_direct_prompt_body(
+            preset="create_plan_auto_opencode",
+            env={},
+            arguments="Auto launch OpenCode ULW after planning",
+        )
+
+        self.assertIn("Automatic envctl follow-up", resolved)
+        self.assertIn("--tmux --opencode --ulw --headless --tmux-new-session", resolved)
+        self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

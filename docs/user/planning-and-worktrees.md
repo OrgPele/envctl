@@ -96,6 +96,17 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
+## Auto-Launch Create-Plan Skills
+
+The installed create-plan skills connect planning documents to these launch paths:
+
+- `$envctl-create-plan` stays plan-only and approval-first.
+- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
+
+The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.
+
 ## Selection Input
 When passing plan selections, you can use any of these forms:
 - `folder/task`

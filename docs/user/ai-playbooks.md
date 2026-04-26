@@ -44,6 +44,9 @@ Current built-in presets:
 - `finalize_task`
 - `merge_trees_into_dev`
 - `create_plan`
+- `create_plan_auto_codex`
+- `create_plan_auto_opencode`
+- `create_plan_auto_omx`
 - `ship_release`
 
 `implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use. `implement_plan` remains available as a backward-compatible preset.
@@ -55,7 +58,20 @@ All Codex presets now install as explicit-only skills. Run `envctl install-promp
 - `$envctl-finalize-task`
 - `$envctl-review-task`
 - `$envctl-review-worktree`
+- `$envctl-create-plan`
+- `$envctl-create-plan-auto-codex`
+- `$envctl-create-plan-auto-opencode`
+- `$envctl-create-plan-auto-omx`
 - `$envctl-ship-release`
+
+Create-plan skill behavior:
+
+- `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`. OpenCode ignores Codex cycle settings.
+- `$envctl-create-plan-auto-omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`. OMX-managed launches are Codex-only, and Ralph owns the loop instead of Codex cycles.
+- Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
+- Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
