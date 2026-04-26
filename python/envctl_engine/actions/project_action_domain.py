@@ -79,6 +79,13 @@ class DirtyWorktreeReport:
         return self.staged or self.unstaged or self.untracked
 
 
+@dataclass(frozen=True, slots=True)
+class EnvctlProtectedPathPartition:
+    protected_staged_paths: list[str]
+    protected_skipped_paths: list[str]
+    stageable_paths: list[str]
+
+
 def run_commit_action(context: ActionProjectContext) -> int:
     git_root = resolve_git_root(context.project_root, context.repo_root)
     if shutil.which("git") is None:
@@ -94,18 +101,35 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if pre_stage_status.returncode != 0:
         _print_error("git status failed", pre_stage_status)
         return 1
-    protected_staged, protected_paths, stageable_paths = _partition_envctl_protected_paths(pre_stage_status.stdout)
-    if protected_staged:
-        print(
-            "Refusing to commit because envctl-local artifacts are already staged: "
-            + ", ".join(protected_paths)
-        )
-        return 1
-    if stageable_paths:
-        add = _run_git(git_root, ["add", "--", *stageable_paths])
+    partition = _partition_envctl_protected_paths(pre_stage_status.stdout)
+    unstaged_protected_paths: list[str] = []
+    if partition.protected_staged_paths:
+        reset = _unstage_envctl_protected_paths(git_root, partition.protected_staged_paths)
+        if reset.returncode != 0:
+            _print_error("git reset protected envctl-local artifacts failed", reset)
+            print("Protected envctl-local artifacts still staged: " + ", ".join(partition.protected_staged_paths))
+            return 1
+        unstaged_protected_paths = list(partition.protected_staged_paths)
+        print("Unstaged envctl-local artifacts: " + ", ".join(unstaged_protected_paths))
+
+        refreshed_status = _run_git(git_root, ["status", "--porcelain", "--untracked-files=all"])
+        if refreshed_status.returncode != 0:
+            _print_error("git status failed", refreshed_status)
+            return 1
+        partition = _partition_envctl_protected_paths(refreshed_status.stdout)
+        if partition.protected_staged_paths:
+            print(
+                "Protected envctl-local artifacts remain staged after recovery: "
+                + ", ".join(partition.protected_staged_paths)
+            )
+            return 1
+
+    if partition.stageable_paths:
+        add = _run_git(git_root, ["add", "--", *partition.stageable_paths])
         if add.returncode != 0:
             _print_error("git add failed", add)
             return 1
+    protected_paths = _ordered_unique_paths(unstaged_protected_paths, partition.protected_skipped_paths)
     if protected_paths:
         print("Skipping envctl-local artifacts: " + ", ".join(protected_paths))
 
@@ -113,7 +137,14 @@ def run_commit_action(context: ActionProjectContext) -> int:
     if status.returncode != 0:
         _print_error("git status failed", status)
         return 1
-    if not status.stdout.strip():
+    commit_partition = _partition_envctl_protected_paths(status.stdout)
+    if commit_partition.protected_staged_paths:
+        print(
+            "Protected envctl-local artifacts remain staged after recovery: "
+            + ", ".join(commit_partition.protected_staged_paths)
+        )
+        return 1
+    if not commit_partition.stageable_paths:
         print(f"No changes to commit for {branch}.")
         return 0
 
@@ -167,11 +198,12 @@ def run_commit_action(context: ActionProjectContext) -> int:
     return 0
 
 
-def _partition_envctl_protected_paths(status_output: str) -> tuple[bool, list[str], list[str]]:
-    protected_staged = False
-    protected_paths: list[str] = []
+def _partition_envctl_protected_paths(status_output: str) -> EnvctlProtectedPathPartition:
+    protected_staged_paths: list[str] = []
+    protected_skipped_paths: list[str] = []
     stageable_paths: list[str] = []
-    seen_protected: set[str] = set()
+    seen_protected_staged: set[str] = set()
+    seen_protected_skipped: set[str] = set()
     seen_stageable: set[str] = set()
     for raw_line in str(status_output or "").splitlines():
         line = raw_line.rstrip("\n")
@@ -184,16 +216,41 @@ def _partition_envctl_protected_paths(status_output: str) -> tuple[bool, list[st
         if not candidate:
             continue
         if is_envctl_local_artifact_path(candidate):
-            if candidate not in seen_protected:
-                protected_paths.append(candidate)
-                seen_protected.add(candidate)
             if index_status not in {" ", "?"}:
-                protected_staged = True
+                if candidate not in seen_protected_staged:
+                    protected_staged_paths.append(candidate)
+                    seen_protected_staged.add(candidate)
+                if candidate in seen_protected_skipped:
+                    protected_skipped_paths = [path for path in protected_skipped_paths if path != candidate]
+                    seen_protected_skipped.remove(candidate)
+            elif candidate not in seen_protected_staged and candidate not in seen_protected_skipped:
+                protected_skipped_paths.append(candidate)
+                seen_protected_skipped.add(candidate)
             continue
         if candidate not in seen_stageable:
             stageable_paths.append(candidate)
             seen_stageable.add(candidate)
-    return protected_staged, protected_paths, stageable_paths
+    return EnvctlProtectedPathPartition(
+        protected_staged_paths=protected_staged_paths,
+        protected_skipped_paths=protected_skipped_paths,
+        stageable_paths=stageable_paths,
+    )
+
+
+def _ordered_unique_paths(*path_groups: list[str]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for group in path_groups:
+        for path in group:
+            if path in seen:
+                continue
+            paths.append(path)
+            seen.add(path)
+    return paths
+
+
+def _unstage_envctl_protected_paths(git_root: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
+    return _run_git(git_root, ["reset", "-q", "--", *paths])
 
 
 def _status_candidate_path(line: str) -> str:
@@ -486,7 +543,10 @@ def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolut
     if resolved is not None:
         return OriginalPlanResolution(path=resolved, source="provenance")
 
-    inferred = _infer_original_plan_file(context.repo_root, feature_name=_feature_name_from_project_name(context.project_name))
+    inferred = _infer_original_plan_file(
+        context.repo_root,
+        feature_name=_feature_name_from_project_name(context.project_name),
+    )
     if inferred is not None:
         return OriginalPlanResolution(path=inferred, source="feature_inference")
     return OriginalPlanResolution(path=None, source="unresolved")
@@ -676,7 +736,8 @@ def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> Revie
         resolved = _resolve_review_base_candidate(git_root, base_branch=explicit, source="explicit")
         if resolved is None:
             raise ReviewBaseResolutionError(
-                f"Review base '{explicit}' could not be resolved. Supply --review-base <branch> with an existing branch."
+                f"Review base '{explicit}' could not be resolved. "
+                + "Supply --review-base <branch> with an existing branch."
             )
         return resolved
 
