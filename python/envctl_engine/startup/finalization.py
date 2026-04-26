@@ -84,6 +84,40 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     )
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
+    if session.plan_agent_launch_result is not None:
+        launch_result = session.plan_agent_launch_result
+        metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()
+        metadata["plan_agent_launch_reason"] = str(getattr(launch_result, "reason", "")).strip()
+        launch_outcomes: list[dict[str, object]] = []
+        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+            launch_outcomes.append(
+                {
+                    "worktree_name": str(getattr(outcome, "worktree_name", "")).strip(),
+                    "worktree_root": str(getattr(outcome, "worktree_root", "")).strip(),
+                    "surface_id": getattr(outcome, "surface_id", None),
+                    "status": str(getattr(outcome, "status", "")).strip(),
+                    "reason": getattr(outcome, "reason", None),
+                }
+            )
+        if launch_outcomes:
+            metadata["plan_agent_launch_outcomes"] = launch_outcomes
+    if session.plan_agent_handoff_degraded or session.local_startup_failures:
+        metadata["plan_agent_handoff_degraded"] = bool(session.plan_agent_handoff_degraded)
+        metadata["implementation_session_running"] = bool(session.plan_agent_session_started)
+        metadata["local_startup_failed"] = bool(session.local_startup_failures)
+        metadata["local_startup_failures"] = [failure.to_metadata() for failure in session.local_startup_failures]
+    attach_target = session.plan_agent_attach_target
+    if attach_target is None and session.plan_agent_launch_result is not None:
+        attach_target = getattr(session.plan_agent_launch_result, "attach_target", None)
+    if attach_target is not None:
+        session_name = str(getattr(attach_target, "session_name", "")).strip()
+        attach_command = " ".join(
+            str(part).strip() for part in getattr(attach_target, "attach_command", ()) if str(part).strip()
+        )
+        if session_name:
+            metadata["plan_agent_session_name"] = session_name
+        if attach_command:
+            metadata["plan_agent_attach_command"] = attach_command
     run_state = RunState(
         run_id=session.run_id,
         mode=session.runtime_mode,

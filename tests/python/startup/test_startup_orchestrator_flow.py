@@ -13,6 +13,7 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
     PlanAgentAttachTarget,
+    PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
     PlanSelectionResult,
 )
@@ -429,6 +430,396 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertNotIn("Planning mode complete; skipping service startup", rendered)
             self.assertIn("attach: tmux attach -t envctl-test-session", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_headless_plan_agent_handoff_prints_attach_when_local_startup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-feature-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-feature-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+            captured: dict[str, object] = {}
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--tmux", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertIn("AI session:", rendered)
+            self.assertIn("attach: tmux attach -t envctl-feature-session", rendered)
+            self.assertIn("kill: tmux kill-session -t envctl-feature-session", rendered)
+            self.assertIn("Local app startup:", rendered)
+            self.assertIn("project: feature-a-1", rendered)
+            self.assertIn("missing_service_start_command: autodetect_failed_backend", rendered)
+            self.assertNotIn("Startup failed:", rendered)
+            state = cast(RunState, captured["state"])
+            self.assertTrue(state.metadata["plan_agent_handoff_degraded"])
+            self.assertTrue(state.metadata["implementation_session_running"])
+            self.assertTrue(state.metadata["local_startup_failed"])
+            self.assertEqual(state.metadata["plan_agent_session_name"], "envctl-feature-session")
+            self.assertEqual(captured["errors"], [])
+            launch_events = [event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"]
+            self.assertTrue(launch_events)
+            self.assertEqual(launch_events[-1].get("status"), "launched")
+            self.assertTrue(launch_events[-1].get("implementation_session_running"))
+            warning_events = [event for event in engine.events if event.get("event") == "startup.project.warning"]
+            self.assertTrue(warning_events)
+            self.assertEqual(warning_events[-1].get("reason"), "plan_agent_handoff_local_startup_failed")
+            self.assertTrue(warning_events[-1].get("implementation_session_running"))
+            degraded_events = [
+                event for event in engine.events if event.get("event") == "startup.plan_agent_handoff.degraded"
+            ]
+            self.assertTrue(degraded_events)
+            self.assertEqual(degraded_events[-1].get("reason"), "missing_service_start_command")
+            self.assertEqual(degraded_events[-1].get("route_transport"), "tmux")
+
+    def test_omx_ralph_headless_plan_agent_handoff_survives_local_startup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--omx", "--ralph", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
+            self.assertIn("Local app startup:", rendered)
+            self.assertNotIn("Startup failed:", rendered)
+
+    def test_strict_truth_does_not_turn_degraded_plan_agent_handoff_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"ENVCTL_RUNTIME_TRUTH_MODE": "strict"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-feature-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-feature-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(engine, "_reconcile_state_truth", return_value=["feature-a-1 Backend"]) as reconcile_mock,
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--tmux", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            reconcile_mock.assert_not_called()
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertNotIn("service truth degraded after startup", rendered)
+            self.assertNotIn("Startup failed:", rendered)
+            reconcile_events = [event for event in engine.events if event.get("event") == "state.reconcile"]
+            self.assertTrue(reconcile_events)
+            self.assertEqual(reconcile_events[-1].get("reason"), "plan_agent_handoff_degraded")
+            self.assertTrue(reconcile_events[-1].get("skipped"))
+
+    def test_plan_agent_launch_failed_keeps_startup_failure_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(status="failed", reason="missing_executables", outcomes=()),
+                ),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(engine, "_write_artifacts"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--tmux", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
+            self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+
+    def test_plain_plan_without_ai_session_keeps_missing_service_command_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(engine, "_write_artifacts"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
+            self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+
+    def test_interactive_plan_agent_degraded_handoff_attempts_attach(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-feature-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-feature-session"),
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(
+                        status="launched",
+                        reason="launched",
+                        outcomes=(
+                            PlanAgentLaunchOutcome(
+                                worktree_name=context.name,
+                                worktree_root=Path(context.root),
+                                surface_id=None,
+                                status="launched",
+                            ),
+                        ),
+                        attach_target=attach_target,
+                    ),
+                ),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(engine, "_write_artifacts"),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=True),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_called_once()
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertNotIn("Startup failed:", rendered)
 
     def test_resume_reuse_failure_falls_back_to_fresh_run_id_before_failure_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

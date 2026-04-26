@@ -8,7 +8,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
 if TYPE_CHECKING:
-    from envctl_engine.planning.plan_agent_launch_support import PlanAgentAttachTarget
+    from envctl_engine.planning.plan_agent_launch_support import PlanAgentAttachTarget, PlanAgentLaunchResult
     from envctl_engine.startup.protocols import ProjectContextLike
 
 
@@ -17,6 +17,20 @@ class ProjectStartupResult:
     requirements: RequirementsResult
     services: dict[str, ServiceRecord]
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class LocalStartupFailure:
+    project: str
+    error: str
+    reason: str
+
+    def to_metadata(self) -> dict[str, str]:
+        return {
+            "project": self.project,
+            "error": self.error,
+            "reason": self.reason,
+        }
 
 
 @dataclass(slots=True)
@@ -47,6 +61,9 @@ class StartupSession:
     base_metadata: dict[str, Any] = field(default_factory=dict)
     identifiers_announced: bool = False
     plan_agent_attach_target: PlanAgentAttachTarget | None = None
+    plan_agent_launch_result: PlanAgentLaunchResult | None = None
+    plan_agent_handoff_degraded: bool = False
+    local_startup_failures: list[LocalStartupFailure] = field(default_factory=list)
 
     @property
     def merged_services(self) -> dict[str, ServiceRecord]:
@@ -60,3 +77,25 @@ class StartupSession:
         requirements = dict(self.preserved_requirements)
         requirements.update(self.requirements_by_project)
         return requirements
+
+    @property
+    def plan_agent_session_started(self) -> bool:
+        if self.plan_agent_attach_target is not None:
+            return True
+        launch_result = self.plan_agent_launch_result
+        if launch_result is None:
+            return False
+        status = str(getattr(launch_result, "status", "")).strip().lower()
+        if status not in {"launched", "partial"}:
+            return False
+        outcomes = tuple(getattr(launch_result, "outcomes", ()) or ())
+        if not outcomes:
+            return status == "launched"
+        return any(str(getattr(outcome, "status", "")).strip().lower() == "launched" for outcome in outcomes)
+
+    @property
+    def plan_agent_launch_degraded(self) -> bool:
+        launch_result = self.plan_agent_launch_result
+        if launch_result is None:
+            return False
+        return str(getattr(launch_result, "status", "")).strip().lower() == "partial"

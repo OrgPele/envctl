@@ -147,6 +147,8 @@ envctl --plan backend/checkout --omx --team
 envctl codex-tmux --help
 ```
 
+If a headless plan-agent launch prints `Implementation session is running, but local app startup failed.`, the implementation session is still alive. Copy the `attach:` command from the `AI session:` section to continue watching or driving the agent. Configure `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` only when that worktree also needs local services for verification; otherwise you can leave services disabled and let the AI implementation session continue.
+
 ## Compare Implementations
 
 ```bash
