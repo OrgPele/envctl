@@ -380,6 +380,46 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
             )
 
+    def test_redis_recreates_adopted_container_when_host_listener_never_appears(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            container_name = build_container_name(
+                prefix="envctl-redis",
+                project_root=root,
+                project_name="Main",
+            )
+            runner.existing.add(container_name)
+            runner.status[container_name] = "running"
+            runner.port_mappings[(container_name, "6379")] = "0.0.0.0:6399\n"
+            runner.wait_for_port_sequences[6399] = [False, False, False]
+            runner.wait_for_port_sequences[6380] = [True]
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={
+                    "ENVCTL_REDIS_PROBE_ATTEMPTS": "1",
+                    "ENVCTL_REDIS_RESTART_PROBE_ATTEMPTS": "1",
+                    "ENVCTL_REDIS_RECREATE_PROBE_ATTEMPTS": "1",
+                },
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 6380)
+            self.assertFalse(result.port_adopted)
+            self.assertTrue(result.container_recreated)
+            self.assertTrue(any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertTrue(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd
+                    for cmd in runner.commands
+                )
+            )
+
     def test_redis_recovers_when_create_times_out_but_container_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
