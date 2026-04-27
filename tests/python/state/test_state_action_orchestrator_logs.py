@@ -13,6 +13,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_runtime_support import normalize_log_line
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -63,6 +64,10 @@ class _RuntimeStub:
 
     def _select_grouped_targets(self, **_kwargs):  # noqa: ANN001
         return TargetSelection(cancelled=True)
+
+    @staticmethod
+    def _normalize_log_line(line: str, *, no_color: bool) -> str:
+        return normalize_log_line(line, no_color=no_color)
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
@@ -375,6 +380,34 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["failed_services"][0]["name"], "Main Backend")
         self.assertEqual(payload["failed_services"][0]["status"], "failed")
+
+    def test_errors_highlights_failure_keywords_for_interactive_output(self) -> None:
+        state = RunState(
+            run_id="run-5",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main",
+                    status="failed",
+                    log_path="/tmp/backend.log",
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime.env["ENVCTL_UI_COLOR_MODE"] = "on"
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="errors", mode="main", flags={"interactive_command": True})
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        rendered = output.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("Main Backend: status=failed", strip_ansi(rendered))
 
 
 if __name__ == "__main__":

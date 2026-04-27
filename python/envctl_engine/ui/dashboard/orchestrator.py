@@ -53,6 +53,8 @@ DirtyPrDecision = Literal["commit", "skip", "cancel"]
 _REVIEW_TAB_OPEN_TOKEN = "__REVIEW_TAB_OPEN__"
 _REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
 _REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
+_RETURN_TO_DASHBOARD_PROMPT = "Press Enter to return to dashboard (manual confirmation required): "
+_PAUSE_BEFORE_DASHBOARD_COMMANDS = {"test", "review", "logs", "errors", "health", "clear-logs"}
 
 
 class DashboardOrchestrator:
@@ -228,11 +230,11 @@ class DashboardOrchestrator:
         next_state = refreshed if refreshed is not None else state
         if code == 0 and route.command == "review":
             self._maybe_offer_review_tab_launch(route, next_state, rt)
-        if route.command in {"test", "review"}:
+        if route.command in _PAUSE_BEFORE_DASHBOARD_COMMANDS:
             if bool(getattr(runtime_any, "_dashboard_command_loop_active", False)):
-                self._queue_return_to_dashboard_prompt(runtime_any, "Press Enter to return to dashboard: ")
+                self._queue_return_to_dashboard_prompt(runtime_any, _RETURN_TO_DASHBOARD_PROMPT)
             else:
-                self._read_interactive_line(runtime_any, "Press Enter to return to dashboard: ")
+                self._read_interactive_line(runtime_any, _RETURN_TO_DASHBOARD_PROMPT)
         if route.command in {"stop-all", "blast-all"}:
             return False, state
         if refreshed is None:

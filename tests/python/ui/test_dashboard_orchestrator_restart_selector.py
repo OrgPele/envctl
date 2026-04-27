@@ -2314,7 +2314,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         rendered = strip_ansi(out.getvalue())
         self.assertNotIn("Test failure summary for Main:", rendered)
         self.assertNotIn("/tmp/runtime/run_1/ft_deadbeef00.txt", rendered)
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_test_success_pauses_before_returning_to_dashboard(self) -> None:
         runtime = _RuntimeStub()
@@ -2340,7 +2343,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_test_interrupt_returns_to_dashboard_without_failure_summary_block(self) -> None:
         runtime = _RuntimeStub()
@@ -2377,7 +2383,41 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         rendered = out.getvalue()
         self.assertNotIn("Command failed (exit 1).", rendered)
         self.assertNotIn("Test failure summary for Main:", rendered)
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
+
+    def test_interactive_errors_pauses_before_returning_to_dashboard(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("e", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        self.assertEqual(runtime.last_dispatched_route.command, "errors")
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
         runtime = _RuntimeStub()

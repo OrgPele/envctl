@@ -190,7 +190,7 @@ class StateActionOrchestrator:
             duration_seconds = parse_float_or_none(raw_duration)
             if duration_seconds is not None and duration_seconds < 0:
                 duration_seconds = 0.0
-            no_color = bool(route.flags.get("logs_no_color")) or self._runtime_is_truthy(rt.env.get("NO_COLOR"))
+            no_color = bool(route.flags.get("logs_no_color")) or self._human_output_no_color(route)
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -199,7 +199,7 @@ class StateActionOrchestrator:
                             tail=max(tail, 0),
                             follow=follow,
                             duration_seconds=duration_seconds,
-                            no_color=no_color,
+                            no_color=True,
                         ),
                         indent=2,
                         sort_keys=True,
@@ -376,15 +376,22 @@ class StateActionOrchestrator:
             if not failed and not requirement_issues and not recent_failures:
                 print("No known service errors.")
                 return 0
+            no_color = self._human_output_no_color(route)
             for service in failed:
-                print(f"{service.name}: status={service.status}")
+                self._print_highlighted_line(f"{service.name}: status={service.status}", no_color=no_color)
             for issue in requirement_issues:
                 if issue["port"] is not None:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}",
+                        no_color=no_color,
+                    )
                 else:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']}",
+                        no_color=no_color,
+                    )
             for failure in recent_failures:
-                print(failure)
+                self._print_highlighted_line(failure, no_color=no_color)
             return 1
 
         return rt.unsupported_command(command)
@@ -536,6 +543,18 @@ class StateActionOrchestrator:
 
     def _runtime_is_truthy(self, value: object) -> bool:
         return self.runtime.is_truthy(value)
+
+    def _human_output_no_color(self, route: Route) -> bool:
+        if self._runtime_is_truthy(self.runtime.env.get("NO_COLOR")):
+            return True
+        return not colors_enabled(
+            self.runtime.env,
+            stream=sys.stdout,
+            interactive_tty=bool(route.flags.get("interactive_command")),
+        )
+
+    def _print_highlighted_line(self, line: str, *, no_color: bool) -> None:
+        print(self.runtime.normalize_log_line(line, no_color=no_color))
 
     def _interactive_log_selection(
         self,
