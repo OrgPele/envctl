@@ -507,7 +507,6 @@ class DashboardOrchestrator:
             prompt="Choose services/dependencies to stop (Space toggles, a selects all visible; Enter stops selected)",
             options=items,
             multi=True,
-            exclusive_token="__STOP__:custom",
             emit=getattr(runtime_any, "_emit", None),
         )
         if values is None:
@@ -517,9 +516,6 @@ class DashboardOrchestrator:
         if not values:
             print("No stop scope selected.")
             return None
-
-        if "__STOP__:custom" in values:
-            return route
 
         self._apply_stop_resource_tokens(route, state, runtime_any, values)
         return route
@@ -572,7 +568,7 @@ class DashboardOrchestrator:
 
             for service_name, service_type in services:
                 label_prefix = "  ↳ " if many_projects else ""
-                readable = "Backend service" if service_type == "backend" else "Frontend service"
+                readable = "Backend" if service_type == "backend" else "Frontend"
                 detail = service_name if many_projects else self._stop_service_detail(service_name, service_type)
                 label = f"{label_prefix}{readable}"
                 if detail:
@@ -593,7 +589,7 @@ class DashboardOrchestrator:
                 items.append(
                     SelectorItem(
                         id=f"stop:dependency:{project_name}:{dependency_id}",
-                        label=f"{label_prefix}{dependency_label} dependency",
+                        label=f"{label_prefix}{dependency_label}",
                         kind="dependency",
                         token=f"__STOP__:dependency:{project_name}:{dependency_id}",
                         scope_signature=(f"dependency:{project_name}:{dependency_id}",),
@@ -601,17 +597,6 @@ class DashboardOrchestrator:
                     )
                 )
 
-        if items:
-            items.append(
-                SelectorItem(
-                    id="stop:custom",
-                    label="Custom services/projects...",
-                    kind="custom",
-                    token="__STOP__:custom",
-                    scope_signature=("custom",),
-                    section="Advanced",
-                )
-            )
         return items
 
     def _apply_stop_resource_tokens(self, route: Route, state: RunState, runtime: Any, values: list[str]) -> None:

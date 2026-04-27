@@ -224,12 +224,13 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(len(selector_calls), 1)
         self.assertIn("a selects all", selector_calls[0]["prompt"])
         self.assertTrue(selector_calls[0]["multi"])
-        self.assertEqual(selector_calls[0]["exclusive_token"], "__STOP__:custom")
+        self.assertNotIn("exclusive_token", selector_calls[0])
         labels = [item.label for item in selector_calls[0]["options"]]
         self.assertIn("All resources — apps + dependencies", labels)
-        self.assertIn("Backend service — Main", labels)
-        self.assertIn("Frontend service — Main", labels)
-        self.assertIn("postgres dependency", labels)
+        self.assertIn("Backend — Main", labels)
+        self.assertIn("Frontend — Main", labels)
+        self.assertIn("postgres", labels)
+        self.assertNotIn("Custom services/projects...", labels)
         sections = [item.section for item in selector_calls[0]["options"]]
         self.assertIn("Resources", sections)
         self.assertIsNotNone(runtime.last_dispatched_route)
@@ -273,8 +274,8 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertIn("▸ Main", sections)
         self.assertIn("▸ Feature", sections)
         self.assertIn("▸ Feature — entire worktree (apps + dependencies)", labels)
-        self.assertIn("  ↳ Frontend service — Feature Frontend", labels)
-        self.assertIn("  ↳ redis dependency", labels)
+        self.assertIn("  ↳ Frontend — Feature Frontend", labels)
+        self.assertIn("  ↳ redis", labels)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Feature Frontend"])
         self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Feature:redis"])
