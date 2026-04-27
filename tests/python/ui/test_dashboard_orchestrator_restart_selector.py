@@ -20,7 +20,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.dashboard.pr_flow import PrFlowResult
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
 
 
@@ -174,8 +174,9 @@ class _RuntimeStubMissingProjectResolver(_RuntimeStub):
 
 
 class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
-    def test_interactive_sessions_shortcut_dispatches_session_listing(self) -> None:
+    def test_interactive_stop_shortcut_opens_scope_selector(self) -> None:
         runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["Dependencies only"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -189,8 +190,18 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     requested_port=8000,
                     actual_port=8000,
                     status="running",
-                )
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
             },
+            requirements={"Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432})},
         )
         runtime._latest_state = state
 
@@ -200,9 +211,83 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertIs(next_state, state)
+        self.assertEqual(len(runtime.selection_calls), 1)
+        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose what to stop")
+        self.assertIn("Backend services", runtime.selection_calls[0]["projects"])
+        self.assertIn("Frontend services", runtime.selection_calls[0]["projects"])
+        self.assertIn("Dependencies only", runtime.selection_calls[0]["projects"])
+        self.assertIn("Entire system (apps + dependencies)", runtime.selection_calls[0]["projects"])
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "stop")
+        self.assertEqual(runtime.last_dispatched_route.flags.get("runtime_scope"), "dependencies")
+        self.assertNotIn("attach:", out.getvalue())
+
+    def test_interactive_sessions_word_lists_ai_sessions(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(run_id="run-1", mode="main")
+        runtime._latest_state = state
+
+        out = StringIO()
+        with (
+            redirect_stdout(out),
+            patch(
+                "envctl_engine.runtime.session_management.list_tmux_sessions",
+                return_value=[
+                    {
+                        "name": "omx-main",
+                        "windows": "sh",
+                        "attach": "tmux attach-session -t omx-main",
+                        "kill": "tmux kill-session -t omx-main",
+                    }
+                ],
+            ),
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("sessions", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
         self.assertEqual(runtime.selection_calls, [])
         self.assertIsNone(runtime.last_dispatched_route)
         self.assertIn("attach:", out.getvalue())
+
+    def test_interactive_kill_word_kills_ai_sessions_not_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+            },
+        )
+        runtime._latest_state = state
+
+        out = StringIO()
+        with (
+            redirect_stdout(out),
+            patch(
+                "envctl_engine.runtime.session_management.list_tmux_sessions",
+                return_value=[
+                    {
+                        "name": "omx-main",
+                        "windows": "sh",
+                        "attach": "tmux attach-session -t omx-main",
+                        "kill": "tmux kill-session -t omx-main",
+                    }
+                ],
+            ),
+            patch("envctl_engine.runtime.session_management.kill_session", return_value=True) as kill_session,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["omx-main"]),
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("kill", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        kill_session.assert_called_once_with("omx-main")
+        self.assertIn("Killing: omx-main", out.getvalue())
 
     def test_hidden_dashboard_command_is_rejected_without_dispatch(self) -> None:
         runtime = _RuntimeStub()

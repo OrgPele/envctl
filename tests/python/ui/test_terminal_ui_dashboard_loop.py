@@ -261,9 +261,10 @@ class DashboardLoopTests(unittest.TestCase):
         rendered = out.getvalue()
         self.assertNotIn("(a)i", rendered)
         self.assertNotIn("AI:", rendered)
-        self.assertIn("Sessions:", rendered)
-        self.assertIn("(k)ill", rendered)
-        self.assertIn("(s)essions", rendered)
+        self.assertIn("AI Sessions:", rendered)
+        self.assertIn("(k)ill AI sessions", rendered)
+        self.assertIn("type 'sessions' to list", rendered)
+        self.assertNotIn("(s)essions", rendered)
 
     def test_dashboard_loop_marks_spinner_failed_from_action_finish_event(self) -> None:
         state = RunState(run_id="run-4", mode="trees")

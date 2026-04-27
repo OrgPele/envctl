@@ -9,7 +9,12 @@ from typing import Any, Literal, cast
 
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.actions.actions_test import default_test_commands
-from envctl_engine.actions.project_action_domain import DirtyWorktreeReport, detect_default_branch, probe_dirty_worktree, resolve_git_root
+from envctl_engine.actions.project_action_domain import (
+    DirtyWorktreeReport,
+    detect_default_branch,
+    probe_dirty_worktree,
+    resolve_git_root,
+)
 from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
@@ -126,10 +131,10 @@ class DashboardOrchestrator:
             return False, state
         if command in {"help", "?"}:
             return True, state
-        if command in {"session", "sessions"} or (command == "s" and not recovered_command):
+        if command in {"session", "sessions"}:
             self._dispatch_session_command(runtime_any)
             return True, state
-        if command in {"k", "kill-session"}:
+        if command in {"k", "kill", "kill-session", "kill-sessions"}:
             self._dispatch_kill_session(runtime_any)
             return True, state
 
@@ -166,6 +171,11 @@ class DashboardOrchestrator:
         route = self._apply_interactive_target_selection(route, state, rt)
         if route is None:
             return True, state
+
+        if route.command == "stop":
+            route = self._apply_stop_scope_selection(route, state, rt)
+            if route is None:
+                return True, state
 
         if route.command == "pr":
             route = self._dedupe_route_projects_by_git_root(route, state, rt)
@@ -397,7 +407,10 @@ class DashboardOrchestrator:
             project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
             action_entry = project_entry.get("migrate") if isinstance(project_entry, dict) else None
-            record = ActionCommandOrchestrator._migrate_result_record(project_name=project_name, action_entry=action_entry)
+            record = ActionCommandOrchestrator._migrate_result_record(
+                project_name=project_name,
+                action_entry=action_entry,
+            )
             if record is None:
                 continue
             records.append(record)
@@ -479,6 +492,81 @@ class DashboardOrchestrator:
             return route
 
         return route
+
+    def _apply_stop_scope_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
+        runtime_any = cast(Any, rt)
+        if self._stop_route_has_explicit_scope(route, runtime_any):
+            return route
+
+        options = self._stop_scope_options(state)
+        if not options:
+            return route
+
+        selection = runtime_any._select_project_targets(
+            prompt="Choose what to stop",
+            projects=[SimpleProject(name=label) for label, _scope in options],
+            allow_all=False,
+            allow_untested=False,
+            multi=False,
+        )
+        if selection.cancelled:
+            print("No stop scope selected.")
+            return None
+        selected_label = next((str(name).strip() for name in selection.project_names if str(name).strip()), "")
+        if not selected_label:
+            print("No stop scope selected.")
+            return None
+        scope_by_label = {label.casefold(): scope for label, scope in options}
+        scope = scope_by_label.get(selected_label.casefold())
+        if scope is None:
+            print("No stop scope selected.")
+            return None
+        if scope == "custom":
+            return route
+        route.flags = {
+            **{
+                key: value
+                for key, value in route.flags.items()
+                if key not in {"runtime_scope", "backend", "frontend"}
+            },
+            "runtime_scope": scope,
+        }
+        return route
+
+    @staticmethod
+    def _stop_route_has_explicit_scope(route: Route, runtime: Any) -> bool:
+        if str(route.flags.get("runtime_scope") or "").strip():
+            return True
+        return route_has_explicit_target(route, runtime)
+
+    @staticmethod
+    def _stop_scope_options(state: RunState) -> list[tuple[str, str]]:
+        service_types: set[str] = set()
+        for service_name, service in state.services.items():
+            service_type = str(getattr(service, "type", "") or "").strip().lower()
+            lowered_name = str(service_name).strip().lower()
+            if service_type in {"backend", "frontend"}:
+                service_types.add(service_type)
+            elif lowered_name.endswith(" backend"):
+                service_types.add("backend")
+            elif lowered_name.endswith(" frontend"):
+                service_types.add("frontend")
+
+        options: list[tuple[str, str]] = []
+        if "backend" in service_types:
+            options.append(("Backend services", "backend"))
+        if "frontend" in service_types:
+            options.append(("Frontend services", "frontend"))
+        if {"backend", "frontend"}.issubset(service_types):
+            options.append(("Backend + frontend services (fullstack)", "fullstack"))
+        elif state.services:
+            options.append(("All app services", "fullstack"))
+        if state.requirements:
+            options.append(("Dependencies only", "dependencies"))
+        if state.services and state.requirements:
+            options.append(("Entire system (apps + dependencies)", "entire-system"))
+        options.append(("Custom services/projects...", "custom"))
+        return options
 
     def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
@@ -692,11 +780,19 @@ class DashboardOrchestrator:
             prompt=prompt,
         )
         if decision == "cancel":
-            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            runtime_any._emit(
+                "dashboard.pr_dirty_commit.cancelled",
+                command="pr",
+                dirty_project_count=len(dirty_targets),
+            )
             print("Cancelled PR creation.")
             return None, state
         if decision == "skip":
-            runtime_any._emit("dashboard.pr_dirty_commit.declined", command="pr", dirty_project_count=len(dirty_targets))
+            runtime_any._emit(
+                "dashboard.pr_dirty_commit.declined",
+                command="pr",
+                dirty_project_count=len(dirty_targets),
+            )
             return route, state
 
         runtime_any._emit("dashboard.pr_dirty_commit.accepted", command="pr", dirty_project_count=len(dirty_targets))
@@ -710,7 +806,11 @@ class DashboardOrchestrator:
         )
         commit_route = self._apply_commit_selection(commit_route, state, runtime_any)
         if commit_route is None:
-            runtime_any._emit("dashboard.pr_dirty_commit.cancelled", command="pr", dirty_project_count=len(dirty_targets))
+            runtime_any._emit(
+                "dashboard.pr_dirty_commit.cancelled",
+                command="pr",
+                dirty_project_count=len(dirty_targets),
+            )
             return None, state
         code = runtime_any.dispatch(commit_route)
         refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
@@ -844,7 +944,12 @@ class DashboardOrchestrator:
         runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
         decision = self._prompt_review_tab_menu(runtime_any, project_name=project_name)
         if decision != "commit":
-            runtime_any._emit("dashboard.review_tab.declined", command="review", project=project_name, cli=readiness.cli)
+            runtime_any._emit(
+                "dashboard.review_tab.declined",
+                command="review",
+                project=project_name,
+                cli=readiness.cli,
+            )
             return route
         runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
         route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}

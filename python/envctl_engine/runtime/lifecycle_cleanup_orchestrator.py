@@ -259,7 +259,7 @@ class LifecycleCleanupOrchestrator:
         )
 
     def _interactive_selection_allowed(self, route: Route) -> bool:
-        return interactive_selection_allowed(self.runtime, route)
+        return interactive_selection_allowed(self.runtime, route, allow_dashboard_override=True)
 
     def _project_names_from_state(self, state: RunState) -> list[object]:
         return project_names_from_state(self.runtime, state)
