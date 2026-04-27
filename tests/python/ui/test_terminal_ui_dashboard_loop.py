@@ -263,7 +263,7 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertNotIn("AI:", rendered)
         self.assertIn("AI Sessions:", rendered)
         self.assertIn("(k)ill AI sessions", rendered)
-        self.assertIn("shown inline", rendered)
+        self.assertNotIn("shown inline per worktree", rendered)
         self.assertNotIn("type 'sessions' to list", rendered)
         self.assertNotIn("(s)essions", rendered)
 
