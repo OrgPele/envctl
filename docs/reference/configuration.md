@@ -62,6 +62,8 @@ These sections are separate from the managed startup block:
 - active backend/frontend launch templates for core database/cache inputs (`ENVCTL_SOURCE_DATABASE_URL`,
   `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`, `ENVCTL_SOURCE_ASYNC_DATABASE_URL`, and `ENVCTL_SOURCE_REDIS_URL`) also
   request envctl-managed PostgreSQL/Redis dynamically when the matching dependency toggle is absent
+- when Main-mode dependency port bases are left at the built-in defaults, envctl applies a per-session offset to managed
+  dependency ports so generated DB/Redis URLs do not bind the same well-known host ports on every run
 - explicit dependency toggles still win; for example `MAIN_POSTGRES_ENABLE=false` keeps PostgreSQL disabled even when a
   template references `ENVCTL_SOURCE_DATABASE_URL`
 - if any other referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
@@ -307,6 +309,7 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `DB_USER` | `postgres` | PostgreSQL user. |
 | `DB_PASSWORD` | `postgres` | PostgreSQL password. |
 | `DB_NAME` | `postgres` | PostgreSQL DB name. |
+| `ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS` | `true` when DB/Redis ports use built-in defaults | Apply a per-session offset to Main-mode managed dependency ports while keeping app ports stable. Set to `false` to bind exactly to `DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE`. |
 | `MAIN_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Main mode. Compatibility alias: `SUPABASE_MAIN_ENABLE`. |
 | `TREES_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Trees mode. |
 

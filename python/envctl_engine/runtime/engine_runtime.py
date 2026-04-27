@@ -212,6 +212,7 @@ from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanu
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
 from envctl_engine.shared.ports import PortPlanner
+from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.shared.process_probe import (
     ProcessProbe,
     ProbeBackend,
@@ -520,6 +521,11 @@ class PythonEngineRuntime:
                 config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),
             ),
             scope_key=config.runtime_scope_id,
+            dynamic_main_dependency_ports=parse_bool(
+                self.env.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS")
+                or config.raw.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS"),
+                config.db_port_base == 5432 and config.redis_port_base == 6379,
+            ),
         )
         self.requirements = RequirementsOrchestrator()
         self.services = ServiceManager()

@@ -195,6 +195,11 @@ for envctl-managed dynamic PostgreSQL/Redis URLs when the matching dependency to
 If you want the template line to stay present but the dependency to remain disabled, add the explicit toggle such as
 `MAIN_POSTGRES_ENABLE=false` or `MAIN_REDIS_ENABLE=false`.
 
+For Main-mode managed dependencies that keep the built-in DB/Redis port defaults, envctl adds a per-session offset to
+the dependency ports before generating those URLs. Backend/frontend app ports remain at their configured bases. Set
+`ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS=false` only when Main-mode dependencies must bind the exact configured
+`DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE` values.
+
 `envctl config` seeds these sections when missing, then preserves them as-is.
 
 ## Validation Rules

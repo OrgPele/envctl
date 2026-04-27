@@ -1176,6 +1176,46 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(plans["frontend"].final, 9040)
         self.assertEqual(plans["db"].final, 5434)
 
+    def test_runtime_uses_session_scoped_main_dependency_ports_by_default(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+
+        runtime = PythonEngineRuntime(config, env={})
+        plans = runtime.port_planner.plan_project_stack("Main", index=0)
+
+        self.assertEqual(plans["backend"].final, 8000)
+        self.assertEqual(plans["frontend"].final, 9000)
+        self.assertNotEqual(plans["db"].final, 5432)
+        self.assertNotEqual(plans["redis"].final, 6379)
+        self.assertEqual(plans["db"].final - 5432, plans["redis"].final - 6379)
+
+    def test_runtime_can_disable_session_scoped_main_dependency_ports(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+
+        runtime = PythonEngineRuntime(config, env={"ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS": "false"})
+        plans = runtime.port_planner.plan_project_stack("Main", index=0)
+
+        self.assertEqual(plans["db"].final, 5432)
+        self.assertEqual(plans["redis"].final, 6379)
+        self.assertEqual(plans["n8n"].final, 5678)
+
     def test_show_config_plain_output_reports_preferred_port_strategy(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
