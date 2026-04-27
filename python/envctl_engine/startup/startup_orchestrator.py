@@ -7,7 +7,7 @@ import shlex
 import sys
 import threading
 import time
-from typing import Callable, cast
+from typing import Callable, Mapping, cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
@@ -518,6 +518,17 @@ class StartupOrchestrator:
                 weak_identity=decision.weak_identity,
                 mismatch_details=decision.mismatch_details,
             )
+            if (
+                decision.decision_kind in {"resume_exact", "resume_subset"}
+                and candidate_state is not None
+                and self._prepare_dashboard_stopped_service_restore(
+                    session,
+                    candidate_state=candidate_state,
+                    reuse_started=reuse_started,
+                    decision_kind=decision.decision_kind,
+                )
+            ):
+                return None
             if decision.decision_kind in {"resume_exact", "resume_subset"} and candidate_state is not None:
                 previous_run_id = session.run_id
                 previous_identifiers_announced = session.identifiers_announced
@@ -762,6 +773,143 @@ class StartupOrchestrator:
             orch_group=sorted(debug_orch_groups) or None,
         )
         return None
+
+    def _prepare_dashboard_stopped_service_restore(
+        self,
+        session: StartupSession,
+        *,
+        candidate_state,
+        reuse_started: float,
+        decision_kind: str,
+    ) -> bool:
+        active_service_names = set(candidate_state.services)
+        stopped_entries = [
+            entry
+            for entry in self._dashboard_stopped_service_entries(candidate_state)
+            if entry["name"] not in active_service_names
+        ]
+        if not stopped_entries:
+            return False
+        selected_context_by_name = {
+            str(context.name).strip().casefold(): context
+            for context in session.selected_contexts
+            if str(getattr(context, "name", "")).strip()
+        }
+        restore_entries = [
+            entry for entry in stopped_entries if entry["project"].casefold() in selected_context_by_name
+        ]
+        if not restore_entries:
+            return False
+        target_project_names = sorted({entry["project"] for entry in restore_entries}, key=str.casefold)
+        target_project_keys = {name.casefold() for name in target_project_names}
+        contexts_to_start = [
+            context
+            for key, context in selected_context_by_name.items()
+            if key in target_project_keys
+        ]
+        if not contexts_to_start:
+            return False
+        stopped_service_names = sorted({entry["name"] for entry in restore_entries})
+        stopped_service_types = sorted({entry["type"] for entry in restore_entries})
+        session.base_metadata = self._metadata_without_dashboard_stopped_services(
+            mark_run_reused(candidate_state.metadata, reason="restore_stopped_services"),
+            restored_service_names=set(stopped_service_names),
+        )
+        session.preserved_services = dict(candidate_state.services)
+        session.preserved_requirements = dict(candidate_state.requirements)
+        session.contexts_to_start = contexts_to_start
+        route = session.effective_route
+        session.effective_route = Route(
+            command=route.command,
+            mode=route.mode,
+            raw_args=route.raw_args,
+            passthrough_args=route.passthrough_args,
+            projects=target_project_names,
+            flags={
+                **route.flags,
+                "_restart_request": True,
+                "_restore_dashboard_stopped_services": True,
+                "services": stopped_service_names,
+                "restart_service_types": stopped_service_types,
+                "restart_include_requirements": False,
+            },
+        )
+        self._emit_phase(
+            session,
+            "auto_resume_evaluate",
+            reuse_started,
+            status="restore_stopped_services",
+            match_mode="exact" if decision_kind == "resume_exact" else "subset",
+            stopped_service_count=len(stopped_service_names),
+            target_projects=target_project_names,
+        )
+        self.runtime._emit(
+            "state.auto_resume.restore_stopped_services",
+            run_id=candidate_state.run_id,
+            mode=session.runtime_mode,
+            command=route.command,
+            projects=target_project_names,
+            services=stopped_service_names,
+        )
+        self.runtime._emit(
+            "state.run_reuse.applied",
+            run_id=candidate_state.run_id,
+            mode=session.runtime_mode,
+            command=route.command,
+            decision_kind="restore_stopped_services",
+            reason="dashboard_stopped_services",
+            restored_projects=target_project_names,
+            restored_services=stopped_service_names,
+        )
+        return True
+
+    @staticmethod
+    def _dashboard_stopped_service_entries(state) -> list[dict[str, str]]:
+        raw = getattr(state, "metadata", {}).get("dashboard_stopped_services")
+        if not isinstance(raw, list):
+            return []
+        entries: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            project = str(item.get("project", "") or "").strip()
+            service_type = str(item.get("type", "") or "").strip().lower()
+            name = str(item.get("name", "") or "").strip()
+            if not project or service_type not in {"backend", "frontend"}:
+                continue
+            entries.append(
+                {
+                    "project": project,
+                    "type": service_type,
+                    "name": name or f"{project} {service_type.title()}",
+                }
+            )
+        return entries
+
+    @staticmethod
+    def _metadata_without_dashboard_stopped_services(
+        metadata: Mapping[str, object],
+        *,
+        restored_service_names: set[str],
+    ) -> dict[str, object]:
+        updated = dict(metadata)
+        raw = updated.get("dashboard_stopped_services")
+        if not isinstance(raw, list):
+            return updated
+        remaining: list[object] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                remaining.append(item)
+                continue
+            name = str(item.get("name", "") or "").strip()
+            if name in restored_service_names:
+                continue
+            remaining.append(dict(item))
+        if remaining:
+            updated["dashboard_stopped_services"] = remaining
+        else:
+            updated.pop("dashboard_stopped_services", None)
+        return updated
 
     def _prepare_execution(self, session: StartupSession) -> None:
         route = session.effective_route
