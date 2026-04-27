@@ -168,6 +168,7 @@ def _prediction_payloads(
 def _print_config(runtime: Any, *, json_output: bool) -> int:
     local_state = discover_local_config_state(runtime.config.base_dir, runtime.env.get("ENVCTL_CONFIG_FILE"))
     values = managed_values_from_local_state(local_state)
+    _apply_runtime_effective_config_values(values, runtime.config)
     payload = {
         "base_dir": str(runtime.config.base_dir),
         "config_file": str(local_state.config_file_path),
@@ -240,6 +241,23 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
     print(f"plan_agent_codex_cycles: {payload['plan_agent']['codex_cycles']}")
     return 0
+
+
+def _apply_runtime_effective_config_values(values: Any, config: Any) -> None:
+    values.default_mode = config.default_mode
+    values.backend_dir_name = config.backend_dir_name
+    values.frontend_dir_name = config.frontend_dir_name
+    values.backend_start_cmd = config.backend_start_cmd
+    values.frontend_start_cmd = config.frontend_start_cmd
+    values.backend_test_cmd = config.backend_test_cmd
+    values.frontend_test_cmd = config.frontend_test_cmd
+    values.action_test_cmd = config.action_test_cmd
+    values.frontend_test_path = config.frontend_test_path
+    values.port_defaults = config.port_defaults
+    values.main_profile = config.main_profile
+    values.trees_profile = config.trees_profile
+    values.main_backend_expect_listener = config.main_backend_expect_listener
+    values.trees_backend_expect_listener = config.trees_backend_expect_listener
 
 
 def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:

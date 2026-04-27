@@ -190,6 +190,11 @@ Edit them directly when you want to:
 - derive values from earlier lines with `${VAR}`
 - scope vars to backend-only or frontend-only launches
 
+Active backend launch templates for `ENVCTL_SOURCE_DATABASE_URL` and `ENVCTL_SOURCE_REDIS_URL` are treated as requests
+for envctl-managed dynamic PostgreSQL/Redis URLs when the matching dependency toggle is not present in `.envctl`.
+If you want the template line to stay present but the dependency to remain disabled, add the explicit toggle such as
+`MAIN_POSTGRES_ENABLE=false` or `MAIN_REDIS_ENABLE=false`.
+
 `envctl config` seeds these sections when missing, then preserves them as-is.
 
 ## Validation Rules

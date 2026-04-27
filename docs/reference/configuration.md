@@ -59,7 +59,12 @@ These sections are separate from the managed startup block:
 - you can rename, delete, add, or reorder emitted env vars manually
 - later lines can reference earlier emitted values with `${VAR}`
 - `ENVCTL_SOURCE_*` names are template-only inputs built from envctl's canonical dependency outputs
-- if a referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
+- active backend/frontend launch templates for core database/cache inputs (`ENVCTL_SOURCE_DATABASE_URL`,
+  `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`, `ENVCTL_SOURCE_ASYNC_DATABASE_URL`, and `ENVCTL_SOURCE_REDIS_URL`) also
+  request envctl-managed PostgreSQL/Redis dynamically when the matching dependency toggle is absent
+- explicit dependency toggles still win; for example `MAIN_POSTGRES_ENABLE=false` keeps PostgreSQL disabled even when a
+  template references `ENVCTL_SOURCE_DATABASE_URL`
+- if any other referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
 - custom aliases/templates are injected into launched processes only; backend `.env` writeback stays canonical
 - after envctl seeds the launch env sections, `envctl config` leaves them unchanged
 
