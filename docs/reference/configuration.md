@@ -223,6 +223,11 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
 
+Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
+This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
+commands that begin with generic Python (`python`, `python3`, or `python3.12`) are resolved through the prepared Poetry
+runner or backend virtualenv when available.
+
 Dashboard review-tab note:
 
 - the optional post-review origin tab in `envctl dashboard` reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`

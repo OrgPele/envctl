@@ -82,6 +82,21 @@ Behavior:
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
+### Dependency prep before AI launch
+
+Before envctl submits the implementation prompt, enabled plan-agent launches prepare dependency artifacts in the selected
+worktree:
+
+- Python backends with Poetry run the existing Poetry install bootstrap and launch generic configured commands through
+  `poetry run python`.
+- Python backends with `requirements.txt` get a worktree-local `backend/venv` and use that interpreter for generic
+  commands like `python -m uvicorn ...`.
+- Frontends use the same package-manager detection as service startup; for `package-lock.json`, envctl runs
+  `npm ci --include=dev --prefer-offline --no-audit`.
+
+This preparation does not start backend/frontend services and does not run migrations. It only ensures the AI session
+starts in a worktree whose dependency roots are ready or were skipped for a documented reason.
+
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux launches keep using `/<preset>`, while `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
@@ -182,7 +197,7 @@ When the source repo already has common local dependency/runtime artifacts, envc
 - `backend/.env`
 - `frontend/node_modules`
 
-This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory.
+This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory. Plan-agent dependency prep does not rely on these links; it prepares per-worktree dependency artifacts so branch-specific dependency files remain authoritative.
 
 Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
 
