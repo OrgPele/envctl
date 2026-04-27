@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 
+from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
@@ -84,6 +85,9 @@ class LifecycleCleanupOrchestrator:
             print("No active runtime state found.")
             return 0
 
+        if route.flags.get("runtime_scope") == "dependencies":
+            return self._execute_stop_dependencies(route, state)
+
         selected = self._select_services_for_stop(state, route)
         if not selected:
             if not state.services:
@@ -141,6 +145,18 @@ class LifecycleCleanupOrchestrator:
         if bool(route.flags.get("all")):
             return set(state.services.keys())
 
+        runtime_scope = route.flags.get("runtime_scope")
+        if runtime_scope in {"backend", "frontend"}:
+            return {
+                name
+                for name, service in state.services.items()
+                if self._service_matches_runtime_scope(name, service, str(runtime_scope))
+            }
+        if runtime_scope in {"fullstack", "entire-system"}:
+            return set(state.services.keys())
+        if runtime_scope == "dependencies":
+            return set()
+
         selected: set[str] = set()
         has_selectors = False
         services_flag = route.flags.get("services")
@@ -176,6 +192,58 @@ class LifecycleCleanupOrchestrator:
         if not selected:
             return set(state.services.keys())
         return selected
+
+    def _execute_stop_dependencies(self, route: Route, state: RunState) -> int:
+        def operation() -> int:
+            if not state.requirements:
+                if not state.services:
+                    self._state_repository(self.runtime).purge(aggressive=False)
+                    release_port_session = getattr(self.runtime, "_release_port_session", None)
+                    if callable(release_port_session):
+                        release_port_session()
+                print("No dependencies found.")
+                return 0
+
+            for project in list(state.requirements):
+                self._release_requirement_ports(state.requirements[project])
+                state.requirements.pop(project, None)
+
+            if state.services:
+                self._state_repository(self.runtime).save_selected_stop_state(
+                    state=state,
+                    emit=self.runtime._emit,  # type: ignore[attr-defined]
+                    runtime_map_builder=build_runtime_map,
+                )
+            else:
+                self._state_repository(self.runtime).purge(aggressive=False)
+                release_port_session = getattr(self.runtime, "_release_port_session", None)
+                if callable(release_port_session):
+                    release_port_session()
+
+            print("Stopped dependencies.")
+            return 0
+
+        return self._run_spinner_operation(
+            route=route,
+            op_id="cleanup.stop_dependencies",
+            message="Stopping dependencies...",
+            operation=operation,
+        )
+
+    def _release_requirement_ports(self, requirements: object) -> None:
+        release = getattr(self.runtime, "_release_requirement_ports", None)
+        if callable(release):
+            release(requirements)
+            return
+        release_requirement_ports(self.runtime, requirements)  # type: ignore[arg-type]
+
+    @staticmethod
+    def _service_matches_runtime_scope(name: str, service: object, runtime_scope: str) -> bool:
+        service_type = str(getattr(service, "type", "") or "").strip().lower()
+        if service_type == runtime_scope:
+            return True
+        lowered_name = str(name).strip().lower()
+        return lowered_name.endswith(f" {runtime_scope}")
 
     def _interactive_stop_selection(self, route: Route, state: RunState) -> TargetSelection | None:
         if not self._interactive_selection_allowed(route):

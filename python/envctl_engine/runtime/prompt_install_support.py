@@ -66,6 +66,7 @@ class CodexSkillMetadata:
     display_name: str
     short_description: str
     description: str
+    default_prompt: str | None = None
 
 
 def dispatch_utility_command(runtime: Any, route: object) -> int:
@@ -653,10 +654,31 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
         "implement_task": CodexSkillMetadata(
             skill_name="envctl-implement-task",
             display_name="Envctl Implement Task",
-            short_description="MAIN_TASK-driven implementation workflow",
+            short_description="MAIN_TASK implementation workflow with scoped runtime validation",
             description=(
                 "Use when you explicitly want the envctl implement_task workflow for a MAIN_TASK-driven "
-                "implementation pass. Invoke it explicitly as $envctl-implement-task."
+                "implementation pass. The skill knows envctl service-scope flags such as --backend, --frontend, "
+                "--fullstack/--both, --dependencies/--deps, and --entire-system, plus stop/kill aliases, "
+                "when to choose each scope, and expects Playwright E2E validation against a running service "
+                "when UI behavior is involved. "
+                "Invoke it explicitly as $envctl-implement-task."
+            ),
+            default_prompt=(
+                "Use envctl-implement-task explicitly for this envctl workflow. For runtime validation, "
+                "default to `envctl --entire-system --headless` when a change crosses backend/frontend boundaries, "
+                "affects API/UI integration, changes browser-visible behavior, needs DB/Redis/queue or other "
+                "managed dependencies, or when a narrower scope is not obviously sufficient. Use backend only "
+                "for backend-confined changes with "
+                "`envctl --backend --headless`. Use frontend only for frontend-confined changes with "
+                "`envctl --frontend --headless`. Use `envctl --fullstack --headless` only when backend and "
+                "frontend are both needed but managed dependencies are explicitly disabled, mocked, externalized, "
+                "or proven unnecessary. Use `envctl --dependencies --headless` for DB/Redis or infrastructure-only "
+                "validation. For UI/product work, run Playwright E2E validation against the running service before "
+                "claiming completion. At the end, kill the scope you started with "
+                "`envctl stop --backend --headless`, `envctl stop --frontend --headless`, "
+                "`envctl stop --fullstack --headless`, `envctl stop --dependencies --headless`, "
+                "`envctl stop --entire-system --headless`, or `envctl kill-all --headless`, then offer to "
+                "start it again for human verification."
             ),
         ),
         "continue_task": CodexSkillMetadata(
@@ -781,11 +803,12 @@ def _render_codex_skill_markdown(*, template: PromptTemplate, metadata: CodexSki
 
 
 def _render_codex_skill_openai_yaml(*, metadata: CodexSkillMetadata) -> str:
+    default_prompt = metadata.default_prompt or f"Use {metadata.skill_name} explicitly for this envctl workflow."
     return (
         "interface:\n"
         f"  display_name: {json.dumps(metadata.display_name)}\n"
         f"  short_description: {json.dumps(metadata.short_description)}\n"
-        f"  default_prompt: {json.dumps(f'Use {metadata.skill_name} explicitly for this envctl workflow.')}\n"
+        f"  default_prompt: {json.dumps(default_prompt)}\n"
         "policy:\n"
         "  allow_implicit_invocation: false\n"
     )

@@ -221,6 +221,11 @@ def _restart_include_requirements(route: Route) -> bool:
     explicit = route.flags.get("restart_include_requirements")
     if explicit is not None:
         return bool(explicit)
+    runtime_scope = route.flags.get("runtime_scope")
+    if runtime_scope in {"backend", "frontend", "fullstack"}:
+        return False
+    if runtime_scope in {"dependencies", "entire-system"}:
+        return True
     if bool(route.flags.get("all")):
         return True
     services = route.flags.get("services")
@@ -312,8 +317,20 @@ def _restart_service_types_for_project(
     project_name: str,
     default_service_types: set[str] | None = None,
 ) -> set[str]:
-    if route is None or not bool(route.flags.get("_restart_request")):
-        return set(default_service_types or {"backend", "frontend"})
+    configured_service_types = set(default_service_types or {"backend", "frontend"})
+    if route is None:
+        return configured_service_types
+
+    runtime_scope = route.flags.get("runtime_scope")
+    if runtime_scope in {"backend", "frontend"}:
+        return {str(runtime_scope)}.intersection(configured_service_types)
+    if runtime_scope == "dependencies":
+        return set()
+    if runtime_scope in {"fullstack", "entire-system"} and not bool(route.flags.get("_restart_request")):
+        return configured_service_types
+
+    if not bool(route.flags.get("_restart_request")):
+        return configured_service_types
 
     services_value = route.flags.get("services")
     service_types: set[str] = set()
@@ -330,7 +347,7 @@ def _restart_service_types_for_project(
             elif lowered.endswith(" frontend"):
                 service_types.add("frontend")
     if service_types:
-        return service_types.intersection(default_service_types or service_types)
+        return service_types.intersection(configured_service_types or service_types)
 
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
@@ -340,8 +357,8 @@ def _restart_service_types_for_project(
             if str(value).strip().lower() in {"backend", "frontend"}
         }
         if normalized:
-            return normalized.intersection(default_service_types or normalized)
-    return set(default_service_types or {"backend", "frontend"})
+            return normalized.intersection(configured_service_types or normalized)
+    return configured_service_types
 
 
 def port_allocator(runtime: object) -> PortAllocator:

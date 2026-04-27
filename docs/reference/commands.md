@@ -170,6 +170,7 @@ High-value command families:
 - `errors`
 - `restart`
 - `stop` / `stop-all`
+- `kill` / `kill-all` (aliases for `stop` / `stop-all`)
 - `doctor`
 - `config`
 - `pr`
@@ -225,6 +226,25 @@ envctl show-config --json
 envctl explain-startup --json
 envctl --resume
 envctl dashboard
+```
+
+Runtime scope shortcuts:
+
+```bash
+envctl --backend --headless          # dependencies + backend service only
+envctl --frontend --headless         # dependencies + frontend service only
+envctl --fullstack --headless        # dependencies + backend + frontend
+envctl --both --headless             # alias for --fullstack
+envctl --dependencies --headless     # dependencies only; no app services
+envctl --entire-system --headless    # dependencies + all configured app services
+
+envctl stop --backend --headless
+envctl stop --frontend --headless
+envctl stop --fullstack --headless
+envctl stop --dependencies --headless
+envctl stop --entire-system --headless
+envctl kill --backend --headless     # alias for stop --backend
+envctl kill-all --headless           # alias for stop-all
 ```
 
 Review branch-relative changes:
