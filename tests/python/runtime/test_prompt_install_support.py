@@ -522,6 +522,10 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(skill_result["path"], str(target))
             written = target.read_text(encoding="utf-8")
             self.assertIn('name: "envctl-implement-task"', written)
+            frontmatter = written.split("---", 2)[1]
+            self.assertIn("envctl service-scope flags", frontmatter)
+            self.assertIn("--backend", frontmatter)
+            self.assertIn("Playwright", frontmatter)
             self.assertIn("Use this skill explicitly with `$envctl-implement-task`.", written)
             self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", written)
             self.assertIn("You are implementing real code, end-to-end.", written)
@@ -529,6 +533,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(openai_yaml.exists())
             rendered_yaml = openai_yaml.read_text(encoding="utf-8")
             self.assertIn("allow_implicit_invocation: false", rendered_yaml)
+            self.assertIn("envctl --backend --headless", rendered_yaml)
+            self.assertIn("Playwright", rendered_yaml)
 
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
         self.assertIn("implement_task", _available_presets())

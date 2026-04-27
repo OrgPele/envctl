@@ -66,6 +66,7 @@ class CodexSkillMetadata:
     display_name: str
     short_description: str
     description: str
+    default_prompt: str | None = None
 
 
 def dispatch_utility_command(runtime: Any, route: object) -> int:
@@ -653,10 +654,23 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
         "implement_task": CodexSkillMetadata(
             skill_name="envctl-implement-task",
             display_name="Envctl Implement Task",
-            short_description="MAIN_TASK-driven implementation workflow",
+            short_description="MAIN_TASK implementation workflow with scoped runtime validation",
             description=(
                 "Use when you explicitly want the envctl implement_task workflow for a MAIN_TASK-driven "
-                "implementation pass. Invoke it explicitly as $envctl-implement-task."
+                "implementation pass. The skill knows envctl service-scope flags such as --backend, --frontend, "
+                "--fullstack/--both, --dependencies/--deps, and --entire-system, plus stop/kill aliases, "
+                "and expects Playwright E2E validation against a running service when UI behavior is involved. "
+                "Invoke it explicitly as $envctl-implement-task."
+            ),
+            default_prompt=(
+                "Use envctl-implement-task explicitly for this envctl workflow. For runtime validation, start "
+                "the needed scope with commands such as `envctl --backend --headless`, "
+                "`envctl --frontend --headless`, `envctl --fullstack --headless`, "
+                "`envctl --dependencies --headless`, or `envctl --entire-system --headless`; stop matching "
+                "scopes with `envctl stop --backend --headless`, `envctl stop --dependencies --headless`, "
+                "`envctl stop --entire-system --headless`, `envctl kill --backend --headless`, or "
+                "`envctl kill-all --headless`. For UI/product work, run Playwright E2E validation against "
+                "the running service before claiming completion."
             ),
         ),
         "continue_task": CodexSkillMetadata(
@@ -781,11 +795,12 @@ def _render_codex_skill_markdown(*, template: PromptTemplate, metadata: CodexSki
 
 
 def _render_codex_skill_openai_yaml(*, metadata: CodexSkillMetadata) -> str:
+    default_prompt = metadata.default_prompt or f"Use {metadata.skill_name} explicitly for this envctl workflow."
     return (
         "interface:\n"
         f"  display_name: {json.dumps(metadata.display_name)}\n"
         f"  short_description: {json.dumps(metadata.short_description)}\n"
-        f"  default_prompt: {json.dumps(f'Use {metadata.skill_name} explicitly for this envctl workflow.')}\n"
+        f"  default_prompt: {json.dumps(default_prompt)}\n"
         "policy:\n"
         "  allow_implicit_invocation: false\n"
     )
