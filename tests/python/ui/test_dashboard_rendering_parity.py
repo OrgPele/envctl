@@ -159,7 +159,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("workspace backend:", output)
             self.assertNotIn("Frontend:", output)
 
-    def test_dashboard_hides_missing_runtime_service_rows_after_partial_stop(self) -> None:
+    def test_dashboard_shows_stopped_service_rows_after_partial_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -171,15 +171,21 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 run_id="run-1",
                 mode="main",
                 services={
-                    "Main Frontend": ServiceRecord(
-                        name="Main Frontend",
-                        type="frontend",
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
                         cwd=str(repo),
-                        requested_port=9000,
-                        actual_port=9004,
+                        requested_port=8000,
+                        actual_port=8000,
                         pid=1234,
                         status="running",
                     ),
+                },
+                metadata={
+                    "project_roots": {"Main": str(repo)},
+                    "dashboard_stopped_services": [
+                        {"name": "Main Frontend", "project": "Main", "type": "frontend"},
+                    ],
                 },
             )
 
@@ -188,9 +194,41 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn("services: 1 total | 1 running | 0 starting/unknown | 0 issues", output)
-            self.assertIn("Frontend: http://localhost:9004", output)
-            self.assertNotIn("Backend: n/a [Unknown]", output)
+            self.assertIn("services: 2 total | 1 running | 1 not running | 0 starting/unknown | 0 issues", output)
+            self.assertIn("Backend: http://localhost:8000", output)
+            self.assertIn("Frontend: not running [Stopped]", output)
+            self.assertNotIn("Frontend: n/a [Unknown]", output)
+
+    def test_dashboard_shows_all_stopped_rows_after_entire_worktree_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={},
+                metadata={
+                    "project_roots": {"Main": str(repo)},
+                    "dashboard_stopped_services": [
+                        {"name": "Main Backend", "project": "Main", "type": "backend"},
+                        {"name": "Main Frontend", "project": "Main", "type": "frontend"},
+                    ],
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("services: 2 total | 0 running | 2 not running | 0 starting/unknown | 0 issues", output)
+            self.assertIn("Backend: not running [Stopped]", output)
+            self.assertIn("Frontend: not running [Stopped]", output)
+            self.assertNotIn("n/a [Unknown]", output)
 
     def test_dashboard_renders_matching_ai_session_inline_for_active_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

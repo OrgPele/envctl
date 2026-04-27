@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import shutil
 import subprocess
 from typing import Any, Callable, Mapping, Protocol, Sequence, cast
@@ -89,6 +90,7 @@ class LifecycleCleanupOrchestrator:
         if route.flags.get("runtime_scope") == "dependencies":
             return self._execute_stop_dependencies(route, state)
 
+        preserve_stopped_dashboard_state = self._should_preserve_stopped_dashboard_state(route)
         selected_dependencies = self._select_dependency_components_for_stop(state, route)
         selected = self._select_services_for_stop(state, route)
         if not selected and not selected_dependencies:
@@ -100,6 +102,9 @@ class LifecycleCleanupOrchestrator:
             return 1
 
         def operation() -> int:
+            if selected and preserve_stopped_dashboard_state:
+                self._remember_dashboard_stopped_services(state, selected)
+
             if selected:
                 self.runtime._terminate_services_from_state(  # type: ignore[attr-defined]
                     state,
@@ -125,6 +130,19 @@ class LifecycleCleanupOrchestrator:
                     state.requirements.pop(project, None)
 
             if not state.services and not state.requirements:
+                if preserve_stopped_dashboard_state and self._has_dashboard_stopped_services(state):
+                    self._state_repository(self.runtime).save_selected_stop_state(  # type: ignore[attr-defined]
+                        state=state,
+                        emit=self.runtime._emit,  # type: ignore[attr-defined]
+                        runtime_map_builder=build_runtime_map,
+                    )
+                    if selected and selected_dependencies:
+                        print("Stopped selected services and dependencies.")
+                    elif selected_dependencies:
+                        print("Stopped selected dependencies.")
+                    else:
+                        print("Stopped selected services.")
+                    return 0
                 self.clear_runtime_state(command="stop", aggressive=False)
                 print("Stopped runtime state.")
                 return 0
@@ -151,6 +169,98 @@ class LifecycleCleanupOrchestrator:
             message=message,
             operation=operation,
         )
+
+    @staticmethod
+    def _should_preserve_stopped_dashboard_state(route: Route) -> bool:
+        if bool(route.flags.get("interactive_command")):
+            return True
+        if bool(route.flags.get("stop_preserve_requirements")):
+            return True
+        services = route.flags.get("services")
+        return isinstance(services, list) and any(str(item).strip() for item in services)
+
+    def _remember_dashboard_stopped_services(self, state: RunState, selected_services: set[str]) -> None:
+        if not selected_services:
+            return
+        raw_existing = state.metadata.get("dashboard_stopped_services")
+        existing_items = raw_existing if isinstance(raw_existing, list) else []
+        by_name: dict[str, dict[str, str]] = {}
+        for item in existing_items:
+            if not isinstance(item, Mapping):
+                continue
+            name = str(item.get("name", "") or "").strip()
+            project = str(item.get("project", "") or "").strip()
+            service_type = str(item.get("type", "") or "").strip().lower()
+            if name and project and service_type in {"backend", "frontend"}:
+                by_name[name] = {"name": name, "project": project, "type": service_type}
+
+        raw_roots = state.metadata.get("project_roots")
+        project_roots = dict(raw_roots) if isinstance(raw_roots, Mapping) else {}
+        raw_configured_types = state.metadata.get("dashboard_configured_service_types")
+        configured_types = {
+            str(item).strip().lower()
+            for item in (raw_configured_types if isinstance(raw_configured_types, list) else [])
+            if str(item).strip()
+        }
+
+        for service_name in sorted(selected_services):
+            service = state.services.get(service_name)
+            if service is None:
+                continue
+            project = str(self.runtime._project_name_from_service(service_name) or "").strip()  # type: ignore[attr-defined]
+            if not project:
+                project = self._project_name_from_stopped_service(service_name)
+            service_type = self._service_type_from_stopped_service(service_name, service)
+            if not project or service_type not in {"backend", "frontend"}:
+                continue
+            by_name[service_name] = {"name": service_name, "project": project, "type": service_type}
+            configured_types.add(service_type)
+            if project not in project_roots:
+                root = self._project_root_from_stopped_service(service, service_type=service_type)
+                if root:
+                    project_roots[project] = root
+
+        if by_name:
+            state.metadata["dashboard_stopped_services"] = [by_name[name] for name in sorted(by_name)]
+        if project_roots:
+            state.metadata["project_roots"] = {str(key): str(value) for key, value in project_roots.items()}
+        if configured_types:
+            state.metadata["dashboard_configured_service_types"] = sorted(configured_types)
+
+    @staticmethod
+    def _has_dashboard_stopped_services(state: RunState) -> bool:
+        raw = state.metadata.get("dashboard_stopped_services")
+        return isinstance(raw, list) and bool(raw)
+
+    @staticmethod
+    def _project_name_from_stopped_service(service_name: str) -> str:
+        trimmed = str(service_name).strip()
+        for suffix in (" Backend", " Frontend"):
+            if trimmed.endswith(suffix):
+                return trimmed[: -len(suffix)].strip()
+        return ""
+
+    @staticmethod
+    def _service_type_from_stopped_service(service_name: str, service: object) -> str:
+        service_type = str(getattr(service, "type", "") or "").strip().lower()
+        if service_type in {"backend", "frontend"}:
+            return service_type
+        lowered = str(service_name).strip().lower()
+        if lowered.endswith(" backend"):
+            return "backend"
+        if lowered.endswith(" frontend"):
+            return "frontend"
+        return ""
+
+    @staticmethod
+    def _project_root_from_stopped_service(service: object, *, service_type: str) -> str:
+        cwd_raw = str(getattr(service, "cwd", "") or "").strip()
+        if not cwd_raw:
+            return ""
+        cwd = Path(cwd_raw).expanduser()
+        if cwd.name.lower() == service_type:
+            return str(cwd.parent)
+        return str(cwd)
 
     def _select_services_for_stop(self, state: RunState, route: Route) -> set[str]:
         if route.command != "stop":

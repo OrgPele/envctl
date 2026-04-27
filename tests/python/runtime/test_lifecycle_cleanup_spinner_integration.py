@@ -295,6 +295,56 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(state.services, {})
         self.assertIn("Main", state.requirements)
         self.assertEqual(runtime.state_repository.saved_states[0].requirements.keys(), {"Main"})
+        stopped_services = runtime.state_repository.saved_states[0].metadata.get("dashboard_stopped_services")
+        self.assertEqual(
+            stopped_services,
+            [{"name": "Main Backend", "project": "Main", "type": "backend"}],
+        )
+
+    def test_interactive_stop_all_services_preserves_stopped_dashboard_state(self) -> None:
+        runtime = _RuntimeStub()
+        terminated: list[set[str] | None] = []
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/repo/backend", pid=1),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd="/repo/frontend", pid=2),
+            },
+            metadata={"project_roots": {"Main": "/repo"}},
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "services": ["Main Backend", "Main Frontend"],
+                "stop_preserve_requirements": True,
+                "interactive_command": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [{"Main Backend", "Main Frontend"}])
+        self.assertEqual(state.services, {})
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+        self.assertEqual(len(runtime.state_repository.saved_states), 1)
+        saved = runtime.state_repository.saved_states[0]
+        self.assertEqual(saved.services, {})
+        self.assertEqual(
+            saved.metadata.get("dashboard_stopped_services"),
+            [
+                {"name": "Main Backend", "project": "Main", "type": "backend"},
+                {"name": "Main Frontend", "project": "Main", "type": "frontend"},
+            ],
+        )
 
     def test_stop_selection_routes_through_runtime_backend_selector(self) -> None:
         runtime = _RuntimeStub()
