@@ -710,9 +710,7 @@ def _print_dashboard_ai_session_row(
                 session_message = "attached"
             else:
                 session_message = "detached"
-            print(
-                f"    {dim}○{reset} {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}"
-            )
+            print(f"    {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}")
         return
     if not render_launch_fallback:
         return

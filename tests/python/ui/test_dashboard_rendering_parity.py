@@ -336,7 +336,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                "○ AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (attached)",
+                "AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (attached)",
                 output,
             )
             self.assertNotIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
@@ -435,7 +435,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                "○ AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (detached)",
+                "AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (detached)",
                 output,
             )
             self.assertNotIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
