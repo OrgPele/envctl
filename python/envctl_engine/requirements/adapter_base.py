@@ -562,8 +562,11 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
     )
     listener_wait_ms += _add_stage_duration("listener_wait", listener_started)
     listener_error = f"probe timeout waiting for readiness on port {effective_port}"
+    probe_error_text = listener_error
+    local_settle_attempted = False
     if not listener_ready:
         if timeout_recovered_create or port_adopted:
+            local_settle_attempted = True
             settled, settled_error = _attempt_local_settle(
                 listener_ready=False,
                 probe_error_text=listener_error,
@@ -589,12 +592,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                         port_mismatch_action=mismatch_action,
                     )
                 )
-            return _failure(
-                settled_error,
-                reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-                stage="probe.timeout_recovered_create.failed",
-            )
+            probe_error_text = settled_error
+            if not template.restart_on_listener_timeout:
+                return _failure(
+                    settled_error,
+                    reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                    failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+                    stage="probe.timeout_recovered_create.failed",
+                )
         if not template.restart_on_listener_timeout:
             return _failure(
                 listener_error,
@@ -603,7 +608,6 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                 stage="probe.listener_timeout",
             )
 
-    probe_error_text = listener_error
     if listener_ready:
         probe_started = time.monotonic()
         ready, probe_error_text = template.probe_readiness(template.probe_attempts)
@@ -623,7 +627,7 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             )
 
     retryable = template.retryable_probe_error(probe_error_text)
-    if (timeout_recovered_create or port_adopted) and retryable:
+    if (timeout_recovered_create or port_adopted) and retryable and not local_settle_attempted:
         settled, settled_error = _attempt_local_settle(
             listener_ready=True,
             probe_error_text=probe_error_text,
@@ -756,9 +760,11 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                         stage="probe.retry.recreate.failed",
                     )
-            elif not port_adopted:
+            else:
                 effective_port = int(template.port)
                 port_adopted = False
+                if mismatch_action == "adopt_existing":
+                    mismatch_action = "recreate_after_adopted_existing_unreachable"
             recreate_listener_started = time.monotonic()
             recreate_listener_ready = wait_for_port_ready(
                 template.process_runner,
