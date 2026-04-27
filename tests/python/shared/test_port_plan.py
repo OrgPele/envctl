@@ -52,6 +52,33 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(first["db"].final, 5432)
         self.assertEqual(second["redis"].final, 6379)
 
+    def test_main_dependency_ports_can_be_scoped_to_session_without_moving_app_ports(self) -> None:
+        first = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            spacing=20,
+            scope_key="repo-a",
+            session_id="session-a",
+            dynamic_main_dependency_ports=True,
+        ).plan_project_stack("Main", index=0)
+        second = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            spacing=20,
+            scope_key="repo-a",
+            session_id="session-b",
+            dynamic_main_dependency_ports=True,
+        ).plan_project_stack("Main", index=0)
+
+        self.assertEqual(first["backend"].final, 8000)
+        self.assertEqual(first["frontend"].final, 9000)
+        self.assertNotEqual(first["db"].final, 5432)
+        self.assertNotEqual(first["redis"].final, 6379)
+        self.assertNotEqual(first["n8n"].final, 5678)
+        self.assertEqual(first["db"].final - 5432, first["redis"].final - 6379)
+        self.assertEqual(first["db"].final - 5432, first["n8n"].final - 5678)
+        self.assertNotEqual(first["db"].final, second["db"].final)
+
     def test_project_identity_normalization_keeps_equivalent_names_stable(self) -> None:
         planner = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
 

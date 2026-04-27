@@ -34,6 +34,7 @@ class PortPlanner:
         availability_mode: str = "auto",
         preferred_port_strategy: str = "project_slot",
         scope_key: str | None = None,
+        dynamic_main_dependency_ports: bool = False,
     ) -> None:
         self.backend_base = backend_base
         self.frontend_base = frontend_base
@@ -56,6 +57,7 @@ class PortPlanner:
             strategy = "project_slot"
         self.preferred_port_strategy = strategy
         self.scope_key = str(scope_key or "global").strip() or "global"
+        self.dynamic_main_dependency_ports = bool(dynamic_main_dependency_ports)
         self.max_port: Final[int] = 65000
 
     def plan_project(
@@ -106,9 +108,13 @@ class PortPlanner:
         sources = sources or {}
         retries = retries or {}
         plans = self.plan_project(project, index=index, requested=requested, sources=sources, retries=retries)
-        db_requested = requested.get("db", self._preferred_port(project, "db", self.db_base, index=index))
-        redis_requested = requested.get("redis", self._preferred_port(project, "redis", self.redis_base, index=index))
-        n8n_requested = requested.get("n8n", self._preferred_port(project, "n8n", self.n8n_base, index=index))
+        db_requested = requested.get("db", self._preferred_dependency_port(project, "db", self.db_base, index=index))
+        redis_requested = requested.get(
+            "redis", self._preferred_dependency_port(project, "redis", self.redis_base, index=index)
+        )
+        n8n_requested = requested.get(
+            "n8n", self._preferred_dependency_port(project, "n8n", self.n8n_base, index=index)
+        )
         plans.update(
             {
                 "db": PortPlan(
@@ -226,6 +232,11 @@ class PortPlanner:
         slot = self._project_slot(project)
         return base + slot
 
+    def _preferred_dependency_port(self, project: str, service_name: str, base: int, *, index: int) -> int:
+        if self._dynamic_main_dependency_ports_enabled(project):
+            return base + self._main_dependency_session_slot()
+        return self._preferred_port(project, service_name, base, index=index)
+
     def _project_slot(self, project: str) -> int:
         normalized = self._normalize_project_identity(project)
         if normalized in {"", "main"}:
@@ -233,6 +244,22 @@ class PortPlanner:
         span = self._project_slot_span()
         digest = hashlib.sha1(f"{self.scope_key}:{normalized}".encode("utf-8")).hexdigest()
         return int(digest[:8], 16) % span
+
+    def _dynamic_main_dependency_ports_enabled(self, project: str) -> bool:
+        if not self.dynamic_main_dependency_ports:
+            return False
+        normalized = self._normalize_project_identity(project)
+        return normalized in {"", "main"}
+
+    def _main_dependency_session_slot(self) -> int:
+        span = self._project_slot_span()
+        if span <= 1:
+            return 0
+        digest = hashlib.sha1(f"{self.scope_key}:{self.session_id}:main-dependencies".encode("utf-8")).hexdigest()
+        slot = int(digest[:8], 16) % span
+        # Keep envctl-managed Main dependencies off the well-known base ports
+        # while still staying inside the configured service port bands.
+        return slot or 1
 
     def _project_slot_span(self) -> int:
         bases = sorted(
