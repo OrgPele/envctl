@@ -109,6 +109,9 @@ Behavior:
   - `finalize_task`
   - `merge_trees_into_dev`
   - `create_plan`
+  - `create_plan_auto_codex`
+  - `create_plan_auto_opencode`
+  - `create_plan_auto_omx`
   - `ship_release`
 - target roots:
   - Codex: `~/.codex/skills/envctl-*`
@@ -123,6 +126,15 @@ Behavior:
 - Codex presets are user-editable skill markdown files owned by envctl; envctl reads the embedded direct prompt body when it needs to submit a preset itself instead of relying on a Codex slash alias
 - envctl-managed `--plan` launches submit the rendered workflow automatically; manual `$envctl-*` invocation is only for direct Codex or OMX use
 - Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` is kept as a compatibility no-op for older scripts
+
+Auto-launch create-plan presets:
+
+- `create_plan` remains plan-only and approval-first; `$envctl-create-plan` writes the plan and asks before running envctl.
+- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
+- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`.
+- `create_plan_auto_omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
+- Each auto preset creates/syncs implementation worktrees and starts a fresh implementation session; use it only when you want implementation to start immediately.
+- Refresh installed prompt files with `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes`.
 
 ## `codex-tmux`
 
@@ -319,6 +331,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
+- `$envctl-create-plan-auto-codex` overrides that cycle count to `4` for its one launch command only; the global default remains `2`
 - OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap

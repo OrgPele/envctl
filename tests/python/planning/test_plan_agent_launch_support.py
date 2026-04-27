@@ -424,6 +424,74 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.direct_prompt_enabled)
         self.assertTrue(launch_config.ulw_loop_prefix)
 
+    def test_create_plan_auto_launch_default_routes_remain_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            codex_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                route=parse_route(["--plan", "features/example", "--tmux"], env={}),
+            )
+            codex_workflow = _build_plan_agent_workflow(
+                cli=codex_config.cli,
+                preset=codex_config.preset,
+                codex_cycles=codex_config.codex_cycles,
+                direct_prompt_enabled=codex_config.direct_prompt_enabled,
+            )
+
+            opencode_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "features/example", "--tmux", "--opencode", "--ulw"], env={}),
+            )
+            opencode_workflow = _build_plan_agent_workflow(
+                cli=opencode_config.cli,
+                preset=opencode_config.preset,
+                codex_cycles=opencode_config.codex_cycles,
+                direct_prompt_enabled=opencode_config.direct_prompt_enabled,
+            )
+
+            omx_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                route=parse_route(["--plan", "features/example", "--omx", "--ralph"], env={}),
+            )
+            omx_workflow = _build_plan_agent_workflow(
+                cli=omx_config.cli,
+                preset=omx_config.preset,
+                codex_cycles=omx_config.codex_cycles,
+                direct_prompt_enabled=omx_config.direct_prompt_enabled,
+            )
+
+        self.assertEqual(codex_config.transport, "tmux")
+        self.assertEqual(codex_config.cli, "codex")
+        self.assertEqual(codex_config.preset, "implement_task")
+        self.assertEqual(codex_config.codex_cycles, 4)
+        self.assertEqual(codex_workflow.mode, "codex_cycles")
+        self.assertEqual(codex_workflow.codex_cycles, 4)
+
+        self.assertEqual(opencode_config.transport, "tmux")
+        self.assertEqual(opencode_config.cli, "opencode")
+        self.assertTrue(opencode_config.direct_prompt_enabled)
+        self.assertTrue(opencode_config.ulw_loop_prefix)
+        self.assertEqual(opencode_workflow.mode, "single_prompt")
+
+        self.assertEqual(omx_config.transport, "omx")
+        self.assertEqual(omx_config.cli, "codex")
+        self.assertEqual(omx_config.omx_workflow, "ralph")
+        self.assertEqual(omx_config.codex_cycles, 0)
+        self.assertEqual(omx_config.codex_cycles_warning, "omx_workflow_disables_codex_cycles")
+        self.assertEqual(omx_workflow.mode, "single_prompt")
+
     def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
