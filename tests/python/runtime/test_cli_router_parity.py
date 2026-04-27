@@ -146,9 +146,13 @@ class CliRouterParityTests(unittest.TestCase):
     def test_mode_force_tokens_apply_shell_compatible_semantics(self) -> None:
         route = parse_route(["--main"], env={})
         self.assertEqual(route.mode, "main")
-        self.assertTrue(route.flags.get("no_resume"))
+        self.assertNotIn("no_resume", route.flags)
 
         route = parse_route(["--trees=false"], env={})
+        self.assertEqual(route.mode, "main")
+        self.assertNotIn("no_resume", route.flags)
+
+        route = parse_route(["--main", "--no-resume"], env={})
         self.assertEqual(route.mode, "main")
         self.assertTrue(route.flags.get("no_resume"))
 
