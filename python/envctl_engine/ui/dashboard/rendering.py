@@ -116,7 +116,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             )
         else:
             print(f"  {bold}{project_color}{project_display}{reset}")
-        if state.services or "backend" in configured_service_types:
+        if backend_service is not None or (runs_disabled_dashboard and "backend" in configured_service_types):
             self._print_dashboard_service_row(
                 label="Backend",
                 service=backend_service,
@@ -131,7 +131,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 dim=dim,
                 reset=reset,
             )
-        if state.services or "frontend" in configured_service_types:
+        if frontend_service is not None or (runs_disabled_dashboard and "frontend" in configured_service_types):
             self._print_dashboard_service_row(
                 label="Frontend",
                 service=frontend_service,

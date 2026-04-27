@@ -280,6 +280,35 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Feature:redis"])
         self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
 
+    def test_interactive_stop_all_resources_row_selects_all_single_worktree_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd=".", pid=101),
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:worktree:Main"]
+
+        with patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", side_effect=fake_stop_selector):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("All resources — apps + dependencies", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Backend", "Main Frontend"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
+
     def test_interactive_sessions_word_lists_ai_sessions(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
