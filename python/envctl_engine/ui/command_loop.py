@@ -548,6 +548,20 @@ def _spinner_message_for_event(event_name: str, payload: Mapping[str, object]) -
         return f"Preparing planning PRs for {project_count} project(s)..."
     if event_name == "state.resume":
         return "Resuming previous runtime state..."
+    if event_name == "state.action.start":
+        command = _payload_text(payload, "command")
+        service_count = _payload_count(payload, "service_count")
+        if command == "logs":
+            return _state_action_progress_message("Loading logs", service_count)
+        if command == "clear-logs":
+            return _state_action_progress_message("Clearing logs", service_count)
+        if command == "health":
+            return _state_action_progress_message("Checking health", service_count)
+        if command == "errors":
+            return _state_action_progress_message("Inspecting errors", service_count)
+        return f"Running {command}..." if command else "Running state action..."
+    if event_name == "config.command.start":
+        return "Opening configuration..."
     if event_name == "requirements.start":
         service = _payload_text(payload, "service") or "dependency"
         project = _payload_text(payload, "project")
@@ -605,6 +619,8 @@ def _spinner_starts_for_event(event_name: str) -> bool:
         "action.command.start",
         "startup.execution",
         "state.resume",
+        "state.action.start",
+        "config.command.start",
         "requirements.start",
         "service.bootstrap",
         "service.start",
@@ -621,6 +637,15 @@ def _spinner_failure_message_for_event(event_name: str, payload: Mapping[str, ob
         if code is not None and code != 0:
             command = _payload_text(payload, "command") or "command"
             return f"{command} failed (exit {code})"
+    if event_name == "state.action.finish":
+        code = _coerce_int(payload.get("code"))
+        if code is not None and code != 0:
+            command = _payload_text(payload, "command") or "state action"
+            return f"{command} failed (exit {code})"
+    if event_name == "config.command.finish":
+        code = _coerce_int(payload.get("code"))
+        if code is not None and code != 0:
+            return f"config failed (exit {code})"
     if event_name == "planning.projects.finish":
         code = _coerce_int(payload.get("code"))
         if code is not None and code != 0:
@@ -664,7 +689,25 @@ def _payload_count(payload: Mapping[str, object], key: str) -> int | None:
         return len(value)
     if isinstance(value, tuple):
         return len(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
     return None
+
+
+def _state_action_progress_message(prefix: str, count: int | None) -> str:
+    if count is None:
+        return f"{prefix}..."
+    return f"{prefix} for {_service_count_label(count)}..."
+
+
+def _service_count_label(count: int | None) -> str:
+    if count is None:
+        return "selected service(s)"
+    return f"{count} service(s)"
 
 
 def _coerce_int(value: object) -> int | None:

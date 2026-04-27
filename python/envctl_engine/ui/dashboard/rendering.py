@@ -17,6 +17,13 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
+from envctl_engine.ui.status_symbols import (
+    STATUS_NEUTRAL,
+    dependency_status_badge,
+    service_status_badge,
+)
+
+_DASHBOARD_VISUAL_HOST_ENV = "ENVCTL_UI_VISUAL_HOST"
 
 
 def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
@@ -32,7 +39,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         missing_count=len(failing_services),
         missing_services=failing_services,
     )
-    runtime_map = build_runtime_map(state)
+    visual_host = _dashboard_visual_host(self)
+    runtime_map = build_runtime_map(state, host=visual_host)
     projection = runtime_map.get("projection", {})
     if not isinstance(projection, dict):
         projection = {}
@@ -66,8 +74,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     ]
     total_services = len(service_statuses) + stopped_service_count
     running_services = sum(1 for status in service_statuses if status in {"running", "healthy"})
-    issue_services = sum(1 for status in service_statuses if status in {"stale", "unreachable"})
-    starting_services = sum(1 for status in service_statuses if status in {"starting", "unknown"})
+    issue_services = sum(1 for status in service_statuses if service_status_badge(status).severity == "failure")
+    starting_services = sum(1 for status in service_statuses if service_status_badge(status).severity == "warning")
 
     print(f"{cyan}{separator}{reset}")
     print(f"{bold}{cyan}Development Environment - Interactive Mode{reset}")
@@ -213,11 +221,11 @@ def _print_dashboard_service_row(
 ) -> None:
     if configured_not_running:
         label_text = f"{label_color}{label}{reset}"
-        print(f"    {dim}○{reset} {label_text}: {dim}not running{reset} {dim}[Configured]{reset}")
+        print(f"    {dim}{STATUS_NEUTRAL}{reset} {label_text}: {dim}not running{reset} {dim}[Configured]{reset}")
         return
     if stopped_not_running:
         label_text = f"{label_color}{label}{reset}"
-        print(f"    {dim}○{reset} {label_text}: {dim}not running{reset} {dim}[Stopped]{reset}")
+        print(f"    {dim}{STATUS_NEUTRAL}{reset} {label_text}: {dim}not running{reset} {dim}[Stopped]{reset}")
         return
     status = str(getattr(service, "status", "unknown") or "unknown")
     icon, color, status_label = self._dashboard_status_badge(
@@ -238,7 +246,7 @@ def _print_dashboard_service_row(
     if not url and status.lower() == "unreachable":
         fallback_port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
         if isinstance(fallback_port, int) and fallback_port > 0 and isinstance(pid, int) and pid > 0:
-            url_text = f"http://localhost:{fallback_port}"
+            url_text = _dashboard_visual_url(self, fallback_port)
     label_text = f"{label_color}{label}{reset}"
     print(
         f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}"
@@ -274,43 +282,25 @@ def _print_dashboard_dependency_rows(
             continue
         port = component.get("final") or component.get("requested")
         runtime_status = str(component.get("runtime_status", "")).strip().lower()
-        if runtime_status == "healthy":
-            icon = "✓"
-            color = ok_color
-            status = "Healthy"
-            url = f"http://localhost:{port}" if isinstance(port, int) and port > 0 else "n/a"
-        elif runtime_status == "simulated":
-            icon = "~"
-            color = warn_color
-            status = "Simulated"
-            url = f"http://localhost:{port}" if isinstance(port, int) and port > 0 else "n/a"
-        elif runtime_status == "starting":
-            icon = "•"
-            color = warn_color
-            status = "Starting"
-            url = f"http://localhost:{port}" if isinstance(port, int) and port > 0 else "n/a"
-        elif runtime_status in {"unhealthy", "unreachable"}:
-            icon = "!"
-            color = bad_color
-            status = "Unhealthy" if runtime_status == "unhealthy" else "Unreachable"
-            url = "n/a"
-        else:
-            url = f"http://localhost:{port}" if isinstance(port, int) and port > 0 else "n/a"
-            success = bool(component.get("success", False))
-            if success:
-                if bool(component.get("simulated", False)):
-                    icon = "~"
-                    color = warn_color
-                    status = "Simulated"
-                else:
-                    icon = "✓"
-                    color = ok_color
-                    status = "Healthy"
-            else:
-                failure_count = len(requirements.failures or [])
-                icon = "!"
-                color = bad_color if failure_count > 0 else warn_color
-                status = "Unhealthy" if failure_count > 0 else "Starting"
+        badge = dependency_status_badge(
+            runtime_status,
+            success=bool(component.get("success", False)),
+            simulated=bool(component.get("simulated", False)),
+            failure_count=len(requirements.failures or []),
+        )
+        color = _dashboard_color_for_severity(
+            badge.severity,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+        )
+        url = (
+            "n/a"
+            if badge.severity == "failure"
+            else (_dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a")
+        )
+        icon = badge.symbol
+        status = badge.label
         print(f"    {color}{icon}{reset} {definition.display_name}: {url} [{status}]")
 
 
@@ -397,6 +387,23 @@ def _dashboard_pr_lookup_enabled(self: Any) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return True
+
+
+def _dashboard_visual_url(self: Any, port: int) -> str:
+    return f"http://{_dashboard_visual_host(self)}:{port}"
+
+
+def _dashboard_visual_host(self: Any) -> str:
+    raw: object | None = None
+    runtime_env = getattr(self, "env", {})
+    if isinstance(runtime_env, Mapping):
+        raw = runtime_env.get(_DASHBOARD_VISUAL_HOST_ENV)
+    if raw is None:
+        config_raw = getattr(getattr(self, "config", None), "raw", {})
+        if isinstance(config_raw, Mapping):
+            raw = config_raw.get(_DASHBOARD_VISUAL_HOST_ENV)
+    host = str(raw or "").strip()
+    return host or "localhost"
 
 
 def _dashboard_pr_cache_ttl_seconds(self: Any) -> float:
@@ -616,17 +623,31 @@ def _dashboard_status_badge(
     bad_color: str,
 ) -> tuple[str, str, str]:
     lowered = status.strip().lower()
-    if lowered in {"running", "healthy"}:
-        return "✓", ok_color, "Running" if lowered == "running" else "Healthy"
-    if lowered == "simulated":
-        return "~", warn_color, "Simulated"
-    if lowered in {"starting", "unknown"}:
-        return "•", warn_color, "Starting" if lowered == "starting" else "Unknown"
-    if lowered == "stale":
-        return "!", bad_color, "Stale"
-    if lowered == "unreachable":
-        return "!", bad_color, "Unreachable"
-    return "!", bad_color, status or "Error"
+    badge = service_status_badge(lowered)
+    return (
+        badge.symbol,
+        _dashboard_color_for_severity(
+            badge.severity,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+        ),
+        badge.label,
+    )
+
+
+def _dashboard_color_for_severity(
+    severity: str,
+    *,
+    ok_color: str,
+    warn_color: str,
+    bad_color: str,
+) -> str:
+    if severity == "success":
+        return ok_color
+    if severity in {"warning", "neutral"}:
+        return warn_color
+    return bad_color
 
 
 def _dashboard_palette(self: Any) -> dict[str, str]:

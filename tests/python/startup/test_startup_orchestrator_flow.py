@@ -22,6 +22,7 @@ from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
+from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 
 class StartupOrchestratorFlowTests(unittest.TestCase):
@@ -713,7 +714,69 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertEqual(code, 1)
             rendered = out.getvalue()
             self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
+            self.assertIn(f"{STATUS_FAILURE} Startup failed: missing_service_start_command", rendered)
             self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+
+    def test_startup_failure_final_status_colors_x_and_names_failed_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            engine.env["ENVCTL_UI_COLOR_MODE"] = "on"
+            healthy_context = self._tree_context(
+                repo,
+                "refactoring_supportopia_to_pele_complete_repo_rename-1",
+                "refactoring_supportopia_to_pele_complete_repo_rename/1",
+                backend_port=8215,
+                frontend_port=9215,
+            )
+            failing_context = self._tree_context(
+                repo,
+                "refactoring_repository_layout_cleanliness_consolidation-1",
+                "refactoring_repository_layout_cleanliness_consolidation/1",
+                backend_port=8204,
+                frontend_port=9204,
+            )
+
+            failure = (
+                "Failed to start refactoring_repository_layout_cleanliness_consolidation-1 backend on port 8204: "
+                "backend listener not detected for refactoring_repository_layout_cleanliness_consolidation-1 "
+                "on port 8204"
+            )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[healthy_context, failing_context]),
+                patch.object(engine, "_select_plan_projects", return_value=[healthy_context, failing_context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(
+                        raw_projects=[],
+                        selected_contexts=[healthy_context, failing_context],
+                        created_worktrees=(),
+                    ),
+                ),
+                patch.object(engine, "_start_project_context", side_effect=RuntimeError(failure)),
+                patch.object(engine, "_write_artifacts"),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("\033[31m✗\033[0m", rendered)
+            self.assertIn("worktree: refactoring_repository_layout_cleanliness_consolidation-1", rendered)
+            self.assertIn(
+                "Startup failed: Failed to start refactoring_repository_layout_cleanliness_consolidation-1",
+                rendered,
+            )
 
     def test_plain_plan_without_ai_session_keeps_missing_service_command_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

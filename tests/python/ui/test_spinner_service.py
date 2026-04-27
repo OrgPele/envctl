@@ -299,6 +299,28 @@ class SpinnerServicePolicyTests(unittest.TestCase):
         self.assertTrue(output.raw)
         self.assertIn("✓ commit complete\n", output.raw)
 
+    def test_deferred_failure_fallback_uses_cross_marker_not_legacy_bang(self) -> None:
+        stream = _TtyStream()
+        operation = RichSpinnerOperation(
+            message="Running cleanup...",
+            policy=SpinnerPolicy(
+                mode="on",
+                enabled=True,
+                reason="",
+                backend="rich",
+                min_ms=120,
+                verbose_events=False,
+            ),
+            stream=stream,
+            start_immediately=False,
+        )
+        operation.fail("cleanup failed")
+        operation.end()
+
+        rendered = "".join(stream.writes)
+        self.assertIn("✗ cleanup failed\n", rendered)
+        self.assertNotIn("! cleanup failed", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

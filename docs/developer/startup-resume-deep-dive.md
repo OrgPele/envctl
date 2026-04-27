@@ -843,7 +843,7 @@ This appendix lists every file on the startup/resume path that matters to the cu
 - [python/envctl_engine/startup/startup_progress.py](../../python/envctl_engine/startup/startup_progress.py)
   Startup progress routing and startup-specific spinner group wrapper.
 - [python/envctl_engine/startup/progress_shared.py](../../python/envctl_engine/startup/progress_shared.py)
-  Rich-backed per-project spinner implementation shared by startup and resume.
+  Rich-backed per-project spinner implementation shared by startup and resume. Completed project rows rely on the Rich finished symbol (`✓` for success, `✗` for failure) and keep task descriptions free of legacy `+`/`!` prefixes.
 - [python/envctl_engine/startup/requirements_startup_domain.py](../../python/envctl_engine/startup/requirements_startup_domain.py)
   Requirement start implementation, native adapter path, listener waiting, adapter timing and retry telemetry.
 - [python/envctl_engine/startup/service_bootstrap_domain.py](../../python/envctl_engine/startup/service_bootstrap_domain.py)

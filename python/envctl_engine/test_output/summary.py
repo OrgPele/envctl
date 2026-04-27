@@ -39,7 +39,7 @@ class TestSummaryFormatter:
             returncode: Process return code.
         """
         self.print_banner()
-        self.print_counts(result)
+        self.print_counts(result, returncode=returncode)
 
         if self.detailed and result.failed_tests:
             self.print_failed_tests(result, test_type=test_type)
@@ -56,14 +56,16 @@ class TestSummaryFormatter:
         print(f"{self.colors.BOLD}{self.colors.CYAN}Test Results{self.colors.NC}")
         print(f"{self.colors.CYAN}{banner}{self.colors.NC}\n")
 
-    def print_counts(self, result: TestResult) -> None:
+    def print_counts(self, result: TestResult, *, returncode: int = 0) -> None:
         """Print test counts summary.
 
         Args:
             result: Test result metrics.
+            returncode: Process return code. A non-zero command exit is a
+                failure even when output parsing could not extract counts.
         """
         # Status line
-        if result.failed == 0 and result.errors == 0:
+        if returncode == 0 and result.failed == 0 and result.errors == 0:
             status = f"{self.colors.GREEN}{CHECK_MARK} PASSED{self.colors.NC}"
         else:
             status = f"{self.colors.RED}{CROSS_MARK} FAILED{self.colors.NC}"

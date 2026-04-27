@@ -353,6 +353,22 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertFalse(values.trees_profile.supabase_enable)
         self.assertFalse(values.trees_profile.n8n_enable)
 
+    def test_managed_values_round_trip_dashboard_visual_host(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_UI_VISUAL_HOST": "192.0.2.42"})
+        rendered = managed_values_to_mapping(values)
+        block = render_managed_block(values)
+
+        self.assertEqual(values.ui_visual_host, "192.0.2.42")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "192.0.2.42")
+        self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", block)
+
+    def test_managed_values_default_dashboard_visual_host_is_localhost(self) -> None:
+        values = managed_values_from_mapping({})
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.ui_visual_host, "localhost")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "localhost")
+
     def test_reference_envctl_example_matches_current_defaults(self) -> None:
         example_path = REPO_ROOT / "docs" / "reference" / ".envctl.example"
         example_values = _parse_envctl_text(example_path.read_text(encoding="utf-8"))

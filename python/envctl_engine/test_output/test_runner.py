@@ -98,11 +98,20 @@ class TestRunner:
 
         # Print summary
         if self.render_output:
-            self._print_summary(parser.result, test_type)
+            self._print_summary(parser.result, test_type, returncode=int(getattr(completed, "returncode", 1)))
         self.last_result = parser.result
         self.last_test_type = test_type
 
         return completed
+
+    @staticmethod
+    def _effective_returncode(raw_returncode: int, result: TestResult) -> int:
+        """Return the command status after reconciling it with parsed test failures."""
+        if raw_returncode != 0:
+            return raw_returncode
+        if result.failed > 0 or result.errors > 0 or result.failed_tests:
+            return 1
+        return 0
 
     def _detect_test_type(self, command: Sequence[str]) -> str:
         """Detect test framework type from command.
@@ -235,9 +244,11 @@ class TestRunner:
         else:
             parser.parse_output(self._combined_fallback_output(clean_stdout, clean_stderr))
 
+        raw_returncode = int(getattr(completed, "returncode", 1))
+        effective_returncode = self._effective_returncode(raw_returncode, parser.result)
         return subprocess.CompletedProcess(
             args=list(command),
-            returncode=int(getattr(completed, "returncode", 1)),
+            returncode=effective_returncode,
             stdout=clean_stdout,
             stderr=clean_stderr,
         )
@@ -381,15 +392,16 @@ class TestRunner:
         cmd_snippet = " ".join(str(c) for c in command[:3])
         print(f"{self.colors.BLUE}→{self.colors.NC} {cmd_snippet}...\n")
 
-    def _print_summary(self, result: TestResult, test_type: str) -> None:
+    def _print_summary(self, result: TestResult, test_type: str, *, returncode: int) -> None:
         """Print test summary with colors.
 
         Args:
             result: Test result metrics.
             test_type: Test framework type.
+            returncode: Effective test process return code.
         """
         formatter = TestSummaryFormatter(colors=self.colors, detailed=self.detailed or bool(result.failed_tests))
-        formatter.print_counts(result)
+        formatter.print_counts(result, returncode=returncode)
         if formatter.detailed and result.failed_tests:
             formatter.print_failed_tests(result, test_type=test_type)
         if result.coverage_percent is not None and self.run_coverage:

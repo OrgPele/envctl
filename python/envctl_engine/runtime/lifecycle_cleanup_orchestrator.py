@@ -21,6 +21,7 @@ from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F4
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.status_symbols import STATUS_SUCCESS, STATUS_WARNING
 from envctl_engine.requirements.core import dependency_definitions
 
 
@@ -900,9 +901,9 @@ class LifecycleCleanupOrchestrator:
                 timeout=20.0,
             )
             if rm_code == 0:
-                print("    ✓ removed volume")
+                print(f"    {STATUS_SUCCESS} removed volume")
             else:
-                print("    ! volume not removed (in use or already deleted)")
+                print(f"    {STATUS_WARNING} volume not removed (in use or already deleted)")
         return removed
 
     @staticmethod

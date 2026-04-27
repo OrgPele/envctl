@@ -73,6 +73,8 @@ class ConfigCommandSupportTests(unittest.TestCase):
                             "BACKEND_DIR=api",
                             "--set",
                             "MAIN_STARTUP_ENABLE=false",
+                            "--set",
+                            "ENVCTL_UI_VISUAL_HOST=192.0.2.42",
                         ],
                         env={},
                     )
@@ -83,6 +85,24 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("ENVCTL_DEFAULT_MODE=trees", text)
             self.assertIn("BACKEND_DIR=api", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
+            self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", text)
+
+    def test_config_command_emits_progress_events_for_interactive_spinner_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            runtime = self._runtime(repo, runtime_root)
+
+            with redirect_stdout(io.StringIO()):
+                code = runtime.dispatch(parse_route(["config", "--set", "ENVCTL_DEFAULT_MODE=trees"], env={}))
+
+            self.assertEqual(code, 0)
+            start_events = [event for event in runtime.events if event.get("event") == "config.command.start"]
+            finish_events = [event for event in runtime.events if event.get("event") == "config.command.finish"]
+            self.assertTrue(start_events)
+            self.assertTrue(finish_events)
+            self.assertEqual(finish_events[-1].get("code"), 0)
 
     def test_config_stdin_json_updates_nested_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

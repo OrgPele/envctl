@@ -23,6 +23,7 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
+from envctl_engine.ui.status_symbols import health_status_badge, health_status_severity
 
 
 _LOG_ISSUE_RE = re.compile(
@@ -149,6 +150,10 @@ class StateActionOrchestrator:
             return 1
         current_state = state
 
+        def finish_action(code: int, action_state: RunState = current_state) -> int:
+            self._emit_state_action_finish(command=command, state=action_state, code=code)
+            return code
+
         failing_services: list[str] = []
         requirement_issues: list[dict[str, object]] = []
         recent_failures: list[str] = []
@@ -201,6 +206,7 @@ class StateActionOrchestrator:
                     command=command,
                     filtered_service_count=len(current_state.services),
                 )
+            self._emit_state_action_start(command=command, state=current_state)
             tail = parse_int(str(route.flags.get("logs_tail", "20")), 20)
             follow = bool(route.flags.get("logs_follow"))
             raw_duration = route.flags.get("logs_duration")
@@ -222,7 +228,7 @@ class StateActionOrchestrator:
                         sort_keys=True,
                     )
                 )
-                return 0
+                return finish_action(0, current_state)
             rt.print_logs(
                 current_state,
                 tail=max(tail, 0),
@@ -230,7 +236,7 @@ class StateActionOrchestrator:
                 duration_seconds=duration_seconds,
                 no_color=no_color,
             )
-            return 0
+            return finish_action(0, current_state)
         if command == "clear-logs":
             selected_services = self._resolve_selected_services(route, current_state)
             self._emit(
@@ -257,6 +263,7 @@ class StateActionOrchestrator:
                 command=command,
                 filtered_service_count=len(current_state.services),
             )
+            self._emit_state_action_start(command=command, state=current_state)
             cleared, missing, unavailable, failed = self._clear_service_logs(
                 current_state,
                 quiet=bool(route.flags.get("json")),
@@ -277,10 +284,11 @@ class StateActionOrchestrator:
                         sort_keys=True,
                     )
                 )
-                return 1 if failed > 0 else 0
+                return finish_action(1 if failed > 0 else 0, current_state)
             print(f"Log clear summary: cleared={cleared} missing={missing} unavailable={unavailable} failed={failed}")
-            return 1 if failed > 0 else 0
+            return finish_action(1 if failed > 0 else 0, current_state)
         if command == "health":
+            self._emit_state_action_start(command=command, state=current_state)
             ensure_reconciled()
             service_rows = self._health_service_rows(current_state)
             requirement_rows = self._requirement_health_rows(current_state)
@@ -315,7 +323,10 @@ class StateActionOrchestrator:
                         sort_keys=True,
                     )
                 )
-                return 0 if not failing_services and not requirement_issues and not recent_failures else 1
+                return finish_action(
+                    0 if not failing_services and not requirement_issues and not recent_failures else 1,
+                    current_state,
+                )
             palette = self._health_palette()
             reset = palette["reset"]
             bold = palette["bold"]
@@ -343,9 +354,11 @@ class StateActionOrchestrator:
             if not failing_services and not requirement_issues and recent_failures:
                 for failure in recent_failures:
                     print(failure)
-            return 0 if not failing_services and not requirement_issues and not recent_failures else 1
+            return finish_action(
+                0 if not failing_services and not requirement_issues and not recent_failures else 1,
+                current_state,
+            )
         if command == "errors":
-            ensure_reconciled()
             selected_services = self._resolve_selected_services(route, current_state)
             self._emit(
                 "state.selection.filters",
@@ -370,6 +383,8 @@ class StateActionOrchestrator:
                     command=command,
                     filtered_service_count=len(current_state.services),
                 )
+            self._emit_state_action_start(command=command, state=current_state)
+            ensure_reconciled()
             failed = [
                 svc
                 for svc in current_state.services.values()
@@ -395,10 +410,13 @@ class StateActionOrchestrator:
                         sort_keys=True,
                     )
                 )
-                return 0 if not failed and not requirement_issues and not recent_failures and not log_issues else 1
+                return finish_action(
+                    0 if not failed and not requirement_issues and not recent_failures and not log_issues else 1,
+                    current_state,
+                )
             if not failed and not requirement_issues and not recent_failures and not log_issues:
                 print("No known service errors.")
-                return 0
+                return finish_action(0, current_state)
             no_color = self._human_output_no_color(route)
             for service in failed:
                 self._print_highlighted_line(f"{service.name}: status={service.status}", no_color=no_color)
@@ -421,7 +439,7 @@ class StateActionOrchestrator:
                     self._print_highlighted_line(f"  {line}", no_color=no_color)
             for failure in recent_failures:
                 self._print_highlighted_line(failure, no_color=no_color)
-            return 1
+            return finish_action(1, current_state)
 
         return rt.unsupported_command(command)
 
@@ -616,6 +634,25 @@ class StateActionOrchestrator:
 
     def _emit(self, event: str, **payload: object) -> None:
         self.runtime.emit(event, **payload)
+
+    def _emit_state_action_start(self, *, command: str, state: RunState) -> None:
+        self._emit(
+            "state.action.start",
+            command=command,
+            run_id=state.run_id,
+            mode=state.mode,
+            service_count=len(state.services),
+            dependency_count=len(state.requirements),
+        )
+
+    def _emit_state_action_finish(self, *, command: str, state: RunState, code: int) -> None:
+        self._emit(
+            "state.action.finish",
+            command=command,
+            run_id=state.run_id,
+            mode=state.mode,
+            code=code,
+        )
 
     def _runtime_is_truthy(self, value: object) -> bool:
         return self.runtime.is_truthy(value)
@@ -835,31 +872,23 @@ class StateActionOrchestrator:
         counters = {"ok": 0, "warn": 0, "bad": 0}
         for row in [*service_rows, *dependency_rows]:
             status = str(row.get("status", "unknown"))
-            icon = cls._health_status_icon(status)
-            if icon == "✓":
-                counters["ok"] += 1
-            elif icon == "~":
-                counters["warn"] += 1
-            else:
-                counters["bad"] += 1
+            severity = health_status_severity(status)
+            counters[severity] += 1
         return counters
 
     @staticmethod
     def _health_status_icon(status: str) -> str:
-        lowered = str(status).strip().lower()
-        if lowered in {"running", "healthy"}:
-            return "✓"
-        if lowered in {"simulated", "starting", "unknown"}:
-            return "~"
-        return "!"
+        return health_status_badge(status).symbol
 
     @staticmethod
     def _health_status_color(status: str, palette: dict[str, str]) -> str:
-        lowered = str(status).strip().lower()
-        if lowered in {"running", "healthy"}:
+        severity = health_status_badge(status).severity
+        if severity == "success":
             return palette["green"]
-        if lowered in {"simulated", "starting", "unknown"}:
+        if severity == "warning":
             return palette["yellow"]
+        if severity == "neutral":
+            return palette["dim"]
         return palette["red"]
 
     def _health_palette(self) -> dict[str, str]:
