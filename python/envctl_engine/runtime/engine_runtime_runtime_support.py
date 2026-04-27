@@ -56,7 +56,32 @@ def probe_listener_support() -> bool:
         return False
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_LOG_HIGHLIGHT_RE = re.compile(
+    r"\b("
+    r"no module named|"
+    r"error(?:s|_[a-z_]+)?|"
+    r"failed|failure|"
+    r"exception|traceback|"
+    r"validationerror|attributeerror|modulenotfounderror|importerror|runtimeerror|"
+    r"critical|fatal|"
+    r"warn(?:ing)?|deprecated"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def normalize_log_line(line: str, *, no_color: bool) -> str:
-    if not no_color:
+    if no_color:
+        return _ANSI_RE.sub("", line)
+    if _ANSI_RE.search(line) is not None:
         return line
-    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+
+    def highlight(match: re.Match[str]) -> str:
+        value = match.group(0)
+        lowered = value.lower()
+        if lowered.startswith(("warn", "deprecated")):
+            return f"\033[1;33m{value}\033[0m"
+        return f"\033[1;31m{value}\033[0m"
+
+    return _LOG_HIGHLIGHT_RE.sub(highlight, line)

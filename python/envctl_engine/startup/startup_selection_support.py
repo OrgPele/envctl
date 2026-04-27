@@ -242,6 +242,32 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
     if isinstance(service_filters, list):
         filter_set = {str(value).strip() for value in service_filters if str(value).strip()}
         selected.update({name for name in state.services if name in filter_set})
+        return selected
+
+    explicit_types = route.flags.get("restart_service_types")
+    if isinstance(explicit_types, list):
+        selected_types = {
+            str(value).strip().lower()
+            for value in explicit_types
+            if str(value).strip().lower() in {"backend", "frontend"}
+        }
+        project_set = {
+            project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()
+        }
+        for name, service in state.services.items():
+            project = _project_name_from_service_name(name)
+            if project_set and (not project or project.lower() not in project_set):
+                continue
+            service_type = str(getattr(service, "type", "") or "").strip().lower()
+            if service_type not in {"backend", "frontend"}:
+                lowered = str(name).strip().lower()
+                if lowered.endswith(" backend"):
+                    service_type = "backend"
+                elif lowered.endswith(" frontend"):
+                    service_type = "frontend"
+            if service_type in selected_types:
+                selected.add(name)
+        return selected
     if selected:
         return selected
 

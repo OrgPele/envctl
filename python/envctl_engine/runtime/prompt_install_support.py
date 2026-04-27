@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -17,6 +18,8 @@ _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
 _CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
 _PROMPT_ARGUMENT_PLACEHOLDER = "$ARGUMENTS"
+_CODEX_SKILL_ARGUMENT_SENTINEL = "additional user instructions supplied with the invoking prompt"
+_PROMPT_ARGUMENT_LINE_RE = re.compile(r"(?m)^(?P<indent>[ \t]*)\$ARGUMENTS[ \t]*$")
 _CODEX_SKILL_BODY_START = "<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->"
 _CODEX_SKILL_BODY_END = "<!-- ENVCTL_DIRECT_PROMPT_BODY_END -->"
 
@@ -546,8 +549,18 @@ def _render_opencode_template(template: PromptTemplate) -> str:
 
 
 def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
+    raw_body = str(body)
     replacement = str(arguments or "")
-    return str(body).replace(_PROMPT_ARGUMENT_PLACEHOLDER, replacement, 1)
+    if replacement and _CODEX_SKILL_ARGUMENT_SENTINEL in raw_body:
+        return raw_body.replace(_CODEX_SKILL_ARGUMENT_SENTINEL, replacement, 1)
+
+    def replace_standalone(match: re.Match[str]) -> str:
+        return f"{match.group('indent')}{replacement}"
+
+    rendered, count = _PROMPT_ARGUMENT_LINE_RE.subn(replace_standalone, raw_body, count=1)
+    if count:
+        return rendered
+    return raw_body
 
 
 def _codex_skill_feature_enabled(env: Mapping[str, str] | None) -> bool:
@@ -784,10 +797,7 @@ def _render_codex_skill_markdown(*, template: PromptTemplate, metadata: CodexSki
         "Treat any extra text in the invoking user message as the optional additional instructions "
         "that the prompt version would have received through `$ARGUMENTS`."
     )
-    body = _render_direct_prompt_arguments(
-        template.body,
-        arguments="additional user instructions supplied with the invoking prompt",
-    )
+    body = template.body.replace(_PROMPT_ARGUMENT_PLACEHOLDER, _CODEX_SKILL_ARGUMENT_SENTINEL, 1)
     return (
         f"---\n"
         f"name: {json.dumps(metadata.skill_name)}\n"

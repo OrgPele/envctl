@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import concurrent.futures
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -22,6 +23,22 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
+
+
+_LOG_ISSUE_RE = re.compile(
+    r"\b("
+    r"no module named|"
+    r"error(?:s|_[a-z_]+)?|"
+    r"failed|failure|"
+    r"exception|traceback|"
+    r"validationerror|attributeerror|modulenotfounderror|importerror|runtimeerror|"
+    r"critical|fatal|"
+    r"warn(?:ing)?|deprecated"
+    r")\b",
+    re.IGNORECASE,
+)
+_LOG_ISSUE_SCAN_MAX_BYTES = 512 * 1024
+_DEFAULT_LOG_ISSUE_LIMIT = 20
 
 
 class StateActionRuntimeFacade:
@@ -190,7 +207,7 @@ class StateActionOrchestrator:
             duration_seconds = parse_float_or_none(raw_duration)
             if duration_seconds is not None and duration_seconds < 0:
                 duration_seconds = 0.0
-            no_color = bool(route.flags.get("logs_no_color")) or self._runtime_is_truthy(rt.env.get("NO_COLOR"))
+            no_color = bool(route.flags.get("logs_no_color")) or self._human_output_no_color(route)
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -199,7 +216,7 @@ class StateActionOrchestrator:
                             tail=max(tail, 0),
                             follow=follow,
                             duration_seconds=duration_seconds,
-                            no_color=no_color,
+                            no_color=True,
                         ),
                         indent=2,
                         sort_keys=True,
@@ -358,6 +375,11 @@ class StateActionOrchestrator:
                 for svc in current_state.services.values()
                 if (svc.status or "").lower() not in {"running", "healthy"}
             ]
+            log_issue_limit = max(
+                parse_int(str(route.flags.get("logs_tail", _DEFAULT_LOG_ISSUE_LIMIT)), _DEFAULT_LOG_ISSUE_LIMIT),
+                0,
+            )
+            log_issues = self._service_log_issues(current_state, max_matches=log_issue_limit)
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -366,25 +388,39 @@ class StateActionOrchestrator:
                             failed_services=failed,
                             requirement_issues=requirement_issues,
                             recent_failures=recent_failures,
+                            log_issues=log_issues,
                             selected_services=selected_services,
                         ),
                         indent=2,
                         sort_keys=True,
                     )
                 )
-                return 0 if not failed and not requirement_issues and not recent_failures else 1
-            if not failed and not requirement_issues and not recent_failures:
+                return 0 if not failed and not requirement_issues and not recent_failures and not log_issues else 1
+            if not failed and not requirement_issues and not recent_failures and not log_issues:
                 print("No known service errors.")
                 return 0
+            no_color = self._human_output_no_color(route)
             for service in failed:
-                print(f"{service.name}: status={service.status}")
+                self._print_highlighted_line(f"{service.name}: status={service.status}", no_color=no_color)
             for issue in requirement_issues:
                 if issue["port"] is not None:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}",
+                        no_color=no_color,
+                    )
                 else:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']}",
+                        no_color=no_color,
+                    )
+            for log_issue in log_issues:
+                log_path = str(log_issue.get("log_path") or "")
+                suffix = f" ({log_path})" if log_path else ""
+                self._print_highlighted_line(f"{log_issue['service']}: log issues{suffix}", no_color=no_color)
+                for line in log_issue.get("lines", []):
+                    self._print_highlighted_line(f"  {line}", no_color=no_color)
             for failure in recent_failures:
-                print(failure)
+                self._print_highlighted_line(failure, no_color=no_color)
             return 1
 
         return rt.unsupported_command(command)
@@ -423,6 +459,7 @@ class StateActionOrchestrator:
         failed_services: Sequence[ServiceRecord],
         requirement_issues: list[dict[str, object]],
         recent_failures: list[str],
+        log_issues: list[dict[str, object]],
         selected_services: set[str] | None,
     ) -> dict[str, object]:
         return {
@@ -432,7 +469,8 @@ class StateActionOrchestrator:
             "failed_services": self._parallel_service_map(list(failed_services), self._failed_service_payload),
             "requirement_issues": requirement_issues,
             "recent_failures": list(recent_failures),
-            "ok": not failed_services and not requirement_issues and not recent_failures,
+            "log_issues": log_issues,
+            "ok": not failed_services and not requirement_issues and not recent_failures and not log_issues,
         }
 
     def _logs_payload(
@@ -483,6 +521,51 @@ class StateActionOrchestrator:
             "services": snapshots,
             "ok": failed == 0,
         }
+
+    def _service_log_issues(self, state: RunState, *, max_matches: int) -> list[dict[str, object]]:
+        if max_matches <= 0:
+            return []
+        snapshots = self._parallel_service_map(
+            list(state.services.values()),
+            lambda service: self._service_log_issue_snapshot(service, max_matches=max_matches),
+        )
+        return [snapshot for snapshot in snapshots if snapshot.get("lines")]
+
+    def _service_log_issue_snapshot(self, service: ServiceRecord, *, max_matches: int) -> dict[str, object]:
+        log_path_raw = str(service.log_path or "").strip()
+        payload: dict[str, object] = {
+            "service": service.name,
+            "status": service.status or "unknown",
+            "log_path": log_path_raw or None,
+            "lines": [],
+        }
+        if not log_path_raw:
+            return payload
+        log_path = Path(log_path_raw)
+        if not log_path.is_file():
+            return payload
+        lines = self._read_recent_log_lines(log_path, max_bytes=_LOG_ISSUE_SCAN_MAX_BYTES)
+        matches = [line for line in lines if self._log_line_has_issue(line)]
+        payload["lines"] = matches[-max_matches:]
+        return payload
+
+    @staticmethod
+    def _read_recent_log_lines(log_path: Path, *, max_bytes: int) -> list[str]:
+        try:
+            size = log_path.stat().st_size
+            with log_path.open("rb") as handle:
+                if size > max_bytes:
+                    handle.seek(size - max_bytes)
+                    handle.readline()
+                data = handle.read(max_bytes)
+        except OSError:
+            return []
+        return data.decode("utf-8", errors="replace").splitlines()
+
+    @staticmethod
+    def _log_line_has_issue(line: str) -> bool:
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+        return _LOG_ISSUE_RE.search(plain) is not None
 
     def _log_snapshot(self, service: object, *, tail: int, no_color: bool) -> dict[str, object]:
         log_path_raw = str(getattr(service, "log_path", "") or "").strip()
@@ -536,6 +619,18 @@ class StateActionOrchestrator:
 
     def _runtime_is_truthy(self, value: object) -> bool:
         return self.runtime.is_truthy(value)
+
+    def _human_output_no_color(self, route: Route) -> bool:
+        if self._runtime_is_truthy(self.runtime.env.get("NO_COLOR")):
+            return True
+        return not colors_enabled(
+            self.runtime.env,
+            stream=sys.stdout,
+            interactive_tty=bool(route.flags.get("interactive_command")),
+        )
+
+    def _print_highlighted_line(self, line: str, *, no_color: bool) -> None:
+        print(self.runtime.normalize_log_line(line, no_color=no_color))
 
     def _interactive_log_selection(
         self,

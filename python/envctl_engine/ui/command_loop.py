@@ -86,7 +86,7 @@ def run_dashboard_command_loop(
                 print("")
                 rt._print_dashboard_snapshot(current_state)
                 print(f"{magenta}Commands:{reset} (q)uit")
-                lifecycle_commands = [("(s)top", "stop"), ("(r)estart", "restart")]
+                lifecycle_commands = [("(s)top services/deps", "stop"), ("(r)estart services", "restart")]
                 visible_lifecycle = [label for label, command in lifecycle_commands if command not in hidden_commands]
                 if visible_lifecycle:
                     print(f"  {magenta}Lifecycle:{reset} " + " | ".join(visible_lifecycle))
@@ -101,10 +101,9 @@ def run_dashboard_command_loop(
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
                 session_commands = [
-                    ("(k)ill", "kill-session"),
-                    ("(s)essions", "sessions"),
+                    ("(k)ill AI sessions", "kill-session"),
                 ]
-                print(f"  {magenta}Sessions:{reset} " + " | ".join(l for l, _ in session_commands))
+                print(f"  {magenta}AI Sessions:{reset} " + " | ".join(label for label, _ in session_commands))
                 inspect_commands = [
                     ("(l)ogs", "logs"),
                     ("(x) clear-logs", "clear-logs"),

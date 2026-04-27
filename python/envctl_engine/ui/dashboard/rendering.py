@@ -40,6 +40,11 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         metadata_roots = state.metadata.get("project_roots")
         if isinstance(metadata_roots, dict):
             projection = {str(project).strip(): {} for project in metadata_roots if str(project).strip()}
+    stopped_services = _dashboard_stopped_services_by_project(state)
+    if stopped_services:
+        projection = dict(projection)
+        for project in stopped_services:
+            projection.setdefault(project, {})
     terminal_width, _ = self._terminal_size()
     project_name_budget = max(20, terminal_width - 4)
     palette = self._dashboard_palette()
@@ -55,10 +60,11 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     dim = palette["dim"]
     separator = "=" * 56
     runs_disabled_dashboard = _dashboard_runs_disabled(state)
+    stopped_service_count = _dashboard_visible_stopped_service_count(state, stopped_services=stopped_services)
     service_statuses = [
         str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()
     ]
-    total_services = len(service_statuses)
+    total_services = len(service_statuses) + stopped_service_count
     running_services = sum(1 for status in service_statuses if status in {"running", "healthy"})
     issue_services = sum(1 for status in service_statuses if status in {"stale", "unreachable"})
     starting_services = sum(1 for status in service_statuses if status in {"starting", "unknown"})
@@ -90,10 +96,17 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         )
     else:
         print(f"{bold}{cyan}Running Services:{reset}")
-        print(
-            f"{dim}services: {total_services} total | {running_services} running | "
-            f"{starting_services} starting/unknown | {issue_services} issues{reset}"
-        )
+        if stopped_service_count:
+            print(
+                f"{dim}services: {total_services} total | {running_services} running | "
+                f"{stopped_service_count} not running | {starting_services} starting/unknown | "
+                f"{issue_services} issues{reset}"
+            )
+        else:
+            print(
+                f"{dim}services: {total_services} total | {running_services} running | "
+                f"{starting_services} starting/unknown | {issue_services} issues{reset}"
+            )
     print(f"{cyan}{separator}{reset}")
     project_colors = [blue, magenta, cyan, green, yellow]
     for project_index, project in enumerate(ordered_projects):
@@ -104,6 +117,9 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         frontend_url = item.get("frontend_url")
         backend_service = state.services.get(f"{project} Backend")
         frontend_service = state.services.get(f"{project} Frontend")
+        stopped_for_project = stopped_services.get(project, {})
+        backend_stopped = backend_service is None and "backend" in stopped_for_project
+        frontend_stopped = frontend_service is None and "frontend" in stopped_for_project
         project_display = self._truncate_text(project, project_name_budget)
         project_color = project_colors[project_index % len(project_colors)]
         project_pr = project_prs.get(project)
@@ -116,11 +132,13 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             )
         else:
             print(f"  {bold}{project_color}{project_display}{reset}")
-        if state.services or "backend" in configured_service_types:
+        show_configured_backend = runs_disabled_dashboard and "backend" in configured_service_types
+        if backend_service is not None or backend_stopped or show_configured_backend:
             self._print_dashboard_service_row(
                 label="Backend",
                 service=backend_service,
                 url=str(backend_url) if backend_url else None,
+                stopped_not_running=backend_stopped,
                 configured_not_running=bool(
                     runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types
                 ),
@@ -131,11 +149,13 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 dim=dim,
                 reset=reset,
             )
-        if state.services or "frontend" in configured_service_types:
+        show_configured_frontend = runs_disabled_dashboard and "frontend" in configured_service_types
+        if frontend_service is not None or frontend_stopped or show_configured_frontend:
             self._print_dashboard_service_row(
                 label="Frontend",
                 service=frontend_service,
                 url=str(frontend_url) if frontend_url else None,
+                stopped_not_running=frontend_stopped,
                 configured_not_running=bool(
                     runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types
                 ),
@@ -146,6 +166,15 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 dim=dim,
                 reset=reset,
             )
+        _print_dashboard_ai_session_row(
+            self,
+            state=state,
+            project=project,
+            gray=gray,
+            dim=dim,
+            reset=reset,
+            render_launch_fallback=runs_disabled_dashboard,
+        )
         _print_dashboard_dependency_rows(
             self,
             state=state,
@@ -164,14 +193,6 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             dim=dim,
             reset=reset,
         )
-        if runs_disabled_dashboard:
-            _print_dashboard_ai_session_row(
-                state=state,
-                project=project,
-                gray=gray,
-                dim=dim,
-                reset=reset,
-            )
         print("")
 
 
@@ -182,6 +203,7 @@ def _print_dashboard_service_row(
     service: object | None,
     url: str | None,
     configured_not_running: bool,
+    stopped_not_running: bool,
     ok_color: str,
     warn_color: str,
     bad_color: str,
@@ -192,6 +214,10 @@ def _print_dashboard_service_row(
     if configured_not_running:
         label_text = f"{label_color}{label}{reset}"
         print(f"    {dim}○{reset} {label_text}: {dim}not running{reset} {dim}[Configured]{reset}")
+        return
+    if stopped_not_running:
+        label_text = f"{label_color}{label}{reset}"
+        print(f"    {dim}○{reset} {label_text}: {dim}not running{reset} {dim}[Stopped]{reset}")
         return
     status = str(getattr(service, "status", "unknown") or "unknown")
     icon, color, status_label = self._dashboard_status_badge(
@@ -426,6 +452,37 @@ def _dashboard_configured_service_total(*, projection: Mapping[str, object], con
     return sum(len(configured_service_types) for _project in projection)
 
 
+def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
+    raw = state.metadata.get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return {}
+    stopped: dict[str, dict[str, str]] = {}
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        project = str(item.get("project", "") or "").strip()
+        service_type = str(item.get("type", "") or "").strip().lower()
+        name = str(item.get("name", "") or "").strip()
+        if not project or service_type not in {"backend", "frontend"}:
+            continue
+        stopped.setdefault(project, {})[service_type] = name
+    return stopped
+
+
+def _dashboard_visible_stopped_service_count(
+    state: RunState,
+    *,
+    stopped_services: Mapping[str, Mapping[str, str]],
+) -> int:
+    count = 0
+    for project, services in stopped_services.items():
+        for service_type, stopped_name in services.items():
+            service_name = stopped_name or f"{project} {service_type.title()}"
+            if service_name not in state.services:
+                count += 1
+    return count
+
+
 def _dashboard_runs_disabled(state: RunState) -> bool:
     raw = state.metadata.get("dashboard_runs_disabled")
     if isinstance(raw, bool):
@@ -613,18 +670,20 @@ def _dashboard_palette(self: Any) -> dict[str, str]:
 
 
 def _print_dashboard_ai_session_row(
+    self: Any,
     *,
     state: RunState,
     project: str,
     gray: str,
     dim: str,
     reset: str,
+    render_launch_fallback: bool,
 ) -> None:
     import subprocess  # noqa: PLC0415
     from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
     from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
 
-    project_root = _dashboard_project_root_from_state(state=state, project=project)
+    project_root = _dashboard_project_root(self, state=state, project=project)
     repo_root = _dashboard_repo_root_for_project(project_root=project_root)
     launch_command = (
         resolve_plan_agent_launch_command(project_name=project, project_root=project_root, repo_root=repo_root)
@@ -651,9 +710,9 @@ def _print_dashboard_ai_session_row(
                 session_message = "attached"
             else:
                 session_message = "detached"
-            print(
-                f"    {dim}○{reset} {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}"
-            )
+            print(f"    {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}")
+        return
+    if not render_launch_fallback:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
 
