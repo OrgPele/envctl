@@ -20,6 +20,7 @@ from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F4
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.requirements.core import dependency_definitions
 
 
 class _StateRepositoryProtocol(Protocol):
@@ -88,9 +89,10 @@ class LifecycleCleanupOrchestrator:
         if route.flags.get("runtime_scope") == "dependencies":
             return self._execute_stop_dependencies(route, state)
 
+        selected_dependencies = self._select_dependency_components_for_stop(state, route)
         selected = self._select_services_for_stop(state, route)
-        if not selected:
-            if not state.services:
+        if not selected and not selected_dependencies:
+            if not state.services and not state.requirements:
                 self.clear_runtime_state(command="stop", aggressive=False)
                 print("Stopped runtime state.")
                 return 0
@@ -98,26 +100,31 @@ class LifecycleCleanupOrchestrator:
             return 1
 
         def operation() -> int:
-            self.runtime._terminate_services_from_state(  # type: ignore[attr-defined]
-                state,
-                selected_services=selected,
-                aggressive=False,
-                verify_ownership=True,
-            )
+            if selected:
+                self.runtime._terminate_services_from_state(  # type: ignore[attr-defined]
+                    state,
+                    selected_services=selected,
+                    aggressive=False,
+                    verify_ownership=True,
+                )
 
             for service_name in list(selected):
                 state.services.pop(service_name, None)
 
-            remaining_projects = {
-                self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-                for name in state.services
-            }
-            removed_projects = [project for project in state.requirements if project not in remaining_projects]
-            for project in removed_projects:
-                self.runtime._release_requirement_ports(state.requirements[project])  # type: ignore[attr-defined]
-                state.requirements.pop(project, None)
+            if selected_dependencies:
+                self._release_selected_dependency_components(state, selected_dependencies)
 
-            if not state.services:
+            if not bool(route.flags.get("stop_preserve_requirements")):
+                remaining_projects = {
+                    self.runtime._project_name_from_service(name)  # type: ignore[attr-defined]
+                    for name in state.services
+                }
+                removed_projects = [project for project in state.requirements if project not in remaining_projects]
+                for project in removed_projects:
+                    self.runtime._release_requirement_ports(state.requirements[project])  # type: ignore[attr-defined]
+                    state.requirements.pop(project, None)
+
+            if not state.services and not state.requirements:
                 self.clear_runtime_state(command="stop", aggressive=False)
                 print("Stopped runtime state.")
                 return 0
@@ -127,11 +134,17 @@ class LifecycleCleanupOrchestrator:
                 emit=self.runtime._emit,  # type: ignore[attr-defined]
                 runtime_map_builder=build_runtime_map,
             )
-            print("Stopped selected services.")
+            if selected and selected_dependencies:
+                print("Stopped selected services and dependencies.")
+            elif selected_dependencies:
+                print("Stopped selected dependencies.")
+            else:
+                print("Stopped selected services.")
             return 0
 
-        service_label = "service" if len(selected) == 1 else "services"
-        message = f"Stopping {len(selected)} selected {service_label}..."
+        selected_count = len(selected) + sum(len(items) for items in selected_dependencies.values())
+        resource_label = "resource" if selected_count == 1 else "resources"
+        message = f"Stopping {selected_count} selected {resource_label}..."
         return self._run_spinner_operation(
             route=route,
             op_id="cleanup.stop",
@@ -183,6 +196,8 @@ class LifecycleCleanupOrchestrator:
 
         if not selected and has_selectors:
             return set()
+        if not selected and self._select_dependency_components_for_stop(state, route):
+            return set()
         if not selected:
             selection = self._interactive_stop_selection(route, state)
             if selection is not None:
@@ -228,6 +243,75 @@ class LifecycleCleanupOrchestrator:
             op_id="cleanup.stop_dependencies",
             message="Stopping dependencies...",
             operation=operation,
+        )
+
+    def _select_dependency_components_for_stop(self, state: RunState, route: Route) -> dict[str, set[str]]:
+        raw_components = route.flags.get("stop_dependency_components")
+        if not isinstance(raw_components, list):
+            return {}
+        known_definitions = {definition.id for definition in dependency_definitions()}
+        selected: dict[str, set[str]] = {}
+        project_key_by_lower = {str(project).strip().casefold(): project for project in state.requirements}
+        for raw in raw_components:
+            project_name, separator, dependency_id = str(raw).partition(":")
+            if not separator:
+                continue
+            project_key = project_key_by_lower.get(project_name.strip().casefold())
+            if project_key is None:
+                continue
+            normalized_dependency = dependency_id.strip().lower()
+            if normalized_dependency not in known_definitions:
+                continue
+            component = state.requirements[project_key].component(normalized_dependency)
+            if not bool(component.get("enabled", False)):
+                continue
+            selected.setdefault(project_key, set()).add(normalized_dependency)
+        return selected
+
+    def _release_selected_dependency_components(
+        self,
+        state: RunState,
+        selected_dependencies: dict[str, set[str]],
+    ) -> None:
+        for project_name, dependency_ids in selected_dependencies.items():
+            requirements = state.requirements.get(project_name)
+            if requirements is None:
+                continue
+            for dependency_id in dependency_ids:
+                component = requirements.component(dependency_id)
+                if not bool(component.get("enabled", False)):
+                    continue
+                self._release_requirement_component_ports(component)
+                requirements.components[dependency_id] = {}
+            if not self._requirements_have_enabled_components(requirements):
+                state.requirements.pop(project_name, None)
+
+    def _release_requirement_component_ports(self, component: Mapping[str, object]) -> None:
+        ports: set[int] = set()
+        final = component.get("final")
+        if isinstance(final, int) and final > 0:
+            ports.add(final)
+        resources = component.get("resources")
+        if isinstance(resources, Mapping):
+            for value in resources.values():
+                if isinstance(value, int) and value > 0:
+                    ports.add(value)
+        port_planner = getattr(self.runtime, "port_planner", None)
+        release = getattr(port_planner, "release", None)
+        if not callable(release):
+            return
+        for port in sorted(ports):
+            release(port)
+
+    @staticmethod
+    def _requirements_have_enabled_components(requirements: object) -> bool:
+        components = getattr(requirements, "components", {})
+        if not isinstance(components, Mapping):
+            return False
+        return any(
+            bool(component.get("enabled", False))
+            for component in components.values()
+            if isinstance(component, Mapping)
         )
 
     def _release_requirement_ports(self, requirements: object) -> None:

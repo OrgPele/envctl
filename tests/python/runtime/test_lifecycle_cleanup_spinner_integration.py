@@ -212,6 +212,90 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(state.requirements, {})
         self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
 
+    def test_stop_selected_dependency_component_preserves_services_and_other_dependencies(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    db={"enabled": True, "final": 5432},
+                    redis={"enabled": True, "final": 6379},
+                ),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "stop_dependency_components": ["Main:redis"],
+                "stop_preserve_requirements": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [])
+        self.assertEqual(released, [6379])
+        self.assertIn("Main Backend", state.services)
+        self.assertIn("Main", state.requirements)
+        self.assertFalse(state.requirements["Main"].redis.get("enabled", False))
+        self.assertTrue(state.requirements["Main"].db.get("enabled", False))
+        self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
+
+    def test_stop_selected_services_can_leave_dependencies_running(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "services": ["Main Backend"],
+                "stop_preserve_requirements": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [{"Main Backend"}])
+        self.assertEqual(released, [])
+        self.assertEqual(state.services, {})
+        self.assertIn("Main", state.requirements)
+        self.assertEqual(runtime.state_repository.saved_states[0].requirements.keys(), {"Main"})
+
     def test_stop_selection_routes_through_runtime_backend_selector(self) -> None:
         runtime = _RuntimeStub()
         runtime._try_load_existing_state = lambda *args, **kwargs: RunState(  # type: ignore[method-assign]

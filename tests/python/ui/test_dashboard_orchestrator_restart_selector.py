@@ -205,23 +205,80 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:dependency:Main:postgres"]
+
         out = StringIO()
-        with redirect_stdout(out):
+        with redirect_stdout(out), patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_stop_selector,
+        ):
             should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertIs(next_state, state)
-        self.assertEqual(len(runtime.selection_calls), 1)
-        self.assertEqual(runtime.selection_calls[0]["prompt"], "Choose what to stop")
-        self.assertIn("Backend services", runtime.selection_calls[0]["projects"])
-        self.assertIn("Frontend services", runtime.selection_calls[0]["projects"])
-        self.assertIn("Dependencies only", runtime.selection_calls[0]["projects"])
-        self.assertIn("Entire system (apps + dependencies)", runtime.selection_calls[0]["projects"])
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(len(selector_calls), 1)
+        self.assertIn("a selects all", selector_calls[0]["prompt"])
+        self.assertTrue(selector_calls[0]["multi"])
+        self.assertEqual(selector_calls[0]["exclusive_token"], "__STOP__:custom")
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("All resources — apps + dependencies", labels)
+        self.assertIn("Backend service — Main", labels)
+        self.assertIn("Frontend service — Main", labels)
+        self.assertIn("postgres dependency", labels)
+        sections = [item.section for item in selector_calls[0]["options"]]
+        self.assertIn("Resources", sections)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.command, "stop")
-        self.assertEqual(runtime.last_dispatched_route.flags.get("runtime_scope"), "dependencies")
+        self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Main:postgres"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
         self.assertNotIn("attach:", out.getvalue())
+
+    def test_interactive_stop_groups_resources_by_worktree_when_multiple_projects_exist(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+                "Feature Frontend": ServiceRecord(name="Feature Frontend", type="frontend", cwd=".", pid=101),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+                "Feature": RequirementsResult(project="Feature", redis={"enabled": True, "final": 6379}),
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:worktree:Feature"]
+
+        with patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", side_effect=fake_stop_selector):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(len(selector_calls), 1)
+        options = selector_calls[0]["options"]
+        labels = [item.label for item in options]
+        sections = [item.section for item in options]
+        self.assertIn("▸ Main", sections)
+        self.assertIn("▸ Feature", sections)
+        self.assertIn("▸ Feature — entire worktree (apps + dependencies)", labels)
+        self.assertIn("  ↳ Frontend service — Feature Frontend", labels)
+        self.assertIn("  ↳ redis dependency", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Feature Frontend"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Feature:redis"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
 
     def test_interactive_sessions_word_lists_ai_sessions(self) -> None:
         runtime = _RuntimeStub()

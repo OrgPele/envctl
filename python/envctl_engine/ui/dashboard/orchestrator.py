@@ -46,6 +46,7 @@ from envctl_engine.ui.selection_support import SimpleProject
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
+from envctl_engine.requirements.core import dependency_definitions
 
 
 DirtyPrDecision = Literal["commit", "skip", "cancel"]
@@ -498,39 +499,29 @@ class DashboardOrchestrator:
         if self._stop_route_has_explicit_scope(route, runtime_any):
             return route
 
-        options = self._stop_scope_options(state)
-        if not options:
+        items = self._stop_resource_items(state, runtime_any)
+        if not items:
             return route
 
-        selection = runtime_any._select_project_targets(
-            prompt="Choose what to stop",
-            projects=[SimpleProject(name=label) for label, _scope in options],
-            allow_all=False,
-            allow_untested=False,
-            multi=False,
+        values = _run_selector_with_impl(
+            prompt="Choose services/dependencies to stop (Space toggles, a selects all visible; Enter stops selected)",
+            options=items,
+            multi=True,
+            exclusive_token="__STOP__:custom",
+            emit=getattr(runtime_any, "_emit", None),
         )
-        if selection.cancelled:
+        if values is None:
             print("No stop scope selected.")
             return None
-        selected_label = next((str(name).strip() for name in selection.project_names if str(name).strip()), "")
-        if not selected_label:
+        values = [str(value).strip() for value in values if str(value).strip()]
+        if not values:
             print("No stop scope selected.")
             return None
-        scope_by_label = {label.casefold(): scope for label, scope in options}
-        scope = scope_by_label.get(selected_label.casefold())
-        if scope is None:
-            print("No stop scope selected.")
-            return None
-        if scope == "custom":
+
+        if "__STOP__:custom" in values:
             return route
-        route.flags = {
-            **{
-                key: value
-                for key, value in route.flags.items()
-                if key not in {"runtime_scope", "backend", "frontend"}
-            },
-            "runtime_scope": scope,
-        }
+
+        self._apply_stop_resource_tokens(route, state, runtime_any, values)
         return route
 
     @staticmethod
@@ -539,34 +530,221 @@ class DashboardOrchestrator:
             return True
         return route_has_explicit_target(route, runtime)
 
-    @staticmethod
-    def _stop_scope_options(state: RunState) -> list[tuple[str, str]]:
-        service_types: set[str] = set()
-        for service_name, service in state.services.items():
-            service_type = str(getattr(service, "type", "") or "").strip().lower()
-            lowered_name = str(service_name).strip().lower()
-            if service_type in {"backend", "frontend"}:
-                service_types.add(service_type)
-            elif lowered_name.endswith(" backend"):
-                service_types.add("backend")
-            elif lowered_name.endswith(" frontend"):
-                service_types.add("frontend")
+    def _stop_resource_items(self, state: RunState, runtime: Any) -> list[SelectorItem]:
+        project_order = self._stop_project_order(state, runtime)
+        many_projects = len(project_order) > 1
+        service_lookup = self._stop_services_by_project(state, runtime)
+        dependency_lookup = self._stop_dependencies_by_project(state)
+        items: list[SelectorItem] = []
 
-        options: list[tuple[str, str]] = []
-        if "backend" in service_types:
-            options.append(("Backend services", "backend"))
-        if "frontend" in service_types:
-            options.append(("Frontend services", "frontend"))
-        if {"backend", "frontend"}.issubset(service_types):
-            options.append(("Backend + frontend services (fullstack)", "fullstack"))
-        elif state.services:
-            options.append(("All app services", "fullstack"))
-        if state.requirements:
-            options.append(("Dependencies only", "dependencies"))
-        if state.services and state.requirements:
-            options.append(("Entire system (apps + dependencies)", "entire-system"))
-        options.append(("Custom services/projects...", "custom"))
-        return options
+        for project_name in project_order:
+            services = service_lookup.get(project_name, [])
+            dependencies = dependency_lookup.get(project_name, [])
+            if not services and not dependencies:
+                continue
+            section = f"▸ {project_name}" if many_projects else "Resources"
+            scope = [
+                *(f"service:{service_name}" for service_name, _service_type in services),
+                *(f"dependency:{project_name}:{dependency_id}" for dependency_id, _label in dependencies),
+            ]
+            if many_projects:
+                items.append(
+                    SelectorItem(
+                        id=f"stop:worktree:{project_name}",
+                        label=f"▸ {project_name} — entire worktree (apps + dependencies)",
+                        kind="worktree",
+                        token=f"__STOP__:worktree:{project_name}",
+                        scope_signature=tuple(sorted(scope)) or (f"project:{project_name}",),
+                        section=section,
+                    )
+                )
+            elif len(scope) > 1:
+                items.append(
+                    SelectorItem(
+                        id=f"stop:worktree:{project_name}",
+                        label="All resources — apps + dependencies",
+                        kind="worktree",
+                        token=f"__STOP__:worktree:{project_name}",
+                        scope_signature=tuple(sorted(scope)) or (f"project:{project_name}",),
+                        section=section,
+                    )
+                )
+
+            for service_name, service_type in services:
+                label_prefix = "  ↳ " if many_projects else ""
+                readable = "Backend service" if service_type == "backend" else "Frontend service"
+                detail = service_name if many_projects else self._stop_service_detail(service_name, service_type)
+                label = f"{label_prefix}{readable}"
+                if detail:
+                    label = f"{label} — {detail}"
+                items.append(
+                    SelectorItem(
+                        id=f"stop:service:{service_name}",
+                        label=label,
+                        kind="service",
+                        token=f"__STOP__:service:{service_name}",
+                        scope_signature=(f"service:{service_name}",),
+                        section=section,
+                    )
+                )
+
+            for dependency_id, dependency_label in dependencies:
+                label_prefix = "  ↳ " if many_projects else ""
+                items.append(
+                    SelectorItem(
+                        id=f"stop:dependency:{project_name}:{dependency_id}",
+                        label=f"{label_prefix}{dependency_label} dependency",
+                        kind="dependency",
+                        token=f"__STOP__:dependency:{project_name}:{dependency_id}",
+                        scope_signature=(f"dependency:{project_name}:{dependency_id}",),
+                        section=section,
+                    )
+                )
+
+        if items:
+            items.append(
+                SelectorItem(
+                    id="stop:custom",
+                    label="Custom services/projects...",
+                    kind="custom",
+                    token="__STOP__:custom",
+                    scope_signature=("custom",),
+                    section="Advanced",
+                )
+            )
+        return items
+
+    def _apply_stop_resource_tokens(self, route: Route, state: RunState, runtime: Any, values: list[str]) -> None:
+        service_lookup = self._stop_services_by_project(state, runtime)
+        dependency_lookup = self._stop_dependencies_by_project(state)
+        selected_services: set[str] = set()
+        selected_dependencies: set[tuple[str, str]] = set()
+
+        for token in values:
+            if token.startswith("__STOP__:worktree:"):
+                project_name = token.removeprefix("__STOP__:worktree:")
+                for service_name, _service_type in service_lookup.get(project_name, []):
+                    selected_services.add(service_name)
+                for dependency_id, _label in dependency_lookup.get(project_name, []):
+                    selected_dependencies.add((project_name, dependency_id))
+                continue
+            if token.startswith("__STOP__:service:"):
+                service_name = token.removeprefix("__STOP__:service:")
+                if service_name in state.services:
+                    selected_services.add(service_name)
+                continue
+            if token.startswith("__STOP__:dependency:"):
+                _, _, project_name, dependency_id = token.split(":", 3)
+                if any(dependency_id == existing_id for existing_id, _label in dependency_lookup.get(project_name, [])):
+                    selected_dependencies.add((project_name, dependency_id))
+
+        all_services = set(state.services)
+        all_dependencies = {
+            (project_name, dependency_id)
+            for project_name, dependencies in dependency_lookup.items()
+            for dependency_id, _label in dependencies
+        }
+
+        flags = {
+            key: value
+            for key, value in route.flags.items()
+            if key
+            not in {
+                "runtime_scope",
+                "backend",
+                "frontend",
+                "services",
+                "stop_dependency_components",
+                "stop_preserve_requirements",
+            }
+        }
+        if (
+            selected_services
+            and selected_services == all_services
+            and selected_dependencies == all_dependencies
+            and all_dependencies
+        ):
+            flags["runtime_scope"] = "entire-system"
+        else:
+            if selected_services:
+                flags["services"] = sorted(selected_services)
+                flags["stop_preserve_requirements"] = True
+            if selected_dependencies:
+                flags["stop_dependency_components"] = [
+                    f"{project_name}:{dependency_id}"
+                    for project_name, dependency_id in sorted(selected_dependencies)
+                ]
+                flags["stop_preserve_requirements"] = True
+        route.flags = flags
+
+    def _stop_project_order(self, state: RunState, runtime: Any) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for project in self._project_names_from_state(state, runtime):
+            name = str(getattr(project, "name", "")).strip()
+            if name and name.casefold() not in seen:
+                seen.add(name.casefold())
+                names.append(name)
+        for project_name in state.requirements:
+            name = str(project_name).strip()
+            if name and name.casefold() not in seen:
+                seen.add(name.casefold())
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _stop_services_by_project(state: RunState, runtime: Any) -> dict[str, list[tuple[str, str]]]:
+        services_by_project: dict[str, list[tuple[str, str]]] = {}
+        for service_name, service in state.services.items():
+            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+            if not project_name:
+                project_name = str(project_name_from_service_name(str(service_name))).strip()
+            if not project_name:
+                project_name = "Services"
+            service_type = DashboardOrchestrator._stop_service_type(service_name, service)
+            if not service_type:
+                continue
+            services_by_project.setdefault(project_name, []).append((service_name, service_type))
+        for services in services_by_project.values():
+            services.sort(key=lambda item: (0 if item[1] == "backend" else 1, item[0].casefold()))
+        return services_by_project
+
+    @staticmethod
+    def _stop_dependencies_by_project(state: RunState) -> dict[str, list[tuple[str, str]]]:
+        labels = {definition.id: definition.display_name for definition in dependency_definitions()}
+        dependencies_by_project: dict[str, list[tuple[str, str]]] = {}
+        for project_name, requirements in state.requirements.items():
+            project = str(project_name).strip()
+            if not project:
+                continue
+            for definition in dependency_definitions():
+                component = requirements.component(definition.id)
+                if not bool(component.get("enabled", False)):
+                    continue
+                dependencies_by_project.setdefault(project, []).append(
+                    (definition.id, labels.get(definition.id, definition.display_name))
+                )
+        return dependencies_by_project
+
+    @staticmethod
+    def _stop_service_type(service_name: str, service: object) -> str:
+        service_type = str(getattr(service, "type", "") or "").strip().lower()
+        if service_type in {"backend", "frontend"}:
+            return service_type
+        lowered_name = str(service_name).strip().lower()
+        if lowered_name.endswith(" backend"):
+            return "backend"
+        if lowered_name.endswith(" frontend"):
+            return "frontend"
+        return ""
+
+    @staticmethod
+    def _stop_service_detail(service_name: str, service_type: str) -> str:
+        trimmed = str(service_name).strip()
+        suffix = f" {service_type.title()}"
+        if trimmed.endswith(suffix):
+            return trimmed[: -len(suffix)].strip()
+        return trimmed
 
     def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
