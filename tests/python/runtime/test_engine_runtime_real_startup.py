@@ -3847,6 +3847,74 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
 
+    def test_explicit_main_start_auto_resumes_matching_main_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        "Main Backend": ServiceRecord(
+                            name="Main Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        ),
+                        "Main Frontend": ServiceRecord(
+                            name="Main Frontend",
+                            type="frontend",
+                            cwd=str(context.root / "frontend"),
+                            pid=1235,
+                            requested_port=context.ports["frontend"].requested,
+                            actual_port=context.ports["frontend"].final,
+                            status="running",
+                        ),
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(
+                first_engine,
+                "_start_project_context",
+                side_effect=lambda **kwargs: fake_result(kwargs["context"]),
+            ) as first_start_mock:
+                first_code = first_engine.dispatch(parse_route(["--main", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            self.assertEqual(first_start_mock.call_count, 1)
+            first_state = first_engine.state_repository.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with (
+                patch.object(second_engine, "_resume", return_value=0) as resume_mock,
+                patch.object(
+                    second_engine,
+                    "_start_project_context",
+                    side_effect=AssertionError("fresh start not expected"),
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                second_code = second_engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            self.assertEqual(resume_mock.call_count, 1)
+            second_state = second_engine.state_repository.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
+
     def test_plan_snapshot_emits_real_path_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
