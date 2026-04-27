@@ -1028,6 +1028,77 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 )
             )
 
+    def test_main_backend_launch_env_templates_enable_dynamic_database_and_redis_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_FRONTEND_ENABLE=false",
+                        "DB_PORT=5544",
+                        "REDIS_PORT=6399",
+                        "ENVCTL_BACKEND_START_CMD=python -c 'import time; time.sleep(1)'",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                        "N8N_URL=${ENVCTL_SOURCE_N8N_URL}",
+                        "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            python_bin = sys.executable
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_REQUIREMENT_POSTGRES_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_REDIS_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_N8N_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_SUPABASE_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    }
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            requirement_events = [
+                event
+                for event in engine.events
+                if event.get("event") == "requirements.start" and event.get("project") == "Main"
+            ]
+            self.assertCountEqual([event.get("service") for event in requirement_events], ["postgres", "redis"])
+            backend_start_env = fake_runner.start_background_envs[-1]
+            self.assertIsNotNone(backend_start_env)
+            assert backend_start_env is not None
+            self.assertEqual(
+                backend_start_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+            )
+            self.assertEqual(backend_start_env.get("REDIS_URL"), "redis://localhost:6399/0")
+            self.assertNotIn("N8N_URL", backend_start_env)
+            self.assertNotIn("SUPABASE_URL", backend_start_env)
+
     def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

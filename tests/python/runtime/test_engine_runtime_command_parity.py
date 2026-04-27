@@ -1079,6 +1079,39 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
 
+    def test_show_config_json_reports_launch_env_inferred_dynamic_dependencies(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / ".envctl").write_text(
+            "\n".join(
+                [
+                    "# >>> envctl managed startup config >>>",
+                    "ENVCTL_DEFAULT_MODE=main",
+                    "# <<< envctl managed startup config <<<",
+                    "",
+                    "# >>> envctl backend launch env >>>",
+                    "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                    "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                    "# <<< envctl backend launch env <<<",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+
+        self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["postgres"])
+        self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["redis"])
+
     def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

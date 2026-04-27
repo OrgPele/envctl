@@ -227,6 +227,72 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.n8n_main_enable)
             self.assertFalse(config.n8n_enable)
 
+    def test_load_config_infers_core_dynamic_dependencies_from_backend_launch_env_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "ENVCTL_BACKEND_START_CMD=python -m uvicorn app.main:app --port {port}",
+                        "MAIN_FRONTEND_ENABLE=false",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                        "N8N_URL=${ENVCTL_SOURCE_N8N_URL}",
+                        "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertTrue(config.main_profile.postgres_enable)
+            self.assertTrue(config.main_profile.redis_enable)
+            self.assertFalse(config.main_profile.n8n_enable)
+            self.assertFalse(config.main_profile.supabase_enable)
+            self.assertTrue(config.trees_profile.postgres_enable)
+            self.assertTrue(config.trees_profile.redis_enable)
+            self.assertFalse(config.trees_profile.n8n_enable)
+            self.assertFalse(config.trees_profile.supabase_enable)
+
+    def test_load_config_does_not_infer_dynamic_dependencies_when_toggles_are_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_POSTGRES_ENABLE=false",
+                        "MAIN_REDIS_ENABLE=false",
+                        "TREES_POSTGRES_ENABLE=false",
+                        "TREES_REDIS_ENABLE=false",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertFalse(config.main_profile.postgres_enable)
+            self.assertFalse(config.main_profile.redis_enable)
+            self.assertFalse(config.trees_profile.postgres_enable)
+            self.assertFalse(config.trees_profile.redis_enable)
+
 
 if __name__ == "__main__":
     unittest.main()

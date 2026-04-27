@@ -459,6 +459,18 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     if "N8N_ENABLE" in explicit_values and not parse_bool(explicit_values.get("N8N_ENABLE"), True):
         main_profile.n8n_enable = False
         trees_profile.n8n_enable = False
+    _apply_dependency_env_template_inferences(
+        main_profile,
+        mode="main",
+        explicit_values=explicit_values,
+        local_state=local_state,
+    )
+    _apply_dependency_env_template_inferences(
+        trees_profile,
+        mode="trees",
+        explicit_values=explicit_values,
+        local_state=local_state,
+    )
 
     redis_enabled_any = main_profile.redis_enable or trees_profile.redis_enable
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
@@ -540,6 +552,88 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_dependency_env_section_present=local_state.frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=local_state.frontend_dependency_env_template_errors,
     )
+
+
+_POSTGRES_TEMPLATE_SOURCE_TOKENS = (
+    "${ENVCTL_SOURCE_DATABASE_URL}",
+    "${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}",
+    "${ENVCTL_SOURCE_ASYNC_DATABASE_URL}",
+    "${ENVCTL_SOURCE_DB_HOST}",
+    "${ENVCTL_SOURCE_DB_PORT}",
+    "${ENVCTL_SOURCE_DB_USER}",
+    "${ENVCTL_SOURCE_DB_PASSWORD}",
+    "${ENVCTL_SOURCE_DB_NAME}",
+)
+_REDIS_TEMPLATE_SOURCE_TOKENS = (
+    "${ENVCTL_SOURCE_REDIS_URL}",
+    "${ENVCTL_SOURCE_REDIS_PORT}",
+)
+
+
+def _apply_dependency_env_template_inferences(
+    profile: StartupProfile,
+    *,
+    mode: Literal["main", "trees"],
+    explicit_values: Mapping[str, str],
+    local_state: LocalConfigState,
+) -> None:
+    """Enable core dynamic dependencies needed by active launch env templates.
+
+    A saved `.envctl` file can contain backend/frontend launch env templates without
+    the older managed dependency toggles. In that shape the template is an active
+    request for envctl-owned dynamic URLs, so keep PostgreSQL/Redis dynamic by
+    default while still honoring explicit dependency enable/disable keys.
+    """
+
+    if not profile.startup_enable:
+        return
+    inferred = _core_dependencies_referenced_by_launch_env_templates(
+        local_state,
+        backend_enabled=profile.backend_enable,
+        frontend_enabled=profile.frontend_enable,
+    )
+    for dependency_id in sorted(inferred):
+        if _dependency_toggle_explicit_for_mode(dependency_id, mode=mode, explicit_values=explicit_values):
+            continue
+        if dependency_id == "postgres" and profile.supabase_enable:
+            continue
+        profile.dependencies[dependency_id] = True
+
+
+def _core_dependencies_referenced_by_launch_env_templates(
+    local_state: LocalConfigState,
+    *,
+    backend_enabled: bool,
+    frontend_enabled: bool,
+) -> set[str]:
+    entries: list[DependencyEnvTemplateEntry] = []
+    if backend_enabled:
+        entries.extend(local_state.dependency_env_templates)
+        entries.extend(local_state.backend_dependency_env_templates)
+    if frontend_enabled:
+        entries.extend(local_state.dependency_env_templates)
+        entries.extend(local_state.frontend_dependency_env_templates)
+    inferred: set[str] = set()
+    for entry in entries:
+        template = entry.template
+        if any(token in template for token in _POSTGRES_TEMPLATE_SOURCE_TOKENS):
+            inferred.add("postgres")
+        if any(token in template for token in _REDIS_TEMPLATE_SOURCE_TOKENS):
+            inferred.add("redis")
+    return inferred
+
+
+def _dependency_toggle_explicit_for_mode(
+    dependency_id: str,
+    *,
+    mode: Literal["main", "trees"],
+    explicit_values: Mapping[str, str],
+) -> bool:
+    for definition in _dependency_definitions():
+        if definition.id != dependency_id:
+            continue
+        return any(key in explicit_values for key in definition.enable_keys_for_mode(mode))
+    return False
 
 
 def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
