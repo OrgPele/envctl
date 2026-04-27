@@ -192,6 +192,59 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Frontend: http://localhost:9004", output)
             self.assertNotIn("Backend: n/a [Unknown]", output)
 
+    def test_dashboard_renders_matching_ai_session_inline_for_active_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {"Main": str(repo)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "omx-supportopia-main",
+                            "windows": "sh",
+                            "paths": str(repo),
+                            "attach": "tmux attach-session -t omx-supportopia-main",
+                            "kill": "tmux kill-session -t omx-supportopia-main",
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("", ""),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Frontend: http://localhost:9004", output)
+            self.assertIn("AI session: tmux attach-session -t omx-supportopia-main (detached)", output)
+            self.assertNotIn("Run AI:", output)
+            self.assertLess(output.index("Frontend:"), output.index("AI session:"))
+
     def test_dashboard_renders_run_ai_row_when_launch_command_resolves(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

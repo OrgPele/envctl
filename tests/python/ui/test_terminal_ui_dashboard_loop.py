@@ -237,7 +237,7 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertNotIn("(l)ogs", rendered)
         self.assertNotIn("confi(g)", rendered)
 
-    def test_dashboard_loop_footer_removes_ai_shortcut_and_keeps_session_controls(self) -> None:
+    def test_dashboard_loop_footer_points_to_inline_sessions_without_list_command(self) -> None:
         state = RunState(run_id="run-footer", mode="trees")
         runtime = _RuntimeStub(state)
 
@@ -263,7 +263,8 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertNotIn("AI:", rendered)
         self.assertIn("AI Sessions:", rendered)
         self.assertIn("(k)ill AI sessions", rendered)
-        self.assertIn("type 'sessions' to list", rendered)
+        self.assertIn("shown inline", rendered)
+        self.assertNotIn("type 'sessions' to list", rendered)
         self.assertNotIn("(s)essions", rendered)
 
     def test_dashboard_loop_marks_spinner_failed_from_action_finish_event(self) -> None:

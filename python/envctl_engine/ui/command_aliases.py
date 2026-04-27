@@ -28,8 +28,6 @@ INTERACTIVE_COMMAND_ALIASES: dict[str, str] = {
     "kill": "kill-session",
     "kill-session": "kill-session",
     "kill-sessions": "kill-session",
-    "session": "sessions",
-    "sessions": "sessions",
     "dash": "dashboard",
     "g": "config",
     "d": "doctor",

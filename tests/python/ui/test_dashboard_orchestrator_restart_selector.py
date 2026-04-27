@@ -309,7 +309,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Backend", "Main Frontend"])
         self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
 
-    def test_interactive_sessions_word_lists_ai_sessions(self) -> None:
+    def test_interactive_sessions_word_points_to_inline_dashboard_rows(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(run_id="run-1", mode="main")
@@ -320,14 +320,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             redirect_stdout(out),
             patch(
                 "envctl_engine.runtime.session_management.list_tmux_sessions",
-                return_value=[
-                    {
-                        "name": "omx-main",
-                        "windows": "sh",
-                        "attach": "tmux attach-session -t omx-main",
-                        "kill": "tmux kill-session -t omx-main",
-                    }
-                ],
+                side_effect=AssertionError("sessions command should not list tmux sessions"),
             ),
         ):
             should_continue, next_state = orchestrator._run_interactive_command("sessions", state, runtime)
@@ -336,7 +329,8 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertIs(next_state, state)
         self.assertEqual(runtime.selection_calls, [])
         self.assertIsNone(runtime.last_dispatched_route)
-        self.assertIn("attach:", out.getvalue())
+        self.assertIn("shown inline", out.getvalue())
+        self.assertNotIn("attach:", out.getvalue())
 
     def test_interactive_kill_word_kills_ai_sessions_not_services(self) -> None:
         runtime = _RuntimeStub()

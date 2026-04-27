@@ -146,6 +146,15 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 dim=dim,
                 reset=reset,
             )
+        _print_dashboard_ai_session_row(
+            self,
+            state=state,
+            project=project,
+            gray=gray,
+            dim=dim,
+            reset=reset,
+            render_launch_fallback=runs_disabled_dashboard,
+        )
         _print_dashboard_dependency_rows(
             self,
             state=state,
@@ -164,14 +173,6 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             dim=dim,
             reset=reset,
         )
-        if runs_disabled_dashboard:
-            _print_dashboard_ai_session_row(
-                state=state,
-                project=project,
-                gray=gray,
-                dim=dim,
-                reset=reset,
-            )
         print("")
 
 
@@ -613,18 +614,20 @@ def _dashboard_palette(self: Any) -> dict[str, str]:
 
 
 def _print_dashboard_ai_session_row(
+    self: Any,
     *,
     state: RunState,
     project: str,
     gray: str,
     dim: str,
     reset: str,
+    render_launch_fallback: bool,
 ) -> None:
     import subprocess  # noqa: PLC0415
     from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
     from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
 
-    project_root = _dashboard_project_root_from_state(state=state, project=project)
+    project_root = _dashboard_project_root(self, state=state, project=project)
     repo_root = _dashboard_repo_root_for_project(project_root=project_root)
     launch_command = (
         resolve_plan_agent_launch_command(project_name=project, project_root=project_root, repo_root=repo_root)
@@ -654,6 +657,8 @@ def _print_dashboard_ai_session_row(
             print(
                 f"    {dim}○{reset} {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}"
             )
+        return
+    if not render_launch_fallback:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
 

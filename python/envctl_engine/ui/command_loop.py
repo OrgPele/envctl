@@ -101,8 +101,8 @@ def run_dashboard_command_loop(
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
                 session_commands = [
+                    ("shown inline per worktree", "inline-sessions"),
                     ("(k)ill AI sessions", "kill-session"),
-                    ("type 'sessions' to list/attach", "sessions"),
                 ]
                 print(f"  {magenta}AI Sessions:{reset} " + " | ".join(label for label, _ in session_commands))
                 inspect_commands = [

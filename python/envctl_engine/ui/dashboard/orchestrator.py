@@ -133,7 +133,7 @@ class DashboardOrchestrator:
         if command in {"help", "?"}:
             return True, state
         if command in {"session", "sessions"}:
-            self._dispatch_session_command(runtime_any)
+            print("AI sessions are shown inline under each worktree. Use 'k' to kill AI sessions.")
             return True, state
         if command in {"k", "kill", "kill-session", "kill-sessions"}:
             self._dispatch_kill_session(runtime_any)
@@ -1889,22 +1889,6 @@ class DashboardOrchestrator:
         return sanitize_interactive_input(raw)
 
     @staticmethod
-    def _dispatch_session_command(runtime_any: Any) -> None:
-        try:
-            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
-            sessions = list_tmux_sessions()
-            if not sessions:
-                print("No active tmux sessions.")
-                return
-            for i, s in enumerate(sessions):
-                print(f"  {i+1}. {s['name']} (windows: {s['windows']})")
-                print(f"     attach: {s['attach']}")
-                print(f"     kill:   {s['kill']}")
-            runtime_any._read_interactive_command_line("Press Enter to continue: ")
-        except Exception as exc:
-            print(f"Error listing sessions: {exc}")
-
-    @staticmethod
     def _repo_root_for_project(project_root: Path) -> Path | None:
         current = Path(project_root).expanduser().resolve(strict=False)
         for candidate in (current, *current.parents):
@@ -1952,24 +1936,6 @@ class DashboardOrchestrator:
                 print("Done.")
         except Exception as exc:
             print(f"Error: {exc}")
-
-    @staticmethod
-    def _dispatch_session_attach(runtime_any: Any) -> None:
-        try:
-            from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
-            sessions = list_tmux_sessions()
-            if not sessions:
-                print("No active tmux sessions.")
-                return
-            print(f"Found {len(sessions)} active tmux session(s):")
-            for i, s in enumerate(sessions):
-                print(f"  {i+1}. {s['name']} (windows: {s['windows']})")
-                print(f"     attach: {s['attach']}")
-                print(f"     kill:   {s['kill']}")
-            if len(sessions) == 1:
-                print(f"\nTo attach, run: {sessions[0]['attach']}")
-        except Exception as exc:
-            print(f"Error listing sessions: {exc}")
 
     @staticmethod
     def _recover_single_letter_command_from_escape_fragment(raw: str) -> str:
