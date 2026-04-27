@@ -321,6 +321,7 @@ Commit defaults:
 - `envctl commit` now reads its default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `--commit-message` or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries
+- envctl-local control artifacts (`.envctl*`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
 
 Optional plan-agent launch config for `--plan`:
 
