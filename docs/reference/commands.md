@@ -338,6 +338,8 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session
+- plan-agent launches prepare backend and frontend dependencies inside the selected worktree before the AI prompt is submitted; this is dependency prep only, not service startup or migrations
+- generic configured backend Python commands such as `ENVCTL_BACKEND_START_CMD=python -m uvicorn ...` use the prepared backend runtime when a Poetry project or backend virtualenv is available
 - `--ralph` and `--team` are OMX-only launch modifiers; using them without `--omx` fails fast
 - OMX-managed Team launches force `OMX_TEAM_WORKER_LAUNCH_ARGS=--dangerously-bypass-approvals-and-sandbox` so the worker lanes stay non-sandboxed too
 - when enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`

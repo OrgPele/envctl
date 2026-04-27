@@ -95,12 +95,22 @@ def resolve_service_start_command(
             project_root=project_root,
             config_raw=config_raw,
         )
+        python_runner_prefix = (
+            _prepared_backend_python_runner_prefix(
+                service_root=service_root,
+                project_root=project_root,
+                command_exists=exists,
+            )
+            if service_name == "backend"
+            else ()
+        )
         return CommandResolutionResult(
             command=_split_and_validate(
                 raw,
                 port=port,
                 command_exists=exists,
                 search_roots=[service_root, project_root],
+                python_runner_prefix=python_runner_prefix,
             ),
             source="configured",
         )
@@ -434,10 +444,12 @@ def _split_and_validate(
     port: int,
     command_exists: CommandExists,
     search_roots: list[Path] | None = None,
+    python_runner_prefix: tuple[str, ...] = (),
 ) -> list[str]:
     parsed = shlex.split(raw.replace("{port}", str(port)))
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
+    parsed = _normalize_configured_python_command(parsed, runner_prefix=python_runner_prefix)
     executable = parsed[0]
     if not _command_exists_for_roots(executable, command_exists=command_exists, search_roots=search_roots or []):
         raise CommandResolutionError(
@@ -471,3 +483,35 @@ def _command_exists_for_roots(
         if resolved.exists():
             return True
     return False
+
+
+def _normalize_configured_python_command(command: list[str], *, runner_prefix: tuple[str, ...]) -> list[str]:
+    if not command or not runner_prefix:
+        return command
+    executable = command[0]
+    if executable not in {"python", "python3", "python3.12"}:
+        return command
+    return [*runner_prefix, *command[1:]]
+
+
+def _prepared_backend_python_runner_prefix(
+    *,
+    service_root: Path,
+    project_root: Path,
+    command_exists: CommandExists,
+) -> tuple[str, ...]:
+    pyproject = service_root / "pyproject.toml"
+    if pyproject.is_file() and _pyproject_uses_poetry(pyproject) and command_exists("poetry"):
+        return ("poetry", "run", "python")
+    python_bin = _detect_python_bin(project_root=project_root, service_root=service_root, command_exists=command_exists)
+    if python_bin is None or "/" not in python_bin:
+        return ()
+    return (python_bin,)
+
+
+def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
+    try:
+        text = pyproject_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text

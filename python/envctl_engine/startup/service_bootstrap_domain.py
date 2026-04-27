@@ -354,6 +354,8 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
             "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
         )
         return parse_bool(raw, False)
+    if bool(route.flags.get("_dependency_bootstrap_no_migrations")):
+        return False
     if bool(route.flags.get("_resume_restore")):
         return False
     raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
@@ -550,7 +552,8 @@ def _run_frontend_bootstrap_command(
                 handle.write(f"[envctl] frontend bootstrap step failed ({step}): {error}\n")
         except OSError:
             pass
-    raise RuntimeError(f"frontend bootstrap failed for {context.name} during {step}: {error}")
+    log_hint = f" Log: {frontend_log_path}" if frontend_log_path else ""
+    raise RuntimeError(f"frontend bootstrap failed for {context.name} during {step}: {error}{log_hint}")
 
 
 def _frontend_dependency_install_required(*, frontend_cwd: Path, dev_script: str) -> tuple[bool, str]:
@@ -599,7 +602,7 @@ def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
 
 def _backend_dependency_install_required(*, backend_cwd: Path, manager: str) -> tuple[bool, str, dict[str, object]]:
     fingerprint = _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager)
-    state = {"manager": manager, "fingerprint": fingerprint}
+    state: dict[str, object] = {"manager": manager, "fingerprint": fingerprint}
     env_artifact = backend_cwd / "venv"
     alt_env_artifact = backend_cwd / ".venv"
     if not env_artifact.exists() and not alt_env_artifact.exists():
@@ -620,7 +623,7 @@ def _backend_runtime_prep_required(
     skip_local_db_env: bool,
     migrations_enabled: bool,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "dependency_fingerprint": _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager),
         "runtime_fingerprint": _backend_runtime_fingerprint(
@@ -754,7 +757,7 @@ def _frontend_runtime_prep_required(
     env: Mapping[str, str],
     dev_script: str,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "runtime_fingerprint": _frontend_runtime_fingerprint(
             frontend_cwd=frontend_cwd,
@@ -1184,7 +1187,8 @@ def _run_backend_bootstrap_command(
         except OSError:
             pass
     suggestion = _bootstrap_failure_suggestion(step, error, cwd)
-    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}\n{suggestion}")
+    log_hint = f"\nLog: {backend_log_path}" if backend_log_path else ""
+    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}{log_hint}\n{suggestion}")
 
 
 def _run_backend_migration_step(

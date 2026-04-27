@@ -7,13 +7,14 @@ import shlex
 import sys
 import threading
 import time
-from typing import cast
+from typing import Callable, cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
     attach_plan_agent_terminal,
     launch_plan_agent_terminals,
+    resolve_plan_agent_launch_config,
 )
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
@@ -25,6 +26,7 @@ from envctl_engine.startup.finalization import (
     build_planning_dashboard_state,
     build_success_run_state,
 )
+from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import LocalStartupFailure, ProjectStartupResult, StartupSession
@@ -79,6 +81,7 @@ class StartupOrchestrator:
                 self._handle_restart_prestop,
                 self._select_contexts,
                 self._resolve_plan_dry_run,
+                self._prepare_and_launch_plan_agent_worktrees,
                 self._resolve_run_reuse,
                 self._resolve_disabled_startup_mode,
             ):
@@ -317,10 +320,15 @@ class StartupOrchestrator:
             else:
                 print("No projects discovered for selected mode.")
             return 1
-        if route.command == "plan" and not bool(route.flags.get("planning_prs")) and not bool(route.flags.get("dry_run")):
+        if (
+            route.command == "plan"
+            and not bool(route.flags.get("planning_prs"))
+            and not bool(route.flags.get("dry_run"))
+        ):
             planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
             selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
             if callable(selection_getter):
+                session.plan_agent_launch_requested = True
                 selection_result = selection_getter()
                 selected_names = {context.name for context in project_contexts}
                 created_worktrees = tuple(
@@ -339,10 +347,7 @@ class StartupOrchestrator:
                             )
                         )
                     created_worktrees = tuple(recovered_worktrees)
-                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
-                session.plan_agent_launch_result = launch_result
-                session.plan_agent_attach_target = launch_result.attach_target
-                self._emit_plan_agent_launch_state(session, launch_result)
+                session.pending_plan_agent_worktrees = created_worktrees
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
@@ -353,6 +358,83 @@ class StartupOrchestrator:
             return None
         self._print_plan_dry_run_preview(session)
         return 0
+
+    def _prepare_and_launch_plan_agent_worktrees(self, session: StartupSession) -> int | None:
+        route = session.effective_route
+        if route.command != "plan" or bool(route.flags.get("planning_prs")):
+            return None
+        if not session.plan_agent_launch_requested:
+            return None
+        created_worktrees = tuple(session.pending_plan_agent_worktrees)
+        rt = self.runtime
+        launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
+        if launch_config.enabled and created_worktrees:
+            self._ensure_run_id(session)
+            context_by_name = {context.name: context for context in session.selected_contexts}
+            bootstrap_started = time.monotonic()
+            rt._emit(
+                "planning.dependency_bootstrap.start",
+                project_count=len(created_worktrees),
+                projects=[worktree.name for worktree in created_worktrees],
+                cli=launch_config.cli,
+                transport=launch_config.transport,
+            )
+            results: list[object] = []
+            try:
+                for worktree in created_worktrees:
+                    context = context_by_name.get(worktree.name)
+                    if context is None:
+                        continue
+                    self._report_progress(
+                        route,
+                        f"Preparing dependencies for {worktree.name}...",
+                        project=worktree.name,
+                    )
+                    project_started = time.monotonic()
+                    result = prepare_project_dependencies(
+                        rt,
+                        context=context,
+                        route=route,
+                        run_id=self._resolved_run_id(session),
+                    )
+                    results.append(result)
+                    rt._emit(
+                        "planning.dependency_bootstrap.project",
+                        project=worktree.name,
+                        status="ok",
+                        backend_manager=result.backend.manager,
+                        frontend_manager=result.frontend.manager,
+                        skipped=list(result.skipped),
+                        duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
+                    )
+                    self._report_progress(
+                        route,
+                        (
+                            f"Dependencies ready for {worktree.name}: "
+                            f"backend={result.backend.manager} frontend={result.frontend.manager}"
+                        ),
+                        project=worktree.name,
+                    )
+            except Exception as exc:
+                rt._emit(
+                    "planning.dependency_bootstrap.finish",
+                    status="failed",
+                    error=str(exc),
+                    duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
+                )
+                raise
+            session.plan_agent_dependency_bootstrap_results = tuple(results)
+            rt._emit(
+                "planning.dependency_bootstrap.finish",
+                status="ok",
+                project_count=len(results),
+                duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
+            )
+        launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+        session.plan_agent_launch_result = launch_result
+        session.plan_agent_attach_target = launch_result.attach_target
+        self._emit_plan_agent_launch_state(session, launch_result)
+        return None
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime
@@ -504,7 +586,9 @@ class StartupOrchestrator:
                 missing_services = rt._reconcile_state_truth(candidate_state)
                 if not missing_services:
                     session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
-                    session.resumed_context_names = [project["name"] for project in decision.state_projects]
+                    session.resumed_context_names = [
+                        str(project["name"]) for project in decision.state_projects if project.get("name") is not None
+                    ]
                     session.preserved_services = dict(candidate_state.services)
                     session.preserved_requirements = dict(candidate_state.requirements)
                     resumed_names = {name.lower() for name in session.resumed_context_names}
@@ -586,7 +670,7 @@ class StartupOrchestrator:
                 resolve_state_repository(rt).save_resume_state(
                     state=candidate_state,
                     emit=rt._emit,
-                    runtime_map_builder=cast(object, build_runtime_map),
+                    runtime_map_builder=cast(Callable[[object], dict[str, object]], build_runtime_map),
                 )
                 self._emit_phase(
                     session,
@@ -626,7 +710,8 @@ class StartupOrchestrator:
                         return attach_code
                 elif not enter_interactive_dashboard:
                     print(
-                        f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services."
+                        f"envctl runs are disabled for {session.runtime_mode}; "
+                        "opening dashboard without starting services."
                     )
                 if enter_interactive_dashboard:
                     return rt._run_interactive_dashboard_loop(candidate_state)

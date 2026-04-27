@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
 if TYPE_CHECKING:
-    from envctl_engine.planning.plan_agent_launch_support import PlanAgentAttachTarget, PlanAgentLaunchResult
+    from envctl_engine.planning.plan_agent_launch_support import (
+        CreatedPlanWorktree,
+        PlanAgentAttachTarget,
+        PlanAgentLaunchResult,
+    )
     from envctl_engine.startup.protocols import ProjectContextLike
 
 
@@ -62,6 +66,9 @@ class StartupSession:
     identifiers_announced: bool = False
     plan_agent_attach_target: PlanAgentAttachTarget | None = None
     plan_agent_launch_result: PlanAgentLaunchResult | None = None
+    plan_agent_launch_requested: bool = False
+    pending_plan_agent_worktrees: tuple[CreatedPlanWorktree, ...] = ()
+    plan_agent_dependency_bootstrap_results: tuple[Any, ...] = ()
     plan_agent_handoff_degraded: bool = False
     local_startup_failures: list[LocalStartupFailure] = field(default_factory=list)
 
@@ -88,7 +95,7 @@ class StartupSession:
         status = str(getattr(launch_result, "status", "")).strip().lower()
         if status not in {"launched", "partial"}:
             return False
-        outcomes = tuple(getattr(launch_result, "outcomes", ()) or ())
+        outcomes = tuple(cast(tuple[object, ...], getattr(launch_result, "outcomes", ()) or ()))
         if not outcomes:
             return status == "launched"
         return any(str(getattr(outcome, "status", "")).strip().lower() == "launched" for outcome in outcomes)

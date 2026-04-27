@@ -488,7 +488,11 @@ def _select_plan_projects(
                     planning_files=planning_files,
                     base_dir=self.config.base_dir,
                     planning_dir=self.config.planning_dir,
-                    requested_cli=str(self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""),
+                    requested_cli=str(
+                        self.env.get("ENVCTL_PLAN_AGENT_CLI")
+                        or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI")
+                        or ""
+                    ),
                 )
                 plan_counts = _adjust_plan_counts_for_fresh_ai_launch(
                     raw_projects=raw_projects,
@@ -1156,6 +1160,12 @@ def _sync_single_plan_worktree_target(
 
     if desired > existing:
         create_count = desired - existing
+        rendered_plan_path = _render_planning_path(
+            self,
+            absolute_path=self._planning_root() / plan_file,
+            display_text=plan_file,
+            interactive_tty=(True if enabled else None),
+        )
         _worktree_spinner_update(
             self,
             enabled=enabled,
@@ -1164,8 +1174,7 @@ def _sync_single_plan_worktree_target(
             message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
             terminal_message=(
                 f"Setting up {create_count} worktree(s) for "
-                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}"
-                f" -> {feature}..."
+                f"{rendered_plan_path} -> {feature}..."
             ),
         )
         create_result = _create_feature_worktrees_result(
@@ -1183,6 +1192,12 @@ def _sync_single_plan_worktree_target(
 
     if desired < existing:
         remove_count = existing - desired
+        rendered_plan_path = _render_planning_path(
+            self,
+            absolute_path=self._planning_root() / plan_file,
+            display_text=plan_file,
+            interactive_tty=(True if enabled else None),
+        )
         _worktree_spinner_update(
             self,
             enabled=enabled,
@@ -1194,7 +1209,7 @@ def _sync_single_plan_worktree_target(
             ),
             terminal_message=(
                 f"Selected count for "
-                f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))} "
+                f"{rendered_plan_path} "
                 f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
             ),
         )
@@ -1204,10 +1219,14 @@ def _sync_single_plan_worktree_target(
             remove_count=remove_count,
         )
         if remove_error:
-            return PlanWorktreeSyncResult(raw_projects=projects, created_worktrees=created_worktrees, error=remove_error)
+            return PlanWorktreeSyncResult(
+                raw_projects=projects,
+                created_worktrees=created_worktrees,
+                error=remove_error,
+            )
         print(
             f"Blasted and deleted {remove_count} worktree(s) for "
-            f"{_render_planning_path(self, absolute_path=self._planning_root() / plan_file, display_text=plan_file, interactive_tty=(True if enabled else None))}."
+            f"{rendered_plan_path}."
         )
         removed_worktrees = tuple(name for name, _root in sorted(
             candidates,
@@ -1249,7 +1268,9 @@ def _create_feature_worktrees_result(
     plan_path = self._planning_root() / plan_file
     setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
     created_worktrees: list[CreatedPlanWorktree] = []
-    requested_cli = str(self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or "").strip().lower()
+    requested_cli = str(
+        self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""
+    ).strip().lower()
     cli_sequence = (["codex", "opencode"] if requested_cli == "both" and count == 2 else [""] * count)
 
     for index in range(count):
@@ -1374,6 +1395,9 @@ def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None
 def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
     if not target.is_dir():
         return
+    # Compatibility links are intentionally limited to setup-worktree and placeholder fallback paths.
+    # Plan-agent launches prepare per-worktree dependencies before prompt submission instead of relying
+    # on shared repo-local node_modules/venv artifacts that can go stale across branches.
     repo_root = self.config.base_dir
     link_specs = (
         ("backend/venv", repo_root / "backend" / "venv"),
