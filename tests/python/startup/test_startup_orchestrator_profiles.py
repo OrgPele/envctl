@@ -22,6 +22,53 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertEqual(selected, set())
 
+    def test_runtime_scope_flags_select_startup_service_types(self) -> None:
+        backend_route = parse_route(["--backend"], env={})
+        self.assertEqual(
+            StartupOrchestrator._restart_service_types_for_project(
+                route=backend_route,
+                project_name="Main",
+                default_service_types={"backend", "frontend"},
+            ),
+            {"backend"},
+        )
+
+        frontend_route = parse_route(["--frontend"], env={})
+        self.assertEqual(
+            StartupOrchestrator._restart_service_types_for_project(
+                route=frontend_route,
+                project_name="Main",
+                default_service_types={"backend", "frontend"},
+            ),
+            {"frontend"},
+        )
+
+        dependencies_route = parse_route(["--dependencies"], env={})
+        self.assertEqual(
+            StartupOrchestrator._restart_service_types_for_project(
+                route=dependencies_route,
+                project_name="Main",
+                default_service_types={"backend", "frontend"},
+            ),
+            set(),
+        )
+
+        fullstack_route = parse_route(["--fullstack"], env={})
+        self.assertEqual(
+            StartupOrchestrator._restart_service_types_for_project(
+                route=fullstack_route,
+                project_name="Main",
+                default_service_types={"backend", "frontend"},
+            ),
+            {"backend", "frontend"},
+        )
+
+    def test_runtime_scope_flags_control_restart_requirements(self) -> None:
+        self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--backend"], env={})))
+        self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--fullstack"], env={})))
+        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--dependencies"], env={})))
+        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--entire-system"], env={})))
+
     def test_non_restart_defaults_to_configured_service_types(self) -> None:
         selected = StartupOrchestrator._restart_service_types_for_project(
             route=None,

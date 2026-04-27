@@ -49,6 +49,22 @@ envctl stop-all
 envctl --main --no-resume
 ```
 
+If you only need part of the runtime while testing:
+
+```bash
+envctl --backend --headless          # backend service plus dependencies
+envctl --frontend --headless         # frontend service plus dependencies
+envctl --fullstack --headless        # backend + frontend plus dependencies
+envctl --dependencies --headless     # DB/Redis/etc. only
+envctl --entire-system --headless    # all dependencies and configured app services
+
+envctl stop --backend --headless
+envctl stop --frontend --headless
+envctl stop --dependencies --headless
+envctl stop --entire-system --headless
+envctl kill-all --headless
+```
+
 ## Worktree Planning Loop
 
 Use this when you want multiple implementations running side by side.

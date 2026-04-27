@@ -168,6 +168,13 @@ VALUE_FLAGS = {
 PAIR_FLAGS = {"--setup-worktrees", "--setup-worktree"}
 
 SPECIAL_FLAGS = {
+    "--backend",
+    "--frontend",
+    "--both",
+    "--fullstack",
+    "--dependencies",
+    "--deps",
+    "--entire-system",
     "--blast-keep-worktree-volumes",
     "--blast-remove-worktree-volumes",
     "--blast-remove-main-volumes",
@@ -274,9 +281,14 @@ _COMMAND_ALIAS_PAIRS = (
     ("--stop", "stop"),
     ("stop", "stop"),
     ("s", "stop"),
+    ("--kill", "stop"),
+    ("kill", "stop"),
     ("--stop-all", "stop-all"),
     ("stop-all", "stop-all"),
     ("stopall", "stop-all"),
+    ("--kill-all", "stop-all"),
+    ("kill-all", "stop-all"),
+    ("killall", "stop-all"),
     ("--blast-all", "blast-all"),
     ("blast-all", "blast-all"),
     ("blastall", "blast-all"),
@@ -716,7 +728,17 @@ def _require_following_value(classified: list[dict[str, str | object]], index: i
 
 def _handle_special_flag(flags: dict[str, object], token: str) -> None:
     """Handle special flag tokens with specific semantics."""
-    if token == "--blast-keep-worktree-volumes":
+    if token == "--backend":
+        _set_runtime_scope(flags, "backend")
+    elif token == "--frontend":
+        _set_runtime_scope(flags, "frontend")
+    elif token in {"--both", "--fullstack"}:
+        _set_runtime_scope(flags, "fullstack")
+    elif token in {"--dependencies", "--deps"}:
+        _set_runtime_scope(flags, "dependencies")
+    elif token == "--entire-system":
+        _set_runtime_scope(flags, "entire-system")
+    elif token == "--blast-keep-worktree-volumes":
         flags["blast_keep_worktree_volumes"] = True
     elif token == "--blast-remove-worktree-volumes":
         flags["blast_keep_worktree_volumes"] = False
@@ -773,6 +795,13 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["parallel_trees_max"] = token.split("=", 1)[1]
     elif token.startswith("frontend-test-runner=") or token.startswith("FRONTEND_TEST_RUNNER="):
         flags["frontend_test_runner"] = token.split("=", 1)[1]
+
+
+def _set_runtime_scope(flags: dict[str, object], scope: str) -> None:
+    existing = flags.get("runtime_scope")
+    if existing is not None and existing != scope:
+        raise RouteError("Use only one runtime scope flag (--backend, --frontend, --fullstack, or --dependencies).")
+    flags["runtime_scope"] = scope
 
 
 def _handle_env_assignment(flags: dict[str, object], token: str) -> None:

@@ -10,18 +10,23 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.target_selector import TargetSelection
 
 
 class _StateRepoStub:
+    def __init__(self) -> None:
+        self.saved_states: list[RunState] = []
+        self.purge_calls: list[bool] = []
+
     def save_selected_stop_state(self, *, state, emit, runtime_map_builder):  # noqa: ANN001
-        _ = state, emit, runtime_map_builder
+        _ = emit, runtime_map_builder
+        self.saved_states.append(state)
         return {}
 
     def purge(self, *, aggressive: bool = False) -> None:
-        _ = aggressive
+        self.purge_calls.append(aggressive)
 
 
 class _RuntimeStub:
@@ -156,6 +161,56 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
             code = orchestrator.execute(route)
 
         self.assertEqual(code, 1)
+
+    def test_stop_runtime_scope_backend_selects_backend_services_without_prompt(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd=".", pid=2),
+                "Other Backend": ServiceRecord(name="Other Backend", type="backend", cwd=".", pid=3),
+            },
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(command="stop", mode="main", flags={"runtime_scope": "backend", "batch": True})
+
+        selected = orchestrator._select_services_for_stop(state, route)
+
+        self.assertEqual(selected, {"Main Backend", "Other Backend"})
+        self.assertEqual(runtime.selection_calls, [])
+
+    def test_stop_dependencies_scope_releases_requirements_without_terminating_services(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(command="stop", mode="main", flags={"runtime_scope": "dependencies", "batch": True})
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [])
+        self.assertEqual(released, [5432])
+        self.assertEqual(state.services.keys(), {"Main Backend"})
+        self.assertEqual(state.requirements, {})
+        self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
 
     def test_stop_selection_routes_through_runtime_backend_selector(self) -> None:
         runtime = _RuntimeStub()

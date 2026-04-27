@@ -307,6 +307,44 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("key_debug"))
         self.assertEqual(route.passthrough_args[:4], ["feature-a", "feature-b", "feature-c", "feature-d"])
 
+    def test_runtime_scope_flags_are_parsed_for_start_and_kill_commands(self) -> None:
+        route = parse_route(["--backend", "--headless"], env={})
+        self.assertEqual(route.command, "start")
+        self.assertEqual(route.flags.get("runtime_scope"), "backend")
+        self.assertTrue(route.flags.get("batch"))
+
+        route = parse_route(["--frontend"], env={})
+        self.assertEqual(route.command, "start")
+        self.assertEqual(route.flags.get("runtime_scope"), "frontend")
+
+        route = parse_route(["--both"], env={})
+        self.assertEqual(route.command, "start")
+        self.assertEqual(route.flags.get("runtime_scope"), "fullstack")
+
+        route = parse_route(["--fullstack"], env={})
+        self.assertEqual(route.flags.get("runtime_scope"), "fullstack")
+
+        route = parse_route(["--dependencies"], env={})
+        self.assertEqual(route.flags.get("runtime_scope"), "dependencies")
+
+        route = parse_route(["--deps"], env={})
+        self.assertEqual(route.flags.get("runtime_scope"), "dependencies")
+
+        route = parse_route(["--entire-system"], env={})
+        self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
+
+        route = parse_route(["kill", "--frontend", "--headless"], env={})
+        self.assertEqual(route.command, "stop")
+        self.assertEqual(route.flags.get("runtime_scope"), "frontend")
+        self.assertTrue(route.flags.get("batch"))
+
+        route = parse_route(["kill-all", "--headless"], env={})
+        self.assertEqual(route.command, "stop-all")
+        self.assertTrue(route.flags.get("batch"))
+
+        with self.assertRaises(RouteError):
+            parse_route(["--backend", "--frontend"], env={})
+
     def test_python_parser_covers_documented_long_flag_surface(self) -> None:
         docs = (REPO_ROOT / "docs" / "reference" / "important-flags.md").read_text(encoding="utf-8")
         documented_flags = {token for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs) if token.startswith("--")}

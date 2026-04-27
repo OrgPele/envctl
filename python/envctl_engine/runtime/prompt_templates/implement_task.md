@@ -28,6 +28,18 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Prefer narrow tests first. Expand to broader integration coverage only when the behavior actually crosses module or service boundaries.
 - Do not stop after partial implementation.
 
+## Runtime and E2E validation protocol
+- Use envctl service-scope flags when you need a running target for verification:
+  - Backend only: `envctl --backend --headless`
+  - Frontend only: `envctl --frontend --headless`
+  - Backend + frontend: `envctl --fullstack --headless` (alias: `--both`)
+  - Dependencies only: `envctl --dependencies --headless` (alias: `--deps`)
+  - Entire system: `envctl --entire-system --headless`
+- Stop matching scopes with `envctl stop --backend --headless`, `envctl stop --frontend --headless`, `envctl stop --fullstack --headless`, `envctl stop --dependencies --headless`, or `envctl stop --entire-system --headless`. `envctl kill --backend --headless` and `envctl kill-all --headless` are stop aliases for users who use kill terminology.
+- Interactive mode is the default when a TTY is available; add `--interactive` when you need to force interactive selection and `--headless` when automation must not prompt.
+- For UI/product implementations, E2E verification is expected against a running service. Prefer Playwright for browser E2E validation when the repo has Playwright or an equivalent E2E harness.
+- Do not claim E2E behavior is fixed from unit tests alone when the change depends on browser/service integration; start the needed scope, run the E2E test, read the output, and include evidence.
+
 ## Context-gathering protocol (do this before coding)
 0. Run `git add .` and verify the baseline is staged (`git status --short`).
 1. Open the authoritative spec file and extract explicit requirements and implied constraints.

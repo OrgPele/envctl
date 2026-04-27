@@ -30,6 +30,13 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `--project <name>` | Target one project (repeatable). |
 | `--projects <a,b>` | Target multiple projects. |
 | `--service <name>` | Target one service. |
+| `--backend` | Runtime scope: run or stop backend app services only. |
+| `--frontend` | Runtime scope: run or stop frontend app services only. |
+| `--fullstack` | Runtime scope: run or stop backend and frontend app services. |
+| `--both` | Alias for `--fullstack`. |
+| `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
+| `--deps` | Alias for `--dependencies`. |
+| `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
