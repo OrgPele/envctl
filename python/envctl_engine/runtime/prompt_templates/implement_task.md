@@ -29,16 +29,17 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Do not stop after partial implementation.
 
 ## Runtime and E2E validation protocol
-- Use envctl service-scope flags when you need a running target for verification:
-  - Backend only: `envctl --backend --headless`
-  - Frontend only: `envctl --frontend --headless`
-  - Backend + frontend: `envctl --fullstack --headless` (alias: `--both`)
-  - Dependencies only: `envctl --dependencies --headless` (alias: `--deps`)
-  - Entire system: `envctl --entire-system --headless`
+- Use envctl service-scope flags when you need a running target for verification. Choose the smallest scope that proves the change, but Default to `envctl --fullstack --headless` whenever the change crosses frontend/backend boundaries, affects API contracts used by the UI, touches auth/session/data flows, changes behavior visible in the browser, or when you are not sure a narrower scope is sufficient.
+  - Use backend only for backend-confined changes: `envctl --backend --headless`. This is appropriate for small API/server/worker changes that can be proven with backend tests, API probes, or non-browser integration checks and do not require a frontend to observe the behavior.
+  - Use frontend only for frontend-confined changes: `envctl --frontend --headless`. This is appropriate for isolated UI/static/client logic changes when the app can run against existing mocks/fixtures or an already-available backend and no server behavior changed.
+  - Use backend + frontend for full product validation: `envctl --fullstack --headless` (alias: `--both`). Use this for changes involving both backend and frontend, browser-visible behavior, API/UI integration, auth flows, forms, dashboards, or any E2E validation. Usually default to this for final verification.
+  - Use dependencies only for infrastructure/data-layer validation: `envctl --dependencies --headless` (alias: `--deps`). Use this when validating migrations, DB/Redis connectivity, queues, or backend tests that need dependencies but no app service.
+  - Use the entire system for maximal verification: `envctl --entire-system --headless`. Use this when requirements/dependencies plus every configured app service must be running, or when the repo's test harness expects the full runtime.
 - Stop matching scopes with `envctl stop --backend --headless`, `envctl stop --frontend --headless`, `envctl stop --fullstack --headless`, `envctl stop --dependencies --headless`, or `envctl stop --entire-system --headless`. `envctl kill --backend --headless` and `envctl kill-all --headless` are stop aliases for users who use kill terminology.
 - Interactive mode is the default when a TTY is available; add `--interactive` when you need to force interactive selection and `--headless` when automation must not prompt.
 - For UI/product implementations, E2E verification is expected against a running service. Prefer Playwright for browser E2E validation when the repo has Playwright or an equivalent E2E harness.
 - Do not claim E2E behavior is fixed from unit tests alone when the change depends on browser/service integration; start the needed scope, run the E2E test, read the output, and include evidence.
+- At the end of verification, kill the exact scope you started so no stray services remain, then offer to start it again for human verification if the user wants to manually inspect the running app.
 
 ## Context-gathering protocol (do this before coding)
 0. Run `git add .` and verify the baseline is staged (`git status --short`).

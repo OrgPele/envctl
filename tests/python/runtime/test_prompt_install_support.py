@@ -534,6 +534,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             rendered_yaml = openai_yaml.read_text(encoding="utf-8")
             self.assertIn("allow_implicit_invocation: false", rendered_yaml)
             self.assertIn("envctl --backend --headless", rendered_yaml)
+            self.assertIn("default to `envctl --fullstack --headless`", rendered_yaml)
+            self.assertIn("Use backend only for backend-confined changes", rendered_yaml)
+            self.assertIn("Use frontend only for frontend-confined changes", rendered_yaml)
+            self.assertIn("kill the scope you started", rendered_yaml)
+            self.assertIn("offer to start it again for human verification", rendered_yaml)
             self.assertIn("Playwright", rendered_yaml)
 
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
@@ -651,6 +656,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("envctl --dependencies --headless", codex)
         self.assertIn("envctl --entire-system --headless", codex)
         self.assertIn("envctl stop --entire-system --headless", codex)
+        self.assertIn("Default to `envctl --fullstack --headless`", codex)
+        self.assertIn("Use backend only", codex)
+        self.assertIn("Use frontend only", codex)
+        self.assertIn("kill the exact scope you started", codex)
+        self.assertIn("offer to start it again for human verification", codex)
         self.assertIn("Playwright", codex)
         self.assertIn("running service", codex)
         self.assertEqual(claude, codex)
