@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 import subprocess
 import sys
@@ -232,6 +234,60 @@ class _MalformedUtf8StreamingRunner:
         )
 
 
+class _RunStreamingZeroExitWithFailureOutputRunner:
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cmd, cwd, env, timeout, show_spinner, echo_output, stdin
+        failure_output = (
+            "FAILED tests/test_auth.py::test_login - AssertionError: expected 200, got 500\n"
+            "========================= 1 failed in 0.03s =========================\n"
+        )
+        if callable(callback):
+            for line in failure_output.splitlines():
+                callback(line)
+        return subprocess.CompletedProcess(
+            args=["python", "-m", "pytest"],
+            returncode=0,
+            stdout=failure_output,
+            stderr="",
+        )
+
+
+class _RunStreamingNonzeroExitWithoutParseableCountsRunner:
+    def run_streaming(
+        self,
+        cmd,
+        *,
+        cwd=None,
+        env=None,
+        timeout=None,
+        callback=None,
+        show_spinner=True,
+        echo_output=True,
+        stdin=None,
+    ):  # noqa: ANN001
+        _ = cmd, cwd, env, timeout, show_spinner, echo_output, stdin
+        failure_output = "Traceback: mock test command failed before pytest summary\n"
+        if callable(callback):
+            callback(failure_output.rstrip())
+        return subprocess.CompletedProcess(
+            args=["python", "-m", "pytest"],
+            returncode=1,
+            stdout=failure_output,
+            stderr="",
+        )
+
+
 class TestRunnerStreamingFallbackTests(unittest.TestCase):
     def test_run_tests_tolerates_replaced_non_utf8_output_during_streaming(self) -> None:
         runtime = _RuntimeStreamingStub(_MalformedUtf8StreamingRunner())
@@ -250,6 +306,30 @@ class TestRunnerStreamingFallbackTests(unittest.TestCase):
         self.assertTrue(runner.last_result.counts_detected)
         self.assertEqual(runner.last_result.total, 2)
         self.assertEqual(runner.last_result.passed, 2)
+
+    def test_run_tests_treats_parsed_failures_as_failed_even_when_mock_exit_is_zero(self) -> None:
+        runtime = _RuntimeStreamingStub(_RunStreamingZeroExitWithFailureOutputRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=False)
+
+        completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        assert runner.last_result is not None
+        self.assertEqual(runner.last_result.failed, 1)
+        self.assertEqual(runner.last_result.failed_tests, ["tests/test_auth.py::test_login"])
+
+    def test_run_tests_summary_uses_process_failure_when_counts_are_unparseable(self) -> None:
+        runtime = _RuntimeStreamingStub(_RunStreamingNonzeroExitWithoutParseableCountsRunner())
+        runner = TestRunner(runtime, verbose=False, render_output=True)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            completed = runner.run_tests(["python", "-m", "pytest"])
+
+        self.assertEqual(completed.returncode, 1)
+        rendered = output.getvalue()
+        self.assertIn("✗ FAILED", rendered)
+        self.assertNotIn("✓ PASSED", rendered)
 
     def test_run_tests_reports_live_unittest_progress_with_real_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
