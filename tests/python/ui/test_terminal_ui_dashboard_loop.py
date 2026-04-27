@@ -648,6 +648,66 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn(("update", "PR already exists: https://github.com/kfiramar/supportopia/pull/53"), spinner_calls)
         self.assertNotIn(("succeed", "pr complete"), spinner_calls)
 
+    def test_dashboard_loop_starts_spinner_for_state_and_config_progress_events(self) -> None:
+        commands = {
+            "logs": ("state.action.start", "Loading logs for 1 service(s)...", "Loading logs..."),
+            "clear-logs": ("state.action.start", "Clearing logs for 1 service(s)...", "Clearing logs..."),
+            "health": ("state.action.start", "Checking health for 1 service(s)...", "Checking service health..."),
+            "errors": ("state.action.start", "Inspecting errors for 1 service(s)...", "Inspecting runtime errors..."),
+            "config": ("config.command.start", "Opening configuration...", "Opening configuration..."),
+        }
+        for command, (event_name, expected_update, expected_initial) in commands.items():
+            with self.subTest(command=command):
+                state = RunState(run_id=f"run-{command}", mode="trees")
+                runtime = _RuntimeStub(state)
+                spinner_calls: list[tuple[str, str, bool] | tuple[str, str]] = []
+
+                class _SpinnerStub:
+                    def start(self) -> None:
+                        spinner_calls.append(("spin-start", ""))
+
+                    def update(self, message: str) -> None:
+                        spinner_calls.append(("update", message))
+
+                    def succeed(self, message: str) -> None:
+                        spinner_calls.append(("succeed", message))
+
+                    def fail(self, message: str) -> None:
+                        spinner_calls.append(("fail", message))
+
+                @contextmanager
+                def fake_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+                    _ = start_immediately
+                    spinner_calls.append(("start", message, enabled))
+                    yield _SpinnerStub()
+
+                def handle_command(_raw: str, current: RunState, rt: object):  # noqa: ANN001
+                    runtime_any = cast(Any, rt)
+                    if event_name == "state.action.start":
+                        runtime_any._emit(event_name, command=command, service_count=1)
+                    else:
+                        runtime_any._emit(event_name)
+                    return False, current
+
+                with (
+                    patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+                    patch("envctl_engine.ui.command_loop.spinner", side_effect=fake_spinner),
+                    patch("envctl_engine.ui.command_loop.spinner_enabled", return_value=True),
+                ):
+                    code = run_dashboard_command_loop(
+                        state=state,
+                        runtime=runtime,
+                        handle_command=handle_command,
+                        sanitize=lambda value: value,
+                        input_provider=lambda _prompt, value=command: value,
+                    )
+
+                self.assertEqual(code, 0)
+                self.assertIn(("start", expected_initial, True), spinner_calls)
+                self.assertIn(("spin-start", ""), spinner_calls)
+                self.assertIn(("update", expected_update), spinner_calls)
+                self.assertIn(("succeed", "Command finished; leaving interactive mode..."), spinner_calls)
+
     def test_dashboard_loop_suppresses_command_spinner_when_suite_group_spinner_is_enabled(self) -> None:
         state = RunState(run_id="run-6b", mode="trees")
         runtime = _RuntimeStub(state)

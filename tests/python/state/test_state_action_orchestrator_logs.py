@@ -25,6 +25,7 @@ class _RuntimeStub:
         self._state = state
         self.env: dict[str, str] = {}
         self.config = SimpleNamespace(raw={})
+        self.events: list[dict[str, object]] = []
         self.seen_logs_state: RunState | None = None
 
     def _try_load_existing_state(self, *, mode: str, strict_mode_match: bool = False):  # noqa: ANN001, ARG002
@@ -68,6 +69,9 @@ class _RuntimeStub:
     @staticmethod
     def _normalize_log_line(line: str, *, no_color: bool) -> str:
         return normalize_log_line(line, no_color=no_color)
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self.events.append({"event": event, **payload})
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
@@ -159,6 +163,94 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertIn("port=6380", rendered)
         self.assertIn("port=5678", rendered)
         self.assertNotIn("Main supabase:", rendered)
+
+    def test_health_uses_cross_for_bad_statuses_and_counts_by_severity(self) -> None:
+        state = RunState(
+            run_id="run-bad",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="failed", actual_port=8000
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend", type="frontend", cwd="/tmp/main", status="unknown", actual_port=9000
+                ),
+                "Main Worker": ServiceRecord(
+                    name="Main Worker", type="worker", cwd="/tmp/main", status="running", actual_port=9100
+                ),
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    n8n={"enabled": True, "runtime_status": "unreachable", "final": 5678, "success": False},
+                    failures=["n8n unreachable"],
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="health", mode="main")
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        rendered = strip_ansi(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertIn("status: healthy/running=1 starting/simulated=1 issues=2", rendered)
+        self.assertIn("✗ Backend", rendered)
+        self.assertIn("• Frontend", rendered)
+        self.assertIn("✓ Main Worker", rendered)
+        self.assertIn("✗ n8n", rendered)
+        self.assertNotIn("! Backend", rendered)
+        self.assertNotIn("! n8n", rendered)
+
+    def test_state_actions_emit_spinner_lifecycle_events_after_target_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("line1\nWARNING cache warmup failed\n", encoding="utf-8")
+            commands = ("logs", "clear-logs", "health", "errors")
+            for command in commands:
+                with self.subTest(command=command):
+                    state = RunState(
+                        run_id=f"run-{command}",
+                        mode="main",
+                        services={
+                            "Main Backend": ServiceRecord(
+                                name="Main Backend",
+                                type="backend",
+                                cwd="/tmp/main",
+                                status="running",
+                                log_path=str(log_path),
+                            )
+                        },
+                    )
+                    runtime = _RuntimeStub(state)
+                    orchestrator = StateActionOrchestrator(runtime)
+                    route = Route(command=command, mode="main", flags={"all": True, "logs_tail": 10})
+                    with redirect_stdout(StringIO()):
+                        orchestrator.execute(route)
+
+                    action_events = [event for event in runtime.events if event.get("event") == "state.action.start"]
+                    finish_events = [event for event in runtime.events if event.get("event") == "state.action.finish"]
+                    self.assertEqual(len(action_events), 1, msg=runtime.events)
+                    self.assertEqual(len(finish_events), 1, msg=runtime.events)
+                    self.assertEqual(action_events[0]["command"], command)
+                    self.assertEqual(action_events[0]["run_id"], f"run-{command}")
+                    self.assertEqual(action_events[0]["service_count"], 1)
+                    self.assertEqual(action_events[0]["mode"], "main")
+                    self.assertEqual(finish_events[0]["command"], command)
+                    self.assertIn(finish_events[0]["code"], {0, 1})
+                    reconcile_indexes = [
+                        index for index, event in enumerate(runtime.events) if event.get("event") == "state.reconcile"
+                    ]
+                    if reconcile_indexes:
+                        start_index = next(
+                            index
+                            for index, event in enumerate(runtime.events)
+                            if event.get("event") == "state.action.start"
+                        )
+                        self.assertLess(start_index, reconcile_indexes[0], msg=runtime.events)
 
     def test_clear_logs_truncates_service_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

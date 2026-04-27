@@ -127,6 +127,11 @@ Spinner visibility quick checks:
 - Check spinner diagnostics in report output:
   - `envctl --debug-report`
   - Look for `spinner_disabled_reasons` and `missing_spinner_lifecycle_transition`.
+- Interpret envctl-owned status glyphs consistently:
+  - `✓` means success, healthy, or running.
+  - `✗` means failure, stale, unreachable, or an error state.
+  - `•` / `~` are non-terminal starting/unknown/simulated states, and `○` is neutral stopped/configured/selection UI.
+  - Literal `+` or `!` characters inside application logs or subprocess output are user/process content, not envctl status glyphs.
 
 Textual backend quick checks:
 - Force Textual dashboard:

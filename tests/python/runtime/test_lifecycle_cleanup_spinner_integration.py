@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -32,7 +33,7 @@ class _StateRepoStub:
 class _RuntimeStub:
     def __init__(self) -> None:
         self.env: dict[str, str] = {}
-        self.config = SimpleNamespace(raw={})
+        self.config = SimpleNamespace(raw={}, base_dir=Path("/tmp"))
         self.events: list[dict[str, object]] = []
         self.state_repository = _StateRepoStub()
         self.selection_calls: list[dict[str, object]] = []
@@ -382,6 +383,42 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(selected, {"Main Backend"})
         self.assertEqual(runtime.selection_calls[0]["prompt"], "Stop services")
         flush_mock.assert_not_called()
+
+    def test_docker_volume_cleanup_uses_warning_glyph_for_nonfatal_volume_removal_miss(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="blast-all",
+            mode="main",
+            flags={"blast_keep_worktree_volumes": False, "blast_remove_main_volumes": False},
+        )
+
+        def fake_run(command: list[str], *, timeout: float | None = None):  # noqa: ANN001
+            _ = timeout
+            if command[:3] == ["docker", "ps", "-a"]:
+                return 0, "abc123|postgres:16|feature-postgres\n", ""
+            if command[:3] == ["docker", "inspect", "-f"]:
+                return 0, "envctl_feature_postgres_data\nenvctl_feature_postgres_busy\n", ""
+            if command[:3] == ["docker", "rm", "-f"]:
+                return 0, "", ""
+            if command[:3] == ["docker", "volume", "rm"]:
+                if command[-1] == "envctl_feature_postgres_data":
+                    return 0, "", ""
+                return 1, "", "volume is in use"
+            return 127, "", "unexpected"
+
+        output = StringIO()
+        with (
+            patch.object(orchestrator, "run_best_effort_command", side_effect=fake_run),
+            redirect_stdout(output),
+        ):
+            removed = orchestrator.blast_all_docker_cleanup(route=route)
+
+        self.assertEqual(removed, 1)
+        rendered = output.getvalue()
+        self.assertIn("✓ removed volume", rendered)
+        self.assertIn("⚠ volume not removed (in use or already deleted)", rendered)
+        self.assertNotIn("! volume not removed", rendered)
 
 
 if __name__ == "__main__":

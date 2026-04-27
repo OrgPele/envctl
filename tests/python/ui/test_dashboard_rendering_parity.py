@@ -17,8 +17,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.ui.dashboard.rendering import _dashboard_color_for_severity
 
 
 class _TtyStringIO(io.StringIO):
@@ -229,6 +230,89 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Backend: not running [Stopped]", output)
             self.assertIn("Frontend: not running [Stopped]", output)
             self.assertNotIn("n/a [Unknown]", output)
+
+    def test_dashboard_status_rows_use_cross_for_bad_states_and_neutral_for_pending_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        pid=111,
+                        status="stale",
+                    ),
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=222,
+                        status="unreachable",
+                    ),
+                    "Feature Backend": ServiceRecord(
+                        name="Feature Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8100,
+                        actual_port=8100,
+                        status="starting",
+                    ),
+                    "Feature Frontend": ServiceRecord(
+                        name="Feature Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9100,
+                        actual_port=9100,
+                        status="unknown",
+                    ),
+                },
+                requirements={
+                    "Main": RequirementsResult(
+                        project="Main",
+                        n8n={"enabled": True, "runtime_status": "unreachable", "final": 5678, "success": False},
+                        supabase={"enabled": True, "success": False},
+                        failures=["n8n unreachable"],
+                    ),
+                },
+                metadata={"project_roots": {"Main": str(repo), "Feature": str(repo)}},
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("✗ Backend: n/a", output)
+            self.assertIn("[Stale]", output)
+            self.assertIn("✗ Frontend: http://localhost:9000", output)
+            self.assertIn("[Unreachable]", output)
+            self.assertIn("• Backend: http://localhost:8100", output)
+            self.assertIn("[Starting]", output)
+            self.assertIn("• Frontend: n/a", output)
+            self.assertIn("[Unknown]", output)
+            self.assertIn("✗ n8n: n/a [Unreachable]", output)
+            self.assertIn("✗ supabase: n/a [Unhealthy]", output)
+            self.assertNotIn("! Backend:", output)
+            self.assertNotIn("! Frontend:", output)
+            self.assertNotIn("! n8n:", output)
+
+    def test_dashboard_neutral_status_severity_does_not_use_error_color(self) -> None:
+        self.assertEqual(
+            _dashboard_color_for_severity("neutral", ok_color="green", warn_color="yellow", bad_color="red"),
+            "yellow",
+        )
 
     def test_dashboard_renders_matching_ai_session_inline_for_active_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

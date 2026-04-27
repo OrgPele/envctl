@@ -6,6 +6,7 @@ from typing import Any
 
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
+from envctl_engine.ui.status_symbols import STATUS_FAILURE, STATUS_SUCCESS
 
 
 class BaseProjectSpinnerGroup:
@@ -161,10 +162,10 @@ class BaseProjectSpinnerGroup:
             try:
                 self._progress.update(
                     task_id,
-                    description=f"+ {line}",
+                    description=line,
                     total=1,
                     completed=1,
-                    finished_symbol="[green]✓[/green]",
+                    finished_symbol=f"[green]{STATUS_SUCCESS}[/green]",
                 )
                 self._progress.stop_task(task_id)
             except Exception:
@@ -185,10 +186,10 @@ class BaseProjectSpinnerGroup:
             try:
                 self._progress.update(
                     task_id,
-                    description=f"! {line}",
+                    description=line,
                     total=1,
                     completed=1,
-                    finished_symbol="[red]✗[/red]",
+                    finished_symbol=f"[red]{STATUS_FAILURE}[/red]",
                 )
                 self._progress.stop_task(task_id)
             except Exception:

@@ -287,6 +287,8 @@ Cycle mode notes:
 | `ENVCTL_UI_RICH` | `true` | Compatibility toggle for rich-backed UI rendering when mode is `auto`. |
 | `ENVCTL_UI_HYPERLINK_MODE` | `auto` | Local-path hyperlink policy for human-facing CLI output (`auto`, `on`, `off`). `auto` only emits OSC-8 links on supported interactive terminals; JSON output stays raw. |
 
+Spinner configuration affects whether animated progress is shown, but not final status semantics: envctl-owned final/status lines use `✓` for success, `✗` for failure/error, and neutral glyphs such as `•`, `~`, or `○` for non-terminal or non-error states. Headless/non-TTY output remains deterministic and does not emit animated spinner frames.
+
 ## Experimental
 | Variable | Default | Purpose |
 | --- | --- | --- |
