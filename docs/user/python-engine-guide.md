@@ -48,8 +48,11 @@ The current wizard flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
+
+The `Entrypoints / Commands` step covers backend/frontend start commands plus optional backend/frontend test commands. The wizard detects common test commands and frontend test paths from local files, labels the source of each suggestion, and lets you leave test command fields blank deliberately when no safe default is known. It does not execute test commands during setup.
 
 For the full setup story, see [First-Run Wizard](first-run-wizard.md).
 

@@ -41,8 +41,9 @@ The current wizard flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
 
 There is no simple/advanced split in the current UI.
 
@@ -120,10 +121,28 @@ Possible fields:
 
 - backend directory
 - frontend directory
+- frontend tests directory (optional)
 
 If a component is not configured, its directory field is not shown.
 
-## Step 6: Ports
+## Step 6: Entrypoints / Commands
+
+This screen shows only the entrypoint and test command fields needed for the components currently configured in `main` or `trees`.
+
+Possible fields:
+
+- backend entrypoint
+- frontend entrypoint
+- backend test command
+- frontend test command
+
+The wizard detects common test commands from local files without running them. Examples include backend pytest from `backend/tests` plus Python metadata, root unittest discovery from `tests/`, and frontend package test scripts from `frontend/package.json`. Detected values are shown with a short source label. When more than one safe suggestion exists, focus the field and use the suggestion shortcut shown in the status line to cycle alternatives, or edit the command manually.
+
+Test command fields are optional. If no command is detected, leaving the field blank is an explicit choice: `envctl test` can still try runtime defaults later, and you can fill the field once you know the preferred command. Existing `.envctl` values are labeled as existing/manual and are not overwritten by detection.
+
+The frontend tests directory field remains on the `Directories` step. It is optional and is only prefilled when test/spec files make a scoped path high-confidence; otherwise the wizard explains that the package test script may already scope tests itself.
+
+## Step 7: Ports
 
 This screen only shows the canonical ports needed for the components currently configured in `main` or `trees`.
 
@@ -140,7 +159,7 @@ Possible fields:
 
 The wizard validates these before allowing save.
 
-## Step 7: Review / Save
+## Step 8: Review / Save
 
 The final screen shows the managed `.envctl` block that will be written.
 
@@ -180,6 +199,9 @@ The wizard/save path currently enforces these user-visible rules:
 - default mode must be `main` or `trees`
 - required directory fields must not be empty
 - directory paths must exist and be directories
+- backend/frontend entrypoints must not be empty when the configured service is expected to run
+- backend/frontend test commands may be blank
+- optional frontend test paths must exist when provided
 - ports must be positive integers
 - a single mode cannot enable both PostgreSQL and Supabase at the same time
 

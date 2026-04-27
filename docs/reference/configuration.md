@@ -170,6 +170,8 @@ The current setup/editor wizard covers:
 - services and dependencies
 - optional backend-only long-running service startup
 - backend/frontend directories
+- entrypoints and backend/frontend test command suggestions
+- optional frontend test directory suggestions
 - canonical ports
 
 The current flow is:
@@ -179,10 +181,15 @@ The current flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
 
 There is no simple/advanced split in the current UI.
+
+The `Entrypoints / Commands` step shows only the command fields needed for the enabled backend/frontend components. For test commands, the wizard displays detected suggestions with source labels (for example backend pytest from `backend/tests` or a frontend package test script from `frontend/package.json`). Test command fields are optional: leaving one blank means `envctl test` may still try runtime defaults later. The wizard does not execute test commands during setup.
+
+The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_TEST_CMD`, `ENVCTL_FRONTEND_TEST_CMD`, and `ENVCTL_FRONTEND_TEST_PATH` when applicable. Shared `ENVCTL_ACTION_TEST_CMD` remains a lower-level override for config/API payload compatibility and is not a first-run wizard field.
 
 ## Core
 | Variable | Default | Purpose |

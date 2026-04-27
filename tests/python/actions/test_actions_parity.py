@@ -25,6 +25,10 @@ engine_runtime_module = importlib.import_module("envctl_engine.runtime.engine_ru
 
 default_test_command = actions_test_module.default_test_command
 default_test_commands = actions_test_module.default_test_commands
+rich_test_command_suggestions = actions_test_module.test_command_suggestions
+frontend_test_path_suggestions = actions_test_module.frontend_test_path_suggestions
+suggest_backend_test_command = actions_test_module.suggest_backend_test_command
+suggest_frontend_test_command = actions_test_module.suggest_frontend_test_command
 _configured_or_default_test_spec = action_test_support_module._configured_or_default_test_spec
 ActionCommandOrchestrator = action_command_orchestrator_module.ActionCommandOrchestrator
 parse_route = command_router_module.parse_route
@@ -4482,6 +4486,150 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(commands[0].cwd, repo)
             self.assertEqual(commands[1].command, ["pnpm", "run", "test"])
             self.assertEqual(commands[1].cwd, repo / "frontend")
+
+    def test_test_command_suggestions_describe_backend_and_frontend_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+            ):
+                suggestions = rich_test_command_suggestions(repo)
+                commands = default_test_commands(repo)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["backend_pytest", "frontend_package_test"])
+            self.assertEqual(suggestions[0].command_text, "/usr/bin/python3 -m pytest " + str(repo / "backend" / "tests"))
+            self.assertEqual(suggestions[0].label, "Backend pytest")
+            self.assertEqual(suggestions[0].confidence, "high")
+            self.assertIn("backend/tests", suggestions[0].reason)
+            self.assertEqual(suggestions[1].command_text, "pnpm run test")
+            self.assertEqual(suggestions[1].cwd, repo / "frontend")
+            self.assertEqual([command.source for command in commands], ["backend_pytest", "frontend_package_test"])
+
+    def test_test_command_suggestions_include_root_pytest_before_unittest_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "pyproject.toml").write_text(
+                "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+                encoding="utf-8",
+            )
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                suggestions = rich_test_command_suggestions(repo, include_backend=True, include_frontend=False)
+                commands = default_test_commands(repo, include_backend=True, include_frontend=False)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["root_pytest"])
+            self.assertEqual(suggestions[0].command_text, "/usr/bin/python3 -m pytest tests")
+            self.assertIn("root pytest", suggestions[0].label.lower())
+            self.assertEqual(commands[0].source, "root_pytest")
+            self.assertEqual(commands[0].command, ["/usr/bin/python3", "-m", "pytest", "tests"])
+
+    def test_test_action_uses_root_pytest_when_root_pytest_config_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            (repo / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                route = parse_route(
+                    ["test", "--project", "feature-a-1", "frontend=false"],
+                    env={"ENVCTL_DEFAULT_MODE": "trees"},
+                )
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
+            command, cwd = fake_runner.run_calls[0]
+            self.assertEqual(command[:3], ("/usr/bin/python3", "-m", "pytest"))
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", command)
+            self.assertIn("tests", command)
+            self.assertEqual(Path(cwd).resolve(), repo.resolve())
+
+    def test_test_command_suggestions_keep_root_unittest_as_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                suggestions = rich_test_command_suggestions(repo, include_backend=True, include_frontend=False)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["root_unittest"])
+            self.assertEqual(
+                suggestions[0].command_text,
+                "/usr/bin/python3 -m unittest discover -s tests -t . -p test_*.py",
+            )
+            self.assertEqual(suggestions[0].confidence, "medium")
+
+    def test_single_value_suggestion_wrappers_remain_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+            ):
+                backend = suggest_backend_test_command(repo)
+                frontend_command = suggest_frontend_test_command(repo)
+
+            self.assertEqual(backend, "/usr/bin/python3 -m pytest " + str(repo / "backend" / "tests"))
+            self.assertEqual(frontend_command, "pnpm run test")
+
+    def test_frontend_test_path_suggestions_label_detected_and_common_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            frontend = repo / "frontend"
+            (frontend / "src").mkdir(parents=True, exist_ok=True)
+            (frontend / "tests").mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "src" / "app.test.ts").write_text("it('works', () => {})\n", encoding="utf-8")
+
+            suggestions = frontend_test_path_suggestions(repo)
+
+            self.assertEqual([suggestion.path for suggestion in suggestions], ["frontend/src", "frontend/tests"])
+            self.assertEqual(suggestions[0].confidence, "high")
+            self.assertIn("test/spec", suggestions[0].reason)
+            self.assertEqual(suggestions[1].confidence, "low")
 
     def test_default_test_commands_append_frontend_test_path_when_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
