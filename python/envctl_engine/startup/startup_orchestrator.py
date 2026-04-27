@@ -62,6 +62,7 @@ from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot, snapshot
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
@@ -1434,10 +1435,11 @@ class StartupOrchestrator:
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
         self._emit_phase(session, "artifacts_write", artifacts_started, status="error")
         link_mode = str(rt.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+        rendered_error = f"{STATUS_FAILURE} {final_error}"
         print(
             render_paths_in_terminal_text(
-                final_error,
-                paths=local_paths_in_text(final_error),
+                rendered_error,
+                paths=local_paths_in_text(rendered_error),
                 env=rt.env,
                 stream=sys.stdout,
                 interactive_tty=(True if link_mode == "on" else None),

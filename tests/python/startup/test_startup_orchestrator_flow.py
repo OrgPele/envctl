@@ -22,6 +22,7 @@ from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
+from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 
 class StartupOrchestratorFlowTests(unittest.TestCase):
@@ -713,6 +714,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertEqual(code, 1)
             rendered = out.getvalue()
             self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
+            self.assertIn(f"{STATUS_FAILURE} Startup failed: missing_service_start_command", rendered)
             self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
 
     def test_plain_plan_without_ai_session_keeps_missing_service_command_fatal(self) -> None:
