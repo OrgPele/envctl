@@ -73,6 +73,8 @@ class ConfigCommandSupportTests(unittest.TestCase):
                             "BACKEND_DIR=api",
                             "--set",
                             "MAIN_STARTUP_ENABLE=false",
+                            "--set",
+                            "ENVCTL_UI_VISUAL_HOST=192.0.2.42",
                         ],
                         env={},
                     )
@@ -83,6 +85,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("ENVCTL_DEFAULT_MODE=trees", text)
             self.assertIn("BACKEND_DIR=api", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
+            self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", text)
 
     def test_config_command_emits_progress_events_for_interactive_spinner_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

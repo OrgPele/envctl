@@ -23,6 +23,8 @@ from envctl_engine.ui.status_symbols import (
     service_status_badge,
 )
 
+_DASHBOARD_VISUAL_HOST_ENV = "ENVCTL_UI_VISUAL_HOST"
+
 
 def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     reconcile_for_snapshot = getattr(self, "_dashboard_reconcile_for_snapshot", None)
@@ -37,7 +39,8 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         missing_count=len(failing_services),
         missing_services=failing_services,
     )
-    runtime_map = build_runtime_map(state)
+    visual_host = _dashboard_visual_host(self)
+    runtime_map = build_runtime_map(state, host=visual_host)
     projection = runtime_map.get("projection", {})
     if not isinstance(projection, dict):
         projection = {}
@@ -243,7 +246,7 @@ def _print_dashboard_service_row(
     if not url and status.lower() == "unreachable":
         fallback_port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
         if isinstance(fallback_port, int) and fallback_port > 0 and isinstance(pid, int) and pid > 0:
-            url_text = f"http://localhost:{fallback_port}"
+            url_text = _dashboard_visual_url(self, fallback_port)
     label_text = f"{label_color}{label}{reset}"
     print(
         f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}"
@@ -294,7 +297,7 @@ def _print_dashboard_dependency_rows(
         url = (
             "n/a"
             if badge.severity == "failure"
-            else (f"http://localhost:{port}" if isinstance(port, int) and port > 0 else "n/a")
+            else (_dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a")
         )
         icon = badge.symbol
         status = badge.label
@@ -384,6 +387,23 @@ def _dashboard_pr_lookup_enabled(self: Any) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return True
+
+
+def _dashboard_visual_url(self: Any, port: int) -> str:
+    return f"http://{_dashboard_visual_host(self)}:{port}"
+
+
+def _dashboard_visual_host(self: Any) -> str:
+    raw: object | None = None
+    runtime_env = getattr(self, "env", {})
+    if isinstance(runtime_env, Mapping):
+        raw = runtime_env.get(_DASHBOARD_VISUAL_HOST_ENV)
+    if raw is None:
+        config_raw = getattr(getattr(self, "config", None), "raw", {})
+        if isinstance(config_raw, Mapping):
+            raw = config_raw.get(_DASHBOARD_VISUAL_HOST_ENV)
+    host = str(raw or "").strip()
+    return host or "localhost"
 
 
 def _dashboard_pr_cache_ttl_seconds(self: Any) -> float:

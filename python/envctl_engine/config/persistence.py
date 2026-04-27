@@ -50,6 +50,7 @@ class ManagedConfigValues:
     frontend_test_cmd: str = ""
     action_test_cmd: str = ""
     frontend_test_path: str = ""
+    ui_visual_host: str = "localhost"
 
 
 @dataclass(slots=True)
@@ -131,6 +132,7 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
         frontend_test_cmd=_resolved_frontend_test_cmd(values=values, base_dir=base_dir),
         action_test_cmd=_resolved_action_test_cmd(values=values, base_dir=base_dir),
         frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
+        ui_visual_host=_resolved_ui_visual_host(values),
         main_profile=main_profile,
         trees_profile=trees_profile,
         port_defaults=port_defaults,
@@ -147,6 +149,7 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "ENVCTL_BACKEND_TEST_CMD": values.backend_test_cmd,
         "ENVCTL_FRONTEND_TEST_CMD": values.frontend_test_cmd,
         "ENVCTL_FRONTEND_TEST_PATH": values.frontend_test_path,
+        "ENVCTL_UI_VISUAL_HOST": values.ui_visual_host,
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
         "PORT_SPACING": str(values.port_defaults.port_spacing),
@@ -197,6 +200,9 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 }
                 for definition in dependency_definitions()
             },
+        },
+        "ui": {
+            "visual_host": values.ui_visual_host,
         },
         "profiles": {
             "main": {
@@ -282,6 +288,10 @@ def managed_values_from_payload(
                 for resource in definition.resources:
                     if resource.name in resource_values:
                         mapping[resource.config_port_keys[0]] = str(resource_values[resource.name])
+
+    ui = payload.get("ui")
+    if isinstance(ui, dict) and ui.get("visual_host") is not None:
+        mapping["ENVCTL_UI_VISUAL_HOST"] = str(ui["visual_host"])
 
     profiles = payload.get("profiles")
     if isinstance(profiles, dict):
@@ -374,6 +384,7 @@ def _managed_block_sections(
 
     sections: list[list[str]] = []
     sections.append(["ENVCTL_DEFAULT_MODE"])
+    sections.append(["ENVCTL_UI_VISUAL_HOST"])
 
     directory_keys: list[str] = []
     if _component_enabled_any(values, "backend") and rendered["BACKEND_DIR"] != defaults["BACKEND_DIR"]:
@@ -550,6 +561,7 @@ def save_local_config_with_ignore_policy(
         backend_test_cmd=values.backend_test_cmd,
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
+        ui_visual_host=values.ui_visual_host,
         frontend_test_path=(
             canonicalize_frontend_test_path(
                 values.frontend_test_path,
@@ -683,6 +695,11 @@ def _parse_bool_value(raw: str | None, default: bool) -> bool:
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _resolved_ui_visual_host(values: dict[str, str]) -> str:
+    host = str(values.get("ENVCTL_UI_VISUAL_HOST") or "").strip()
+    return host or "localhost"
 
 
 def _resolved_backend_start_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:
