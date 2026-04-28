@@ -286,7 +286,8 @@ Cycle mode notes:
 | `ENVCTL_UI_SPINNER` | `true` | Compatibility toggle; still honored when mode is `auto`. |
 | `ENVCTL_UI_RICH` | `true` | Compatibility toggle for rich-backed UI rendering when mode is `auto`. |
 | `ENVCTL_UI_HYPERLINK_MODE` | `auto` | Local-path hyperlink policy for human-facing CLI output (`auto`, `on`, `off`). `auto` only emits OSC-8 links on supported interactive terminals; JSON output stays raw. |
-| `ENVCTL_UI_VISUAL_HOST` | `localhost` | Host/IP to display for dashboard-only visual service URLs. This does not change service binding, probes, persisted runtime maps, or frontend/backend environment URLs. |
+| `ENVCTL_PUBLIC_HOST` | `localhost` | Host/IP injected into browser-facing frontend environment URLs such as `VITE_BACKEND_URL` and `VITE_API_URL`. Dashboard visual URLs use this host by default. Ports remain dynamically allocated per project/worktree; service binding, probes, and persisted runtime maps are unchanged. |
+| `ENVCTL_UI_VISUAL_HOST` | `ENVCTL_PUBLIC_HOST` | Optional dashboard-only override for visual service URLs. Leave unset/blank to reuse `ENVCTL_PUBLIC_HOST`. This does not change service binding, probes, persisted runtime maps, or frontend/backend environment URLs. |
 
 Spinner configuration affects whether animated progress is shown, but not final status semantics: envctl-owned final/status lines use `✓` for success, `✗` for failure/error, and neutral glyphs such as `•`, `~`, or `○` for non-terminal or non-error states. Headless/non-TTY output remains deterministic and does not emit animated spinner frames.
 

@@ -14,8 +14,13 @@ ENVCTL_DEFAULT_MODE=main
 # Planning root directory for --plan / --sequential-plan / --planning-prs.
 ENVCTL_PLANNING_DIR=todo/plans
 
-# Host/IP shown in dashboard-only visual service URLs.
-# This does not change service binding, probes, or runtime map artifacts.
+# Host/IP injected into browser-facing frontend env URLs such as VITE_BACKEND_URL and VITE_API_URL.
+# Dashboard visual URLs default to this same host unless ENVCTL_UI_VISUAL_HOST is set explicitly.
+# Ports remain dynamic per project/worktree; service binding and probes are unchanged.
+ENVCTL_PUBLIC_HOST=localhost
+
+# Optional dashboard-only override for visual service URLs.
+# Leave blank/unset to reuse ENVCTL_PUBLIC_HOST.
 ENVCTL_UI_VISUAL_HOST=localhost
 
 # ==========================================
