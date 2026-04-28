@@ -597,6 +597,63 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
             self.assertNotIn("AI session:", output)
 
+    def test_dashboard_renders_run_ai_row_for_running_worktree_without_ai_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "features_feature_a" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            plan_path = repo / "todo" / "plans" / "features" / "feature-a.md"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                '{"plan_file": "features/feature-a.md"}',
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._dashboard_reconcile_for_snapshot = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "features_feature_a-1 Backend": ServiceRecord(
+                        name="features_feature_a-1 Backend",
+                        type="backend",
+                        cwd=str(project_root),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                    "features_feature_a-1 Frontend": ServiceRecord(
+                        name="features_feature_a-1 Frontend",
+                        type="frontend",
+                        cwd=str(project_root),
+                        requested_port=9000,
+                        actual_port=9004,
+                        pid=1235,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {"features_feature_a-1": str(project_root)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch("envctl_engine.runtime.session_management.list_tmux_sessions", return_value=[]),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Backend: http://localhost:8004", output)
+            self.assertIn("Frontend: http://localhost:9004", output)
+            self.assertIn("○ Run AI: envctl --plan features/feature-a.md --tmux", output)
+            self.assertNotIn("AI session:", output)
+
     def test_dashboard_prefers_attach_when_window_matches_but_session_path_does_not(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
