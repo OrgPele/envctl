@@ -787,7 +787,13 @@ def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | Non
     provenance_repo_root = _dashboard_repo_root_from_provenance(project_root=project_root)
     if provenance_repo_root is not None:
         return provenance_repo_root
+    tree_layout_repo_root = _dashboard_repo_root_from_tree_layout(project_root=project_root)
+    if tree_layout_repo_root is not None:
+        return tree_layout_repo_root
     current = project_root.resolve(strict=False)
+    for candidate in (current, *current.parents):
+        if (candidate / "todo" / "plans").is_dir() or (candidate / "todo" / "done").is_dir():
+            return candidate
     for candidate in (current, *current.parents):
         if (candidate / "todo").is_dir():
             return candidate
@@ -811,6 +817,25 @@ def _dashboard_repo_root_from_provenance(*, project_root: Path) -> Path | None:
     repo_root = Path(repo_root_raw).expanduser().resolve(strict=False)
     if (repo_root / ".git").exists() or (repo_root / "todo").is_dir():
         return repo_root
+    return None
+
+
+def _dashboard_repo_root_from_tree_layout(*, project_root: Path) -> Path | None:
+    current = project_root.resolve(strict=False)
+    for trees_dir in current.parents:
+        if trees_dir.name != "trees":
+            continue
+        repo_root = trees_dir.parent
+        if repo_root == current:
+            continue
+        try:
+            current.relative_to(trees_dir)
+        except ValueError:
+            continue
+        if (repo_root / "todo" / "plans").is_dir() or (repo_root / "todo" / "done").is_dir():
+            return repo_root
+        if (repo_root / ".git").exists() and (repo_root / "todo").is_dir():
+            return repo_root
     return None
 
 

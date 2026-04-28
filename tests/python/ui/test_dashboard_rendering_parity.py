@@ -786,6 +786,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             project_root = repo / "trees" / "refactoring_supportopia_to_pele_complete_repo_rename" / "1"
             plan_path = repo / "todo" / "plans" / "refactoring" / "supportopia-to-pele-complete-repo-rename.md"
             project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / "todo").mkdir(parents=True, exist_ok=True)
             plan_path.parent.mkdir(parents=True, exist_ok=True)
             plan_path.write_text("# Plan\n", encoding="utf-8")
             (repo / ".git").mkdir(parents=True, exist_ok=True)
