@@ -2777,14 +2777,29 @@ def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str |
     return selector
 
 
-def resolve_plan_agent_launch_command(*, project_name: str, project_root: Path, repo_root: Path) -> str | None:
+def resolve_plan_agent_launch_command(
+    *,
+    project_name: str,
+    project_root: Path,
+    repo_root: Path,
+    envctl_executable: str = "envctl",
+) -> str | None:
     plan_path = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
     if plan_path is None:
         return None
     selector = _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
     if not selector:
         return None
-    return f"envctl --plan {shlex.quote(selector)} --tmux"
+    return " ".join(
+        (
+            shlex.quote(envctl_executable),
+            "--repo",
+            shlex.quote(str(repo_root)),
+            "--plan",
+            shlex.quote(selector),
+            "--omx",
+        )
+    )
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:

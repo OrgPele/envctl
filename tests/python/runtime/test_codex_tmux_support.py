@@ -7,6 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from envctl_engine.runtime.codex_tmux_support import run_codex_tmux_command
 
@@ -68,7 +69,8 @@ class CodexTmuxSupportTests(unittest.TestCase):
             runtime = self._runtime(repo_root, process_runner=runner)
             route = SimpleNamespace(command="codex-tmux", flags={}, passthrough_args=["review"])
 
-            code = run_codex_tmux_command(runtime, route)
+            with patch("envctl_engine.runtime.codex_tmux_support.shutil.which", return_value="/opt/bin/codex"):
+                code = run_codex_tmux_command(runtime, route)
 
             self.assertEqual(code, 0)
             self.assertEqual(runner.probe_calls[0][:3], ["tmux", "has-session", "-t"])
@@ -84,7 +86,7 @@ class CodexTmuxSupportTests(unittest.TestCase):
                     "codex",
                     "-c",
                     str(repo_root.resolve()),
-                    "codex --dangerously-bypass-approvals-and-sandbox review",
+                    "/opt/bin/codex --dangerously-bypass-approvals-and-sandbox review",
                 ],
             )
             self.assertEqual(runner.interactive_calls, [["tmux", "attach-session", "-t", runner.probe_calls[0][3]]])
@@ -120,14 +122,73 @@ class CodexTmuxSupportTests(unittest.TestCase):
             route = SimpleNamespace(command="codex-tmux", flags={"dry_run": True, "json": True}, passthrough_args=["review"])
             stdout = StringIO()
 
-            with redirect_stdout(stdout):
+            with (
+                patch("envctl_engine.runtime.codex_tmux_support.shutil.which", return_value="/opt/bin/codex"),
+                redirect_stdout(stdout),
+            ):
                 code = run_codex_tmux_command(runtime, route)
 
             self.assertEqual(code, 0)
             self.assertIn('"create_session": true', stdout.getvalue())
             self.assertIn('"codex_command": [', stdout.getvalue())
+            self.assertIn('/opt/bin/codex', stdout.getvalue())
             self.assertIn('--dangerously-bypass-approvals-and-sandbox', stdout.getvalue())
             self.assertEqual(runner.interactive_calls, [])
+
+    def test_codex_tmux_omx_ralph_launches_omx_workflow_in_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runner = _RecordingProcessRunner()
+            runtime = self._runtime(repo_root, process_runner=runner)
+            route = SimpleNamespace(command="codex-tmux", flags={"omx": True, "ralph": True}, passthrough_args=[])
+
+            code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                runner.interactive_calls,
+                [["omx", "ralph", "--tmux", "Implement MAIN_TASK.md end-to-end."]],
+            )
+            self.assertEqual(runner.probe_calls, [])
+
+    def test_codex_tmux_omx_ralph_dry_run_reports_omx_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runtime = self._runtime(repo_root)
+            route = SimpleNamespace(
+                command="codex-tmux",
+                flags={"omx": True, "ralph": True, "dry_run": True, "json": True},
+                passthrough_args=[],
+            )
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertIn('"omx_command": [', stdout.getvalue())
+            self.assertIn('"ralph"', stdout.getvalue())
+            self.assertIn('"--tmux"', stdout.getvalue())
+            self.assertIn('Implement MAIN_TASK.md end-to-end.', stdout.getvalue())
+
+    def test_codex_tmux_omx_ralph_preserves_explicit_task_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runner = _RecordingProcessRunner()
+            runtime = self._runtime(repo_root, process_runner=runner)
+            route = SimpleNamespace(
+                command="codex-tmux",
+                flags={"omx": True, "ralph": True},
+                passthrough_args=["Fix the dashboard bug"],
+            )
+
+            code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(runner.interactive_calls, [["omx", "ralph", "--tmux", "Fix the dashboard bug"]])
 
     def test_codex_tmux_missing_executable_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

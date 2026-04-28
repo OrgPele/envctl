@@ -804,19 +804,25 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     ),
     "codex-tmux": CommandHelpTopic(
         command="codex-tmux",
-        summary="launch or reuse a repo-scoped tmux session for Codex",
-        usage=("envctl codex-tmux [codex args...]", "envctl codex-tmux --dry-run [--json] [codex args...]"),
+        summary="launch or reuse a repo-scoped Codex/OMX tmux session",
+        usage=(
+            "envctl codex-tmux [codex args...]",
+            "envctl codex-tmux --omx --ralph",
+            "envctl codex-tmux --dry-run [--json] [codex args...]",
+        ),
         what_it_does=(
             "creates or reuses a repo-scoped tmux session for Codex",
             "starts Codex with --dangerously-bypass-approvals-and-sandbox in that session",
             "attaches to the tmux session unless --dry-run is used",
+            "with --omx --ralph, launches the repo through `omx ralph --tmux` instead of bare Codex",
         ),
         flags=(
             "--dry-run              show the session command without starting/attaching",
             "--json                 JSON output; supported only with --dry-run",
+            "--omx --ralph          launch an OMX-managed Ralph/Codex tmux session for this repo",
         ),
         notes=("extra Codex arguments are only applied when creating a new session",),
-        examples=("envctl codex-tmux", "envctl codex-tmux review", "envctl codex-tmux --dry-run --json review"),
+        examples=("envctl codex-tmux", "envctl codex-tmux --omx --ralph", "envctl codex-tmux --dry-run --json review"),
         aliases=("--codex-tmux",),
         related=("plan", "session", "install-prompts"),
     ),

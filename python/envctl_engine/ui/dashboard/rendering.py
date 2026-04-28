@@ -706,13 +706,30 @@ def _print_dashboard_ai_session_row(
 
     project_root = _dashboard_project_root(self, state=state, project=project)
     repo_root = _dashboard_repo_root_for_project(project_root=project_root)
+    envctl_executable = "envctl"
     launch_command = (
-        resolve_plan_agent_launch_command(project_name=project, project_root=project_root, repo_root=repo_root)
+        resolve_plan_agent_launch_command(
+            project_name=project,
+            project_root=project_root,
+            repo_root=repo_root,
+            envctl_executable=envctl_executable,
+        )
         if project_root is not None and repo_root is not None
         else None
     )
     if not launch_command:
-        launch_command = f"envctl --project {shlex.quote(project)} --tmux"
+        if project_root is not None:
+            launch_command = (
+                f"{shlex.quote(envctl_executable)} --repo {shlex.quote(str(project_root.resolve(strict=False)))} "
+                "codex-tmux --omx"
+            )
+        elif repo_root is not None:
+            launch_command = (
+                f"{shlex.quote(envctl_executable)} --repo {shlex.quote(str(repo_root.resolve(strict=False)))} "
+                f"--trees --project {shlex.quote(project)} --omx"
+            )
+        else:
+            launch_command = f"{shlex.quote(envctl_executable)} --trees --project {shlex.quote(project)} --tmux"
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -786,7 +803,10 @@ def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | Non
         return provenance_repo_root
     current = project_root.resolve(strict=False)
     for candidate in (current, *current.parents):
-        if (candidate / ".git").exists() or (candidate / "todo").is_dir():
+        if (candidate / "todo").is_dir():
+            return candidate
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
             return candidate
     return None
 
