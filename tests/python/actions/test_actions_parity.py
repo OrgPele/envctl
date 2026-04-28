@@ -4945,6 +4945,75 @@ class ActionsParityTests(unittest.TestCase):
         self.assertEqual(backend_spec.source, "backend_pytest")
         self.assertEqual(frontend_spec.source, "frontend_package_test")
 
+    def test_configured_backend_python_test_command_uses_poetry_project_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+            target = action_test_support_module.TestTargetContext(
+                project_name="Main",
+                project_root=repo,
+                target_obj=None,
+            )
+
+            with patch("envctl_engine.actions.action_test_support.shutil.which", return_value="/usr/bin/poetry"):
+                backend_spec = _configured_or_default_test_spec(
+                    raw_command="python3.12 -m pytest backend/tests",
+                    target=target,
+                    repo_root=repo,
+                    include_backend=True,
+                    include_frontend=False,
+                    frontend_test_path=None,
+                    split_command=lambda raw, _replacements: raw.split(),
+                    replacements_for_target=lambda _target: {},
+                )
+
+            self.assertIsNotNone(backend_spec)
+            self.assertEqual(backend_spec.source, "backend_pytest")
+            self.assertEqual(
+                backend_spec.command,
+                ["poetry", "--project", str(backend), "run", "python", "-m", "pytest", "backend/tests"],
+            )
+
+    def test_failed_only_backend_pytest_rerun_uses_poetry_project_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+            entry = action_test_support_module.FailedTestManifestEntry(
+                source="backend_pytest",
+                suite="Backend (pytest)",
+                failed_tests=("backend/tests/test_auth.py::test_signup_regression",),
+                failed_files=(),
+            )
+
+            with patch("envctl_engine.actions.action_test_support.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"):
+                spec = action_test_support_module._failed_rerun_spec_for_entry(
+                    entry,
+                    project_name="Main",
+                    project_root=repo,
+                    repo_root=repo,
+                    target_obj=None,
+                )
+
+            self.assertFalse(isinstance(spec, str))
+            self.assertIsNotNone(spec)
+            self.assertEqual(
+                spec.spec.command,
+                [
+                    "poetry",
+                    "--project",
+                    str(backend),
+                    "run",
+                    "python",
+                    "-m",
+                    "pytest",
+                    "backend/tests/test_auth.py::test_signup_regression",
+                ],
+            )
+
     def test_shared_configured_root_unittest_command_keeps_repository_suite_label(self) -> None:
         target = action_test_support_module.TestTargetContext(
             project_name="Main",

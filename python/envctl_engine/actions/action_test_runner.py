@@ -542,7 +542,12 @@ def run_test_action(
         selected_target = (
             execution.target_obj if execution.target_obj is not None else (targets[0] if targets else None)
         )
-        env = orchestrator.action_env("test", targets, target=selected_target)
+        env_extra = orchestrator.test_action_extra_env(
+            route=route,
+            target=selected_target,
+            suite_source=spec.source,
+        )
+        env = orchestrator.action_env("test", targets, route=route, target=selected_target, extra=env_extra)
 
         def emit_test_event(event_name: str, data: dict[str, Any]) -> None:
             rt._emit(  # type: ignore[attr-defined]
