@@ -41,6 +41,10 @@ pass `--interactive` only when you want prompts.
 | `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
 | `--deps` | Alias for `--dependencies`. |
 | `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
+| `--only-frontend` | Startup/plan modifier: launch only the frontend app service; skip backend, managed dependencies, and dependency prep. |
+| `--only-backend` | Startup/plan modifier: launch only the backend app service; skip frontend, managed dependencies, and dependency prep. |
+| `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
+| `--no-infra` | Startup/plan modifier: skip backend, frontend, managed dependencies, and plan-agent dependency prep. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
@@ -58,7 +62,7 @@ pass `--interactive` only when you want prompts.
 | `--keep-plan` | Keep planning files in place after execution. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
 | `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
-| `--ulw` | With `--plan --tmux --opencode`, submit the rendered prompt through the OpenCode ULW loop prefix. |
+| `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
 | `--tmux-new-session` | For AI-driven `--plan` launches, create a fresh tmux or OMX-managed session instead of attaching to an existing one. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly. |
 | `--ralph` | OMX-only modifier for `--plan --omx`; starts the Ralph workflow inside the OMX-managed Codex session. |

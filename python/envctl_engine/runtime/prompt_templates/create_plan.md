@@ -82,6 +82,18 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
+## Launch scope minimization
+Before showing or running any envctl worktree-and-prompt follow-up, infer the smallest safe launch scope from the researched change surface and the user's request:
+
+- For backend-only changes, include `--only-backend` so envctl launches only the backend app service and skips frontend, managed dependencies, and dependency prep.
+- For frontend-only changes, include `--only-frontend` so envctl launches only the frontend app service and skips backend, managed dependencies, and dependency prep.
+- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, or anything uncertain, use no minimization flag and run all configured parts.
+- For plans that need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that do not require backend, frontend, managed dependencies, or dependency prep), include `--no-infra`.
+- For explicitly requested dependency/container/infrastructure verification, do not use `--no-infra`; prefer the broader scope needed to prove the plan safely.
+- If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
+
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
 - Do not run `envctl` unless the user explicitly says yes.
@@ -90,23 +102,22 @@ Use this structure (adapt section names only if truly necessary):
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
-    - `--tmux --opencode --ulw`: same tmux/OpenCode launch, but envctl prepends `/ulw_loop` to the first submitted prompt so OpenCode starts in ULW mode
+    - `--tmux --opencode`: envctl creates or reuses the tmux session/window itself, launches OpenCode, and prepends `/ulw-loop` to the first submitted prompt by default
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
     - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph workflow
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--tmux-new-session`: create another tmux or OMX-managed session instead of attaching to an existing one
+  - whenever you show a follow-up command, include inferred launch scope minimization flags (`--only-frontend`, `--only-backend`, or `--no-infra`) when the plan scope calls for them
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode`
-  - if you show an OpenCode tmux ULW launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --ulw`
   - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux`
   - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --omx`
   - if you show an OMX-managed Ralph launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph`
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team`
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --headless`
-  - if you show a headless OpenCode tmux ULW launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --ulw --headless`
   - if you show a headless Codex tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --headless`
   - when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
   - when you explain how to reconnect to a launched tmux session later, use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`

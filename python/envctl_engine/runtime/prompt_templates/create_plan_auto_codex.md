@@ -83,6 +83,18 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
+## Launch scope minimization
+Before showing or running any envctl worktree-and-prompt follow-up, infer the smallest safe launch scope from the researched change surface and the user's request:
+
+- For backend-only changes, include `--only-backend` so envctl launches only the backend app service and skips frontend, managed dependencies, and dependency prep.
+- For frontend-only changes, include `--only-frontend` so envctl launches only the frontend app service and skips backend, managed dependencies, and dependency prep.
+- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, or anything uncertain, use no minimization flag and run all configured parts.
+- For plans that need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that do not require backend, frontend, managed dependencies, or dependency prep), include `--no-infra`.
+- For explicitly requested dependency/container/infrastructure verification, do not use `--no-infra`; prefer the broader scope needed to prove the plan safely.
+- If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
+
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
 
@@ -98,11 +110,13 @@ If the envctl launch command exits non-zero, report the plan path, attempted com
 If launch succeeds, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and that implementation work is now delegated to the launched session.
 The prompt must not begin implementing in the original planning session after launching envctl.
 
-Run exactly this command after the plan path exists and selector derivation succeeds:
+Run the launch command after the plan path exists and selector derivation succeeds. If launch scope minimization selects any flags, insert them immediately before `--headless`; if it selects no flags, run exactly this command:
 
 ```bash
 cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug> --tmux --headless --tmux-new-session
 ```
+
+For example, a no-runtime-infrastructure plan should run `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug> --tmux --no-infra --headless --tmux-new-session`.
 
 This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
 

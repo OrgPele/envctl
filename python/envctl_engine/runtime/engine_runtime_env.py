@@ -164,6 +164,8 @@ def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool
 def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
     normalized_mode = str(mode).strip().lower()
     normalized_name = str(requirement_name).strip().lower()
+    if route is not None and route.flags.get("launch_dependencies") is False:
+        return False
     if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(
         normalized_mode
     ):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import concurrent.futures
 from datetime import datetime
 import json
-import shlex
 import shutil
 import sys
 import time
@@ -706,13 +705,17 @@ def _print_dashboard_ai_session_row(
 
     project_root = _dashboard_project_root(self, state=state, project=project)
     repo_root = _dashboard_repo_root_for_project(project_root=project_root)
+    envctl_executable = "envctl"
     launch_command = (
-        resolve_plan_agent_launch_command(project_name=project, project_root=project_root, repo_root=repo_root)
+        resolve_plan_agent_launch_command(
+            project_name=project,
+            project_root=project_root,
+            repo_root=repo_root,
+            envctl_executable=envctl_executable,
+        )
         if project_root is not None and repo_root is not None
         else None
     )
-    if not launch_command:
-        launch_command = f"envctl --project {shlex.quote(project)} --tmux"
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -733,7 +736,7 @@ def _print_dashboard_ai_session_row(
                 session_message = "detached"
             print(f"    {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}")
         return
-    if not render_launch_fallback:
+    if not render_launch_fallback or not launch_command:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
 
@@ -784,9 +787,18 @@ def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | Non
     provenance_repo_root = _dashboard_repo_root_from_provenance(project_root=project_root)
     if provenance_repo_root is not None:
         return provenance_repo_root
+    tree_layout_repo_root = _dashboard_repo_root_from_tree_layout(project_root=project_root)
+    if tree_layout_repo_root is not None:
+        return tree_layout_repo_root
     current = project_root.resolve(strict=False)
     for candidate in (current, *current.parents):
-        if (candidate / ".git").exists() or (candidate / "todo").is_dir():
+        if (candidate / "todo" / "plans").is_dir() or (candidate / "todo" / "done").is_dir():
+            return candidate
+    for candidate in (current, *current.parents):
+        if (candidate / "todo").is_dir():
+            return candidate
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
             return candidate
     return None
 
@@ -805,6 +817,25 @@ def _dashboard_repo_root_from_provenance(*, project_root: Path) -> Path | None:
     repo_root = Path(repo_root_raw).expanduser().resolve(strict=False)
     if (repo_root / ".git").exists() or (repo_root / "todo").is_dir():
         return repo_root
+    return None
+
+
+def _dashboard_repo_root_from_tree_layout(*, project_root: Path) -> Path | None:
+    current = project_root.resolve(strict=False)
+    for trees_dir in current.parents:
+        if trees_dir.name != "trees":
+            continue
+        repo_root = trees_dir.parent
+        if repo_root == current:
+            continue
+        try:
+            current.relative_to(trees_dir)
+        except ValueError:
+            continue
+        if (repo_root / "todo" / "plans").is_dir() or (repo_root / "todo" / "done").is_dir():
+            return repo_root
+        if (repo_root / ".git").exists() and (repo_root / "todo").is_dir():
+            return repo_root
     return None
 
 

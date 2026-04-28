@@ -35,7 +35,7 @@ _SURFACE_READY_DELAY_SECONDS = 0.15
 _DEFAULT_CLI_READY_DELAY_SECONDS = 0.35
 _CLI_READY_DELAY_SECONDS_BY_CLI = {
     "codex": 5.0,
-    "opencode": 5.0,
+    "opencode": 15.0,
 }
 _CLI_READY_POLL_INTERVAL_SECONDS = 0.1
 _READ_SCREEN_LINE_COUNT = 80
@@ -238,7 +238,13 @@ def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
     return normalized_cli == "opencode" and direct_prompt_enabled
 
 
-def _build_plan_agent_workflow(*, cli: str, preset: str, codex_cycles: int, direct_prompt_enabled: bool = False) -> _PlanAgentWorkflow:
+def _build_plan_agent_workflow(
+    *,
+    cli: str,
+    preset: str,
+    codex_cycles: int,
+    direct_prompt_enabled: bool = False,
+) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
     if _uses_direct_submission(cli=normalized_cli, direct_prompt_enabled=direct_prompt_enabled):
@@ -279,10 +285,11 @@ def resolve_plan_agent_launch_config(
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
+    opencode_launch_requested = bool(route_flags.get("opencode"))
     transport: Literal["cmux", "tmux", "omx"] = (
         "omx"
         if bool(route_flags.get("omx"))
-        else ("tmux" if bool(route_flags.get("tmux")) else "cmux")
+        else ("tmux" if bool(route_flags.get("tmux")) or opencode_launch_requested else "cmux")
     )
     cli = str(
         "opencode"
@@ -335,7 +342,7 @@ def resolve_plan_agent_launch_config(
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        False,
+        True if (transport == "tmux" and cli == "opencode" and direct_prompt_enabled) else False,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
@@ -422,7 +429,11 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
-    target_workspace = None if launch_config.transport == "tmux" else (launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config))
+    target_workspace = (
+        None
+        if launch_config.transport == "tmux"
+        else (launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config))
+    )
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
         "transport": launch_config.transport,
@@ -476,7 +487,11 @@ def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
-    reason = "missing_cmux_context" if _missing_required_cmux_context(runtime, launch_config) else "workspace_unavailable"
+    reason = (
+        "missing_cmux_context"
+        if _missing_required_cmux_context(runtime, launch_config)
+        else "workspace_unavailable"
+    )
     return ReviewAgentLaunchReadiness(ready=False, reason=reason, cli=launch_config.cli)
 
 
@@ -506,7 +521,11 @@ def launch_review_agent_terminal(
         event_prefix="dashboard.review_tab",
     )
     if workspace_target is None:
-        reason = "missing_cmux_context" if _missing_required_cmux_context(runtime, launch_config) else "workspace_unavailable"
+        reason = (
+            "missing_cmux_context"
+            if _missing_required_cmux_context(runtime, launch_config)
+            else "workspace_unavailable"
+        )
         runtime._emit(
             "dashboard.review_tab.failed",
             reason=reason,
@@ -657,7 +676,8 @@ def launch_plan_agent_terminals(
     )
     if workflow.mode == _PLAN_AGENT_WORKFLOW_CODEX_CYCLES:
         _print_launch_summary(
-            f"Plan agent launch queued Codex cycle workflow (cycles={workflow.codex_cycles}) for {len(created_worktrees)} surface(s)."
+            "Plan agent launch queued Codex cycle workflow "
+            f"(cycles={workflow.codex_cycles}) for {len(created_worktrees)} surface(s)."
         )
     if (
         workspace_target.created
@@ -717,7 +737,10 @@ def _launch_plan_agent_tmux_terminals(
         cli=launch_config.cli,
     )
     if existing_attach_target is not None:
-        if not create_new_session and _should_prompt_existing_tmux_session(runtime, prompt_on_existing=prompt_on_existing):
+        if not create_new_session and _should_prompt_existing_tmux_session(
+            runtime,
+            prompt_on_existing=prompt_on_existing,
+        ):
             action = _prompt_existing_tmux_session_action(runtime, attach_target=existing_attach_target)
             if action == "attach":
                 runtime._emit(
@@ -849,7 +872,10 @@ def _launch_plan_agent_omx_terminals(
         created_worktrees=created_worktrees,
     )
     if existing_attach_target is not None:
-        if not create_new_session and _should_prompt_existing_tmux_session(runtime, prompt_on_existing=prompt_on_existing):
+        if not create_new_session and _should_prompt_existing_tmux_session(
+            runtime,
+            prompt_on_existing=prompt_on_existing,
+        ):
             action = _prompt_existing_tmux_session_action(runtime, attach_target=existing_attach_target)
             if action == "attach":
                 runtime._emit(
@@ -1152,7 +1178,11 @@ def _should_prompt_existing_tmux_session(runtime: Any, *, prompt_on_existing: bo
     return False
 
 
-def _prompt_existing_tmux_session_action(runtime: Any, *, attach_target: PlanAgentAttachTarget) -> Literal["attach", "new"]:
+def _prompt_existing_tmux_session_action(
+    runtime: Any,
+    *,
+    attach_target: PlanAgentAttachTarget,
+) -> Literal["attach", "new"]:
     prompt = (
         f"An envctl tmux session already exists for this plan/workspace ({attach_target.session_name}). "
         f"Attach to it? (Y=attach / n=create new session): "
@@ -1637,10 +1667,38 @@ def _launch_tmux_cli_bootstrap_commands(
     typed_root = shlex.quote(str(cwd))
     emit_failure_event = failure_event == "planning.agent_launch.failed"
     return [
-        _send_tmux_text(runtime, session_name=session_name, window_name=window_name, text=f"cd {typed_root}", emit_failure_event=emit_failure_event, failure_event=failure_event),
-        _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter", emit_failure_event=emit_failure_event, failure_event=failure_event),
-        _send_tmux_text(runtime, session_name=session_name, window_name=window_name, text=cli_command, emit_failure_event=emit_failure_event, failure_event=failure_event),
-        _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter", emit_failure_event=emit_failure_event, failure_event=failure_event),
+        _send_tmux_text(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=f"cd {typed_root}",
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        ),
+        _send_tmux_key(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            key="enter",
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        ),
+        _send_tmux_text(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=cli_command,
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        ),
+        _send_tmux_key(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            key="enter",
+            emit_failure_event=emit_failure_event,
+            failure_event=failure_event,
+        ),
     ]
 
 
@@ -2238,10 +2296,10 @@ def _shape_prompt_text(
             for token in str(stripped).split()
             if _PROMPT_SHAPING_COMMAND_TOKEN_RE.fullmatch(token)
         ]
-        if any(token != "/ulw_loop" for token in slash_command_tokens):
+        if any(token != "/ulw-loop" for token in slash_command_tokens):
             return "", "prompt_resolution_failed: multiple_slash_commands_not_allowed"
-        if not stripped.startswith("/ulw_loop"):
-            shaped = f"/ulw_loop {stripped}" if stripped else "/ulw_loop"
+        if not stripped.startswith("/ulw-loop"):
+            shaped = f"/ulw-loop {stripped}" if stripped else "/ulw-loop"
             stripped = shaped.strip()
     if ulw_suffix and not stripped.endswith(" ulw") and stripped != "ulw":
         shaped = f"{shaped.rstrip()} ulw" if shaped.rstrip() else "ulw"
@@ -2257,7 +2315,10 @@ def _resolve_preset_submission_text(
     arguments: str = "",
 ) -> tuple[str, str | None]:
     normalized_cli = str(cli).strip().lower()
-    direct_prompt = _uses_direct_submission(cli=normalized_cli, direct_prompt_enabled=launch_config.direct_prompt_enabled)
+    direct_prompt = _uses_direct_submission(
+        cli=normalized_cli,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+    )
     try:
         if not direct_prompt:
             resolved = _slash_command(cli, preset, arguments=arguments)
@@ -2777,14 +2838,29 @@ def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str |
     return selector
 
 
-def resolve_plan_agent_launch_command(*, project_name: str, project_root: Path, repo_root: Path) -> str | None:
+def resolve_plan_agent_launch_command(
+    *,
+    project_name: str,
+    project_root: Path,
+    repo_root: Path,
+    envctl_executable: str = "envctl",
+) -> str | None:
     plan_path = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
     if plan_path is None:
         return None
     selector = _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
     if not selector:
         return None
-    return f"envctl --plan {shlex.quote(selector)} --tmux"
+    return " ".join(
+        (
+            shlex.quote(envctl_executable),
+            "--repo",
+            shlex.quote(str(repo_root)),
+            "--plan",
+            shlex.quote(selector),
+            "--opencode",
+        )
+    )
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:
@@ -3036,7 +3112,10 @@ def _create_named_workspace(
     if getattr(rename_result, "returncode", 1) != 0:
         return None, _completed_process_error_text(rename_result)
     runtime._emit(f"{event_prefix}.workspace_created", workspace_id=workspace_ref, title=title)
-    starter_surface_id, probe_result, surface_count = _starter_surface_for_new_workspace(runtime, workspace_id=workspace_ref)
+    starter_surface_id, probe_result, surface_count = _starter_surface_for_new_workspace(
+        runtime,
+        workspace_id=workspace_ref,
+    )
     probe_payload: dict[str, object] = {
         "workspace_id": workspace_ref,
         "result": probe_result,

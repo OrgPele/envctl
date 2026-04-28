@@ -35,10 +35,15 @@ def _python_dependency_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
-def check_prereqs(route: Route, config: EngineConfig, *, env: Mapping[str, str] | None = None) -> tuple[bool, str | None]:
+def check_prereqs(
+    route: Route,
+    config: EngineConfig,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> tuple[bool, str | None]:
     required_tools = {"git"}
     effective_mode = _effective_prereq_mode(route)
-    if route.command in {"start", "plan", "restart"} and _requires_docker(effective_mode, config):
+    if route.command in {"start", "plan", "restart"} and _requires_docker(effective_mode, config, route=route):
         required_tools.add("docker")
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
@@ -63,7 +68,9 @@ def _effective_prereq_mode(route: Route) -> str:
     return route.mode
 
 
-def _requires_docker(mode: str, config: EngineConfig) -> bool:
+def _requires_docker(mode: str, config: EngineConfig, *, route: Route | None = None) -> bool:
+    if route is not None and route.flags.get("launch_dependencies") is False:
+        return False
     return any(config.requirement_enabled_for_mode(mode, definition.id) for definition in dependency_definitions())
 
 

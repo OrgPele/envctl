@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,12 +40,24 @@ def run_codex_tmux_command(runtime: Any, route: object) -> int:
         print("codex-tmux supports --json only together with --dry-run.", file=sys.stderr)
         return 1
 
+    if bool(flags.get("omx")):
+        missing = [name for name in ("omx",) if not bool(runtime._command_exists(name))]
+        if missing:
+            print(f"Missing required executables: {', '.join(missing)}", file=sys.stderr)
+            return 1
+        command = _omx_command_for_flags(flags, passthrough_args=passthrough_args)
+        if dry_run:
+            _print_omx_launch_plan(runtime, command=command, json_output=json_output)
+            return 0
+        return _attach_interactive(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
+
     missing = [name for name in ("tmux", "codex") if not bool(runtime._command_exists(name))]
     if missing:
         print(f"Missing required executables: {', '.join(missing)}", file=sys.stderr)
         return 1
 
-    plan = _build_launch_plan(runtime, passthrough_args=passthrough_args)
+    codex_executable = _resolve_command_path("codex")
+    plan = _build_launch_plan(runtime, passthrough_args=passthrough_args, codex_executable=codex_executable)
     if dry_run:
         _print_launch_plan(plan, json_output=json_output)
         return 0
@@ -69,11 +82,45 @@ def run_codex_tmux_command(runtime: Any, route: object) -> int:
     return _attach_interactive(runtime, plan.attach_command, cwd=plan.repo_root)
 
 
-def _build_launch_plan(runtime: Any, *, passthrough_args: tuple[str, ...]) -> CodexTmuxLaunchPlan:
+
+def _omx_command_for_flags(flags: dict[str, object], *, passthrough_args: tuple[str, ...]) -> tuple[str, ...]:
+    command = ["omx"]
+    workflow = ""
+    if bool(flags.get("ralph")):
+        workflow = "ralph"
+        command.append("ralph")
+    elif bool(flags.get("team")):
+        workflow = "team"
+        command.append("team")
+    command.append("--tmux")
+    if passthrough_args:
+        command.extend(passthrough_args)
+    elif workflow == "ralph":
+        command.append("Implement MAIN_TASK.md end-to-end.")
+    return tuple(command)
+
+
+def _print_omx_launch_plan(runtime: Any, *, command: tuple[str, ...], json_output: bool) -> None:
+    payload = {
+        "repo_root": str(Path(runtime.config.base_dir).resolve()),
+        "omx_command": list(command),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(f"repo_root: {payload['repo_root']}")
+    print(f"omx_command: {shlex.join(command)}")
+
+def _build_launch_plan(
+    runtime: Any,
+    *,
+    passthrough_args: tuple[str, ...],
+    codex_executable: str = "codex",
+) -> CodexTmuxLaunchPlan:
     repo_root = Path(runtime.config.base_dir).resolve()
     session_name = _session_name_for_repo(repo_root, env=getattr(runtime, "env", {}) or {})
     window_name = _window_name(env=getattr(runtime, "env", {}) or {})
-    codex_command = ("codex", *_CODEX_BYPASS_ARGS, *passthrough_args)
+    codex_command = (codex_executable, *_CODEX_BYPASS_ARGS, *passthrough_args)
     create_session = not _tmux_session_exists(runtime, session_name)
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     create_command = None
@@ -101,6 +148,13 @@ def _build_launch_plan(runtime: Any, *, passthrough_args: tuple[str, ...]) -> Co
         create_command=create_command,
         attach_command=attach_command,
     )
+
+
+def _resolve_command_path(command: str) -> str:
+    resolved = shutil.which(command)
+    if not resolved:
+        return command
+    return str(Path(resolved).expanduser().resolve(strict=False))
 
 
 def _print_launch_plan(plan: CodexTmuxLaunchPlan, *, json_output: bool) -> None:

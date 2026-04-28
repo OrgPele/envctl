@@ -12,6 +12,8 @@ from typing import Callable, Mapping, cast
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchResult,
     attach_plan_agent_terminal,
     launch_plan_agent_terminals,
     resolve_plan_agent_launch_config,
@@ -338,7 +340,10 @@ class StartupOrchestrator:
                     for worktree in getattr(selection_result, "created_worktrees", ())
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
-                if not created_worktrees and (bool(route.flags.get("tmux")) or bool(route.flags.get("omx"))):
+                explicit_plan_agent_launch = any(
+                    bool(route.flags.get(flag_name)) for flag_name in ("tmux", "omx", "codex", "opencode")
+                )
+                if not created_worktrees and explicit_plan_agent_launch:
                     recovered_worktrees: list[CreatedPlanWorktree] = []
                     for context in project_contexts:
                         recovered_worktrees.append(
@@ -373,70 +378,194 @@ class StartupOrchestrator:
         if launch_config.enabled and created_worktrees:
             self._ensure_run_id(session)
             context_by_name = {context.name: context for context in session.selected_contexts}
-            bootstrap_started = time.monotonic()
-            rt._emit(
-                "planning.dependency_bootstrap.start",
-                project_count=len(created_worktrees),
-                projects=[worktree.name for worktree in created_worktrees],
-                cli=launch_config.cli,
-                transport=launch_config.transport,
-            )
-            results: list[object] = []
-            try:
-                for worktree in created_worktrees:
-                    context = context_by_name.get(worktree.name)
-                    if context is None:
-                        continue
-                    self._report_progress(
-                        route,
-                        f"Preparing dependencies for {worktree.name}...",
-                        project=worktree.name,
-                    )
-                    project_started = time.monotonic()
-                    result = prepare_project_dependencies(
-                        rt,
-                        context=context,
-                        route=route,
-                        run_id=self._resolved_run_id(session),
-                    )
-                    results.append(result)
-                    rt._emit(
-                        "planning.dependency_bootstrap.project",
-                        project=worktree.name,
-                        status="ok",
-                        backend_manager=result.backend.manager,
-                        frontend_manager=result.frontend.manager,
-                        skipped=list(result.skipped),
-                        duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
-                    )
-                    self._report_progress(
-                        route,
-                        (
-                            f"Dependencies ready for {worktree.name}: "
-                            f"backend={result.backend.manager} frontend={result.frontend.manager}"
-                        ),
-                        project=worktree.name,
-                    )
-            except Exception as exc:
+            if route.flags.get("launch_dependencies") is False:
                 rt._emit(
                     "planning.dependency_bootstrap.finish",
-                    status="failed",
-                    error=str(exc),
+                    status="skipped",
+                    reason="disabled_by_flag",
+                    project_count=0,
+                    duration_ms=0.0,
+                )
+            else:
+                bootstrap_started = time.monotonic()
+                rt._emit(
+                    "planning.dependency_bootstrap.start",
+                    project_count=len(created_worktrees),
+                    projects=[worktree.name for worktree in created_worktrees],
+                    cli=launch_config.cli,
+                    transport=launch_config.transport,
+                )
+                results: list[object] = []
+                try:
+                    for worktree in created_worktrees:
+                        context = context_by_name.get(worktree.name)
+                        if context is None:
+                            continue
+                        self._report_progress(
+                            route,
+                            f"Preparing dependencies for {worktree.name}...",
+                            project=worktree.name,
+                        )
+                        project_started = time.monotonic()
+                        result = prepare_project_dependencies(
+                            rt,
+                            context=context,
+                            route=route,
+                            run_id=self._resolved_run_id(session),
+                        )
+                        results.append(result)
+                        rt._emit(
+                            "planning.dependency_bootstrap.project",
+                            project=worktree.name,
+                            status="ok",
+                            backend_manager=result.backend.manager,
+                            frontend_manager=result.frontend.manager,
+                            skipped=list(result.skipped),
+                            duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
+                        )
+                        self._report_progress(
+                            route,
+                            (
+                                f"Dependencies ready for {worktree.name}: "
+                                f"backend={result.backend.manager} frontend={result.frontend.manager}"
+                            ),
+                            project=worktree.name,
+                        )
+                except Exception as exc:
+                    rt._emit(
+                        "planning.dependency_bootstrap.finish",
+                        status="failed",
+                        error=str(exc),
+                        duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
+                    )
+                    raise
+                session.plan_agent_dependency_bootstrap_results = tuple(results)
+                rt._emit(
+                    "planning.dependency_bootstrap.finish",
+                    status="ok",
+                    project_count=len(results),
                     duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
                 )
-                raise
-            session.plan_agent_dependency_bootstrap_results = tuple(results)
-            rt._emit(
-                "planning.dependency_bootstrap.finish",
-                status="ok",
-                project_count=len(results),
-                duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
-            )
-        launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+        launch_result = self._launch_plan_agent_terminals_with_spinner(
+            session,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+        )
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
         self._emit_plan_agent_launch_state(session, launch_result)
         return None
+
+    def _launch_plan_agent_terminals_with_spinner(
+        self,
+        session: StartupSession,
+        *,
+        created_worktrees: tuple[CreatedPlanWorktree, ...],
+        launch_config: PlanAgentLaunchConfig,
+    ) -> PlanAgentLaunchResult:
+        rt = self.runtime
+        route = session.effective_route
+        spinner_policy = resolve_spinner_policy(dict(rt.env))
+        use_launch_spinner = (
+            bool(getattr(spinner_policy, "enabled", False))
+            and bool(getattr(launch_config, "enabled", False))
+            and bool(created_worktrees)
+            and not self._suppress_progress_output(route)
+        )
+        emit_spinner_policy(
+            rt._emit,
+            spinner_policy,
+            context={"component": "startup_orchestrator", "op_id": "plan_agent.launch"},
+        )
+        if not use_launch_spinner:
+            return launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+
+        launch_message = self._plan_agent_launch_spinner_message(
+            launch_config,
+            count=len(created_worktrees),
+        )
+        with use_spinner_policy(spinner_policy), spinner(launch_message, enabled=True) as active_spinner:
+            rt._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="start",
+                message=launch_message,
+            )
+            try:
+                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+            except Exception:
+                failure_message = "AI session launch failed"
+                active_spinner.fail(failure_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="fail",
+                    message=failure_message,
+                )
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="stop",
+                )
+                raise
+            status = str(getattr(launch_result, "status", "")).strip().lower()
+            if status == "failed":
+                failure_message = "AI session launch failed"
+                active_spinner.fail(failure_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="fail",
+                    message=failure_message,
+                )
+            else:
+                success_message = self._plan_agent_launch_spinner_success_message(
+                    launch_config,
+                    count=len(created_worktrees),
+                )
+                active_spinner.succeed(success_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="success",
+                    message=success_message,
+                )
+            rt._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="stop",
+            )
+            return launch_result
+
+    @staticmethod
+    def _plan_agent_launch_spinner_label(launch_config: PlanAgentLaunchConfig) -> str:
+        transport = str(getattr(launch_config, "transport", "")).strip().lower()
+        cli = str(getattr(launch_config, "cli", "")).strip().lower()
+        if transport == "omx":
+            return "OMX-managed Codex"
+        if cli == "opencode":
+            return "OpenCode"
+        if cli == "codex":
+            return "Codex"
+        return "AI"
+
+    @classmethod
+    def _plan_agent_launch_spinner_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
+        label = cls._plan_agent_launch_spinner_label(launch_config)
+        noun = "session" if count == 1 else "sessions"
+        return f"Launching {label} AI {noun}..."
+
+    @classmethod
+    def _plan_agent_launch_spinner_success_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
+        label = cls._plan_agent_launch_spinner_label(launch_config)
+        noun = "session" if count == 1 else "sessions"
+        return f"{label} AI {noun} ready"
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime
@@ -561,20 +690,32 @@ class StartupOrchestrator:
                     decision_kind=decision.decision_kind,
                     reason=decision.reason,
                 )
+                attach_plan_agent_after_resume = (
+                    route.command == "plan"
+                    and not self._headless_plan_output_only(session)
+                    and session.plan_agent_attach_target is not None
+                )
+                resume_flags = {
+                    **route.flags,
+                    "_resume_source_command": route.command,
+                    "_run_reuse_reason": decision.decision_kind,
+                }
+                if attach_plan_agent_after_resume:
+                    resume_flags["batch"] = True
                 resume_route = Route(
                     command="resume",
                     mode=runtime_mode,
                     raw_args=route.raw_args,
                     passthrough_args=route.passthrough_args,
                     projects=route.projects,
-                    flags={
-                        **route.flags,
-                        "_resume_source_command": route.command,
-                        "_run_reuse_reason": decision.decision_kind,
-                    },
+                    flags=resume_flags,
                 )
                 resume_code = rt._resume(resume_route)
                 if int(resume_code) == 0:
+                    if attach_plan_agent_after_resume:
+                        attach_code = self._maybe_attach_plan_agent_terminal(session)
+                        if attach_code is not None:
+                            return attach_code
                     return 0
                 session.run_id = previous_run_id
                 session.identifiers_announced = previous_identifiers_announced

@@ -195,6 +195,12 @@ SPECIAL_FLAGS = {
     "--no-service-parallel",
     "--service-prep-sequential",
     "--no-service-prep-parallel",
+    "--only-backend",
+    "--only-frontend",
+    "--no-dependencies",
+    "--no-deps",
+    "--no-infra",
+    "--no-infrastructure",
 }
 
 _ENV_ASSIGNMENT_KEYS = {
@@ -776,6 +782,20 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["service_parallel"] = False
     elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
         flags["service_prep_parallel"] = False
+    elif token == "--only-backend":
+        flags["launch_backend"] = True
+        flags["launch_frontend"] = False
+        flags["launch_dependencies"] = False
+    elif token == "--only-frontend":
+        flags["launch_backend"] = False
+        flags["launch_frontend"] = True
+        flags["launch_dependencies"] = False
+    elif token in {"--no-dependencies", "--no-deps"}:
+        flags["launch_dependencies"] = False
+    elif token in {"--no-infra", "--no-infrastructure"}:
+        flags["launch_backend"] = False
+        flags["launch_frontend"] = False
+        flags["launch_dependencies"] = False
     elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
         flags["seed_requirements_from_base"] = False
     elif token in {"fresh=true", "FRESH=true"}:

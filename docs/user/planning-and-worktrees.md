@@ -97,6 +97,11 @@ worktree:
 This preparation does not start backend/frontend services and does not run migrations. It only ensures the AI session
 starts in a worktree whose dependency roots are ready or were skipped for a documented reason.
 
+Use `--no-deps` when you want to launch the AI session without dependency prep or managed dependencies. Use
+`--only-backend` or `--only-frontend` when you want exactly one app side: those flags also skip managed dependencies
+and dependency prep. Use `--no-infra` when the task does not need backend, frontend, managed dependencies, or
+dependency prep at all.
+
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux launches keep using `/<preset>`, while `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
@@ -117,7 +122,7 @@ The installed create-plan skills connect planning documents to these launch path
 
 - `$envctl-create-plan` stays plan-only and approval-first.
 - `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --headless --tmux-new-session`; OpenCode prepends `/ulw-loop` by default.
 - `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.

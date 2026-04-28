@@ -571,9 +571,9 @@ class PromptInstallSupportTests(unittest.TestCase):
                 ),
             },
             "create_plan_auto_opencode": {
-                "command": "envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session",
+                "command": "envctl --plan <category>/<slug> --tmux --opencode --headless --tmux-new-session",
                 "phrases": (
-                    "`--ulw` is required for this auto skill",
+                    "OpenCode plan-agent launches use the `/ulw-loop` prefix by default",
                     "Codex cycle settings are intentionally ignored for this surface",
                     "do not silently fall back to Codex",
                 ),
@@ -613,6 +613,13 @@ class PromptInstallSupportTests(unittest.TestCase):
                     self.assertIn(phrase, body)
                 self.assertIn("--headless", body)
                 self.assertIn("--tmux-new-session", body)
+                self.assertIn("Launch scope minimization", body)
+                self.assertIn("backend-only", body)
+                self.assertIn("--only-backend", body)
+                self.assertIn("frontend-only", body)
+                self.assertIn("--only-frontend", body)
+                self.assertIn("no runtime infrastructure", body)
+                self.assertIn("--no-infra", body)
                 self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
@@ -725,10 +732,6 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux --opencode --ulw",
-            plan_prompt.body,
-        )
-        self.assertIn(
             "cd <repo> && envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
@@ -785,10 +788,9 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --headless", plan_prompt.body)
-        self.assertIn("cd <repo> && envctl --plan <selector> --tmux --opencode --ulw --headless", plan_prompt.body)
         self.assertIn("cd <repo> && envctl --plan <selector> --tmux --headless", plan_prompt.body)
         self.assertIn("--tmux-new-session", plan_prompt.body)
-        self.assertIn("envctl prepends `/ulw_loop` to the first submitted prompt", plan_prompt.body)
+        self.assertIn("prepends `/ulw-loop` to the first submitted prompt by default", plan_prompt.body)
         self.assertIn("use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`", plan_prompt.body)
         self.assertIn("create another tmux or OMX-managed session instead of attaching to an existing one", plan_prompt.body)
         self.assertIn("when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session`", plan_prompt.body)
@@ -816,6 +818,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Do not run parent-directory or sibling-repo searches such as `find ..`", plan_prompt.body)
         self.assertIn("If the user explicitly asks for a light/quick/minimal planning pass", plan_prompt.body)
         self.assertIn("Review todo/plans/README.md if it exists", plan_prompt.body)
+        self.assertIn("Launch scope minimization", plan_prompt.body)
+        self.assertIn("backend-only", plan_prompt.body)
+        self.assertIn("--only-backend", plan_prompt.body)
+        self.assertIn("frontend-only", plan_prompt.body)
+        self.assertIn("--only-frontend", plan_prompt.body)
+        self.assertIn("no runtime infrastructure", plan_prompt.body)
+        self.assertIn("--no-infra", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -865,7 +874,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertTrue(openai_yaml.exists())
                 self.assertIn("allow_implicit_invocation: false", openai_yaml.read_text(encoding="utf-8"))
 
-    def test_install_prompts_writes_create_plan_auto_opencode_command_with_ulw(self) -> None:
+    def test_install_prompts_writes_create_plan_auto_opencode_command_with_default_ulw_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})
             route = parse_route(
@@ -883,7 +892,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(payload["results"][0]["path"], str(expected))
             self.assertTrue(expected.exists())
             written = expected.read_text(encoding="utf-8")
-            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session", written)
+            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --headless --tmux-new-session", written)
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
 
     def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
@@ -965,7 +974,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("--tmux --opencode --ulw --headless --tmux-new-session", resolved)
+        self.assertIn("--tmux --opencode --headless --tmux-new-session", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:

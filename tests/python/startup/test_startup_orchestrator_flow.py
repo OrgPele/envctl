@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import tempfile
 import unittest
@@ -72,6 +72,68 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 },
             },
         )()
+
+    def _plan_agent_dependency_bootstrap_calls(self, extra_args: list[str]) -> list[tuple[tuple[str, ...], str]]:
+        class _RecordingRunner:
+            def __init__(self) -> None:
+                self.run_calls: list[tuple[tuple[str, ...], str]] = []
+
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = env, timeout
+                self.run_calls.append((tuple(str(part) for part in cmd), str(cwd)))
+                return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(
+                repo,
+                runtime,
+                extra={
+                    "TREES_STARTUP_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                },
+            )
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            backend = Path(context.root) / "backend"
+            frontend = Path(context.root) / "frontend"
+            backend.mkdir(parents=True, exist_ok=True)
+            frontend.mkdir(parents=True, exist_ok=True)
+            (backend / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            (frontend / "package.json").write_text('{"scripts":{"dev":"vite"}}', encoding="utf-8")
+            (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+            runner = _RecordingRunner()
+            engine.process_runner = cast(Any, runner)
+            engine._command_exists = (  # type: ignore[attr-defined]
+                lambda executable: "/" in executable
+                or executable in {"npm", "python", "python3", "python3.12", "sh"}
+            )
+            engine.planning_worktree_orchestrator._last_plan_selection_result = PlanSelectionResult(
+                raw_projects=[(context.name, context.root)],
+                selected_contexts=[context],
+                created_worktrees=(
+                    CreatedPlanWorktree(name=context.name, root=Path(context.root), plan_file="feature/task.md"),
+                ),
+            )
+            calls_at_launch: list[tuple[tuple[str, ...], str]] = []
+
+            def _launch(_runtime: object, *, route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]):
+                _ = route, created_worktrees
+                calls_at_launch.extend(runner.run_calls)
+                return PlanAgentLaunchResult(status="launched", reason="launched", outcomes=())
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_launch),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                patch.object(engine, "_write_artifacts"),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch", *extra_args], env={}))
+
+            self.assertEqual(code, 0)
+            return calls_at_launch
 
     def test_disabled_startup_writes_dashboard_state_without_starting_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -431,6 +493,278 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertNotIn("Planning mode complete; skipping service startup", rendered)
             self.assertIn("attach: tmux attach -t envctl-test-session", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
+
+    def test_interactive_plan_resume_exact_attaches_plan_agent_instead_of_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+            existing_state = RunState(
+                run_id="run-existing",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(Path(context.root) / "backend"),
+                        pid=123,
+                        requested_port=8200,
+                        actual_port=8200,
+                        status="running",
+                    )
+                },
+                requirements={},
+                metadata={"repo_scope_id": engine.config.runtime_scope_id},
+            )
+            dependency_result = type(
+                "DependencyBootstrapResult",
+                (),
+                {
+                    "backend": type("BackendDependency", (), {"manager": "poetry"})(),
+                    "frontend": type("FrontendDependency", (), {"manager": "npm"})(),
+                    "skipped": (),
+                },
+            )()
+            resumed_routes: list[object] = []
+
+            def _record_resume(route: object) -> int:
+                resumed_routes.append(route)
+                return 0
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.prepare_project_dependencies",
+                    return_value=dependency_result,
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=PlanAgentLaunchResult(
+                        status="launched",
+                        reason="launched",
+                        outcomes=(
+                            PlanAgentLaunchOutcome(
+                                worktree_name=context.name,
+                                worktree_root=Path(context.root),
+                                surface_id=None,
+                                status="launched",
+                            ),
+                        ),
+                        attach_target=attach_target,
+                    ),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=existing_state,
+                        decision_kind="resume_exact",
+                        reason="exact_match",
+                        selected_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                        state_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                    ),
+                ),
+                patch.object(engine, "_resume", side_effect=_record_resume),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--omx"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            attach_mock.assert_called_once_with(engine, attach_target)
+            dashboard_mock.assert_not_called()
+            self.assertEqual(len(resumed_routes), 1)
+            resumed_route = resumed_routes[0]
+            self.assertEqual(getattr(resumed_route, "command", ""), "resume")
+            self.assertTrue(getattr(resumed_route, "flags", {}).get("batch"))
+            self.assertEqual(getattr(resumed_route, "flags", {}).get("_resume_source_command"), "plan")
+
+    def test_interactive_plan_opencode_without_tmux_launches_existing_worktree_and_attaches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-opencode-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-opencode-session"),
+            )
+            existing_state = RunState(
+                run_id="run-existing",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(Path(context.root) / "backend"),
+                        pid=123,
+                        requested_port=8200,
+                        actual_port=8200,
+                        status="running",
+                    )
+                },
+                requirements={},
+                metadata={"repo_scope_id": engine.config.runtime_scope_id},
+            )
+            dependency_result = type(
+                "DependencyBootstrapResult",
+                (),
+                {
+                    "backend": type("BackendDependency", (), {"manager": "poetry"})(),
+                    "frontend": type("FrontendDependency", (), {"manager": "npm"})(),
+                    "skipped": (),
+                },
+            )()
+            captured_launch_worktrees: list[list[str]] = []
+            resumed_routes: list[object] = []
+            spinner_calls: list[tuple[str, str, bool | None]] = []
+
+            def _record_launch(
+                _runtime: object,
+                *,
+                route: object,
+                created_worktrees: tuple[CreatedPlanWorktree, ...],
+            ) -> PlanAgentLaunchResult:
+                _ = route
+                captured_launch_worktrees.append([worktree.name for worktree in created_worktrees])
+                if not created_worktrees:
+                    return PlanAgentLaunchResult(status="skipped", reason="no_new_worktrees")
+                return PlanAgentLaunchResult(
+                    status="launched",
+                    reason="launched",
+                    outcomes=(
+                        PlanAgentLaunchOutcome(
+                            worktree_name=context.name,
+                            worktree_root=Path(context.root),
+                            surface_id=None,
+                            status="launched",
+                        ),
+                    ),
+                    attach_target=attach_target,
+                )
+
+            def _record_resume(route: object) -> int:
+                resumed_routes.append(route)
+                return 0
+
+            @contextmanager
+            def _record_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+                _ = start_immediately
+                spinner_calls.append(("start", message, enabled))
+
+                class _SpinnerStub:
+                    def update(self, message: str) -> None:
+                        spinner_calls.append(("update", message, None))
+
+                    def succeed(self, message: str) -> None:
+                        spinner_calls.append(("succeed", message, None))
+
+                    def fail(self, message: str) -> None:
+                        spinner_calls.append(("fail", message, None))
+
+                yield _SpinnerStub()
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.prepare_project_dependencies",
+                    return_value=dependency_result,
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    side_effect=_record_launch,
+                ),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=existing_state,
+                        decision_kind="resume_exact",
+                        reason="exact_match",
+                        selected_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                        state_projects=[{"name": context.name, "root": str(Path(context.root).resolve())}],
+                    ),
+                ),
+                patch.object(engine, "_resume", side_effect=_record_resume),
+                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
+                patch("envctl_engine.startup.startup_orchestrator.spinner", side_effect=_record_spinner),
+                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+            ):
+                policy_mock.side_effect = lambda *_args, **_kwargs: type(
+                    "_Policy",
+                    (),
+                    {
+                        "mode": "on",
+                        "enabled": True,
+                        "reason": "",
+                        "backend": "rich",
+                        "min_ms": 120,
+                        "verbose_events": False,
+                    },
+                )()
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--opencode"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(captured_launch_worktrees, [["feature-a-1"]])
+            attach_mock.assert_called_once_with(engine, attach_target)
+            dashboard_mock.assert_not_called()
+            self.assertEqual(len(resumed_routes), 1)
+            self.assertTrue(getattr(resumed_routes[0], "flags", {}).get("batch"))
+            self.assertIn(("start", "Launching OpenCode AI session...", True), spinner_calls)
+            self.assertIn(("succeed", "OpenCode AI session ready", None), spinner_calls)
+            lifecycle_events = [event for event in engine.events if event.get("event") == "ui.spinner.lifecycle"]
+            self.assertTrue(
+                any(
+                    event.get("op_id") == "plan_agent.launch"
+                    and event.get("state") == "start"
+                    and event.get("message") == "Launching OpenCode AI session..."
+                    for event in lifecycle_events
+                )
+            )
 
     def test_headless_plan_agent_handoff_prints_attach_when_local_startup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1125,6 +1459,26 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 any(call[0][-3:] == ("alembic", "upgrade", "head") for call in calls_at_launch),
                 msg=str(calls_at_launch),
             )
+
+    def test_plan_agent_dependency_bootstrap_respects_no_deps_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--no-deps"])
+
+        self.assertEqual(calls_at_launch, [])
+
+    def test_plan_agent_dependency_bootstrap_respects_no_infra_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--no-infra"])
+
+        self.assertEqual(calls_at_launch, [])
+
+    def test_plan_agent_dependency_bootstrap_respects_only_backend_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--only-backend"])
+
+        self.assertEqual(calls_at_launch, [])
+
+    def test_plan_agent_dependency_bootstrap_respects_only_frontend_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--only-frontend"])
+
+        self.assertEqual(calls_at_launch, [])
 
     def test_plan_agent_dependency_bootstrap_failure_skips_launch(self) -> None:
         class _FailingRunner:
