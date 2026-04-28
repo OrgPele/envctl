@@ -1,3 +1,23 @@
+## 2026-04-28 - envctl 1.7.10 hotfix release
+
+### Scope
+Cut the `1.7.10` hotfix release on top of `1.7.9`, bundling the dashboard Run AI command fixes, OpenCode `/ulw-loop` launch defaults, plan-agent attach/progress corrections, and dependency-free single-side launch controls.
+
+### Key behavior changes
+- worktree dashboard Run AI guidance now uses repo-scoped `envctl --plan ... --opencode` launch commands instead of stale `codex-tmux --omx` guidance
+- OpenCode plan launches default to `/ulw-loop` and use the correct hyphenated command spelling
+- plan-agent tmux launches attach to or reuse the intended session and show launch progress during cold startup
+- `--only-backend` and `--only-frontend` launch exactly one app side and skip managed dependencies plus dependency prep
+- `--no-deps` and `--no-infra` provide explicit dependency-free and infrastructure-free launch controls
+- create-plan prompts infer the smallest safe envctl launch scope for follow-up commands
+
+### Verification
+- `./.venv/bin/python -m pytest tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_engine_runtime_real_startup.py tests/python/runtime/test_codex_tmux_support.py tests/python/startup/test_hooks_bridge.py tests/python/startup/test_startup_orchestrator_profiles.py tests/python/startup/test_startup_orchestrator_flow.py tests/python/ui/test_dashboard_rendering_parity.py tests/python/runtime/test_cli_packaging.py -q` → 396 passed, 12 skipped, 82 subtests passed
+- `PYTHONPATH=python ./.venv/bin/python -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.10-py3-none-any.whl` and `dist/envctl-1.7.10.tar.gz`
+
 ## 2026-04-28 - envctl 1.7.9 hotfix release
 
 ### Scope
