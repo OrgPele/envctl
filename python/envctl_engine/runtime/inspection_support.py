@@ -205,6 +205,14 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             }
             for entry in local_state.frontend_dependency_env_templates
         ],
+        "main_backend_dependency_env_section_present": local_state.main_backend_dependency_env_section_present,
+        "main_backend_dependency_env_templates": _template_entries(local_state.main_backend_dependency_env_templates),
+        "main_frontend_dependency_env_section_present": local_state.main_frontend_dependency_env_section_present,
+        "main_frontend_dependency_env_templates": _template_entries(local_state.main_frontend_dependency_env_templates),
+        "trees_backend_dependency_env_section_present": local_state.trees_backend_dependency_env_section_present,
+        "trees_backend_dependency_env_templates": _template_entries(local_state.trees_backend_dependency_env_templates),
+        "trees_frontend_dependency_env_section_present": local_state.trees_frontend_dependency_env_section_present,
+        "trees_frontend_dependency_env_templates": _template_entries(local_state.trees_frontend_dependency_env_templates),
         "plan_agent": {
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,
@@ -241,6 +249,17 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
     print(f"plan_agent_codex_cycles: {payload['plan_agent']['codex_cycles']}")
     return 0
+
+
+def _template_entries(entries: tuple[object, ...]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": getattr(entry, "name", ""),
+            "template": getattr(entry, "template", ""),
+            "line_number": getattr(entry, "line_number", 0),
+        }
+        for entry in entries
+    ]
 
 
 def _apply_runtime_effective_config_values(values: Any, config: Any) -> None:

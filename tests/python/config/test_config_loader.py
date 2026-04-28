@@ -293,6 +293,41 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.trees_profile.postgres_enable)
             self.assertFalse(config.trees_profile.redis_enable)
 
+    def test_load_config_parses_mode_specific_launch_env_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=trees",
+                        "MAIN_POSTGRES_ENABLE=true",
+                        "TREES_SUPABASE_ENABLE=true",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl main frontend launch env >>>",
+                        "VITE_SUPABASE_URL=http://main.example.test:54321",
+                        "# <<< envctl main frontend launch env <<<",
+                        "",
+                        "# >>> envctl trees frontend launch env >>>",
+                        "VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}",
+                        "# <<< envctl trees frontend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertTrue(config.main_frontend_dependency_env_section_present)
+            self.assertTrue(config.trees_frontend_dependency_env_section_present)
+            self.assertEqual(config.main_frontend_dependency_env_templates[0].name, "VITE_SUPABASE_URL")
+            self.assertEqual(
+                config.trees_frontend_dependency_env_templates[0].template,
+                "${ENVCTL_SOURCE_SUPABASE_URL}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
