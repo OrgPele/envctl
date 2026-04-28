@@ -117,7 +117,7 @@ The installed create-plan skills connect planning documents to these launch path
 
 - `$envctl-create-plan` stays plan-only and approval-first.
 - `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --headless --tmux-new-session`; OpenCode prepends `/ulw-loop` by default.
 - `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.

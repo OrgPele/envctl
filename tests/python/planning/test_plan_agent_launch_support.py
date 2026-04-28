@@ -402,6 +402,67 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.cli, "opencode")
         self.assertTrue(launch_config.enabled)
 
+    def test_resolve_plan_agent_launch_config_treats_explicit_opencode_as_tmux_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "tmux")
+        self.assertEqual(launch_config.cli, "opencode")
+        self.assertTrue(launch_config.enabled)
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertTrue(launch_config.ulw_loop_prefix)
+        self.assertEqual(prereqs, ("tmux", "opencode"))
+
+    def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"HOME": tmpdir},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                rt,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "/ulw-loop Implement this directly.")
+
     def test_resolve_plan_agent_launch_config_ulw_route_enables_direct_prompt_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1852,7 +1913,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
         self.assertIsNone(error)
-        self.assertTrue(prompt_text.startswith("/ulw_loop "))
+        self.assertTrue(prompt_text.startswith("/ulw-loop "))
         self.assertIn("Implement this directly.", prompt_text)
 
     def test_resolve_preset_submission_text_appends_ulw_suffix_in_slash_mode(self) -> None:
@@ -1953,14 +2014,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_shape_prompt_text_preserves_existing_ulw_loop_prefix_and_allows_suffix(self) -> None:
         shaped, error = launch_support._shape_prompt_text(
-            "/ulw_loop Implement this directly.",
+            "/ulw-loop Implement this directly.",
             direct_prompt=True,
             ulw_loop_prefix=True,
             ulw_suffix=True,
         )
 
         self.assertIsNone(error)
-        self.assertEqual(shaped, "/ulw_loop Implement this directly. ulw")
+        self.assertEqual(shaped, "/ulw-loop Implement this directly. ulw")
 
     def test_shape_prompt_text_allows_absolute_path_literals_in_direct_prompts(self) -> None:
         shaped, error = launch_support._shape_prompt_text(
@@ -1971,7 +2032,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         self.assertIsNone(error)
-        self.assertTrue(shaped.startswith("/ulw_loop "))
+        self.assertTrue(shaped.startswith("/ulw-loop "))
         self.assertIn('Review bundle: "/tmp/review.md"', shaped)
 
     def test_build_plan_agent_workflow_bounds_large_cycle_counts(self) -> None:
@@ -3692,7 +3753,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]
             ]
             self.assertEqual(len(direct_prompt_calls), 1)
-            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw_loop Review prompt body"))
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop Review prompt body"))
             self.assertIn(f'Review bundle: "{review_bundle}"', str(direct_prompt_calls[0][-1]))
             self.assertIn(f'Original plan file: "{original_plan.resolve()}" ulw', str(direct_prompt_calls[0][-1]))
             self.assertTrue(str(direct_prompt_calls[0][-1]).rstrip().endswith("ulw"))

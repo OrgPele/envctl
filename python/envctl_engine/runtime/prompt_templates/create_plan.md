@@ -90,7 +90,7 @@ Use this structure (adapt section names only if truly necessary):
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
-    - `--tmux --opencode --ulw`: same tmux/OpenCode launch, but envctl prepends `/ulw_loop` to the first submitted prompt so OpenCode starts in ULW mode
+    - `--tmux --opencode`: envctl creates or reuses the tmux session/window itself, launches OpenCode, and prepends `/ulw-loop` to the first submitted prompt by default
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
     - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph workflow
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
@@ -100,13 +100,11 @@ Use this structure (adapt section names only if truly necessary):
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode`
-  - if you show an OpenCode tmux ULW launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --ulw`
   - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux`
   - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --omx`
   - if you show an OMX-managed Ralph launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph`
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team`
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --headless`
-  - if you show a headless OpenCode tmux ULW launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --ulw --headless`
   - if you show a headless Codex tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --headless`
   - when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
   - when you explain how to reconnect to a launched tmux session later, use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`

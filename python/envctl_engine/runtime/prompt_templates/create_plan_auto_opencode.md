@@ -101,10 +101,10 @@ The prompt must not begin implementing in the original planning session after la
 Run exactly this command after the plan path exists and selector derivation succeeds:
 
 ```bash
-cd <repo-root> && envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session
+cd <repo-root> && envctl --plan <category>/<slug> --tmux --opencode --headless --tmux-new-session
 ```
 
-`--ulw` is required for this auto skill because repo evidence shows envctl implements the OpenCode loop prefix through `--tmux --opencode --ulw`. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
+OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
 
 ## Final response format
 1. Path of the plan file created.
