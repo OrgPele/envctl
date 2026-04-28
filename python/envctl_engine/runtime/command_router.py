@@ -587,6 +587,12 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
         if token_type == "command":
             mapped = COMMAND_ALIASES.get(token)
             if mapped:
+                if state.command == "help":
+                    continue
+                if mapped == "help":
+                    state.command = "help"
+                    state.command_explicit = True
+                    continue
                 if mapped == "explain-startup":
                     state.explain_startup_requested = True
                 if mapped == "explain-startup" or not state.explain_startup_requested:
@@ -598,6 +604,8 @@ def _phase_resolve_command_mode(classified: list[dict[str, str | object]], state
             continue
 
         if token_type == "command_explicit":
+            if state.command == "help":
+                continue
             if token.startswith("--command=") or token.startswith("--action="):
                 command_token = token.split("=", 1)[1]
                 mapped = COMMAND_ALIASES.get(command_token)
@@ -637,6 +645,9 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
 
         # Command explicit (--command/--action with value)
         if token_type == "command_explicit":
+            if state.command == "help":
+                i += 2 if token in {"--command", "--action"} else 1
+                continue
             if token in {"--command", "--action"}:
                 command_token = _require_following_value(classified, i, token)
                 mapped = COMMAND_ALIASES.get(command_token)

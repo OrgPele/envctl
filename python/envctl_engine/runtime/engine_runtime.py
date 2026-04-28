@@ -203,8 +203,8 @@ from envctl_engine.runtime.command_router import (
     MODE_MAIN_TOKENS,
     MODE_TREE_TOKENS,
     Route,
-    list_supported_commands,
 )
+from envctl_engine.runtime.help_text import render_help_text as runtime_render_help_text
 from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
@@ -303,112 +303,8 @@ PsutilProbeBackend = _PsutilProbeBackend
 
 
 
-_GENERAL_HELP_TEXT = """envctl Python runtime
-Commands: {commands}
-Mode flags: --main, --tree, --trees, trees=true, main=true
-Non-interactive: --headless (preferred), --batch (compatibility alias)
-Specific action commands (stop/kill/blast-all/logs/health/errors/test/pr/commit/review/migrate/delete-worktree)
-default to non-interactive; pass --interactive to opt back into prompts.
-Command-specific help: envctl --plan --help | envctl codex-tmux --help | envctl install-prompts --help"""
-
-_PLAN_HELP_TEXT = """envctl plan
-Usage:
-  envctl --plan <selector> [--headless] [--dry-run] [--tmux|--omx] [--codex|--opencode] [--ulw]
-  envctl --plan <selector> [--omx --ralph | --omx --team]
-
-What it does:
-  - resolves the requested plan selector against todo/plans
-  - creates or reuses the matching implementation worktree(s) unless --dry-run is used
-  - optionally launches the implementation workflow in tmux or OMX-managed Codex sessions
-
-Useful flags:
-  --headless          stay non-interactive and print follow-up/attach guidance
-  --dry-run           preview selected/reused/created worktrees without mutating git worktrees or trees/
-  --tmux              envctl owns the tmux session/window and submits the workflow there
-  --omx               envctl asks OMX to create/manage the detached Codex tmux session
-  --ralph             OMX-only: start the launched Codex session in Ralph mode
-  --team              OMX-only: start the launched Codex session in Team mode
-  --codex             force Codex for tmux launches
-  --opencode          force OpenCode for tmux launches
-  --ulw               tmux + OpenCode only: prepend `/ulw_loop` to the launched prompt
-  --tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one
-
-Examples:
-  envctl --plan feature/task --headless
-  envctl --plan feature/task --headless --dry-run
-  envctl --plan feature/task --tmux --codex
-  envctl --plan feature/task --tmux --opencode --headless
-  envctl --plan feature/task --tmux --opencode --ulw --headless
-  envctl --plan feature/task --omx
-  envctl --plan feature/task --omx --ralph
-  envctl --plan feature/task --omx --team"""
-
-_CODEX_TMUX_HELP_TEXT = """envctl codex-tmux
-Usage:
-  envctl codex-tmux [codex args...]
-  envctl codex-tmux --dry-run [--json] [codex args...]
-
-What it does:
-  - creates or reuses a repo-scoped tmux session for Codex
-  - starts Codex with --dangerously-bypass-approvals-and-sandbox in that session
-  - attaches to the tmux session unless --dry-run is used
-
-Notes:
-  - extra Codex arguments are only applied when creating a new session
-  - --json is only supported together with --dry-run
-
-Examples:
-  envctl codex-tmux
-  envctl codex-tmux review
-  envctl codex-tmux --dry-run --json review"""
-
-_INSTALL_PROMPTS_HELP_TEXT = """envctl install-prompts
-Usage:
-  envctl install-prompts --cli <targets> [--preset <name>|all] [--dry-run] [--json] [--yes|--force]
-
-What it does:
-  - installs envctl AI workflow surfaces for the selected CLI targets
-  - Codex installs the envctl workflows as skills under ~/.codex/skills
-  - Claude/OpenCode install prompt/command files in their respective config roots
-
-Notes:
-  - use --dry-run to preview written paths without changing files
-  - use --json for machine-readable output, including Codex skill results and invocation guidance
-  - envctl-managed plan launches submit the rendered workflow automatically;
-    manual $envctl-* invocation is only for direct Codex/OMX use
-
-Examples:
-  envctl install-prompts --cli codex --preset implement_task
-  envctl install-prompts --cli codex --preset implement_task --dry-run --json
-  envctl install-prompts --cli claude,opencode --preset all"""
-
-
-def _help_target_command(route: Route | None) -> str | None:
-    if route is None:
-        return None
-    raw_args = [str(token) for token in list(getattr(route, 'raw_args', []) or []) if str(token).strip()]
-    filtered = [token for token in raw_args if token not in {'--help', '-h', 'help'}]
-    if not filtered:
-        return None
-    try:
-        from envctl_engine.runtime.command_router import parse_route  # noqa: PLC0415
-
-        resolved = parse_route(filtered, env={})
-    except Exception:
-        return None
-    command = str(getattr(resolved, 'command', '')).strip()
-    return command if command and command != 'help' else None
-
-
 def _render_help_text(route: Route | None) -> str:
-    target = _help_target_command(route)
-    if target == 'plan':
-        return _PLAN_HELP_TEXT
-    if target == 'codex-tmux':
-        return _CODEX_TMUX_HELP_TEXT
-    if target == 'install-prompts':
-        return _INSTALL_PROMPTS_HELP_TEXT
-    return _GENERAL_HELP_TEXT.format(commands=', '.join(list_supported_commands()))
+    return runtime_render_help_text(route)
 
 
 @dataclass(slots=True)

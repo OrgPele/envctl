@@ -2,17 +2,27 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 import os
+from textwrap import indent
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import tomllib
+
+from envctl_engine.runtime.help_text import render_help_text as render_runtime_help_text
 
 
 class LauncherError(RuntimeError):
     pass
 
 
-USAGE_TEXT = """Usage:
+USAGE_TEXT = """envctl launcher help
+
+This help is printed by the lightweight repo wrapper/package launcher before it
+hands off to the full Python runtime. Use this wrapper section when PATH/repo
+selection is the question; the complete runtime command map is included below.
+Use `envctl <command> --help` for focused command-specific usage.
+
+Usage:
   envctl [--repo <path>] [engine args...]
   envctl doctor [--repo <path>] [--json]
   envctl install [--shell-file <path>] [--dry-run]
@@ -20,12 +30,27 @@ USAGE_TEXT = """Usage:
   envctl [--repo <path>] --version
   envctl --help
 
+Repo wrapper / package launcher responsibilities:
+  - resolve which repository envctl should operate on (`--repo <path>` or cwd)
+  - print the package/repo version without bootstrapping a project
+  - install or remove the shell PATH shim for the envctl executable
+  - run launcher-level doctor checks for binary/repo resolution
+  - forward normal engine args to the Python runtime after repo resolution
+
+Runtime CLI capabilities:
+  - start/resume/restart services and show the dashboard
+  - run specific headless actions such as test, logs, health, errors, pr, commit, review, and migrate
+  - manage envctl implementation worktrees through plan/ensure/delete/blast commands
+  - install AI workflow presets and launch Codex tmux/OMX implementation sessions
+  - collect diagnostics with doctor, preflight, debug-pack, debug-report, and debug-last
+
 Examples:
   envctl
-  envctl --main
+  envctl --main --headless
   envctl --repo /path/to/your/repo --resume
+  envctl --repo /path/to/your/repo pr --project feature-a-1
+  envctl <command> --help
   envctl --version
-  envctl doctor --repo /path/to/your/repo
   envctl doctor --repo /path/to/your/repo --json
 """
 
@@ -41,7 +66,15 @@ class InstallOptions:
 
 
 def launcher_usage_text() -> str:
-    return USAGE_TEXT
+    return "\n".join(
+        (
+            USAGE_TEXT.rstrip(),
+            "",
+            "Runtime command map (after the launcher resolves the repo, these are the forwarded engine commands):",
+            indent(render_runtime_help_text(None), "  "),
+            "",
+        )
+    )
 
 
 def resolve_envctl_version(*, project_root: Path | None = None) -> str:
@@ -237,7 +270,13 @@ def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
     return detected
 
 
-def launcher_doctor_payload(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> dict[str, str]:
+def launcher_doctor_payload(
+    *,
+    binary_path: str,
+    repo_root: Path,
+    runtime_entrypoint: str,
+    launcher_root: Path,
+) -> dict[str, str]:
     return {
         "launcher": "envctl",
         "binary_path": str(binary_path),

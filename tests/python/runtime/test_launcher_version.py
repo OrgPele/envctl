@@ -100,6 +100,27 @@ class LauncherVersionTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--version does not accept additional arguments", stderr.getvalue())
 
+    def test_launcher_help_explains_wrapper_boundary_and_runtime_handoff(self) -> None:
+        stdout = StringIO()
+        with (
+            redirect_stdout(stdout),
+            patch("envctl_engine.runtime.launcher_cli._envctl_root", return_value=Path("/tmp/envctl-root")),
+            patch("envctl_engine.runtime.launcher_cli.runtime_cli.run") as runtime_run,
+        ):
+            code = launcher_cli.run(["--help"])
+
+        output = stdout.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("envctl launcher help", output)
+        self.assertIn("Repo wrapper / package launcher responsibilities:", output)
+        self.assertIn("Runtime CLI capabilities:", output)
+        self.assertIn("Runtime command map (after the launcher resolves the repo", output)
+        self.assertIn("Command families:", output)
+        self.assertIn("Targeting and runtime scopes:", output)
+        self.assertIn("envctl <command> --help", output)
+        self.assertIn("Use this wrapper section when PATH/repo", output)
+        runtime_run.assert_not_called()
+
     def test_runtime_entrypoint_prints_version_without_bootstrap(self) -> None:
         stdout = StringIO()
         with (

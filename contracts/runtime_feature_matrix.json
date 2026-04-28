@@ -254,6 +254,7 @@
       "--fullstack",
       "--headless",
       "--include-existing-worktrees",
+      "--interactive",
       "--json",
       "--keep-plan",
       "--logs-duration",
