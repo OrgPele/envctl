@@ -369,6 +369,34 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(values.ui_visual_host, "localhost")
         self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "localhost")
 
+    def test_dashboard_visual_host_defaults_to_public_host(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_PUBLIC_HOST": "203.0.113.10"})
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.public_host, "203.0.113.10")
+        self.assertEqual(values.ui_visual_host, "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "203.0.113.10")
+
+    def test_dashboard_visual_host_can_override_public_host(self) -> None:
+        values = managed_values_from_mapping(
+            {"ENVCTL_UI_VISUAL_HOST": "192.0.2.42", "ENVCTL_PUBLIC_HOST": "203.0.113.10"}
+        )
+        rendered = managed_values_to_mapping(values)
+        block = render_managed_block(values)
+
+        self.assertEqual(values.public_host, "203.0.113.10")
+        self.assertEqual(values.ui_visual_host, "192.0.2.42")
+        self.assertEqual(rendered["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "192.0.2.42")
+        self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", block)
+
+    def test_public_host_defaults_to_localhost_when_network_hosts_are_blank(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_UI_VISUAL_HOST": " ", "ENVCTL_PUBLIC_HOST": " "})
+
+        self.assertEqual(values.public_host, "localhost")
+        self.assertEqual(values.ui_visual_host, "localhost")
+
     def test_reference_envctl_example_matches_current_defaults(self) -> None:
         example_path = REPO_ROOT / "docs" / "reference" / ".envctl.example"
         example_values = _parse_envctl_text(example_path.read_text(encoding="utf-8"))

@@ -1471,6 +1471,55 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(frontend_envs[0].get("VITE_BACKEND_URL"), expected_backend_url)
             self.assertEqual(frontend_envs[0].get("VITE_API_URL"), expected_api_url)
 
+    def test_frontend_api_env_uses_public_host_with_per_project_backend_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            frontend_dir = repo / "trees" / "feature-a" / "1" / "frontend"
+            env_local = frontend_dir / ".env.local"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "package.json").write_text(
+                json.dumps({"name": "frontend", "scripts": {"dev": "vite"}}),
+                encoding="utf-8",
+            )
+            (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
+            env_local.write_text(
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_PUBLIC_HOST": "203.0.113.10"})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            plans = self._planned_ports(engine, "feature-a-1")
+            expected_backend_url = f"http://203.0.113.10:{plans['backend'].final}"
+            expected_api_url = f"http://203.0.113.10:{plans['backend'].final}/api/v1"
+            self.assertEqual(
+                env_local.read_text(encoding="utf-8"),
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
+            )
+
+            frontend_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if str(cwd).endswith("/frontend") and isinstance(env, dict)
+            ]
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[0].get("VITE_BACKEND_URL"), expected_backend_url)
+            self.assertEqual(frontend_envs[0].get("VITE_API_URL"), expected_api_url)
+
     def test_frontend_bootstrap_installs_dependencies_when_node_modules_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

@@ -75,6 +75,8 @@ class ConfigCommandSupportTests(unittest.TestCase):
                             "MAIN_STARTUP_ENABLE=false",
                             "--set",
                             "ENVCTL_UI_VISUAL_HOST=192.0.2.42",
+                            "--set",
+                            "ENVCTL_PUBLIC_HOST=203.0.113.10",
                         ],
                         env={},
                     )
@@ -86,6 +88,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("BACKEND_DIR=api", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
             self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", text)
+            self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", text)
 
     def test_config_command_emits_progress_events_for_interactive_spinner_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,6 +115,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
             runtime = self._runtime(repo, runtime_root)
             payload = {
                 "default_mode": "trees",
+                "network": {"public_host": "203.0.113.20"},
                 "directories": {"backend": "api", "frontend": "web"},
                 "profiles": {
                     "main": {
@@ -140,9 +144,11 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertEqual(response["config"]["directories"]["backend"], "api")
             self.assertEqual(response["config"]["directories"]["frontend"], "web")
             self.assertEqual(response["config"]["profiles"]["main"]["startup_enabled"], False)
+            self.assertEqual(response["config"]["network"]["public_host"], "203.0.113.20")
             text = (repo / ".envctl").read_text(encoding="utf-8")
             self.assertIn("FRONTEND_DIR=web", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
+            self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.20", text)
 
     def test_config_json_output_includes_global_ignore_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
