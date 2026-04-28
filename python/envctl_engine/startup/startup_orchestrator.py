@@ -7,7 +7,7 @@ import shlex
 import sys
 import threading
 import time
-from typing import Callable, Mapping, cast
+from typing import Callable, Mapping, cast, Iterable
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
@@ -76,6 +76,8 @@ class StartupOrchestrator:
         self.runtime: StartupRuntime = runtime
         self._progress_lock: threading.Lock = threading.Lock()
         self._last_progress_message_by_project: dict[str | None, str] = {}
+        self._shared_dependency_lock: threading.Lock = threading.Lock()
+        self._shared_dependency_requirements: RequirementsResult | None = None
 
     def execute(self, route: Route) -> int:
         session = self._create_session(route)
@@ -183,6 +185,7 @@ class StartupOrchestrator:
             )
             session.runtime_mode = restart_lookup_mode
             return None
+        session.restart_state = resumed
 
         selected_services = _restart_selected_services_impl(state=resumed, route=route)
         target_projects = restart_target_projects_impl(state=resumed, route=route, runtime=rt)
@@ -224,6 +227,11 @@ class StartupOrchestrator:
                     selected_services=selected_services,
                     aggressive=False,
                     verify_ownership=True,
+                )
+                self._terminate_restart_orphan_listeners(
+                    state=resumed,
+                    selected_services=selected_services,
+                    aggressive=True,
                 )
                 for project_name, requirements in resumed.requirements.items():
                     if include_requirements and (not target_projects or project_name in target_projects):
@@ -297,6 +305,7 @@ class StartupOrchestrator:
         if route.projects:
             allow = {project.lower() for project in route.projects}
             project_contexts = [ctx for ctx in project_contexts if ctx.name.lower() in allow]
+        self._apply_restart_ports(session, project_contexts)
         duplicate_error = rt._duplicate_project_context_error(project_contexts)
         if duplicate_error:
             self._emit_phase(session, "project_selection", selection_started, status="error")
@@ -358,6 +367,88 @@ class StartupOrchestrator:
         session.selected_contexts = list(project_contexts)
         session.contexts_to_start = list(project_contexts)
         return None
+
+    def _apply_restart_ports(self, session: StartupSession, contexts: list[ProjectContextLike]) -> None:
+        state = session.restart_state
+        if state is None:
+            return
+        selected_services_raw = session.effective_route.flags.get("_restart_selected_services")
+        selected_services = set(selected_services_raw) if isinstance(selected_services_raw, list) else set()
+        if not selected_services:
+            return
+        by_project: dict[str, dict[str, int]] = {}
+        for service_name, service in state.services.items():
+            if service_name not in selected_services:
+                continue
+            project_name = self.runtime._project_name_from_service(service_name)
+            service_type = str(getattr(service, "type", "") or "").strip().lower()
+            if not project_name or service_type not in {"backend", "frontend"}:
+                continue
+            port = getattr(service, "actual_port", None)
+            if not isinstance(port, int) or port <= 0:
+                port = getattr(service, "requested_port", None)
+            if isinstance(port, int) and port > 0:
+                by_project.setdefault(project_name.lower(), {})[service_type] = port
+        for context in contexts:
+            ports = by_project.get(str(context.name).strip().lower())
+            if not ports:
+                continue
+            for service_type, port in ports.items():
+                plan = context.ports.get(service_type)
+                if plan is None:
+                    continue
+                self.runtime._set_plan_port(plan, port)
+
+    def _terminate_restart_orphan_listeners(
+        self,
+        *,
+        state,
+        selected_services: set[str],
+        aggressive: bool,
+    ) -> None:
+        rt = self.runtime
+        span = max(int(getattr(rt.config, "port_spacing", 20) or 20), 1)
+        ports_by_type: dict[str, set[int]] = {
+            "backend": set(range(int(rt.config.backend_port_base), int(rt.config.backend_port_base) + span)),
+            "frontend": set(range(int(rt.config.frontend_port_base), int(rt.config.frontend_port_base) + span)),
+        }
+        selected_by_cwd: dict[str, set[str]] = {}
+        for service_name, service in state.services.items():
+            if service_name not in selected_services:
+                continue
+            service_type = str(getattr(service, "type", "") or "").strip().lower()
+            cwd = str(getattr(service, "cwd", "") or "").strip()
+            if service_type in ports_by_type and cwd:
+                selected_by_cwd.setdefault(cwd, set()).add(service_type)
+                for attr_name in ("actual_port", "requested_port"):
+                    port = getattr(service, attr_name, None)
+                    if isinstance(port, int) and port > 0:
+                        ports_by_type[service_type].update(range(max(1, port - span), port + span + 1))
+        if not selected_by_cwd:
+            return
+        listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
+        terminate_pid = getattr(rt.process_runner, "terminate", None)
+        if not callable(listener_pids_for_port) or not callable(terminate_pid):
+            return
+        seen_pids: set[int] = set()
+        for cwd, service_types in selected_by_cwd.items():
+            for service_type in service_types:
+                for port in sorted(ports_by_type[service_type]):
+                    for pid in listener_pids_for_port(port):
+                        if pid in seen_pids or pid <= 0:
+                            continue
+                        if self._process_cwd(pid) != cwd:
+                            continue
+                        seen_pids.add(pid)
+                        if terminate_pid(pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
+                            rt.port_planner.release(port)
+
+    @staticmethod
+    def _process_cwd(pid: int) -> str | None:
+        try:
+            return str(Path(f"/proc/{pid}/cwd").resolve())
+        except OSError:
+            return None
 
     def _resolve_plan_dry_run(self, session: StartupSession) -> int | None:
         route = session.effective_route
