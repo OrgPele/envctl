@@ -17,6 +17,7 @@ from envctl_engine.config import load_config
 from envctl_engine.planning import plan_agent_launch_support as launch_support
 from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.command_router import parse_route
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 _screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
 _prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_screen_looks_ready")
@@ -88,6 +89,7 @@ class _RuntimeHarness:
         self.config = config
         self.env = env
         self.process_runner = process_runner
+        self.state_repository: _StateRepositoryHarness | None = None
         self._plan_agent_events: list[dict[str, object]] = []
         self._persist_events_snapshot_calls = 0
 
@@ -99,6 +101,15 @@ class _RuntimeHarness:
 
     def _persist_events_snapshot(self) -> None:
         self._persist_events_snapshot_calls += 1
+
+
+class _StateRepositoryHarness:
+    def __init__(self, state: RunState | None) -> None:
+        self.state = state
+
+    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
+        _ = mode, strict_mode_match
+        return self.state
 
 
 class _ImmediateThread:
@@ -1874,6 +1885,96 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(prompt_text, "/implement_task")
+
+    def test_implement_task_direct_prompt_injects_current_runtime_addresses(self) -> None:
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        runtime.state_repository = _StateRepositoryHarness(
+            RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    "feature-a Backend": ServiceRecord(
+                        name="feature-a Backend",
+                        type="backend",
+                        cwd="/tmp/repo/backend",
+                        actual_port=8201,
+                        requested_port=8200,
+                        status="running",
+                    ),
+                    "feature-a Frontend": ServiceRecord(
+                        name="feature-a Frontend",
+                        type="frontend",
+                        cwd="/tmp/repo/frontend",
+                        actual_port=9201,
+                        status="running",
+                    ),
+                },
+                requirements={
+                    "feature-a": RequirementsResult(
+                        project="feature-a",
+                        components={
+                            "postgres": {"enabled": True, "success": True, "final": 5473},
+                            "redis": {"enabled": True, "success": True, "final": 6420},
+                            "n8n": {"enabled": True, "success": True, "final": 5780},
+                            "supabase": {"enabled": False, "success": True, "final": 5633},
+                        },
+                    )
+                },
+            )
+        )
+
+        prompt_text, error = launch_support._resolve_preset_submission_text(
+            runtime,
+            launch_config=_launch_config_for_tests(cli="codex"),
+            cli="codex",
+            preset="implement_task",
+        )
+
+        self.assertIsNone(error)
+        self.assertIn("## Current envctl runtime addresses", prompt_text)
+        self.assertIn("Postgres (feature-a): localhost:5473", prompt_text)
+        self.assertIn("Redis (feature-a): redis://localhost:6420", prompt_text)
+        self.assertIn("n8n (feature-a): http://localhost:5780", prompt_text)
+        self.assertIn("Backend (feature-a Backend): http://localhost:8201", prompt_text)
+        self.assertIn("Frontend (feature-a Frontend): http://localhost:9201", prompt_text)
+        self.assertNotIn("Supabase (feature-a): http://localhost:5633", prompt_text)
+
+    def test_runtime_addresses_are_not_injected_for_other_direct_presets(self) -> None:
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        runtime.state_repository = _StateRepositoryHarness(
+            RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/repo/backend",
+                        actual_port=8000,
+                    )
+                },
+                requirements={},
+            )
+        )
+
+        prompt_text, error = launch_support._resolve_preset_submission_text(
+            runtime,
+            launch_config=_launch_config_for_tests(cli="codex"),
+            cli="codex",
+            preset="ship_release",
+        )
+
+        self.assertIsNone(error)
+        self.assertNotIn("Current envctl runtime addresses", prompt_text)
+        self.assertNotIn("localhost:8000", prompt_text)
 
     def test_resolve_preset_submission_text_prepends_ulw_loop_for_direct_prompts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
