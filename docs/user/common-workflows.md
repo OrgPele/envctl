@@ -65,6 +65,11 @@ envctl stop --entire-system --headless
 envctl kill-all --headless
 ```
 
+When you invoke a specific action command directly, envctl stays non-interactive by default.
+For example, `envctl kill-all`, `envctl pr`, `envctl test`, `envctl logs`, and `envctl migrate`
+behave like their `--headless` forms. Add `--interactive` only when you want envctl to prompt
+for targets or dashboard-style choices.
+
 ## Worktree Planning Loop
 
 Use this when you want multiple implementations running side by side.

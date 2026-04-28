@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from .command_policy import apply_command_policy, apply_mode_token
+from .command_policy import (
+    ACTION_COMMANDS,
+    LIFECYCLE_CLEANUP_COMMANDS,
+    STATE_ACTION_COMMANDS,
+    apply_command_policy,
+    apply_mode_token,
+)
 
 
 class RouteError(ValueError):
@@ -60,6 +66,8 @@ MODE_FORCE_MAIN_TOKENS = {
 }
 MODE_FORCE_TREES_TOKENS = {"main=false", "MAIN=false"}
 MODE_FALSE_TOKENS = MODE_FORCE_MAIN_TOKENS.union(MODE_FORCE_TREES_TOKENS)
+
+DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
 
 _BOOLEAN_FLAG_TOKENS = (
     "--all",
@@ -472,6 +480,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
+    _apply_default_headless_policy(state)
     _validate_plan_agent_cli_flags(state)
     _validate_plan_agent_workflow_flags(state)
 
@@ -909,6 +918,17 @@ def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:
         projects=state.projects,
         flags=state.flags,
     )
+
+
+def _apply_default_headless_policy(state: _ParserState) -> None:
+    if state.command not in DEFAULT_HEADLESS_COMMANDS:
+        return
+    if bool(state.flags.get("interactive")):
+        return
+    if bool(state.flags.get("batch")):
+        return
+    state.flags["batch"] = True
+    state.flags["default_headless"] = True
 
 
 def _validate_plan_agent_cli_flags(state: _ParserState) -> None:

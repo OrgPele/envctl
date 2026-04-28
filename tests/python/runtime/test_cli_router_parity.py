@@ -345,6 +345,48 @@ class CliRouterParityTests(unittest.TestCase):
         with self.assertRaises(RouteError):
             parse_route(["--backend", "--frontend"], env={})
 
+    def test_specific_action_commands_default_to_headless(self) -> None:
+        examples = {
+            "kill-all": "stop-all",
+            "stop-all": "stop-all",
+            "blast-all": "blast-all",
+            "stop": "stop",
+            "logs": "logs",
+            "errors": "errors",
+            "health": "health",
+            "clear-logs": "clear-logs",
+            "test": "test",
+            "pr": "pr",
+            "commit": "commit",
+            "review": "review",
+            "migrate": "migrate",
+            "delete-worktree": "delete-worktree",
+            "blast-worktree": "blast-worktree",
+            "self-destruct-worktree": "self-destruct-worktree",
+        }
+        for token, command in examples.items():
+            with self.subTest(token=token):
+                route = parse_route([token], env={})
+                self.assertEqual(route.command, command)
+                self.assertTrue(route.flags.get("batch"))
+                self.assertTrue(route.flags.get("default_headless"))
+
+    def test_specific_action_interactive_flag_opts_back_into_prompts(self) -> None:
+        route = parse_route(["pr", "--interactive"], env={})
+
+        self.assertEqual(route.command, "pr")
+        self.assertTrue(route.flags.get("interactive"))
+        self.assertFalse(bool(route.flags.get("batch")))
+        self.assertFalse(bool(route.flags.get("default_headless")))
+
+    def test_workflow_commands_do_not_default_to_headless(self) -> None:
+        for token in ("start", "restart", "resume", "dashboard", "config"):
+            with self.subTest(token=token):
+                route = parse_route([token], env={})
+                self.assertEqual(route.command, token)
+                self.assertFalse(bool(route.flags.get("batch")))
+                self.assertFalse(bool(route.flags.get("default_headless")))
+
     def test_python_parser_covers_documented_long_flag_surface(self) -> None:
         docs = (REPO_ROOT / "docs" / "reference" / "important-flags.md").read_text(encoding="utf-8")
         documented_flags = {token for token in re.findall(r"--[a-z0-9][a-z0-9-]*", docs) if token.startswith("--")}

@@ -307,6 +307,8 @@ _GENERAL_HELP_TEXT = """envctl Python runtime
 Commands: {commands}
 Mode flags: --main, --tree, --trees, trees=true, main=true
 Non-interactive: --headless (preferred), --batch (compatibility alias)
+Specific action commands (stop/kill/blast-all/logs/health/errors/test/pr/commit/review/migrate/delete-worktree)
+default to non-interactive; pass --interactive to opt back into prompts.
 Command-specific help: envctl --plan --help | envctl codex-tmux --help | envctl install-prompts --help"""
 
 _PLAN_HELP_TEXT = """envctl plan
