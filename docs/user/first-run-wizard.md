@@ -28,7 +28,7 @@ It is designed to:
 - seed user-owned launch env sections into `.envctl`
 - leave already running services unchanged until a later start or restart
 
-On save, `envctl` writes the repo-local `.envctl` and then checks whether your Git global excludes file is configured for envctl-managed local artifacts.
+On save, `envctl` writes the repo-local `.envctl` and then configures or updates your Git global excludes file for envctl-managed local artifacts. If `core.excludesFile` is missing, `envctl` sets it to `~/.gitignore_global`.
 
 That global-ignore contract keeps files such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots like `trees/` or `trees-*` out of normal `git status` without mutating the repository's tracked `.gitignore`.
 

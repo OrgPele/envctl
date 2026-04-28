@@ -15,7 +15,7 @@ Use:
 
 The Python runtime expects a repo-local `.envctl` for normal operational commands.
 
-`envctl` keeps `.envctl` as a repo-local file, but envctl-owned local workflow artifacts are expected to be hidden through your Git global excludes configuration rather than by mutating the repository `.gitignore`.
+`envctl` keeps `.envctl` as a repo-local file, but envctl-owned local workflow artifacts are hidden through your Git global excludes configuration rather than by mutating the repository `.gitignore`.
 
 That global-ignore contract covers the current envctl local artifact set:
 
@@ -25,7 +25,7 @@ That global-ignore contract covers the current envctl local artifact set:
 - `trees/`
 - `trees-*`
 
-If `core.excludesFile` is not configured, `envctl config` still saves `.envctl` but warns that local envctl artifacts may continue to appear in `git status` until global excludes are configured.
+On config save, `envctl` updates the envctl-managed block in your configured Git global excludes file. If `core.excludesFile` is not configured, `envctl config` configures it to `~/.gitignore_global` and writes the envctl-managed artifact patterns there.
 
 Useful commands:
 
