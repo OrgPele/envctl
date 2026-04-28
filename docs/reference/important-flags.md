@@ -41,8 +41,8 @@ pass `--interactive` only when you want prompts.
 | `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
 | `--deps` | Alias for `--dependencies`. |
 | `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
-| `--no-backend` | Startup/plan modifier: skip backend service launch and backend dependency prep. |
-| `--no-frontend` | Startup/plan modifier: skip frontend service launch and frontend dependency prep. |
+| `--only-frontend` | Startup/plan modifier: launch only the frontend app service; skip backend, managed dependencies, and dependency prep. |
+| `--only-backend` | Startup/plan modifier: launch only the backend app service; skip frontend, managed dependencies, and dependency prep. |
 | `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
 | `--no-infra` | Startup/plan modifier: skip backend, frontend, managed dependencies, and plan-agent dependency prep. |
 | `--all` | Target all projects/services. |

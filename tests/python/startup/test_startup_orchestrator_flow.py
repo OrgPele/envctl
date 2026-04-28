@@ -1470,11 +1470,15 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
         self.assertEqual(calls_at_launch, [])
 
-    def test_plan_agent_dependency_bootstrap_respects_no_backend_flag(self) -> None:
-        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--no-backend"])
+    def test_plan_agent_dependency_bootstrap_respects_only_backend_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--only-backend"])
 
-        self.assertFalse(any(call[0][1:4] == ("-m", "pip", "install") for call in calls_at_launch))
-        self.assertTrue(any(call[0][:2] == ("npm", "ci") for call in calls_at_launch), msg=str(calls_at_launch))
+        self.assertEqual(calls_at_launch, [])
+
+    def test_plan_agent_dependency_bootstrap_respects_only_frontend_flag(self) -> None:
+        calls_at_launch = self._plan_agent_dependency_bootstrap_calls(["--only-frontend"])
+
+        self.assertEqual(calls_at_launch, [])
 
     def test_plan_agent_dependency_bootstrap_failure_skips_launch(self) -> None:
         class _FailingRunner:

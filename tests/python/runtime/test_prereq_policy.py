@@ -112,6 +112,40 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
+    def test_only_app_worktree_start_does_not_require_docker(self) -> None:
+        for flag in ("--only-backend", "--only-frontend"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "POSTGRES_MAIN_ENABLE": "true",
+                        "REDIS_ENABLE": "true",
+                        "SUPABASE_MAIN_ENABLE": "true",
+                        "N8N_ENABLE": "true",
+                    }
+                )
+                route = parse_route(["--tree", flag], env={})
+
+                def fake_which(binary: str) -> str | None:
+                    if binary == "git":
+                        return "/usr/bin/git"
+                    if binary == "docker":
+                        return None
+                    return f"/usr/bin/{binary}"
+
+                with (
+                    patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                    patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+                ):
+                    ok, reason = cli.check_prereqs(route, config)
+
+                self.assertTrue(ok)
+                self.assertIsNone(reason)
+
     def test_no_infra_worktree_start_does_not_require_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

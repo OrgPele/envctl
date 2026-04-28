@@ -86,8 +86,8 @@ Use this structure (adapt section names only if truly necessary):
 ## Launch scope minimization
 Before showing or running any envctl worktree-and-prompt follow-up, infer the smallest safe launch scope from the researched change surface and the user's request:
 
-- For backend-only changes, include `--no-frontend` so envctl skips frontend prep/service launch while keeping backend and needed dependencies.
-- For frontend-only changes, include `--no-backend` so envctl skips backend prep/service launch while keeping frontend and needed dependencies.
+- For backend-only changes, include `--only-backend` so envctl launches only the backend app service and skips frontend, managed dependencies, and dependency prep.
+- For frontend-only changes, include `--only-frontend` so envctl launches only the frontend app service and skips backend, managed dependencies, and dependency prep.
 - For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, or anything uncertain, use no minimization flag and run all configured parts.
 - For plans that need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that do not require backend, frontend, managed dependencies, or dependency prep), include `--no-infra`.
 - For explicitly requested dependency/container/infrastructure verification, do not use `--no-infra`; prefer the broader scope needed to prove the plan safely.
@@ -116,7 +116,7 @@ Run the launch command after the plan path exists and selector derivation succee
 cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --headless --tmux-new-session
 ```
 
-For example, a frontend-only plan should run `cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --no-backend --headless --tmux-new-session`, and a no-runtime-infrastructure plan should use `--no-infra`.
+For example, a frontend-only plan should run `cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --only-frontend --headless --tmux-new-session`, and a no-runtime-infrastructure plan should use `--no-infra`.
 
 OMX-managed launches are Codex-only, and `--ralph` is the loop mechanism for this surface. Codex cycle settings are intentionally not used here because the plan-agent launch resolver disables Codex cycles when an OMX workflow is selected; Ralph owns its own persistence loop.
 

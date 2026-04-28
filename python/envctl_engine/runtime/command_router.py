@@ -195,8 +195,8 @@ SPECIAL_FLAGS = {
     "--no-service-parallel",
     "--service-prep-sequential",
     "--no-service-prep-parallel",
-    "--no-backend",
-    "--no-frontend",
+    "--only-backend",
+    "--only-frontend",
     "--no-dependencies",
     "--no-deps",
     "--no-infra",
@@ -782,10 +782,14 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["service_parallel"] = False
     elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
         flags["service_prep_parallel"] = False
-    elif token == "--no-backend":
-        flags["launch_backend"] = False
-    elif token == "--no-frontend":
+    elif token == "--only-backend":
+        flags["launch_backend"] = True
         flags["launch_frontend"] = False
+        flags["launch_dependencies"] = False
+    elif token == "--only-frontend":
+        flags["launch_backend"] = False
+        flags["launch_frontend"] = True
+        flags["launch_dependencies"] = False
     elif token in {"--no-dependencies", "--no-deps"}:
         flags["launch_dependencies"] = False
     elif token in {"--no-infra", "--no-infrastructure"}:

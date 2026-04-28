@@ -65,8 +65,8 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             {"backend", "frontend"},
         )
 
-    def test_startup_skip_flags_remove_individual_worktree_launch_parts(self) -> None:
-        route = parse_route(["--tree", "--fullstack", "--no-backend"], env={})
+    def test_startup_only_flags_select_individual_worktree_launch_parts(self) -> None:
+        route = parse_route(["--tree", "--fullstack", "--only-frontend"], env={})
         self.assertEqual(
             StartupOrchestrator._restart_service_types_for_project(
                 route=route,
@@ -75,8 +75,9 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             ),
             {"frontend"},
         )
+        self.assertFalse(route.flags.get("launch_dependencies"))
 
-        route = parse_route(["--tree", "--fullstack", "--no-frontend"], env={})
+        route = parse_route(["--tree", "--fullstack", "--only-backend"], env={})
         self.assertEqual(
             StartupOrchestrator._restart_service_types_for_project(
                 route=route,
@@ -85,6 +86,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             ),
             {"backend"},
         )
+        self.assertFalse(route.flags.get("launch_dependencies"))
 
         route = parse_route(["--tree", "--fullstack", "--no-infra"], env={})
         self.assertEqual(
