@@ -12,6 +12,8 @@ from typing import Callable, Mapping, cast
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchResult,
     attach_plan_agent_terminal,
     launch_plan_agent_terminals,
     resolve_plan_agent_launch_config,
@@ -435,11 +437,126 @@ class StartupOrchestrator:
                 project_count=len(results),
                 duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
             )
-        launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+        launch_result = self._launch_plan_agent_terminals_with_spinner(
+            session,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+        )
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
         self._emit_plan_agent_launch_state(session, launch_result)
         return None
+
+    def _launch_plan_agent_terminals_with_spinner(
+        self,
+        session: StartupSession,
+        *,
+        created_worktrees: tuple[CreatedPlanWorktree, ...],
+        launch_config: PlanAgentLaunchConfig,
+    ) -> PlanAgentLaunchResult:
+        rt = self.runtime
+        route = session.effective_route
+        spinner_policy = resolve_spinner_policy(dict(rt.env))
+        use_launch_spinner = (
+            bool(getattr(spinner_policy, "enabled", False))
+            and bool(getattr(launch_config, "enabled", False))
+            and bool(created_worktrees)
+            and not self._suppress_progress_output(route)
+        )
+        emit_spinner_policy(
+            rt._emit,
+            spinner_policy,
+            context={"component": "startup_orchestrator", "op_id": "plan_agent.launch"},
+        )
+        if not use_launch_spinner:
+            return launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+
+        launch_message = self._plan_agent_launch_spinner_message(
+            launch_config,
+            count=len(created_worktrees),
+        )
+        with use_spinner_policy(spinner_policy), spinner(launch_message, enabled=True) as active_spinner:
+            rt._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="start",
+                message=launch_message,
+            )
+            try:
+                launch_result = launch_plan_agent_terminals(rt, route=route, created_worktrees=created_worktrees)
+            except Exception:
+                failure_message = "AI session launch failed"
+                active_spinner.fail(failure_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="fail",
+                    message=failure_message,
+                )
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="stop",
+                )
+                raise
+            status = str(getattr(launch_result, "status", "")).strip().lower()
+            if status == "failed":
+                failure_message = "AI session launch failed"
+                active_spinner.fail(failure_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="fail",
+                    message=failure_message,
+                )
+            else:
+                success_message = self._plan_agent_launch_spinner_success_message(
+                    launch_config,
+                    count=len(created_worktrees),
+                )
+                active_spinner.succeed(success_message)
+                rt._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="plan_agent.launch",
+                    state="success",
+                    message=success_message,
+                )
+            rt._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="stop",
+            )
+            return launch_result
+
+    @staticmethod
+    def _plan_agent_launch_spinner_label(launch_config: PlanAgentLaunchConfig) -> str:
+        transport = str(getattr(launch_config, "transport", "")).strip().lower()
+        cli = str(getattr(launch_config, "cli", "")).strip().lower()
+        if transport == "omx":
+            return "OMX-managed Codex"
+        if cli == "opencode":
+            return "OpenCode"
+        if cli == "codex":
+            return "Codex"
+        return "AI"
+
+    @classmethod
+    def _plan_agent_launch_spinner_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
+        label = cls._plan_agent_launch_spinner_label(launch_config)
+        noun = "session" if count == 1 else "sessions"
+        return f"Launching {label} AI {noun}..."
+
+    @classmethod
+    def _plan_agent_launch_spinner_success_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
+        label = cls._plan_agent_launch_spinner_label(launch_config)
+        noun = "session" if count == 1 else "sessions"
+        return f"{label} AI {noun} ready"
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime

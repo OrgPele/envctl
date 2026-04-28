@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import tempfile
 import unittest
@@ -589,6 +589,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             )()
             captured_launch_worktrees: list[list[str]] = []
             resumed_routes: list[object] = []
+            spinner_calls: list[tuple[str, str, bool | None]] = []
 
             def _record_launch(
                 _runtime: object,
@@ -617,6 +618,23 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             def _record_resume(route: object) -> int:
                 resumed_routes.append(route)
                 return 0
+
+            @contextmanager
+            def _record_spinner(message: str, *, enabled: bool, start_immediately: bool = True):
+                _ = start_immediately
+                spinner_calls.append(("start", message, enabled))
+
+                class _SpinnerStub:
+                    def update(self, message: str) -> None:
+                        spinner_calls.append(("update", message, None))
+
+                    def succeed(self, message: str) -> None:
+                        spinner_calls.append(("succeed", message, None))
+
+                    def fail(self, message: str) -> None:
+                        spinner_calls.append(("fail", message, None))
+
+                yield _SpinnerStub()
 
             with (
                 patch.object(engine, "_discover_projects", return_value=[context]),
@@ -647,7 +665,21 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_resume", side_effect=_record_resume),
                 patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
+                patch("envctl_engine.startup.startup_orchestrator.spinner", side_effect=_record_spinner),
+                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
             ):
+                policy_mock.side_effect = lambda *_args, **_kwargs: type(
+                    "_Policy",
+                    (),
+                    {
+                        "mode": "on",
+                        "enabled": True,
+                        "reason": "",
+                        "backend": "rich",
+                        "min_ms": 120,
+                        "verbose_events": False,
+                    },
+                )()
                 out = StringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(
@@ -660,6 +692,17 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             dashboard_mock.assert_not_called()
             self.assertEqual(len(resumed_routes), 1)
             self.assertTrue(getattr(resumed_routes[0], "flags", {}).get("batch"))
+            self.assertIn(("start", "Launching OpenCode AI session...", True), spinner_calls)
+            self.assertIn(("succeed", "OpenCode AI session ready", None), spinner_calls)
+            lifecycle_events = [event for event in engine.events if event.get("event") == "ui.spinner.lifecycle"]
+            self.assertTrue(
+                any(
+                    event.get("op_id") == "plan_agent.launch"
+                    and event.get("state") == "start"
+                    and event.get("message") == "Launching OpenCode AI session..."
+                    for event in lifecycle_events
+                )
+            )
 
     def test_headless_plan_agent_handoff_prints_attach_when_local_startup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
