@@ -42,6 +42,7 @@ def start_n8n_container(
     env: Mapping[str, str] | None = None,
     image: str = "n8nio/n8n:latest",
 ) -> ContainerStartResult:
+    image = _n8n_image(env, default=image)
     container_name = build_container_name(
         prefix="envctl-n8n",
         project_root=project_root,
@@ -86,6 +87,11 @@ def start_n8n_container(
     return result
 
 
+def _n8n_image(env: Mapping[str, str] | None, *, default: str) -> str:
+    configured = str((env or {}).get("ENVCTL_N8N_IMAGE", "")).strip()
+    return configured or default
+
+
 def _create_n8n_container(
     *,
     process_runner: ProcessRuntime,
@@ -95,6 +101,14 @@ def _create_n8n_container(
     env: Mapping[str, str] | None,
     image: str,
 ) -> str | None:
+    pull_error = _pull_n8n_image_if_needed(
+        process_runner=process_runner,
+        project_root=project_root,
+        env=env,
+        image=image,
+    )
+    if pull_error:
+        return pull_error
     create_timeout_seconds = env_float(
         env,
         "ENVCTL_N8N_CREATE_TIMEOUT_SECONDS",
@@ -166,6 +180,35 @@ def _create_n8n_container(
         timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
     ):
         return "probe timeout waiting for readiness on port {port} after timeout recovery".format(port=port)
+    return None
+
+
+def _pull_n8n_image_if_needed(
+    *,
+    process_runner: ProcessRuntime,
+    project_root: Path,
+    env: Mapping[str, str] | None,
+    image: str,
+) -> str | None:
+    if not env_bool(env, "ENVCTL_N8N_PULL_IMAGE", True):
+        return None
+    pull_timeout_seconds = env_float(
+        env,
+        "ENVCTL_N8N_PULL_TIMEOUT_SECONDS",
+        300.0,
+        minimum=30.0,
+    )
+    pull_result, pull_error = run_docker(
+        process_runner,
+        ["pull", image],
+        cwd=project_root,
+        env=env,
+        timeout=pull_timeout_seconds,
+    )
+    if pull_result is None:
+        return pull_error
+    if getattr(pull_result, "returncode", 1) != 0:
+        return run_result_error(pull_result, f"failed pulling n8n image {image}")
     return None
 
 

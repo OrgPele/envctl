@@ -55,8 +55,8 @@ class _FakeRunner:
         self.restart_stderr: dict[str, str] = {}
         self.compose_services_stdout: str = "supabase-db\nsupabase-auth\nsupabase-kong\n"
 
-    def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
-        _ = cwd, env, timeout
+    def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+        _ = cwd, env, timeout, process_started_callback
         command = list(cmd)
         self.commands.append(command)
 
@@ -181,6 +181,12 @@ class _FakeRunner:
                 self.status[container] = "created"
             return subprocess.CompletedProcess(command, rc, "container-id\n" if rc == 0 else "", stderr)
 
+        if command[:2] == ["docker", "pull"]:
+            image = command[2]
+            rc = self.run_returncode.get(f"pull:{image}", 0)
+            stderr = self.run_stderr.get(f"pull:{image}", "")
+            return subprocess.CompletedProcess(command, rc, "pulled\n" if rc == 0 else "", stderr)
+
         if command[:2] == ["docker", "exec"]:
             container = command[2]
             sequence = self.exec_returncode_sequence.get(container)
@@ -232,6 +238,49 @@ class _FakeRunner:
             return sequence.pop(0)
         return self.wait_for_port_overrides.get(port, self.wait_for_port_result)
 
+    def start(self, cmd, *, cwd=None, env=None, stdout_path=None, stderr_path=None):  # noqa: ANN001
+        _ = cwd, env, stdout_path, stderr_path
+        self.commands.append(list(cmd))
+        return _FakeComposeProcess()
+
+    def start_background(self, cmd, *, cwd=None, env=None, stdout_path=None, stderr_path=None):  # noqa: ANN001
+        return self.start(cmd, cwd=cwd, env=env, stdout_path=stdout_path, stderr_path=stderr_path)
+
+    def terminate(self, pid: int, *, term_timeout: float, kill_timeout: float) -> bool:
+        _ = pid, term_timeout, kill_timeout
+        return True
+
+    def terminate_process_group(self, pid: int, *, term_timeout: float, kill_timeout: float) -> bool:
+        _ = pid, term_timeout, kill_timeout
+        return True
+
+    def is_pid_running(self, pid: int) -> bool:
+        _ = pid
+        return True
+
+    def wait_for_pid_port(self, pid: int, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+        _ = pid
+        return self.wait_for_port(port, host=host, timeout=timeout)
+
+    def pid_owns_port(self, pid: int, port: int) -> bool:
+        _ = pid, port
+        return True
+
+    def listener_pids_for_port(self, port: int) -> list[int]:
+        _ = port
+        return []
+
+    def process_tree_listener_pids(self, root_pid: int, port: int) -> list[int]:
+        _ = root_pid, port
+        return []
+
+    def find_pid_listener_port(self, pid: int, preferred_port: int, *, max_delta: int = 200) -> int | None:
+        _ = pid, max_delta
+        return preferred_port
+
+    def supports_process_tree_probe(self) -> bool:
+        return False
+
     def sleep(self, seconds: float) -> None:
         self.sleep_calls.append(float(seconds))
 
@@ -255,7 +304,7 @@ class _FakeRunner:
 
 class _FakeComposeProcess:
     def __init__(self, *, returncode: int | None = 0, stdout: str = "", stderr: str = "") -> None:
-        self.pid = 424242
+        self.pid: int | None = 424242
         self._returncode = returncode
         self._terminated = False
         self._stdout = stdout
@@ -497,6 +546,58 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             self.assertEqual(result.effective_port, 5680)
+
+    def test_n8n_uses_configured_image_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={"ENVCTL_N8N_IMAGE": "n8nio/n8n:1.0.0"},
+            )
+
+            self.assertTrue(result.success)
+            create_commands = [cmd for cmd in runner.commands if cmd[:2] == ["docker", "create"]]
+            self.assertTrue(create_commands)
+            self.assertEqual(create_commands[0][-1], "n8nio/n8n:1.0.0")
+
+    def test_n8n_pulls_image_before_create_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "create"])
+            self.assertLess(pull_index, create_index)
+
+    def test_n8n_can_skip_image_pull(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={"ENVCTL_N8N_PULL_IMAGE": "false"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
 
     def test_n8n_adopted_existing_uses_settle_listener_without_restart_or_recreate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
