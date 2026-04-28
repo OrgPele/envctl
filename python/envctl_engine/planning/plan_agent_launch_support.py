@@ -2858,7 +2858,7 @@ def resolve_plan_agent_launch_command(
             shlex.quote(str(repo_root)),
             "--plan",
             shlex.quote(selector),
-            "--omx",
+            "--opencode",
         )
     )
 

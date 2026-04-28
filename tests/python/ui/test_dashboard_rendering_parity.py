@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import re
-import shlex
 import threading
 import tempfile
 import time
@@ -555,7 +554,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 "AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (attached)",
                 output,
             )
-            self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --omx", output)
+            self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
             self.assertNotIn("command:", output)
 
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
@@ -595,7 +594,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --omx", output)
+            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
             self.assertNotIn("AI session:", output)
 
     def test_dashboard_renders_run_ai_row_for_running_worktree_without_ai_session(self) -> None:
@@ -652,7 +651,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn("Backend: http://localhost:8004", output)
             self.assertIn("Frontend: http://localhost:9004", output)
-            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --omx", output)
+            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
             self.assertNotIn("AI session:", output)
 
     def test_dashboard_prefers_attach_when_window_matches_but_session_path_does_not(self) -> None:
@@ -711,9 +710,9 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 "AI session: tmux attach-session -t envctl-codex-envctl-pr98-197bdc97 (detached)",
                 output,
             )
-            self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --omx", output)
+            self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
 
-    def test_dashboard_quotes_project_fallback_command(self) -> None:
+    def test_dashboard_omits_run_ai_when_plan_selector_does_not_resolve_for_quoted_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -743,10 +742,11 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {shlex.quote(str(project_root))} codex-tmux --omx", output)
+            self.assertNotIn("Run AI:", output)
+            self.assertNotIn("codex-tmux", output)
             self.assertNotIn("AI session:", output)
 
-    def test_dashboard_renders_project_ai_fallback_when_no_plan_selector_resolves(self) -> None:
+    def test_dashboard_omits_project_ai_fallback_when_no_plan_selector_resolves(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -775,7 +775,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {shlex.quote(str(project_root))} codex-tmux --omx", output)
+            self.assertNotIn("Run AI:", output)
+            self.assertNotIn("codex-tmux", output)
             self.assertNotIn("AI session:", output)
 
     def test_dashboard_infers_plan_from_parent_repo_for_git_worktree_without_provenance(self) -> None:
@@ -815,7 +816,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} "
-                "--plan refactoring/supportopia-to-pele-complete-repo-rename.md --omx",
+                "--plan refactoring/supportopia-to-pele-complete-repo-rename.md --opencode",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -863,7 +864,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan test-headless/tmux-headless-check.md --omx", output)
+            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan test-headless/tmux-headless-check.md --opencode", output)
             self.assertNotIn(" --project", output)
 
     def test_dashboard_renders_run_ai_row_when_active_plan_and_archived_copy_both_exist(self) -> None:
@@ -901,7 +902,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/task.md --omx", output)
+            self.assertIn(f"○ Run AI: envctl --repo {repo} --plan features/task.md --opencode", output)
             self.assertNotIn(" --project", output)
 
     def test_dashboard_does_not_render_workspace_rows_for_running_services(self) -> None:

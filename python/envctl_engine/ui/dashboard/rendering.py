@@ -5,7 +5,6 @@ from __future__ import annotations
 import concurrent.futures
 from datetime import datetime
 import json
-import shlex
 import shutil
 import sys
 import time
@@ -717,19 +716,6 @@ def _print_dashboard_ai_session_row(
         if project_root is not None and repo_root is not None
         else None
     )
-    if not launch_command:
-        if project_root is not None:
-            launch_command = (
-                f"{shlex.quote(envctl_executable)} --repo {shlex.quote(str(project_root.resolve(strict=False)))} "
-                "codex-tmux --omx"
-            )
-        elif repo_root is not None:
-            launch_command = (
-                f"{shlex.quote(envctl_executable)} --repo {shlex.quote(str(repo_root.resolve(strict=False)))} "
-                f"--trees --project {shlex.quote(project)} --omx"
-            )
-        else:
-            launch_command = f"{shlex.quote(envctl_executable)} --trees --project {shlex.quote(project)} --tmux"
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -750,7 +736,7 @@ def _print_dashboard_ai_session_row(
                 session_message = "detached"
             print(f"    {gray}AI session:{reset} {dim}{session['attach']} ({session_message}){reset}")
         return
-    if not render_launch_fallback:
+    if not render_launch_fallback or not launch_command:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
 
