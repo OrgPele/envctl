@@ -1,3 +1,21 @@
+## 2026-04-28 - envctl 1.7.9 hotfix release
+
+### Scope
+Cut the `1.7.9` hotfix release on top of `1.7.8`, bundling the follow-up CLI usability fixes for explicit headless actions, comprehensive help, and dashboard AI-session launch guidance.
+
+### Key behavior changes
+- explicit action commands such as `kill-all`, `stop`, and `pr` default to non-interactive/headless behavior when the requested action is already specific
+- `envctl --help` and `envctl help <command>` now provide detailed workflow-oriented guidance across commands, scopes, runtime controls, configuration, PR/release support, and examples
+- launcher help includes a runtime command map for clearer wrapper/entry-point discovery
+- worktree dashboard AI rows show an attach command for active sessions, or a `Run AI:` create-session command when no AI session exists
+
+### Verification
+- `./.venv/bin/python -m pytest tests/python/runtime/test_launcher_version.py tests/python/runtime/test_cli_packaging.py tests/python/runtime/test_release_shipability_gate.py tests/python/runtime/test_release_shipability_gate_cli.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_command_policy_contract.py tests/python/ui/test_dashboard_rendering_parity.py -q` → 167 passed, 12 skipped, 43 subtests passed
+- `PYTHONPATH=python python3 -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.9-py3-none-any.whl` and `dist/envctl-1.7.9.tar.gz`
+
 ## 2026-04-14 - envctl 1.6.0 release
 
 ### Scope
