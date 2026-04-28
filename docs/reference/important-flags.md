@@ -10,6 +10,7 @@ These are the highest-value flags for daily use.
 | `--version` | Print the current `envctl` package version and exit without repo/bootstrap/runtime startup. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
+| `--interactive` | Opt specific action commands back into prompts/interactive target selection. |
 | `--main` | Run main mode only (skip trees). |
 | `--tree` / `--trees` | Explicit trees-mode switch. |
 | `--doctor` | Run diagnostics and exit. |
@@ -23,6 +24,9 @@ Allowed values are `main` and `trees` (default: `main`).
 Engine note: Python runtime is the only supported runtime path.
 Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
 Launcher note: `--version` is launcher-owned and intentionally stays out of the runtime supported-command inventory.
+Action note: explicit action commands such as `kill-all`, `stop`, `blast-all`, `logs`, `health`,
+`errors`, `test`, `pr`, `commit`, `review`, and `migrate` default to non-interactive execution;
+pass `--interactive` only when you want prompts.
 
 ## Targeting
 | Flag | Purpose |

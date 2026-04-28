@@ -179,6 +179,11 @@ High-value command families:
 - `migrate`
 - `install-prompts`
 
+Specific action commands are non-interactive by default. For example, `kill-all`, `stop`, `blast-all`,
+`logs`, `health`, `errors`, `test`, `pr`, `commit`, `review`, `migrate`,
+`delete-worktree`, `blast-worktree`, and `self-destruct-worktree` behave as if
+`--headless` was supplied unless you explicitly pass `--interactive`.
+
 Current supported command surface:
 
 - `blast-all`

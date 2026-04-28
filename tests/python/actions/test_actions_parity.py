@@ -743,6 +743,31 @@ class ActionsParityTests(unittest.TestCase):
             )
             self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
 
+    def test_action_env_marks_default_headless_pr_routes_non_interactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(
+                ["pr", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "pr",
+                [target],
+                route=route,
+                target=target,
+                extra=engine.action_command_orchestrator.action_extra_env(route),
+            )
+
+            self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
+
     def test_action_env_keeps_interactive_pr_routes_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
