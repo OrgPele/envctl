@@ -895,14 +895,67 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--help"], env={}))
 
         self.assertEqual(code, 0)
-        lines = [line.strip() for line in buffer.getvalue().splitlines() if line.strip()]
-        self.assertGreaterEqual(len(lines), 3)
-        self.assertEqual(lines[0], "envctl Python runtime")
-        self.assertTrue(lines[1].startswith("Commands: "))
-        help_commands = {item.strip() for item in lines[1].split("Commands: ", 1)[1].split(",") if item.strip()}
+        output = buffer.getvalue()
+        self.assertIn("envctl - run, inspect, test, and ship repo services/worktrees", output)
+        self.assertIn("Usage:", output)
+        self.assertIn("Command families:", output)
+        self.assertIn("Workflow commands (may start services or open interactive flows):", output)
+        self.assertIn("Specific action commands (non-interactive/headless by default):", output)
+        self.assertIn("Inspection and diagnostics:", output)
+        self.assertIn("Targeting and runtime scopes:", output)
+        self.assertIn("Examples:", output)
+        self.assertIn("Get focused help:", output)
+        self.assertIn("envctl <command> --help", output)
+        self.assertIn("envctl help <command>", output)
+        self.assertIn("pass --interactive to opt back into prompts", output)
+
+        command_line = next(line for line in output.splitlines() if line.startswith("  all commands: "))
+        help_commands = {item.strip() for item in command_line.split("all commands: ", 1)[1].split(",") if item.strip()}
         self.assertEqual(help_commands, set(list_supported_commands()))
-        self.assertIn("Mode flags: --main, --tree, --trees, trees=true, main=true", lines[2])
-        self.assertIn("Non-interactive: --headless (preferred), --batch (compatibility alias)", lines[3])
+
+    def test_all_supported_commands_have_focused_help(self) -> None:
+        runtime = self._runtime()
+        for command in list_supported_commands():
+            if command == "help":
+                continue
+            with self.subTest(command=command):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(parse_route([command, "--help"], env={}))
+
+                output = buffer.getvalue()
+                self.assertEqual(code, 0)
+                self.assertIn(f"envctl {command}", output)
+                self.assertIn("What it does:", output)
+                self.assertIn("Usage:", output)
+                self.assertIn("Examples:", output)
+
+    def test_action_command_help_explains_headless_default_and_interactive_opt_in(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["pr", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("envctl pr", output)
+        self.assertIn("Default interactivity:", output)
+        self.assertIn("headless by default", output)
+        self.assertIn("--interactive", output)
+        self.assertIn("--pr-base", output)
+
+    def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["start", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("envctl start", output)
+        self.assertIn("Default interactivity:", output)
+        self.assertIn("interactive-capable", output)
+        self.assertIn("--headless", output)
 
     def test_help_output_for_plan_is_command_specific(self) -> None:
         runtime = self._runtime()
@@ -917,6 +970,24 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("--ulw", output)
         self.assertIn("--omx --ralph", output)
         self.assertIn("preview selected/reused/created worktrees without mutating", output)
+
+    def test_help_prefix_forms_are_command_specific(self) -> None:
+        runtime = self._runtime()
+        for argv, expected in (
+            (["help", "pr"], "envctl pr"),
+            (["--help", "pr"], "envctl pr"),
+            (["help", "--plan"], "envctl plan"),
+            (["--help", "--command", "pr"], "envctl pr"),
+        ):
+            with self.subTest(argv=argv):
+                route = parse_route(argv, env={})
+                self.assertEqual(route.command, "help")
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(route)
+
+                self.assertEqual(code, 0)
+                self.assertIn(expected, buffer.getvalue())
 
     def test_help_output_for_codex_tmux_is_command_specific(self) -> None:
         runtime = self._runtime()

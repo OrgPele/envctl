@@ -503,8 +503,8 @@ class CliPackagingTests(unittest.TestCase):
                 check=False,
             )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("envctl Python runtime", result.stdout)
-        self.assertIn("Commands:", result.stdout)
+        self.assertIn("envctl - run, inspect, test, and ship repo services/worktrees", result.stdout)
+        self.assertIn("Command families:", result.stdout)
 
     def test_editable_install_exposes_envctl_version(self) -> None:
         expected_version = self._package_version()
