@@ -561,20 +561,32 @@ class StartupOrchestrator:
                     decision_kind=decision.decision_kind,
                     reason=decision.reason,
                 )
+                attach_plan_agent_after_resume = (
+                    route.command == "plan"
+                    and not self._headless_plan_output_only(session)
+                    and session.plan_agent_attach_target is not None
+                )
+                resume_flags = {
+                    **route.flags,
+                    "_resume_source_command": route.command,
+                    "_run_reuse_reason": decision.decision_kind,
+                }
+                if attach_plan_agent_after_resume:
+                    resume_flags["batch"] = True
                 resume_route = Route(
                     command="resume",
                     mode=runtime_mode,
                     raw_args=route.raw_args,
                     passthrough_args=route.passthrough_args,
                     projects=route.projects,
-                    flags={
-                        **route.flags,
-                        "_resume_source_command": route.command,
-                        "_run_reuse_reason": decision.decision_kind,
-                    },
+                    flags=resume_flags,
                 )
                 resume_code = rt._resume(resume_route)
                 if int(resume_code) == 0:
+                    if attach_plan_agent_after_resume:
+                        attach_code = self._maybe_attach_plan_agent_terminal(session)
+                        if attach_code is not None:
+                            return attach_code
                     return 0
                 session.run_id = previous_run_id
                 session.identifiers_announced = previous_identifiers_announced
