@@ -240,6 +240,8 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
         frontend_test_path=values.frontend_test_path,
+        public_host=values.public_host,
+        ui_visual_host=values.ui_visual_host,
     )
 
 

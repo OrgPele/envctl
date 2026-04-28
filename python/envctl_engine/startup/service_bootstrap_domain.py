@@ -13,6 +13,7 @@ from typing import Any, Mapping, Protocol
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.ui.path_links import render_path_for_terminal
 
 _STATE_DIRNAME = ".envctl-state"
@@ -380,7 +381,7 @@ def _prepare_frontend_runtime(
     api_url = ""
     manager = ""
     if backend_port > 0:
-        backend_url = f"http://localhost:{backend_port}"
+        backend_url = browser_backend_url(host=resolve_public_host(env=self.env, config=self.config), port=backend_port)
         api_url = f"{backend_url}/api/v1"
 
     package_json = frontend_cwd / "package.json"

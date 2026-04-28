@@ -84,6 +84,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
         "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
         "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
+        "ENVCTL_PUBLIC_HOST": "localhost",
         "ENVCTL_UI_VISUAL_HOST": "localhost",
         "MAIN_STARTUP_ENABLE": _bool_text(bool(main_profile["startup_enable"])),
         "MAIN_BACKEND_ENABLE": _bool_text(bool(main_profile["backend_enable"])),
@@ -132,6 +133,7 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_BACKEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_PATH",
+    "ENVCTL_PUBLIC_HOST",
     "ENVCTL_UI_VISUAL_HOST",
     "BACKEND_PORT_BASE",
     "FRONTEND_PORT_BASE",
@@ -407,6 +409,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    if "ENVCTL_UI_VISUAL_HOST" not in explicit_values:
+        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
+    elif not str(resolved.get("ENVCTL_UI_VISUAL_HOST") or "").strip():
+        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
     _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()

@@ -51,6 +51,7 @@ class ManagedConfigValues:
     frontend_test_cmd: str = ""
     action_test_cmd: str = ""
     frontend_test_path: str = ""
+    public_host: str = "localhost"
     ui_visual_host: str = "localhost"
 
 
@@ -133,6 +134,7 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
         frontend_test_cmd=_resolved_frontend_test_cmd(values=values, base_dir=base_dir),
         action_test_cmd=_resolved_action_test_cmd(values=values, base_dir=base_dir),
         frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
+        public_host=_resolved_public_host(values),
         ui_visual_host=_resolved_ui_visual_host(values),
         main_profile=main_profile,
         trees_profile=trees_profile,
@@ -150,6 +152,7 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "ENVCTL_BACKEND_TEST_CMD": values.backend_test_cmd,
         "ENVCTL_FRONTEND_TEST_CMD": values.frontend_test_cmd,
         "ENVCTL_FRONTEND_TEST_PATH": values.frontend_test_path,
+        "ENVCTL_PUBLIC_HOST": values.public_host,
         "ENVCTL_UI_VISUAL_HOST": values.ui_visual_host,
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
@@ -204,6 +207,9 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
         },
         "ui": {
             "visual_host": values.ui_visual_host,
+        },
+        "network": {
+            "public_host": values.public_host,
         },
         "profiles": {
             "main": {
@@ -293,6 +299,10 @@ def managed_values_from_payload(
     ui = payload.get("ui")
     if isinstance(ui, dict) and ui.get("visual_host") is not None:
         mapping["ENVCTL_UI_VISUAL_HOST"] = str(ui["visual_host"])
+
+    network = payload.get("network")
+    if isinstance(network, dict) and network.get("public_host") is not None:
+        mapping["ENVCTL_PUBLIC_HOST"] = str(network["public_host"])
 
     profiles = payload.get("profiles")
     if isinstance(profiles, dict):
@@ -385,7 +395,7 @@ def _managed_block_sections(
 
     sections: list[list[str]] = []
     sections.append(["ENVCTL_DEFAULT_MODE"])
-    sections.append(["ENVCTL_UI_VISUAL_HOST"])
+    sections.append(["ENVCTL_PUBLIC_HOST", "ENVCTL_UI_VISUAL_HOST"])
 
     directory_keys: list[str] = []
     if _component_enabled_any(values, "backend") and rendered["BACKEND_DIR"] != defaults["BACKEND_DIR"]:
@@ -562,6 +572,7 @@ def save_local_config_with_ignore_policy(
         backend_test_cmd=values.backend_test_cmd,
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
+        public_host=values.public_host,
         ui_visual_host=values.ui_visual_host,
         frontend_test_path=(
             canonicalize_frontend_test_path(
@@ -700,6 +711,13 @@ def _bool_text(value: bool) -> str:
 
 def _resolved_ui_visual_host(values: dict[str, str]) -> str:
     host = str(values.get("ENVCTL_UI_VISUAL_HOST") or "").strip()
+    if host:
+        return host
+    return _resolved_public_host(values)
+
+
+def _resolved_public_host(values: dict[str, str]) -> str:
+    host = str(values.get("ENVCTL_PUBLIC_HOST") or "").strip()
     return host or "localhost"
 
 

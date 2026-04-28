@@ -10,6 +10,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
@@ -169,7 +170,7 @@ def start_project_services(
         env_file=frontend_env_file,
         include_app_env_file=False,
     )
-    backend_url = f"http://localhost:{backend_plan.final}"
+    backend_url = browser_backend_url(host=resolve_public_host(env=rt.env, config=rt.config), port=backend_plan.final)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
     frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
     configured_service_types = {
