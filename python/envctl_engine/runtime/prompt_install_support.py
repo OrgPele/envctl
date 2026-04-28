@@ -673,7 +673,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "implementation pass. The skill knows envctl service-scope flags such as --backend, --frontend, "
                 "--fullstack/--both, --dependencies/--deps, and --entire-system, plus stop/kill aliases, "
                 "when to choose each scope, and expects Playwright E2E validation against a running service "
-                "when UI behavior is involved. "
+                "when UI behavior is involved. It also requires final validation and reports runtime addresses "
+                "for dependencies, backend, and frontend when a runtime is involved. "
                 "Invoke it explicitly as $envctl-implement-task."
             ),
             default_prompt=(
@@ -687,7 +688,10 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "frontend are both needed but managed dependencies are explicitly disabled, mocked, externalized, "
                 "or proven unnecessary. Use `envctl --dependencies --headless` for DB/Redis or infrastructure-only "
                 "validation. For UI/product work, run Playwright E2E validation against the running service before "
-                "claiming completion. At the end, kill the scope you started with "
+                "claiming completion. Before final handoff, run the final relevant validation after the code is complete "
+                "and report the result. When a runtime was needed or started, report the actual addresses/URLs for "
+                "started dependencies, backend, and frontend, or say explicitly which components were not started. "
+                "At the end, kill the scope you started with "
                 "`envctl stop --backend --headless`, `envctl stop --frontend --headless`, "
                 "`envctl stop --fullstack --headless`, `envctl stop --dependencies --headless`, "
                 "`envctl stop --entire-system --headless`, or `envctl kill-all --headless`, then offer to "
