@@ -16,9 +16,11 @@ Cut the `1.7.11` hotfix release on top of `1.7.10`, bundling shared/main depende
 - `./.venv/bin/python -m pytest tests/python/runtime/test_cli_router_parity.py tests/python/startup/test_startup_orchestrator_profiles.py tests/python/runtime/test_prereq_policy.py -q` → 48 passed, 37 subtests passed
 - `./.venv/bin/python -m pytest tests/python/requirements/test_requirements_adapters_real_contracts.py -k "n8n_pulls_image_before_create_by_default or n8n_can_skip_image_pull or n8n_uses_configured_image_override"` → 3 passed, 65 deselected
 - Manual E2E default main/tree startup and direct `implement_task` prompt address injection checks passed before release prep
-- `./.venv/bin/python -m pytest tests/python/runtime/test_launcher_version.py tests/python/runtime/test_cli_packaging.py tests/python/runtime/test_release_shipability_gate.py tests/python/runtime/test_release_shipability_gate_cli.py -q` → pending during release preparation
-- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → pending during release preparation
-- `./.venv/bin/python -m build` → pending during release preparation
+- `./.venv/bin/python -m pytest tests/python/runtime/test_launcher_version.py tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_release_version_metadata_is_consistent tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_release_notes_exist_for_current_version tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_build_smoke_is_warning_free tests/python/runtime/test_release_shipability_gate.py tests/python/runtime/test_release_shipability_gate_cli.py -q` → 33 passed
+- `PYTHONPATH=python ./.venv/bin/python -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.11-py3-none-any.whl` and `dist/envctl-1.7.11.tar.gz`
 
 ## 2026-04-28 - envctl 1.7.10 hotfix release
 
