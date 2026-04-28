@@ -31,6 +31,7 @@ _WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarg
 _ensure_tmux_window = cast(Any, getattr(launch_support, "_ensure_tmux_window", None))
 _tmux_session_name_for_worktree = cast(Any, getattr(launch_support, "_tmux_session_name_for_worktree", None))
 _run_tmux_worktree_bootstrap = cast(Any, getattr(launch_support, "_run_tmux_worktree_bootstrap", None))
+_wait_for_tmux_cli_ready = cast(Any, getattr(launch_support, "_wait_for_tmux_cli_ready", None))
 
 
 def _launch_config_for_tests(
@@ -2878,6 +2879,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         screen = '  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo  ⊙ 3 MCP /status    1.2.27\n'
         self.assertTrue(launch_support._screen_looks_ready("opencode", screen))
 
+    def test_tmux_opencode_ready_wait_allows_slow_cold_start(self) -> None:
+        self.assertIsNotNone(_wait_for_tmux_cli_ready)
+        clock = {"now": 0.0}
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        def monotonic() -> float:
+            return clock["now"]
+
+        def sleep(seconds: float) -> None:
+            clock["now"] += float(seconds)
+
+        def screen(*_args: object, **_kwargs: object) -> str:
+            if clock["now"] >= 8.0:
+                return '  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo /status\n'
+            return "Loading workspace...\n"
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=monotonic),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=sleep),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=screen),
+        ):
+            _wait_for_tmux_cli_ready(runtime, session_name="envctl-test", window_name="feature-a", cli="opencode")
+
+        self.assertGreaterEqual(clock["now"], 8.0)
+
     def test_codex_ready_screen_requires_boot_to_finish(self) -> None:
         loading = (
             "╭───────────────────────────────────────────────────╮\n"
@@ -2905,9 +2940,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertFalse(_screen_looks_ready("codex", model_loading))
         self.assertTrue(_screen_looks_ready("codex", ready))
 
-    def test_ai_cli_ready_window_uses_five_second_fallback(self) -> None:
+    def test_ai_cli_ready_window_allows_slower_opencode_startup(self) -> None:
         self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 5.0)
-        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 5.0)
+        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 15.0)
 
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
