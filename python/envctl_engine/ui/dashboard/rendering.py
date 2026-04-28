@@ -181,7 +181,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             gray=gray,
             dim=dim,
             reset=reset,
-            render_launch_fallback=runs_disabled_dashboard,
+            render_launch_fallback=runs_disabled_dashboard or state.mode == "trees",
         )
         _print_dashboard_dependency_rows(
             self,
