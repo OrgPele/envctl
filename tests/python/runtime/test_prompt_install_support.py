@@ -613,6 +613,13 @@ class PromptInstallSupportTests(unittest.TestCase):
                     self.assertIn(phrase, body)
                 self.assertIn("--headless", body)
                 self.assertIn("--tmux-new-session", body)
+                self.assertIn("Launch scope minimization", body)
+                self.assertIn("backend-only", body)
+                self.assertIn("--no-frontend", body)
+                self.assertIn("frontend-only", body)
+                self.assertIn("--no-backend", body)
+                self.assertIn("no runtime infrastructure", body)
+                self.assertIn("--no-infra", body)
                 self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
@@ -811,6 +818,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Do not run parent-directory or sibling-repo searches such as `find ..`", plan_prompt.body)
         self.assertIn("If the user explicitly asks for a light/quick/minimal planning pass", plan_prompt.body)
         self.assertIn("Review todo/plans/README.md if it exists", plan_prompt.body)
+        self.assertIn("Launch scope minimization", plan_prompt.body)
+        self.assertIn("backend-only", plan_prompt.body)
+        self.assertIn("--no-frontend", plan_prompt.body)
+        self.assertIn("frontend-only", plan_prompt.body)
+        self.assertIn("--no-backend", plan_prompt.body)
+        self.assertIn("no runtime infrastructure", plan_prompt.body)
+        self.assertIn("--no-infra", plan_prompt.body)
 
     def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

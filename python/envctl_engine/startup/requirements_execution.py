@@ -107,35 +107,37 @@ def start_requirements_for_project(
     def plan_for_dependency(dependency_id: str) -> object:
         return definition_ports[dependency_id]
 
-    setup_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_setup_infrastructure")
-    if setup_hook.found and not setup_hook.success:
-        failures.append(f"setup_hook:{setup_hook.error or 'failed'}")
-        components = {}
-        for definition in definitions:
-            plan = plan_for_dependency(definition.id)
-            components[definition.id] = {
-                "requested": plan.requested,
-                "final": plan.final,
-                "resources": {"requested": plan.requested, "primary": plan.final},
-                "retries": 0,
-                "success": False,
-                "simulated": False,
-                "enabled": rt._requirement_enabled(definition.id, mode=mode, route=route),
-            }
-        return RequirementsResult(
-            project=context.name,
-            components=components,
-            health="degraded",
-            failures=failures,
-        )
-    if setup_hook.found and setup_hook.success:
-        payload = setup_hook.payload if isinstance(setup_hook.payload, dict) else {}
-        if bool(payload.get("skip_default_requirements")):
-            return rt._requirements_result_from_hook_payload(
-                context=context,
-                mode=mode,
-                payload=payload,
+    skip_infrastructure_hooks = route is not None and route.flags.get("launch_dependencies") is False
+    if not skip_infrastructure_hooks:
+        setup_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_setup_infrastructure")
+        if setup_hook.found and not setup_hook.success:
+            failures.append(f"setup_hook:{setup_hook.error or 'failed'}")
+            components = {}
+            for definition in definitions:
+                plan = plan_for_dependency(definition.id)
+                components[definition.id] = {
+                    "requested": plan.requested,
+                    "final": plan.final,
+                    "resources": {"requested": plan.requested, "primary": plan.final},
+                    "retries": 0,
+                    "success": False,
+                    "simulated": False,
+                    "enabled": rt._requirement_enabled(definition.id, mode=mode, route=route),
+                }
+            return RequirementsResult(
+                project=context.name,
+                components=components,
+                health="degraded",
+                failures=failures,
             )
+        if setup_hook.found and setup_hook.success:
+            payload = setup_hook.payload if isinstance(setup_hook.payload, dict) else {}
+            if bool(payload.get("skip_default_requirements")):
+                return rt._requirements_result_from_hook_payload(
+                    context=context,
+                    mode=mode,
+                    payload=payload,
+                )
 
     def reserve_next(port: int) -> int:
         with reserve_lock:

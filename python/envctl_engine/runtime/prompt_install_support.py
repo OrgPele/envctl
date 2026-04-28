@@ -745,7 +745,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create an envctl implementation plan",
             description=(
                 "Use when you explicitly want the envctl create_plan workflow to produce a plan artifact for "
-                "implementation work. Invoke it explicitly as $envctl-create-plan."
+                "implementation work and infer the smallest safe envctl launch scope. Invoke it explicitly as "
+                "$envctl-create-plan."
             ),
         ),
         "create_plan_auto_codex": CodexSkillMetadata(
@@ -754,7 +755,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch Codex implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-codex to create an envctl "
-                "implementation plan and automatically launch the Codex implementation workflow."
+                "implementation plan and automatically launch the Codex implementation workflow with the smallest "
+                "safe inferred envctl launch scope."
             ),
         ),
         "create_plan_auto_opencode": CodexSkillMetadata(
@@ -763,7 +765,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch OpenCode ULW implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-opencode to create an envctl "
-                "implementation plan and automatically launch the OpenCode ULW implementation workflow."
+                "implementation plan and automatically launch the OpenCode ULW implementation workflow with the "
+                "smallest safe inferred envctl launch scope."
             ),
         ),
         "create_plan_auto_omx": CodexSkillMetadata(
@@ -772,7 +775,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch OMX Ralph implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
-                "implementation plan and automatically launch the OMX Ralph implementation workflow."
+                "implementation plan and automatically launch the OMX Ralph implementation workflow with the smallest "
+                "safe inferred envctl launch scope."
             ),
         ),
         "ship_release": CodexSkillMetadata(

@@ -57,6 +57,9 @@ envctl --frontend --headless         # frontend service plus dependencies
 envctl --fullstack --headless        # backend + frontend plus dependencies
 envctl --dependencies --headless     # DB/Redis/etc. only
 envctl --entire-system --headless    # all dependencies and configured app services
+envctl --trees --no-frontend         # worktree backend + dependencies; skip frontend
+envctl --trees --no-deps             # worktree app services only; skip managed dependencies/prep
+envctl --trees --no-infra            # worktree state/AI only; skip backend, frontend, and dependencies
 
 envctl stop --backend --headless
 envctl stop --frontend --headless

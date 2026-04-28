@@ -349,14 +349,17 @@ def _restart_service_types_for_project(
 
     runtime_scope = route.flags.get("runtime_scope")
     if runtime_scope in {"backend", "frontend"}:
-        return {str(runtime_scope)}.intersection(configured_service_types)
+        return _apply_startup_service_launch_flags(
+            {str(runtime_scope)}.intersection(configured_service_types),
+            route=route,
+        )
     if runtime_scope == "dependencies":
         return set()
     if runtime_scope in {"fullstack", "entire-system"} and not bool(route.flags.get("_restart_request")):
-        return configured_service_types
+        return _apply_startup_service_launch_flags(configured_service_types, route=route)
 
     if not bool(route.flags.get("_restart_request")):
-        return configured_service_types
+        return _apply_startup_service_launch_flags(configured_service_types, route=route)
 
     services_value = route.flags.get("services")
     service_types: set[str] = set()
@@ -373,7 +376,10 @@ def _restart_service_types_for_project(
             elif lowered.endswith(" frontend"):
                 service_types.add("frontend")
     if service_types:
-        return service_types.intersection(configured_service_types or service_types)
+        return _apply_startup_service_launch_flags(
+            service_types.intersection(configured_service_types or service_types),
+            route=route,
+        )
 
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
@@ -383,8 +389,20 @@ def _restart_service_types_for_project(
             if str(value).strip().lower() in {"backend", "frontend"}
         }
         if normalized:
-            return normalized.intersection(configured_service_types or normalized)
-    return configured_service_types
+            return _apply_startup_service_launch_flags(
+                normalized.intersection(configured_service_types or normalized),
+                route=route,
+            )
+    return _apply_startup_service_launch_flags(configured_service_types, route=route)
+
+
+def _apply_startup_service_launch_flags(service_types: set[str], *, route: Route) -> set[str]:
+    selected = set(service_types)
+    if route.flags.get("launch_backend") is False:
+        selected.discard("backend")
+    if route.flags.get("launch_frontend") is False:
+        selected.discard("frontend")
+    return selected
 
 
 def port_allocator(runtime: object) -> PortAllocator:

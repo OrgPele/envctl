@@ -333,6 +333,17 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["--entire-system"], env={})
         self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
 
+        route = parse_route(["--tree", "--no-backend", "--no-frontend", "--no-deps"], env={})
+        self.assertEqual(route.mode, "trees")
+        self.assertFalse(route.flags.get("launch_backend"))
+        self.assertFalse(route.flags.get("launch_frontend"))
+        self.assertFalse(route.flags.get("launch_dependencies"))
+
+        route = parse_route(["--tree", "--no-infra"], env={})
+        self.assertFalse(route.flags.get("launch_backend"))
+        self.assertFalse(route.flags.get("launch_frontend"))
+        self.assertFalse(route.flags.get("launch_dependencies"))
+
         route = parse_route(["kill", "--frontend", "--headless"], env={})
         self.assertEqual(route.command, "stop")
         self.assertEqual(route.flags.get("runtime_scope"), "frontend")

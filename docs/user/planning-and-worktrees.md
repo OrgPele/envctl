@@ -97,6 +97,11 @@ worktree:
 This preparation does not start backend/frontend services and does not run migrations. It only ensures the AI session
 starts in a worktree whose dependency roots are ready or were skipped for a documented reason.
 
+Use `--no-deps` when you want to launch the AI session without this dependency prep. Use `--no-backend` or
+`--no-frontend` to skip only that side's prep; the same flags also suppress the matching local service startup when
+the worktree run continues into app startup. Use `--no-infra` when the task does not need backend, frontend, managed
+dependencies, or dependency prep at all.
+
 Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux launches keep using `/<preset>`, while `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:

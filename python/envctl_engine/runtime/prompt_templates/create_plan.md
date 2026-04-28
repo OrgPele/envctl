@@ -82,6 +82,18 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
+## Launch scope minimization
+Before showing or running any envctl worktree-and-prompt follow-up, infer the smallest safe launch scope from the researched change surface and the user's request:
+
+- For backend-only changes, include `--no-frontend` so envctl skips frontend prep/service launch while keeping backend and needed dependencies.
+- For frontend-only changes, include `--no-backend` so envctl skips backend prep/service launch while keeping frontend and needed dependencies.
+- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, or anything uncertain, use no minimization flag and run all configured parts.
+- For plans that need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that do not require backend, frontend, managed dependencies, or dependency prep), include `--no-infra`.
+- For explicitly requested dependency/container/infrastructure verification, do not use `--no-infra`; prefer the broader scope needed to prove the plan safely.
+- If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
+
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
 - Do not run `envctl` unless the user explicitly says yes.
@@ -96,6 +108,7 @@ Use this structure (adapt section names only if truly necessary):
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--tmux-new-session`: create another tmux or OMX-managed session instead of attaching to an existing one
+  - whenever you show a follow-up command, include inferred launch scope minimization flags (`--no-backend`, `--no-frontend`, or `--no-infra`) when the plan scope calls for them
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only

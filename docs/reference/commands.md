@@ -242,6 +242,10 @@ envctl --fullstack --headless        # dependencies + backend + frontend
 envctl --both --headless             # alias for --fullstack
 envctl --dependencies --headless     # dependencies only; no app services
 envctl --entire-system --headless    # dependencies + all configured app services
+envctl --trees --no-frontend         # worktree backend + dependencies; skip frontend
+envctl --trees --no-deps             # worktree app services only; skip managed dependencies/prep
+envctl --trees --no-infra            # worktree state/AI only; skip backend, frontend, and dependencies
+envctl --plan feature/task --opencode --no-deps  # AI session without local dependency prep
 
 envctl stop --backend --headless
 envctl stop --frontend --headless

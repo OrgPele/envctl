@@ -41,6 +41,10 @@ pass `--interactive` only when you want prompts.
 | `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
 | `--deps` | Alias for `--dependencies`. |
 | `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
+| `--no-backend` | Startup/plan modifier: skip backend service launch and backend dependency prep. |
+| `--no-frontend` | Startup/plan modifier: skip frontend service launch and frontend dependency prep. |
+| `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
+| `--no-infra` | Startup/plan modifier: skip backend, frontend, managed dependencies, and plan-agent dependency prep. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |

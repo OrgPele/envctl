@@ -81,7 +81,13 @@ def prepare_project_dependencies(
     backend_plan = _backend_plan(runtime, backend_cwd)
     frontend_plan = _frontend_plan(runtime, frontend_cwd)
     skipped: list[str] = []
-    if backend_plan.manager == "none":
+    prepare_dependencies = _route_launch_enabled(route, "launch_dependencies")
+    prepare_backend = prepare_dependencies and _route_launch_enabled(route, "launch_backend")
+    prepare_frontend = prepare_dependencies and _route_launch_enabled(route, "launch_frontend")
+    if not prepare_backend:
+        backend_plan = PreparedBackendRuntime(manager="skipped", runner_prefix=(), reason="disabled_by_flag")
+        skipped.append("backend:disabled_by_flag")
+    elif backend_plan.manager == "none":
         skipped.append(f"backend:{backend_plan.reason or 'no_dependency_manifest'}")
     else:
         runtime._prepare_backend_runtime(
@@ -94,7 +100,10 @@ def prepare_project_dependencies(
             backend_env_is_default=backend_env_is_default,
         )
 
-    if frontend_plan.manager == "none":
+    if not prepare_frontend:
+        frontend_plan = PreparedFrontendRuntime(manager="skipped", reason="disabled_by_flag")
+        skipped.append("frontend:disabled_by_flag")
+    elif frontend_plan.manager == "none":
         skipped.append(f"frontend:{frontend_plan.reason or 'no_package_json'}")
     else:
         runtime._prepare_frontend_runtime(
@@ -111,9 +120,15 @@ def prepare_project_dependencies(
         project=str(context.name),
         backend=backend_plan,
         frontend=frontend_plan,
-        prepared=backend_plan.manager != "none" or frontend_plan.manager != "none",
+        prepared=backend_plan.manager not in {"none", "skipped"} or frontend_plan.manager not in {"none", "skipped"},
         skipped=tuple(skipped),
     )
+
+
+def _route_launch_enabled(route: Route | None, flag_name: str) -> bool:
+    if route is None:
+        return True
+    return route.flags.get(flag_name) is not False
 
 
 def _dependency_bootstrap_route(route: Route | None) -> Route | None:

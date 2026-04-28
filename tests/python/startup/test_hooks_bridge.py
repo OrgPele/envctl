@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
+from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.engine_runtime import ProjectContext, PythonEngineRuntime
 from envctl_engine.shared.hooks import (
     build_python_hook_starter_stub,
@@ -129,6 +130,45 @@ class HooksBridgeTests(unittest.TestCase):
             self.assertIsInstance(result, RequirementsResult)
             self.assertEqual(result.health, "healthy")
             self.assertFalse(result.failures)
+
+    def test_no_deps_skips_setup_infrastructure_hook(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime_dir = root / "runtime"
+            marker = root / "hook-ran"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl_hooks.py").write_text(
+                "from __future__ import annotations\n\n"
+                "from pathlib import Path\n\n"
+                "def envctl_setup_infrastructure(context: dict) -> dict | None:\n"
+                f"    Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
+                '    return {"skip_default_requirements": True}\n',
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                }
+            )
+            runtime = PythonEngineRuntime(config, env={"ENVCTL_ENABLE_HOOK_BRIDGE": "true"})
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
+            result = runtime._start_requirements_for_project(
+                context,
+                mode="trees",
+                route=parse_route(["--tree", "--no-deps"], env={}),
+            )
+
+            self.assertIsInstance(result, RequirementsResult)
+            self.assertEqual(result.health, "healthy")
+            self.assertFalse(result.failures)
+            self.assertFalse(marker.exists())
+            self.assertTrue(result.components)
+            self.assertTrue(all(not bool(component.get("enabled")) for component in result.components.values()))
 
     def test_runtime_define_services_hook_returns_service_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

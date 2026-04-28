@@ -378,65 +378,74 @@ class StartupOrchestrator:
         if launch_config.enabled and created_worktrees:
             self._ensure_run_id(session)
             context_by_name = {context.name: context for context in session.selected_contexts}
-            bootstrap_started = time.monotonic()
-            rt._emit(
-                "planning.dependency_bootstrap.start",
-                project_count=len(created_worktrees),
-                projects=[worktree.name for worktree in created_worktrees],
-                cli=launch_config.cli,
-                transport=launch_config.transport,
-            )
-            results: list[object] = []
-            try:
-                for worktree in created_worktrees:
-                    context = context_by_name.get(worktree.name)
-                    if context is None:
-                        continue
-                    self._report_progress(
-                        route,
-                        f"Preparing dependencies for {worktree.name}...",
-                        project=worktree.name,
-                    )
-                    project_started = time.monotonic()
-                    result = prepare_project_dependencies(
-                        rt,
-                        context=context,
-                        route=route,
-                        run_id=self._resolved_run_id(session),
-                    )
-                    results.append(result)
-                    rt._emit(
-                        "planning.dependency_bootstrap.project",
-                        project=worktree.name,
-                        status="ok",
-                        backend_manager=result.backend.manager,
-                        frontend_manager=result.frontend.manager,
-                        skipped=list(result.skipped),
-                        duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
-                    )
-                    self._report_progress(
-                        route,
-                        (
-                            f"Dependencies ready for {worktree.name}: "
-                            f"backend={result.backend.manager} frontend={result.frontend.manager}"
-                        ),
-                        project=worktree.name,
-                    )
-            except Exception as exc:
+            if route.flags.get("launch_dependencies") is False:
                 rt._emit(
                     "planning.dependency_bootstrap.finish",
-                    status="failed",
-                    error=str(exc),
+                    status="skipped",
+                    reason="disabled_by_flag",
+                    project_count=0,
+                    duration_ms=0.0,
+                )
+            else:
+                bootstrap_started = time.monotonic()
+                rt._emit(
+                    "planning.dependency_bootstrap.start",
+                    project_count=len(created_worktrees),
+                    projects=[worktree.name for worktree in created_worktrees],
+                    cli=launch_config.cli,
+                    transport=launch_config.transport,
+                )
+                results: list[object] = []
+                try:
+                    for worktree in created_worktrees:
+                        context = context_by_name.get(worktree.name)
+                        if context is None:
+                            continue
+                        self._report_progress(
+                            route,
+                            f"Preparing dependencies for {worktree.name}...",
+                            project=worktree.name,
+                        )
+                        project_started = time.monotonic()
+                        result = prepare_project_dependencies(
+                            rt,
+                            context=context,
+                            route=route,
+                            run_id=self._resolved_run_id(session),
+                        )
+                        results.append(result)
+                        rt._emit(
+                            "planning.dependency_bootstrap.project",
+                            project=worktree.name,
+                            status="ok",
+                            backend_manager=result.backend.manager,
+                            frontend_manager=result.frontend.manager,
+                            skipped=list(result.skipped),
+                            duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
+                        )
+                        self._report_progress(
+                            route,
+                            (
+                                f"Dependencies ready for {worktree.name}: "
+                                f"backend={result.backend.manager} frontend={result.frontend.manager}"
+                            ),
+                            project=worktree.name,
+                        )
+                except Exception as exc:
+                    rt._emit(
+                        "planning.dependency_bootstrap.finish",
+                        status="failed",
+                        error=str(exc),
+                        duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
+                    )
+                    raise
+                session.plan_agent_dependency_bootstrap_results = tuple(results)
+                rt._emit(
+                    "planning.dependency_bootstrap.finish",
+                    status="ok",
+                    project_count=len(results),
                     duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
                 )
-                raise
-            session.plan_agent_dependency_bootstrap_results = tuple(results)
-            rt._emit(
-                "planning.dependency_bootstrap.finish",
-                status="ok",
-                project_count=len(results),
-                duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
-            )
         launch_result = self._launch_plan_agent_terminals_with_spinner(
             session,
             created_worktrees=created_worktrees,
