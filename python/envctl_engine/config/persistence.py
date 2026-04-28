@@ -18,6 +18,7 @@ from envctl_engine.config import (
 from envctl_engine.config.git_global_ignore import (
     GlobalIgnoreStatus,
     _configured_global_excludes_path,
+    configure_envctl_global_ignores,
     ensure_envctl_global_ignores,
 )
 from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
@@ -538,7 +539,7 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
-    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=False)
+    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=True)
 
 
 def save_local_config_with_ignore_policy(
@@ -607,7 +608,7 @@ def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) 
                 warning=lookup_warning,
             )
         if current_path is None:
-            return ensure_envctl_global_ignores(base_dir)
+            return configure_envctl_global_ignores(base_dir)
     return ensure_envctl_global_ignores(base_dir)
 
 

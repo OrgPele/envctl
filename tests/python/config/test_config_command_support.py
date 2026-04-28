@@ -172,7 +172,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
                 [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
             )
 
-    def test_headless_config_does_not_bootstrap_missing_global_excludes(self) -> None:
+    def test_headless_config_bootstraps_missing_global_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_root = Path(tmpdir) / "runtime"
@@ -188,11 +188,18 @@ class ConfigCommandSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             response = json.loads(buffer.getvalue())
-            self.assertFalse(response["ignore_updated"])
-            self.assertEqual(response["ignore_status"]["code"], "missing_global_excludes_configuration")
-            self.assertIsNone(response["ignore_status"]["target_path"])
+            self.assertTrue(response["ignore_updated"])
+            self.assertIsNone(response["ignore_warning"])
+            self.assertEqual(response["ignore_status"]["code"], "configured_global_excludes")
+            excludes_path = Path(response["ignore_status"]["target_path"])
+            self.assertEqual(excludes_path, Path(tmpdir) / "home" / ".gitignore_global")
+            self.assertEqual(
+                response["ignore_status"]["managed_patterns"],
+                [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
+            )
+            self.assertIn("MAIN_TASK.md", excludes_path.read_text(encoding="utf-8"))
 
-    def test_config_plain_output_warns_when_global_ignore_is_missing(self) -> None:
+    def test_config_plain_output_reports_configured_global_ignore_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_root = Path(tmpdir) / "runtime"
@@ -210,8 +217,9 @@ class ConfigCommandSupportTests(unittest.TestCase):
             output = buffer.getvalue()
             self.assertIn("Saved startup config:", output)
             self.assertIn("Config saved. Restart required for running services to adopt changes.", output)
-            self.assertIn("global excludes", output.lower())
+            self.assertIn(f"Configured Git global excludes at {Path(tmpdir) / 'home' / '.gitignore_global'}.", output)
             self.assertNotIn(".gitignore on save", output)
+            self.assertNotIn("not configured", output.lower())
 
     def test_config_plain_output_reports_updated_global_ignore_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

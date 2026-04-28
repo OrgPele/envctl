@@ -839,7 +839,7 @@ def run_config_wizard_textual(
                         source_label=source_label,
                         ignore_warning=(
                             "envctl local artifacts are managed through Git global excludes instead of repo .gitignore. "
-                            "Configure core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
+                            "On save, envctl configures or updates core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
                         ),
                     )
                 )
@@ -1578,7 +1578,7 @@ def run_config_wizard_textual(
                 save_result = save_local_config_with_ignore_policy(
                     local_state=local_state,
                     values=self.values,
-                    update_global_ignores=False,
+                    update_global_ignores=True,
                 )
                 self._save_result = save_result
                 self.exit(ConfigWizardResult(values=self.values, save_result=save_result))
