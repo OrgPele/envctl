@@ -368,14 +368,14 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertEqual(runtime_projection["Main"]["backend_url"], "http://localhost:8000")
             self.assertIsNone(runtime_projection["Main"]["frontend_url"])
 
-    def test_dashboard_visual_host_blank_value_keeps_localhost_default(self) -> None:
+    def test_dashboard_visual_host_blank_value_uses_public_host_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(
                 load_config(self._config(repo, runtime)),
-                env={"NO_COLOR": "1", "ENVCTL_UI_VISUAL_HOST": "   "},
+                env={"NO_COLOR": "1", "ENVCTL_PUBLIC_HOST": "203.0.113.10", "ENVCTL_UI_VISUAL_HOST": "   "},
             )
             engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
 
@@ -401,8 +401,42 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn("Backend: http://localhost:8000", output)
+            self.assertIn("Backend: http://203.0.113.10:8000", output)
             self.assertNotIn("http://   :8000", output)
+
+    def test_dashboard_visual_host_defaults_to_public_host_from_envctl_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_PUBLIC_HOST=203.0.113.10\n", encoding="utf-8")
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-public-host-envctl",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8000,
+                        actual_port=8000,
+                        pid=111,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {"Main": str(repo)}},
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Backend: http://203.0.113.10:8000", output)
 
     def test_dashboard_visual_host_can_be_loaded_from_envctl_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

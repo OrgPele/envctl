@@ -3,6 +3,7 @@ from __future__ import annotations
 from envctl_engine.config.profile_defaults import dependency_default_enabled
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.supabase import start_supabase_stack
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 
 
 def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]:
@@ -13,6 +14,7 @@ def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]
     db_password = runtime._command_override_value("SUPABASE_DB_PASSWORD") or "supabase-db-password"
     db_name = runtime._command_override_value("DB_NAME") or "postgres"
     database_url = f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{port}/{db_name}"
+    public_url = browser_backend_url(host=resolve_public_host(env=runtime.env, config=runtime.config), port=int(port))
     return {
         "DB_HOST": db_host,
         "DB_PORT": str(port),
@@ -24,7 +26,7 @@ def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]
         "ASYNC_DATABASE_URL": database_url,
         "SUPABASE_DB_PASSWORD": db_password,
         "SUPABASE_DB_PORT": str(port),
-        "SUPABASE_URL": f"http://localhost:{port}",
+        "SUPABASE_URL": public_url,
     }
 
 

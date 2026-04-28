@@ -24,6 +24,7 @@ from envctl_engine.runtime.prompt_install_support import (
     resolve_codex_direct_prompt_body,
     resolve_opencode_direct_prompt_body,
 )
+from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
@@ -2338,12 +2339,133 @@ def _resolve_preset_submission_text(
             resolved = _slash_command(cli, preset, arguments=arguments)
     except (LookupError, OSError, ValueError) as exc:
         return "", f"prompt_resolution_failed: {exc}"
+    if direct_prompt:
+        resolved = _append_runtime_addresses_for_preset(runtime, preset=preset, prompt_text=resolved)
     return _shape_prompt_text(
         resolved,
         direct_prompt=direct_prompt,
         ulw_loop_prefix=launch_config.ulw_loop_prefix,
         ulw_suffix=launch_config.ulw_suffix,
     )
+
+
+def _append_runtime_addresses_for_preset(runtime: Any, *, preset: str, prompt_text: str) -> str:
+    if str(preset).strip() != "implement_task":
+        return prompt_text
+    context = _runtime_addresses_prompt_section(runtime)
+    if not context:
+        return prompt_text
+    return f"{prompt_text.rstrip()}\n\n{context}\n"
+
+
+def _runtime_addresses_prompt_section(runtime: Any) -> str:
+    state = _latest_runtime_state(runtime)
+    if state is None:
+        return ""
+    lines = [
+        "## Current envctl runtime addresses",
+        "Use these currently known localhost addresses when validating or debugging. They are generated from saved envctl runtime state; verify them again if you restart services.",
+    ]
+    dependency_lines = _dependency_address_lines(state)
+    service_lines = _service_address_lines(state)
+    if dependency_lines:
+        lines.append("Dependencies:")
+        lines.extend(f"- {line}" for line in dependency_lines)
+    if service_lines:
+        lines.append("Backend/frontend:")
+        lines.extend(f"- {line}" for line in service_lines)
+    if len(lines) == 2:
+        return ""
+    return "\n".join(lines)
+
+
+def _latest_runtime_state(runtime: Any) -> RunState | None:
+    state_repository = getattr(runtime, "state_repository", None)
+    if state_repository is not None and hasattr(state_repository, "load_latest"):
+        try:
+            state = state_repository.load_latest()
+        except Exception:
+            state = None
+        if isinstance(state, RunState):
+            return state
+    try_loader = getattr(runtime, "_try_load_existing_state", None)
+    if callable(try_loader):
+        for mode in ("trees", "main"):
+            try:
+                state = try_loader(mode=mode, strict_mode_match=True)
+            except Exception:
+                state = None
+            if isinstance(state, RunState):
+                return state
+    return None
+
+
+def _dependency_address_lines(state: RunState) -> list[str]:
+    rows: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    for project_name, requirements in state.requirements.items():
+        for dependency_id in ("postgres", "redis", "supabase", "n8n"):
+            component = requirements.component(dependency_id)
+            if not bool(component.get("enabled", False)):
+                continue
+            port = _component_port(component)
+            if port is None:
+                continue
+            key = (dependency_id, port)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(f"{_dependency_label(dependency_id)} ({project_name}): {_dependency_address(dependency_id, port)}")
+    return rows
+
+
+def _service_address_lines(state: RunState) -> list[str]:
+    rows: list[str] = []
+    for service in state.services.values():
+        service_type = str(service.type or "").strip().lower()
+        if service_type not in {"backend", "frontend"}:
+            continue
+        port = service.actual_port or service.requested_port
+        if port is None:
+            continue
+        label = "Backend" if service_type == "backend" else "Frontend"
+        rows.append(f"{label} ({service.name}): http://localhost:{int(port)}")
+    return rows
+
+
+def _component_port(component: Mapping[str, object]) -> int | None:
+    for key in ("final", "actual", "requested"):
+        port = _int_or_none(component.get(key))
+        if port is not None and port > 0:
+            return port
+    resources = component.get("resources")
+    if isinstance(resources, Mapping):
+        port = _int_or_none(resources.get("primary"))
+        if port is not None and port > 0:
+            return port
+    return None
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _dependency_label(dependency_id: str) -> str:
+    return {"postgres": "Postgres", "redis": "Redis", "supabase": "Supabase", "n8n": "n8n"}.get(
+        dependency_id,
+        dependency_id,
+    )
+
+
+def _dependency_address(dependency_id: str, port: int) -> str:
+    if dependency_id == "redis":
+        return f"redis://localhost:{port}"
+    if dependency_id in {"supabase", "n8n"}:
+        return f"http://localhost:{port}"
+    return f"localhost:{port}"
 
 
 def _prepare_surface(

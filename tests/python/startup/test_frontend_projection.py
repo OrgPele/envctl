@@ -41,6 +41,15 @@ class FrontendProjectionTests(unittest.TestCase):
         env = frontend_env_for_project(state, "Tree Alpha")
 
         self.assertEqual(env["VITE_BACKEND_URL"], "http://localhost:8111")
+        self.assertEqual(env["VITE_API_URL"], "http://localhost:8111/api/v1")
+
+    def test_backend_final_port_projects_to_frontend_env_with_public_host(self) -> None:
+        state = self._state()
+
+        env = frontend_env_for_project(state, "Tree Alpha", host="203.0.113.10")
+
+        self.assertEqual(env["VITE_BACKEND_URL"], "http://203.0.113.10:8111")
+        self.assertEqual(env["VITE_API_URL"], "http://203.0.113.10:8111/api/v1")
 
     def test_runtime_map_tracks_actual_frontend_rebound_port(self) -> None:
         state = self._state()
@@ -103,6 +112,8 @@ class FrontendProjectionTests(unittest.TestCase):
 
         self.assertEqual(alpha_env["VITE_BACKEND_URL"], "http://localhost:8100")
         self.assertEqual(beta_env["VITE_BACKEND_URL"], "http://localhost:8200")
+        self.assertEqual(alpha_env["VITE_API_URL"], "http://localhost:8100/api/v1")
+        self.assertEqual(beta_env["VITE_API_URL"], "http://localhost:8200/api/v1")
         self.assertEqual(projection["Tree Alpha"]["frontend_url"], "http://localhost:9100")
         self.assertEqual(projection["Tree Beta"]["frontend_url"], "http://localhost:9200")
 
@@ -141,6 +152,7 @@ class FrontendProjectionTests(unittest.TestCase):
         env = frontend_env_for_project(state, "feature-a-1")
 
         self.assertEqual(env["VITE_BACKEND_URL"], "http://localhost:8101")
+        self.assertEqual(env["VITE_API_URL"], "http://localhost:8101/api/v1")
 
 
 if __name__ == "__main__":

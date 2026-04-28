@@ -1094,6 +1094,43 @@ if result.returncode != 0:
             extra=extra,
         )
 
+    def test_action_extra_env(
+        self,
+        *,
+        route: Route | None,
+        target: object | None,
+        suite_source: str,
+    ) -> dict[str, str]:
+        normalized_source = str(suite_source or "").strip().lower()
+        if normalized_source not in {"backend_pytest", "root_unittest"}:
+            return {}
+        if target is None:
+            return {}
+        project_name = str(getattr(target, "name", "") or "").strip()
+        target_root_raw = str(getattr(target, "root", "") or "").strip()
+        if not project_name or not target_root_raw:
+            return {}
+        rt = self.runtime
+        state = rt.load_existing_state(mode=getattr(route, "mode", None))
+        if state is None:
+            return {}
+        requirements = state.requirements.get(project_name)
+        if requirements is None:
+            return {}
+        target_root = Path(target_root_raw)
+        context = self._migrate_project_context(
+            project_name=project_name,
+            project_root=target_root,
+            requirements=requirements,
+        )
+        projector = getattr(rt.raw_runtime, "_project_service_env", None)
+        if not callable(projector):
+            return {}
+        projected = projector(context, requirements=requirements, route=route, service_name="backend")
+        if not isinstance(projected, dict):
+            return {}
+        return {str(key): str(value) for key, value in projected.items() if isinstance(key, str) and value is not None}
+
     @staticmethod
     def action_extra_env(route: Route) -> dict[str, str]:
         return build_action_extra_env(route)

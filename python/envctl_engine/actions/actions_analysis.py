@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 
 from envctl_engine.actions.action_utils import detect_envctl_python, detect_repo_python
 
@@ -26,6 +27,23 @@ def default_migrate_command(project_root: Path) -> MigrateCommandResolution:
     if not backend_dir.is_dir():
         backend_dir = project_root
 
+    pyproject = backend_dir / "pyproject.toml"
+    if pyproject.is_file() and _pyproject_uses_poetry(pyproject) and shutil.which("poetry"):
+        return MigrateCommandResolution(
+            command=["poetry", "--project", str(backend_dir), "run", "alembic", "upgrade", "head"],
+            cwd=backend_dir,
+            error=None,
+        )
+
+    for env_dir in (backend_dir / ".venv", backend_dir / "venv", project_root / ".venv", project_root / "venv"):
+        alembic_bin = env_dir / "bin" / "alembic"
+        if alembic_bin.is_file():
+            return MigrateCommandResolution(
+                command=[str(alembic_bin), "upgrade", "head"],
+                cwd=backend_dir,
+                error=None,
+            )
+
     python_bin = detect_repo_python(backend_dir)
     if python_bin is None:
         return MigrateCommandResolution(
@@ -38,3 +56,11 @@ def default_migrate_command(project_root: Path) -> MigrateCommandResolution:
         cwd=backend_dir,
         error=None,
     )
+
+
+def _pyproject_uses_poetry(pyproject: Path) -> bool:
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text

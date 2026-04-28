@@ -166,6 +166,8 @@ def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str,
     normalized_name = str(requirement_name).strip().lower()
     if route is not None and route.flags.get("launch_dependencies") is False:
         return False
+    if normalized_mode == "trees" and effective_dependency_scope(route, normalized_mode) == "shared":
+        normalized_mode = "main"
     if hasattr(runtime.config, "startup_enabled_for_mode") and not runtime.config.startup_enabled_for_mode(
         normalized_mode
     ):
@@ -177,6 +179,20 @@ def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str,
     if hasattr(runtime.config, "requirement_enabled_for_mode"):
         return runtime.config.requirement_enabled_for_mode(normalized_mode, normalized_name)
     return True
+
+
+def effective_dependency_scope(route: Route | None, mode: str) -> str:
+    if route is None:
+        return "isolated" if str(mode).strip().lower() == "trees" else "shared"
+    if route is not None and route.flags.get("launch_dependencies") is False:
+        return "none"
+    explicit = route.flags.get("dependency_scope") if route is not None else None
+    if explicit in {"shared", "isolated"}:
+        return str(explicit)
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode == "trees":
+        return "shared"
+    return "shared"
 
 
 class SimpleProfile:
@@ -225,9 +241,11 @@ def project_service_env(
     env = {"ENVCTL_PROJECT_NAME": context.name}
     dependency_env = _dependency_projector_env(runtime, context, requirements=requirements, route=route)
     config = getattr(runtime, "config", None)
+    mode = str(getattr(route, "mode", "") or "").strip().lower() if route is not None else ""
     scoped_dependency_env = _resolve_scoped_dependency_env(
         config,
         canonical_dependency_env=dependency_env,
+        mode=mode,
         service_name=service_name,
     )
     if scoped_dependency_env is not None:
@@ -303,7 +321,7 @@ def resolve_dependency_env_templates(
         if isinstance(value, str) and value.strip()
     }
     resolved: dict[str, str] = dict(resolved_env_base or {})
-    seen_names: set[str] = set(resolved)
+    seen_names: set[str] = set()
     for entry in entries:
         name = str(getattr(entry, "name", "")).strip()
         template = str(getattr(entry, "template", ""))
@@ -331,9 +349,10 @@ def _resolve_scoped_dependency_env(
     config: Any,
     *,
     canonical_dependency_env: dict[str, str],
+    mode: str,
     service_name: str | None,
 ) -> dict[str, str] | None:
-    sections = _dependency_template_sections_for_service(config, service_name=service_name)
+    sections = _dependency_template_sections_for_service(config, mode=mode, service_name=service_name)
     if not sections:
         if _any_dependency_template_section_present(config):
             return {}
@@ -353,6 +372,7 @@ def _resolve_scoped_dependency_env(
 def _dependency_template_sections_for_service(
     config: Any,
     *,
+    mode: str,
     service_name: str | None,
 ) -> list[tuple[str, tuple[object, ...], tuple[str, ...]]]:
     sections: list[tuple[str, tuple[object, ...], tuple[str, ...]]] = []
@@ -381,6 +401,18 @@ def _dependency_template_sections_for_service(
                 tuple(getattr(config, "frontend_dependency_env_template_errors", ())),
             )
         )
+    normalized_mode = "trees" if str(mode).strip().lower() == "trees" else "main"
+    mode_service_prefix = f"{normalized_mode}_{normalized_service}"
+    if normalized_service in {"backend", "frontend"} and bool(
+        getattr(config, f"{mode_service_prefix}_dependency_env_section_present", False)
+    ):
+        sections.append(
+            (
+                f"{normalized_mode} {normalized_service} launch env",
+                tuple(getattr(config, f"{mode_service_prefix}_dependency_env_templates", ())),
+                tuple(getattr(config, f"{mode_service_prefix}_dependency_env_template_errors", ())),
+            )
+        )
     return sections
 
 
@@ -389,6 +421,10 @@ def _any_dependency_template_section_present(config: Any) -> bool:
         getattr(config, "dependency_env_section_present", False)
         or getattr(config, "backend_dependency_env_section_present", False)
         or getattr(config, "frontend_dependency_env_section_present", False)
+        or getattr(config, "main_backend_dependency_env_section_present", False)
+        or getattr(config, "main_frontend_dependency_env_section_present", False)
+        or getattr(config, "trees_backend_dependency_env_section_present", False)
+        or getattr(config, "trees_frontend_dependency_env_section_present", False)
     )
 
 

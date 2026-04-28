@@ -24,6 +24,14 @@ CONFIG_BACKEND_DEPENDENCY_ENV_START = "# >>> envctl backend launch env >>>"
 CONFIG_BACKEND_DEPENDENCY_ENV_END = "# <<< envctl backend launch env <<<"
 CONFIG_FRONTEND_DEPENDENCY_ENV_START = "# >>> envctl frontend launch env >>>"
 CONFIG_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl frontend launch env <<<"
+CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_START = "# >>> envctl main backend launch env >>>"
+CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_END = "# <<< envctl main backend launch env <<<"
+CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_START = "# >>> envctl main frontend launch env >>>"
+CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl main frontend launch env <<<"
+CONFIG_TREES_BACKEND_DEPENDENCY_ENV_START = "# >>> envctl trees backend launch env >>>"
+CONFIG_TREES_BACKEND_DEPENDENCY_ENV_END = "# <<< envctl trees backend launch env <<<"
+CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_START = "# >>> envctl trees frontend launch env >>>"
+CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl trees frontend launch env <<<"
 LEGACY_CONFIG_DEPENDENCY_ENV_START = "# >>> envctl dependency env >>>"
 LEGACY_CONFIG_DEPENDENCY_ENV_END = "# <<< envctl dependency env <<<"
 LEGACY_CONFIG_BACKEND_DEPENDENCY_ENV_START = "# >>> envctl backend dependency env >>>"
@@ -84,6 +92,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
         "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP": "false",
         "ENVCTL_STATE_COMPAT_MODE": "compat_read_write",
+        "ENVCTL_PUBLIC_HOST": "localhost",
         "ENVCTL_UI_VISUAL_HOST": "localhost",
         "MAIN_STARTUP_ENABLE": _bool_text(bool(main_profile["startup_enable"])),
         "MAIN_BACKEND_ENABLE": _bool_text(bool(main_profile["backend_enable"])),
@@ -132,6 +141,7 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_BACKEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_CMD",
     "ENVCTL_FRONTEND_TEST_PATH",
+    "ENVCTL_PUBLIC_HOST",
     "ENVCTL_UI_VISUAL_HOST",
     "BACKEND_PORT_BASE",
     "FRONTEND_PORT_BASE",
@@ -288,6 +298,18 @@ class LocalConfigState:
     frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
     frontend_dependency_env_section_present: bool = False
     frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_backend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    main_backend_dependency_env_section_present: bool = False
+    main_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    main_frontend_dependency_env_section_present: bool = False
+    main_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_backend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    trees_backend_dependency_env_section_present: bool = False
+    trees_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    trees_frontend_dependency_env_section_present: bool = False
+    trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -350,6 +372,18 @@ class EngineConfig:
     frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
     frontend_dependency_env_section_present: bool = False
     frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_backend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    main_backend_dependency_env_section_present: bool = False
+    main_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    main_frontend_dependency_env_section_present: bool = False
+    main_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_backend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    trees_backend_dependency_env_section_present: bool = False
+    trees_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
+    trees_frontend_dependency_env_section_present: bool = False
+    trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
 
     def profile_for_mode(self, mode: str) -> StartupProfile:
         return self.trees_profile if str(mode).strip().lower() == "trees" else self.main_profile
@@ -407,6 +441,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    if "ENVCTL_UI_VISUAL_HOST" not in explicit_values:
+        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
+    elif not str(resolved.get("ENVCTL_UI_VISUAL_HOST") or "").strip():
+        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
     _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()
@@ -553,6 +591,18 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         frontend_dependency_env_templates=local_state.frontend_dependency_env_templates,
         frontend_dependency_env_section_present=local_state.frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=local_state.frontend_dependency_env_template_errors,
+        main_backend_dependency_env_templates=local_state.main_backend_dependency_env_templates,
+        main_backend_dependency_env_section_present=local_state.main_backend_dependency_env_section_present,
+        main_backend_dependency_env_template_errors=local_state.main_backend_dependency_env_template_errors,
+        main_frontend_dependency_env_templates=local_state.main_frontend_dependency_env_templates,
+        main_frontend_dependency_env_section_present=local_state.main_frontend_dependency_env_section_present,
+        main_frontend_dependency_env_template_errors=local_state.main_frontend_dependency_env_template_errors,
+        trees_backend_dependency_env_templates=local_state.trees_backend_dependency_env_templates,
+        trees_backend_dependency_env_section_present=local_state.trees_backend_dependency_env_section_present,
+        trees_backend_dependency_env_template_errors=local_state.trees_backend_dependency_env_template_errors,
+        trees_frontend_dependency_env_templates=local_state.trees_frontend_dependency_env_templates,
+        trees_frontend_dependency_env_section_present=local_state.trees_frontend_dependency_env_section_present,
+        trees_frontend_dependency_env_template_errors=local_state.trees_frontend_dependency_env_template_errors,
     )
 
 
@@ -591,6 +641,7 @@ def _apply_dependency_env_template_inferences(
         return
     inferred = _core_dependencies_referenced_by_launch_env_templates(
         local_state,
+        mode=mode,
         backend_enabled=profile.backend_enable,
         frontend_enabled=profile.frontend_enable,
     )
@@ -605,6 +656,7 @@ def _apply_dependency_env_template_inferences(
 def _core_dependencies_referenced_by_launch_env_templates(
     local_state: LocalConfigState,
     *,
+    mode: Literal["main", "trees"],
     backend_enabled: bool,
     frontend_enabled: bool,
 ) -> set[str]:
@@ -612,9 +664,17 @@ def _core_dependencies_referenced_by_launch_env_templates(
     if backend_enabled:
         entries.extend(local_state.dependency_env_templates)
         entries.extend(local_state.backend_dependency_env_templates)
+        if mode == "main":
+            entries.extend(local_state.main_backend_dependency_env_templates)
+        else:
+            entries.extend(local_state.trees_backend_dependency_env_templates)
     if frontend_enabled:
         entries.extend(local_state.dependency_env_templates)
         entries.extend(local_state.frontend_dependency_env_templates)
+        if mode == "main":
+            entries.extend(local_state.main_frontend_dependency_env_templates)
+        else:
+            entries.extend(local_state.trees_frontend_dependency_env_templates)
     inferred: set[str] = set()
     for entry in entries:
         template = entry.template
@@ -689,6 +749,18 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
     frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
     frontend_dependency_env_section_present = False
     frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_backend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
+    main_backend_dependency_env_section_present = False
+    main_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    main_frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
+    main_frontend_dependency_env_section_present = False
+    main_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_backend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
+    trees_backend_dependency_env_section_present = False
+    trees_backend_dependency_env_template_errors: tuple[str, ...] = ()
+    trees_frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
+    trees_frontend_dependency_env_section_present = False
+    trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
     if active_source_path is not None and active_source_path.is_file():
         try:
             file_text = active_source_path.read_text(encoding="utf-8")
@@ -710,6 +782,26 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
             frontend_dependency_env_section_present,
             frontend_dependency_env_template_errors,
         ) = _extract_frontend_dependency_env_section(file_text)
+        (
+            main_backend_dependency_env_templates,
+            main_backend_dependency_env_section_present,
+            main_backend_dependency_env_template_errors,
+        ) = _extract_mode_service_dependency_env_section(file_text, mode="main", service_name="backend")
+        (
+            main_frontend_dependency_env_templates,
+            main_frontend_dependency_env_section_present,
+            main_frontend_dependency_env_template_errors,
+        ) = _extract_mode_service_dependency_env_section(file_text, mode="main", service_name="frontend")
+        (
+            trees_backend_dependency_env_templates,
+            trees_backend_dependency_env_section_present,
+            trees_backend_dependency_env_template_errors,
+        ) = _extract_mode_service_dependency_env_section(file_text, mode="trees", service_name="backend")
+        (
+            trees_frontend_dependency_env_templates,
+            trees_frontend_dependency_env_section_present,
+            trees_frontend_dependency_env_template_errors,
+        ) = _extract_mode_service_dependency_env_section(file_text, mode="trees", service_name="frontend")
 
     return LocalConfigState(
         base_dir=base_dir,
@@ -730,6 +822,18 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
         frontend_dependency_env_templates=frontend_dependency_env_templates,
         frontend_dependency_env_section_present=frontend_dependency_env_section_present,
         frontend_dependency_env_template_errors=frontend_dependency_env_template_errors,
+        main_backend_dependency_env_templates=main_backend_dependency_env_templates,
+        main_backend_dependency_env_section_present=main_backend_dependency_env_section_present,
+        main_backend_dependency_env_template_errors=main_backend_dependency_env_template_errors,
+        main_frontend_dependency_env_templates=main_frontend_dependency_env_templates,
+        main_frontend_dependency_env_section_present=main_frontend_dependency_env_section_present,
+        main_frontend_dependency_env_template_errors=main_frontend_dependency_env_template_errors,
+        trees_backend_dependency_env_templates=trees_backend_dependency_env_templates,
+        trees_backend_dependency_env_section_present=trees_backend_dependency_env_section_present,
+        trees_backend_dependency_env_template_errors=trees_backend_dependency_env_template_errors,
+        trees_frontend_dependency_env_templates=trees_frontend_dependency_env_templates,
+        trees_frontend_dependency_env_section_present=trees_frontend_dependency_env_section_present,
+        trees_frontend_dependency_env_template_errors=trees_frontend_dependency_env_template_errors,
     )
 
 
@@ -1043,11 +1147,16 @@ def _frontend_dependency_env_section_markers_present(text: str) -> bool:
     return any(marker in text for marker in _frontend_dependency_env_markers())
 
 
+def _mode_service_dependency_env_section_markers_present(text: str) -> bool:
+    return any(marker in text for marker in _mode_service_dependency_env_markers())
+
+
 def _any_dependency_env_section_markers_present(text: str) -> bool:
     return bool(
         _dependency_env_section_markers_present(text)
         or _backend_dependency_env_section_markers_present(text)
         or _frontend_dependency_env_section_markers_present(text)
+        or _mode_service_dependency_env_section_markers_present(text)
     )
 
 
@@ -1098,6 +1207,19 @@ def _extract_frontend_dependency_env_section(
         text,
         marker_pairs=_frontend_dependency_env_marker_pairs(),
         section_label="frontend launch env",
+    )
+
+
+def _extract_mode_service_dependency_env_section(
+    text: str,
+    *,
+    mode: Literal["main", "trees"],
+    service_name: Literal["backend", "frontend"],
+) -> tuple[tuple[DependencyEnvTemplateEntry, ...], bool, tuple[str, ...]]:
+    return _extract_template_section(
+        text,
+        marker_pairs=_mode_service_dependency_env_marker_pairs(mode=mode, service_name=service_name),
+        section_label=f"{mode} {service_name} launch env",
     )
 
 
@@ -1177,6 +1299,19 @@ def _frontend_dependency_env_markers() -> tuple[str, ...]:
     )
 
 
+def _mode_service_dependency_env_markers() -> tuple[str, ...]:
+    return (
+        CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_START,
+        CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_END,
+        CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_START,
+        CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_END,
+        CONFIG_TREES_BACKEND_DEPENDENCY_ENV_START,
+        CONFIG_TREES_BACKEND_DEPENDENCY_ENV_END,
+        CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_START,
+        CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_END,
+    )
+
+
 def _dependency_env_marker_pairs() -> tuple[tuple[str, str], ...]:
     return (
         (CONFIG_DEPENDENCY_ENV_START, CONFIG_DEPENDENCY_ENV_END),
@@ -1198,12 +1333,30 @@ def _frontend_dependency_env_marker_pairs() -> tuple[tuple[str, str], ...]:
     )
 
 
+def _mode_service_dependency_env_marker_pairs(
+    *,
+    mode: Literal["main", "trees"],
+    service_name: Literal["backend", "frontend"],
+) -> tuple[tuple[str, str], ...]:
+    marker_map = {
+        ("main", "backend"): (CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_START, CONFIG_MAIN_BACKEND_DEPENDENCY_ENV_END),
+        ("main", "frontend"): (CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_START, CONFIG_MAIN_FRONTEND_DEPENDENCY_ENV_END),
+        ("trees", "backend"): (CONFIG_TREES_BACKEND_DEPENDENCY_ENV_START, CONFIG_TREES_BACKEND_DEPENDENCY_ENV_END),
+        ("trees", "frontend"): (CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_START, CONFIG_TREES_FRONTEND_DEPENDENCY_ENV_END),
+    }
+    return (marker_map[(mode, service_name)],)
+
+
 def _strip_template_sections(text: str) -> str:
     stripped = text
     for start_marker, end_marker in (
         *_dependency_env_marker_pairs(),
         *_backend_dependency_env_marker_pairs(),
         *_frontend_dependency_env_marker_pairs(),
+        *_mode_service_dependency_env_marker_pairs(mode="main", service_name="backend"),
+        *_mode_service_dependency_env_marker_pairs(mode="main", service_name="frontend"),
+        *_mode_service_dependency_env_marker_pairs(mode="trees", service_name="backend"),
+        *_mode_service_dependency_env_marker_pairs(mode="trees", service_name="frontend"),
     ):
         while True:
             bounds = _template_section_bounds(stripped, start_marker, end_marker)

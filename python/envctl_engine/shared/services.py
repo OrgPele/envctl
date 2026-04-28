@@ -13,8 +13,10 @@ def frontend_env_for_project(state: RunState, project: str, *, host: str = "loca
         backend_port = service.actual_port if service.actual_port is not None else service.requested_port
     if backend_port is None:
         return {}
+    backend_url = f"http://{host}:{backend_port}"
     return {
-        "VITE_BACKEND_URL": f"http://{host}:{backend_port}",
+        "VITE_BACKEND_URL": backend_url,
+        "VITE_API_URL": f"{backend_url}/api/v1",
     }
 
 

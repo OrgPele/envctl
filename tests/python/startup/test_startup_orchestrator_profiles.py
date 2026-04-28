@@ -111,11 +111,56 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "redis", route=route))
 
+    def test_worktree_defaults_to_shared_deps_main_requirement_profile(self) -> None:
+        class Config:
+            def startup_enabled_for_mode(self, mode: str) -> bool:
+                return True
+
+            def requirement_enabled_for_mode(self, mode: str, requirement_name: str) -> bool:
+                if mode == "main":
+                    return requirement_name in {"redis", "n8n"}
+                return False
+
+        runtime = SimpleNamespace(config=Config())
+        route = parse_route(["--trees"], env={})
+
+        self.assertTrue(requirement_enabled_for_mode(runtime, "trees", "redis", route=route))
+        self.assertTrue(requirement_enabled_for_mode(runtime, "trees", "n8n", route=route))
+        self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "postgres", route=route))
+
+        isolated_route = parse_route(["--trees", "--isolated-deps"], env={})
+        self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "redis", route=isolated_route))
+
+    def test_worktree_shared_dependency_default_is_disabled_by_app_only_flags(self) -> None:
+        class Config:
+            def startup_enabled_for_mode(self, mode: str) -> bool:
+                return True
+
+            def requirement_enabled_for_mode(self, mode: str, requirement_name: str) -> bool:
+                return True
+
+        runtime = SimpleNamespace(config=Config())
+        for args in (
+            ["--trees", "--no-deps"],
+            ["--trees", "--only-backend"],
+            ["--trees", "--only-frontend"],
+            ["--trees", "--no-infra"],
+        ):
+            with self.subTest(args=args):
+                route = parse_route(list(args), env={})
+                self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "redis", route=route))
+
     def test_runtime_scope_flags_control_restart_requirements(self) -> None:
         self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--backend"], env={})))
         self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--fullstack"], env={})))
         self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--dependencies"], env={})))
         self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--entire-system"], env={})))
+        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart"], env={})))
+        self.assertFalse(
+            StartupOrchestrator._restart_include_requirements(
+                parse_route(["restart", "--service", "Main Frontend"], env={})
+            )
+        )
 
     def test_non_restart_defaults_to_configured_service_types(self) -> None:
         selected = StartupOrchestrator._restart_service_types_for_project(

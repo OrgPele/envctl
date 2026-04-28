@@ -112,6 +112,68 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
+    def test_shared_deps_worktree_start_uses_main_docker_prereq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_REDIS_ENABLE": "true",
+                    "TREES_REDIS_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--trees", "--shared-deps"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("docker", str(reason).lower())
+
+    def test_default_worktree_start_uses_main_shared_docker_prereq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_REDIS_ENABLE": "true",
+                    "TREES_REDIS_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--trees"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("docker", str(reason).lower())
+
     def test_only_app_worktree_start_does_not_require_docker(self) -> None:
         for flag in ("--only-backend", "--only-frontend"):
             with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmpdir:

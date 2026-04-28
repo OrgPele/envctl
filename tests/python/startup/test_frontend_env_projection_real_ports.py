@@ -35,8 +35,12 @@ class FrontendEnvProjectionRealPortsTests(unittest.TestCase):
         )
 
         env = frontend_env_for_project(state, "feature-a-1")
+        public_env = frontend_env_for_project(state, "feature-a-1", host="203.0.113.10")
 
         self.assertEqual(env["VITE_BACKEND_URL"], "http://localhost:8014")
+        self.assertEqual(env["VITE_API_URL"], "http://localhost:8014/api/v1")
+        self.assertEqual(public_env["VITE_BACKEND_URL"], "http://203.0.113.10:8014")
+        self.assertEqual(public_env["VITE_API_URL"], "http://203.0.113.10:8014/api/v1")
 
 
 if __name__ == "__main__":

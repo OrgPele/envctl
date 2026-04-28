@@ -62,6 +62,58 @@ class CliRouterParityTests(unittest.TestCase):
         with self.assertRaises(RouteError):
             parse_route(["definitely-unknown-command"], env={})
 
+    def test_shared_dependency_scope_flags_are_parsed(self) -> None:
+        route = parse_route(["--trees"], env={})
+
+        self.assertEqual(route.mode, "trees")
+        self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
+        self.assertNotEqual(route.flags.get("dependency_scope"), "isolated")
+
+        route = parse_route(["--trees", "--shared-deps"], env={})
+
+        self.assertEqual(route.mode, "trees")
+        self.assertEqual(route.flags.get("dependency_scope"), "shared")
+
+        route = parse_route(["--trees", "--isolated-deps"], env={})
+
+        self.assertEqual(route.flags.get("dependency_scope"), "isolated")
+
+    def test_start_and_restart_default_to_entire_system_scope(self) -> None:
+        self.assertEqual(parse_route([], env={}).flags.get("runtime_scope"), "entire-system")
+        self.assertEqual(parse_route(["--project", "feature-a-1"], env={}).flags.get("runtime_scope"), "entire-system")
+        self.assertEqual(parse_route(["restart"], env={}).flags.get("runtime_scope"), "entire-system")
+
+        self.assertIsNone(parse_route(["--only-backend"], env={}).flags.get("runtime_scope"))
+        self.assertIsNone(parse_route(["restart", "--project", "feature-a-1"], env={}).flags.get("runtime_scope"))
+
+    def test_shared_dependency_default_does_not_conflict_with_app_only_overrides(self) -> None:
+        for args in (
+            ["--trees", "--no-deps"],
+            ["--trees", "--only-backend"],
+            ["--trees", "--only-frontend"],
+            ["--trees", "--no-infra"],
+        ):
+            with self.subTest(args=args):
+                route = parse_route(list(args), env={})
+                self.assertFalse(route.flags.get("launch_dependencies"))
+                self.assertNotEqual(route.flags.get("dependency_scope"), "shared")
+
+    def test_shared_dependency_scope_flags_reject_conflicts(self) -> None:
+        for args in (
+            ["--trees", "--shared-deps", "--isolated-deps"],
+            ["--trees", "--shared-deps", "--no-deps"],
+            ["--trees", "--shared-deps", "--only-backend"],
+            ["--trees", "--shared-deps", "--only-frontend"],
+            ["--trees", "--shared-deps", "--no-infra"],
+            ["--main", "--isolated-deps"],
+        ):
+            with self.subTest(args=args), self.assertRaises(RouteError):
+                parse_route(list(args), env={})
+
+        route = parse_route(["--main", "--shared-deps"], env={})
+        self.assertEqual(route.mode, "main")
+        self.assertEqual(route.flags.get("dependency_scope"), "shared")
+
     def test_action_flags_are_parsed_for_command_routes(self) -> None:
         route = parse_route(["test", "--all", "--dry-run"], env={})
         self.assertEqual(route.command, "test")

@@ -23,6 +23,7 @@ from envctl_engine.ui.status_symbols import (
 )
 
 _DASHBOARD_VISUAL_HOST_ENV = "ENVCTL_UI_VISUAL_HOST"
+_DASHBOARD_PUBLIC_HOST_ENV = "ENVCTL_PUBLIC_HOST"
 
 
 def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
@@ -393,15 +394,20 @@ def _dashboard_visual_url(self: Any, port: int) -> str:
 
 
 def _dashboard_visual_host(self: Any) -> str:
-    raw: object | None = None
+    visual_raw: object | None = None
+    public_raw: object | None = None
     runtime_env = getattr(self, "env", {})
     if isinstance(runtime_env, Mapping):
-        raw = runtime_env.get(_DASHBOARD_VISUAL_HOST_ENV)
-    if raw is None:
+        visual_raw = runtime_env.get(_DASHBOARD_VISUAL_HOST_ENV)
+        public_raw = runtime_env.get(_DASHBOARD_PUBLIC_HOST_ENV)
+    if visual_raw is None or public_raw is None:
         config_raw = getattr(getattr(self, "config", None), "raw", {})
         if isinstance(config_raw, Mapping):
-            raw = config_raw.get(_DASHBOARD_VISUAL_HOST_ENV)
-    host = str(raw or "").strip()
+            if visual_raw is None:
+                visual_raw = config_raw.get(_DASHBOARD_VISUAL_HOST_ENV)
+            if public_raw is None:
+                public_raw = config_raw.get(_DASHBOARD_PUBLIC_HOST_ENV)
+    host = str(visual_raw or "").strip() or str(public_raw or "").strip()
     return host or "localhost"
 
 

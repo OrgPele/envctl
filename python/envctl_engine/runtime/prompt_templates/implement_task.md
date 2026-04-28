@@ -39,6 +39,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Interactive mode is the default when a TTY is available; add `--interactive` when you need to force interactive selection and `--headless` when automation must not prompt.
 - For UI/product implementations, E2E verification is expected against a running service. Prefer Playwright for browser E2E validation when the repo has Playwright or an equivalent E2E harness.
 - Do not claim E2E behavior is fixed from unit tests alone when the change depends on browser/service integration; start the needed scope, run the E2E test, read the output, and include evidence.
+- At the end of every implementation, run the final relevant validation yourself after the code is complete. If a runtime was needed or started, report the actual addresses for every available dependency plus backend and frontend targets, including host/port and URL where applicable (for example DB, Redis, n8n, Supabase, backend API, and frontend app). Use `envctl health --json`, `envctl show-state --json`, runtime output, or direct probes to get real addresses; do not guess.
 - At the end of verification, kill the exact scope you started so no stray services remain, then offer to start it again for human verification if the user wants to manually inspect the running app.
 
 ## Context-gathering protocol (do this before coding)
@@ -96,13 +97,16 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 1. Brief summary of what you changed.
 2. List of files modified/added.
 3. How to run the relevant tests (exact commands).
-4. Commit status.
-5. PR status and URL.
-6. Any notable edge cases covered.
-7. Risk register (only if needed): trade-offs or missing tests.
+4. Final validation performed at the end, with observed output/results.
+5. Runtime addresses used or produced during validation: dependencies, backend, and frontend. If no runtime was started, explicitly say so.
+6. Commit status.
+7. PR status and URL.
+8. Any notable edge cases covered.
+9. Risk register (only if needed): trade-offs or missing tests.
 
 ## Self-check (before responding)
 - Requirements in the authoritative spec file are fully implemented.
 - Tests were written first and are now green.
+- Final validation was run after implementation completed, and the final response includes the actual dependency/backend/frontend addresses when a runtime was involved.
 - No behavior gaps, TODOs, or unwired changes remain.
 - Changes follow repo conventions and best practices.

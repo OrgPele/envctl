@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 if TYPE_CHECKING:
     from envctl_engine.planning.plan_agent_launch_support import (
@@ -51,6 +51,7 @@ class StartupSession:
     resumed_context_names: list[str] = field(default_factory=list)
     preserved_services: dict[str, ServiceRecord] = field(default_factory=dict)
     preserved_requirements: dict[str, RequirementsResult] = field(default_factory=dict)
+    restart_state: RunState | None = None
     requirements_by_project: dict[str, RequirementsResult] = field(default_factory=dict)
     services_by_project: dict[str, dict[str, ServiceRecord]] = field(default_factory=dict)
     started_context_names: list[str] = field(default_factory=list)
