@@ -15,6 +15,7 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.launcher_support import resolve_envctl_version
+from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.runtime.runtime_dependency_contract import (
     missing_runtime_dependency_modules,
     runtime_dependency_failure_message,
@@ -71,6 +72,8 @@ def _effective_prereq_mode(route: Route) -> str:
 def _requires_docker(mode: str, config: EngineConfig, *, route: Route | None = None) -> bool:
     if route is not None and route.flags.get("launch_dependencies") is False:
         return False
+    if effective_dependency_scope(route, mode) == "shared" and mode == "trees":
+        mode = "main"
     return any(config.requirement_enabled_for_mode(mode, definition.id) for definition in dependency_definitions())
 
 
@@ -79,7 +82,7 @@ def run(
     *,
     env: Mapping[str, str] | None = None,
     shell_runner: Callable[[Sequence[str]], int] | None = None,
-    dispatcher: Callable[[object, EngineConfig], int] | None = None,
+    dispatcher: Callable[[Route, EngineConfig], int] | None = None,
 ) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     env_map = dict(os.environ if env is None else env)

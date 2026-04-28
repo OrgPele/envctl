@@ -201,6 +201,14 @@ SPECIAL_FLAGS = {
     "--no-deps",
     "--no-infra",
     "--no-infrastructure",
+    "--shared-dep",
+    "--shared-deps",
+    "--shared-dependency",
+    "--shared-dependencies",
+    "--isolated-dep",
+    "--isolated-deps",
+    "--isolated-dependency",
+    "--isolated-dependencies",
 }
 
 _ENV_ASSIGNMENT_KEYS = {
@@ -486,9 +494,11 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
+    _apply_default_runtime_scope_policy(state)
     _apply_default_headless_policy(state)
     _validate_plan_agent_cli_flags(state)
     _validate_plan_agent_workflow_flags(state)
+    _validate_dependency_scope_flags(state)
 
     # Phase 5: Route Finalization - build final Route object
     return _phase_finalize(state, argv)
@@ -796,6 +806,10 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["launch_backend"] = False
         flags["launch_frontend"] = False
         flags["launch_dependencies"] = False
+    elif token in {"--shared-dep", "--shared-deps", "--shared-dependency", "--shared-dependencies"}:
+        _set_dependency_scope(flags, "shared")
+    elif token in {"--isolated-dep", "--isolated-deps", "--isolated-dependency", "--isolated-dependencies"}:
+        _set_dependency_scope(flags, "isolated")
     elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
         flags["seed_requirements_from_base"] = False
     elif token in {"fresh=true", "FRESH=true"}:
@@ -842,6 +856,35 @@ def _set_runtime_scope(flags: dict[str, object], scope: str) -> None:
     if existing is not None and existing != scope:
         raise RouteError("Use only one runtime scope flag (--backend, --frontend, --fullstack, or --dependencies).")
     flags["runtime_scope"] = scope
+
+
+def _apply_default_runtime_scope_policy(state: _ParserState) -> None:
+    if state.command not in {"start", "restart"}:
+        return
+    if state.flags.get("runtime_scope") is not None:
+        return
+    if any(key in state.flags for key in ("launch_backend", "launch_frontend", "launch_dependencies")):
+        return
+    if state.command == "restart" and (state.flags.get("services") or state.projects):
+        return
+    state.flags["runtime_scope"] = "entire-system"
+
+
+def _set_dependency_scope(flags: dict[str, object], scope: str) -> None:
+    existing = flags.get("dependency_scope")
+    if existing is not None and existing != scope:
+        raise RouteError("Use only one dependency scope flag (--shared-deps or --isolated-deps).")
+    flags["dependency_scope"] = scope
+
+
+def _validate_dependency_scope_flags(state: _ParserState) -> None:
+    scope = state.flags.get("dependency_scope")
+    if scope is None:
+        return
+    if scope == "isolated" and state.mode == "main":
+        raise RouteError("Main always uses shared dependencies; --isolated-deps only applies to --trees.")
+    if scope == "shared" and state.flags.get("launch_dependencies") is False:
+        raise RouteError("--shared-deps requires managed dependencies; remove --no-deps, --only-backend, --only-frontend, or --no-infra.")
 
 
 def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
