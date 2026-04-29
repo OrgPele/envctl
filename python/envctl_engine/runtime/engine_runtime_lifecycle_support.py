@@ -76,10 +76,7 @@ def terminate_service_record(runtime: Any, service: object, *, aggressive: bool,
                 reason="missing_port_for_ownership",
             )
             return False
-        try:
-            is_owner = bool(runtime.process_runner.pid_owns_port(pid, port))
-        except Exception:  # noqa: BLE001
-            is_owner = False
+        is_owner = _service_pid_or_listener_owns_port(runtime, service, pid=pid, port=port)
         if not is_owner:
             runtime._emit("cleanup.skip", service=getattr(service, "name", "unknown"), pid=pid, port=port)
             return False
@@ -99,6 +96,26 @@ def terminate_service_record(runtime: Any, service: object, *, aggressive: bool,
     except OSError:
         return True
     return True
+
+
+def _service_pid_or_listener_owns_port(runtime: Any, service: object, *, pid: int, port: int) -> bool:
+    try:
+        if bool(runtime.process_runner.pid_owns_port(pid, port)):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    listener_pids = getattr(service, "listener_pids", None)
+    if not isinstance(listener_pids, list):
+        return False
+    for listener_pid in listener_pids:
+        if not isinstance(listener_pid, int) or listener_pid <= 0:
+            continue
+        try:
+            if bool(runtime.process_runner.pid_owns_port(listener_pid, port)):
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
 
 
 def service_port(service: object) -> int | None:
