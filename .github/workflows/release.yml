@@ -1,0 +1,182 @@
+name: Release
+
+# Cuts an envctl release in one shot:
+#
+#   1. Computes the next version from the current `pyproject.toml` (default
+#      bump is `patch`; can be overridden via inputs).
+#   2. Generates release notes by aggregating every PR merged since the
+#      previous version tag, using GitHub's own auto-generated release-notes
+#      endpoint.
+#   3. Updates `pyproject.toml`, `README.md` badges, and writes
+#      `docs/changelog/RELEASE_NOTES_<version>.md`.
+#   4. Commits the bump straight to `main`, tags `<version>`, builds wheel +
+#      sdist, and creates the GitHub Release with the matching notes file.
+#
+# Trigger from the Actions tab. No PR number is required.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump applied to the current pyproject version."
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: "Optional explicit MAJOR.MINOR.PATCH version (overrides bump)."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve previous and next versions
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          OVERRIDE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          previous=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          if [ -n "${OVERRIDE:-}" ]; then
+            new=$(python scripts/prepare_release.py compute-version --version "$OVERRIDE")
+          else
+            new=$(python scripts/prepare_release.py compute-version --bump "${BUMP:-patch}")
+          fi
+
+          previous_tag=""
+          if git rev-parse -q --verify "refs/tags/${previous}" >/dev/null; then
+            previous_tag="$previous"
+          elif git rev-parse -q --verify "refs/tags/v${previous}" >/dev/null; then
+            previous_tag="v${previous}"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${new}" >/dev/null; then
+            echo "::error::tag ${new} already exists; pick a different version" >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v${new}" >/dev/null; then
+            echo "::error::tag v${new} already exists; pick a different version" >&2
+            exit 1
+          fi
+
+          {
+            echo "previous=$previous"
+            echo "previous_tag=$previous_tag"
+            echo "new=$new"
+            echo "tag=$new"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing ${previous} -> ${new} (previous tag: ${previous_tag:-<none>})"
+
+      - name: Generate release notes from merged PRs
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release-tmp
+          payload=".release-tmp/notes-payload.json"
+          if [ -n "${PREVIOUS_TAG}" ]; then
+            jq -n --arg tag "$NEW_VERSION" --arg target "main" --arg prev "$PREVIOUS_TAG" \
+              '{tag_name: $tag, target_commitish: $target, previous_tag_name: $prev}' > "$payload"
+          else
+            jq -n --arg tag "$NEW_VERSION" --arg target "main" \
+              '{tag_name: $tag, target_commitish: $target}' > "$payload"
+          fi
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            --input "$payload" \
+            > .release-tmp/notes-response.json
+
+          jq -r '.body' .release-tmp/notes-response.json > .release-tmp/notes-body.md
+
+          if [ ! -s .release-tmp/notes-body.md ]; then
+            echo "_No merged pull requests detected since the previous release._" > .release-tmp/notes-body.md
+          fi
+
+          echo "--- generated notes preview ---"
+          head -n 40 .release-tmp/notes-body.md || true
+
+      - name: Apply version bump and write release notes
+        env:
+          BUMP: ${{ inputs.bump }}
+          OVERRIDE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE:-}" ]; then
+            python scripts/prepare_release.py apply \
+              --version "$OVERRIDE" \
+              --notes-body-file .release-tmp/notes-body.md
+          else
+            python scripts/prepare_release.py apply \
+              --bump "${BUMP:-patch}" \
+              --notes-body-file .release-tmp/notes-body.md
+          fi
+
+      - name: Commit bump to main
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add pyproject.toml README.md "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
+          git commit -m "Release envctl ${NEW_VERSION}"
+          git push origin "HEAD:main"
+
+      - name: Build wheel and sdist
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build --wheel --sdist
+
+      - name: Create tag
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          git tag -a "$NEW_VERSION" -m "envctl ${NEW_VERSION}"
+          git push origin "$NEW_VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          gh release create "$NEW_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "envctl ${NEW_VERSION}" \
+            --notes-file "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md" \
+            dist/*
