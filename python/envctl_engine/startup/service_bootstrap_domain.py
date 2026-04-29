@@ -8,7 +8,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
@@ -98,6 +98,19 @@ def _prepare_backend_runtime(
         started=env_merge_started,
     )
 
+    uses_poetry = pyproject_file.is_file() and _pyproject_uses_poetry(pyproject_file) and self._command_exists("poetry")
+    probe_modules = _backend_runtime_probe_modules(backend_cwd) if uses_poetry else ()
+
+    def _poetry_environment_ready() -> bool:
+        return _poetry_backend_environment_ready(
+            self,
+            backend_cwd=backend_cwd,
+            env=env,
+            modules=probe_modules,
+        )
+
+    poetry_install_decision: tuple[bool, str, dict[str, object]] | None = None
+    poetry_install_check_emitted = False
     migrations_enabled = _backend_migrations_enabled(self, route)
     runtime_required, runtime_reason, runtime_state = _backend_runtime_prep_required(
         backend_cwd=backend_cwd,
@@ -109,40 +122,82 @@ def _prepare_backend_runtime(
         migrations_enabled=migrations_enabled,
     )
     if not runtime_required:
-        self._emit(
-            "service.bootstrap.skip",
-            project=context.name,
-            service="backend",
-            manager=manager,
-            step="prepare",
-            reason=runtime_reason,
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="backend",
-            phase="prepare",
-            started=prepare_started,
-            status="reused",
-            reason=runtime_reason,
-        )
-        return
+        if uses_poetry:
+            install_check_started = time.monotonic()
+            poetry_install_decision = _backend_dependency_install_required(
+                backend_cwd=backend_cwd,
+                manager="poetry",
+                environment_ready=_poetry_environment_ready if probe_modules else None,
+            )
+            install_required, install_reason, _install_state = poetry_install_decision
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="dependency_install_check",
+                started=install_check_started,
+                reason=install_reason,
+            )
+            poetry_install_check_emitted = True
+            if not install_required:
+                self._emit(
+                    "service.bootstrap.skip",
+                    project=context.name,
+                    service="backend",
+                    manager=manager,
+                    step="install",
+                    reason=install_reason,
+                )
+                _emit_bootstrap_phase(
+                    self,
+                    project=context.name,
+                    service="backend",
+                    phase="dependency_install",
+                    started=time.monotonic(),
+                    status="reused",
+                    reason=install_reason,
+                )
+            else:
+                runtime_required = True
 
-    uses_poetry = _pyproject_uses_poetry(pyproject_file)
-    if pyproject_file.is_file() and uses_poetry and self._command_exists("poetry"):
+        if not runtime_required:
+            self._emit(
+                "service.bootstrap.skip",
+                project=context.name,
+                service="backend",
+                manager=manager,
+                step="prepare",
+                reason=runtime_reason,
+            )
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="prepare",
+                started=prepare_started,
+                status="reused",
+                reason=runtime_reason,
+            )
+            return
+
+    if uses_poetry:
         install_check_started = time.monotonic()
-        install_required, install_reason, install_state = _backend_dependency_install_required(
-            backend_cwd=backend_cwd,
-            manager="poetry",
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="backend",
-            phase="dependency_install_check",
-            started=install_check_started,
-            reason=install_reason,
-        )
+        if poetry_install_decision is None:
+            poetry_install_decision = _backend_dependency_install_required(
+                backend_cwd=backend_cwd,
+                manager="poetry",
+                environment_ready=_poetry_environment_ready if probe_modules else None,
+            )
+        install_required, install_reason, install_state = poetry_install_decision
+        if not poetry_install_check_emitted:
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="dependency_install_check",
+                started=install_check_started,
+                reason=install_reason,
+            )
         if install_required:
             install_started = time.monotonic()
             self._emit(
@@ -601,17 +656,78 @@ def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
     return "[tool.poetry]" in text or "[tool.pdm]" in text
 
 
-def _backend_dependency_install_required(*, backend_cwd: Path, manager: str) -> tuple[bool, str, dict[str, object]]:
+def _backend_dependency_install_required(
+    *,
+    backend_cwd: Path,
+    manager: str,
+    environment_ready: Callable[[], bool] | None = None,
+) -> tuple[bool, str, dict[str, object]]:
     fingerprint = _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager)
     state: dict[str, object] = {"manager": manager, "fingerprint": fingerprint}
+    existing = _read_backend_bootstrap_state(backend_cwd)
+    if manager == "poetry":
+        if existing != state:
+            return True, "dependency_files_changed", state
+        if environment_ready is not None and not environment_ready():
+            return True, "poetry_environment_missing_dependencies", state
+        return False, "up_to_date", state
+
     env_artifact = backend_cwd / "venv"
     alt_env_artifact = backend_cwd / ".venv"
     if not env_artifact.exists() and not alt_env_artifact.exists():
         return True, "environment_missing", state
-    existing = _read_backend_bootstrap_state(backend_cwd)
     if existing != state:
         return True, "dependency_files_changed", state
     return False, "up_to_date", state
+
+
+def _backend_runtime_probe_modules(backend_cwd: Path) -> tuple[str, ...]:
+    modules: list[str] = []
+    for module in ("uvicorn",):
+        if _backend_dependency_file_mentions(backend_cwd, module):
+            modules.append(module)
+    return tuple(modules)
+
+
+def _backend_dependency_file_mentions(backend_cwd: Path, dependency_name: str) -> bool:
+    normalized = dependency_name.replace("_", "[-_]")
+    pattern = re.compile(rf"(^|[^A-Za-z0-9_.-]){normalized}([^A-Za-z0-9_.-]|$)", re.IGNORECASE)
+    for candidate in (
+        backend_cwd / "pyproject.toml",
+        backend_cwd / "poetry.lock",
+        backend_cwd / "requirements.txt",
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
+def _poetry_backend_environment_ready(
+    self: Any,
+    *,
+    backend_cwd: Path,
+    env: Mapping[str, str],
+    modules: tuple[str, ...],
+) -> bool:
+    if not modules:
+        return True
+    imports = "; ".join(f"import {module}" for module in modules)
+    try:
+        result = self.process_runner.run(
+            ["poetry", "run", "python", "-c", imports],
+            cwd=backend_cwd,
+            env=env,
+            timeout=30.0,
+        )
+    except Exception:  # noqa: BLE001 - failed readiness probes should trigger a safe reinstall path.
+        return False
+    return int(getattr(result, "returncode", 1)) == 0
 
 
 def _backend_runtime_prep_required(
