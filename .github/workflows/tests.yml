@@ -10,6 +10,23 @@ name: Tests
 # `pull_request` already fires on PR open, reopen, and every push to the head
 # branch (the `synchronize` event), so a separate `push` trigger would just
 # double the runs. Post-merge work on `main` is handled by `release.yml`.
+#
+# Jobs run in parallel:
+#   - pytest:   the slow lane (~33s on 4 vCPU)
+#   - package:  python -m build + release shipability gate
+#   - lint:     ruff (non-blocking until main is green)
+#
+# All three share a Blacksmith Sticky Disk for the uv wheel cache, so
+# dependency installs reuse already-downloaded wheels (~1-2s warm vs ~7s
+# cold). The pytest job additionally mounts a cache for .pytest_cache so
+# `--ff` orders previously-failing tests first on subsequent pushes,
+# delivering signal in seconds when a regression is in flight.
+#
+# Pytest itself runs through pytest-xdist with `--dist=loadscope` so tests
+# in the same module/class stay on the same worker (the suite has
+# class-level os.environ patching and tempdir fixtures that break under
+# load-balancing). `-n 4` matches the runner tier, keeping behavior
+# reproducible regardless of host core count.
 
 on:
   pull_request:
@@ -20,37 +37,133 @@ permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate:
+  pytest:
+    name: pytest
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
+      - name: Mount uv cache (Sticky Disk)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: envctl-uv-cache
+          path: /home/runner/.cache/uv
+
+      - name: Mount pytest cache (Sticky Disk)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: envctl-pytest-cache
+          path: /home/runner/.cache/envctl-pytest
+
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+
+      - name: Link pytest cache into workspace
+        run: |
+          set -euo pipefail
+          mkdir -p /home/runner/.cache/envctl-pytest
+          rm -rf .pytest_cache
+          ln -s /home/runner/.cache/envctl-pytest .pytest_cache
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false
 
       - name: Create venv and install dev extras
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
         run: |
           set -euo pipefail
-          python3.12 -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -e '.[dev]'
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e '.[dev]'
 
       - name: Run pytest
-        run: .venv/bin/python -m pytest -q
+        run: |
+          .venv/bin/python -m pytest -q \
+            -n 4 --dist=loadscope \
+            --maxfail=25 \
+            --ff \
+            --junitxml=test-results/junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-results
+          path: test-results/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  package:
+    name: build & shipability
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Mount uv cache (Sticky Disk)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: envctl-uv-cache
+          path: /home/runner/.cache/uv
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false
+
+      - name: Create venv and install dev extras
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
+        run: |
+          set -euo pipefail
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e '.[dev]'
 
       - name: Build wheel and sdist
         run: .venv/bin/python -m build
 
       - name: Release shipability gate
         run: .venv/bin/python scripts/release_shipability_gate.py --repo .
+
+  lint:
+    name: ruff
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Lint is advisory until main is green. Failures still appear in the PR
+    # checks so contributors see signal, but they do not block the gate.
+    continue-on-error: true
+    steps:
+      - name: Mount uv cache (Sticky Disk)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: envctl-uv-cache
+          path: /home/runner/.cache/uv
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false
+
+      - name: Install ruff
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
+        run: uv tool install --quiet ruff
+
+      - name: Run ruff
+        run: uv tool run ruff check python tests scripts
