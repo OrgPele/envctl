@@ -470,7 +470,7 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("current local repo directory is the unedited baseline", written)
             self.assertIn("defaults to the worktree created from the current plan file", written)
-            self.assertIn("Launch arguments: `additional user instructions supplied with the invoking prompt`", written)
+            self.assertIn("Launch arguments:\nadditional user instructions supplied with the invoking prompt", written)
             self.assertIn("Treat only the first path-like token as the explicit worktree override", written)
             self.assertIn("use that bundle as the primary review guide", written)
             self.assertIn("original plan file", written)

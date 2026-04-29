@@ -84,6 +84,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
             policy = resolve_spinner_policy(
                 {
                     "ENVCTL_UI_SPINNER_MODE": "auto",
+                    "CI": "",
                 },
                 stream_isatty=True,
             )

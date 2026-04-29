@@ -706,7 +706,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
         self.assertIn("current local repo directory is the unedited baseline", review_worktree_prompt.body)
         self.assertIn("defaults to the worktree created from the current plan file", review_worktree_prompt.body)
-        self.assertIn("Launch arguments: `$ARGUMENTS`", review_worktree_prompt.body)
+        self.assertIn("Launch arguments:\n$ARGUMENTS", review_worktree_prompt.body)
         self.assertIn("Treat only the first path-like token as the explicit worktree override", review_worktree_prompt.body)
         self.assertIn("If reviewer notes include an original plan file path, use that first", review_worktree_prompt.body)
         self.assertIn("read `.envctl-state/worktree-provenance.json`", review_worktree_prompt.body)
