@@ -6,11 +6,13 @@ This is a read-only review by default: do not write in the local/origin repo or 
 ## Inputs
 - Baseline repo: the current working directory where this prompt was invoked
 - Default target worktree: the worktree created from the current plan file
-- Launch arguments: `$ARGUMENTS`
 - Explicit worktree override: the first path-like token in the launch arguments, if any
 - Reviewer notes: the remaining launch-argument text after removing that explicit worktree override, if one was provided
 - Reviewer notes may include a generated review bundle path and an explicit worktree directory path when envctl launches this prompt from the dashboard review flow
 - Reviewer notes may also include the original plan file path that was used to create the worktree
+
+Launch arguments:
+$ARGUMENTS
 
 ## Required workflow
 1. Resolve the target worktree.
