@@ -11,6 +11,8 @@ _IGNORED_DIR_NAMES = {
     ".hg",
     ".svn",
     ".venv",
+    ".omx",
+    ".envctl-state",
     "venv",
     "__pycache__",
     "node_modules",
@@ -312,6 +314,8 @@ def _append_feature_projects(
     )
     if nested_iters:
         for iter_dir in nested_iters:
+            if not _looks_like_tree_project_root(iter_dir):
+                continue
             project_name = f"{feature_name}-{iter_dir.name}"
             dedupe_key = f"{project_name}|{iter_dir.resolve()}"
             if dedupe_key in seen:
@@ -320,11 +324,24 @@ def _append_feature_projects(
             projects.append((project_name, iter_dir))
         return
 
+    if not _looks_like_tree_project_root(feature_dir):
+        return
     dedupe_key = f"{feature_name}|{feature_dir.resolve()}"
     if dedupe_key in seen:
         return
     seen.add(dedupe_key)
     projects.append((feature_name, feature_dir))
+
+
+def _looks_like_tree_project_root(path: Path) -> bool:
+    try:
+        entries = list(path.iterdir())
+    except OSError:
+        return False
+    entry_names = {entry.name for entry in entries}
+    if entry_names and entry_names.issubset({".omx"}):
+        return False
+    return True
 
 
 def _slugify_underscore(value: str) -> str:
