@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from envctl_engine.startup.service_bootstrap_domain import (
     _backend_async_driver_mismatch_error,
     _backend_dependency_install_required,
+    _backend_runtime_prep_required,
+    _prepare_backend_runtime,
     _backend_migration_retry_env_for_async_driver_mismatch,
     _read_backend_bootstrap_state,
     _read_env_file_safe,
@@ -19,6 +21,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _run_backend_migration_step,
     _rewrite_database_url_to_asyncpg,
     _write_backend_bootstrap_state,
+    _write_backend_runtime_prep_state,
 )
 from envctl_engine.test_output.parser_base import strip_ansi
 
@@ -122,6 +125,150 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
 
             self.assertTrue(required)
             self.assertEqual(reason, "environment_missing")
+
+    def test_backend_dependency_install_required_for_cached_poetry_when_runtime_dependency_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend = Path(tmpdir)
+            (backend / "pyproject.toml").write_text(
+                "[tool.poetry]\nname='x'\n[tool.poetry.dependencies]\nuvicorn='^0.24.0'\n",
+                encoding="utf-8",
+            )
+
+            _required, _reason, state = _backend_dependency_install_required(
+                backend_cwd=backend,
+                manager="poetry",
+                environment_ready=lambda: False,
+            )
+            _write_backend_bootstrap_state(backend_cwd=backend, state=state)
+
+            required_again, reason_again, state_again = _backend_dependency_install_required(
+                backend_cwd=backend,
+                manager="poetry",
+                environment_ready=lambda: False,
+            )
+
+            self.assertTrue(required_again)
+            self.assertEqual(reason_again, "poetry_environment_missing_dependencies")
+            self.assertEqual(state_again, state)
+
+    def test_backend_dependency_install_skips_cached_poetry_when_runtime_dependency_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend = Path(tmpdir)
+            (backend / "pyproject.toml").write_text(
+                "[tool.poetry]\nname='x'\n[tool.poetry.dependencies]\nuvicorn='^0.24.0'\n",
+                encoding="utf-8",
+            )
+
+            _required, _reason, state = _backend_dependency_install_required(
+                backend_cwd=backend,
+                manager="poetry",
+                environment_ready=lambda: False,
+            )
+            _write_backend_bootstrap_state(backend_cwd=backend, state=state)
+
+            required_again, reason_again, state_again = _backend_dependency_install_required(
+                backend_cwd=backend,
+                manager="poetry",
+                environment_ready=lambda: True,
+            )
+
+            self.assertFalse(required_again)
+            self.assertEqual(reason_again, "up_to_date")
+            self.assertEqual(state_again, state)
+
+    def test_prepare_backend_runtime_rechecks_cached_poetry_dependencies_before_reusing_runtime(self) -> None:
+        class _Context:
+            def __init__(self, *, root: Path) -> None:
+                self.name = "Main"
+                self.root = root
+
+        class _ProbeProcessRunner:
+            def __init__(self) -> None:
+                self.run_calls: list[tuple[str, ...]] = []
+
+            def run(self, command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                self.run_calls.append(tuple(command))
+                if tuple(command[:4]) == ("poetry", "run", "python", "-c"):
+                    return SimpleNamespace(returncode=1, stdout="", stderr="No module named uvicorn")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        class _RuntimeStub:
+            def __init__(self, repo_root: Path) -> None:
+                self.config = SimpleNamespace(base_dir=repo_root, raw={})
+                self.env: dict[str, str] = {}
+                self.events: list[dict[str, object]] = []
+                self.bootstrap_commands: list[list[str]] = []
+                self.process_runner = _ProbeProcessRunner()
+
+            def _command_exists(self, command: str) -> bool:
+                return command == "poetry"
+
+            def _command_env(self, *, port: int, extra=None):  # noqa: ANN001
+                _ = port, extra
+                return {}
+
+            def _command_override_value(self, key: str) -> str | None:
+                _ = key
+                return None
+
+            def _read_env_file_safe(self, path: Path) -> dict[str, str]:
+                return _read_env_file_safe(path)
+
+            def _sync_backend_env_file(self, path: Path, *, env):  # noqa: ANN001
+                _ = path, env
+
+            def _emit(self, event: str, **payload: object) -> None:
+                self.events.append({"event": event, **payload})
+
+            def _backend_has_migrations(self, backend_cwd: Path) -> bool:
+                _ = backend_cwd
+                return False
+
+            def _run_backend_bootstrap_command(self, **kwargs) -> None:  # noqa: ANN003
+                self.bootstrap_commands.append(list(kwargs["command"]))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            backend.mkdir(parents=True)
+            (backend / "pyproject.toml").write_text(
+                "[tool.poetry]\nname='x'\n[tool.poetry.dependencies]\nuvicorn='^0.24.0'\n",
+                encoding="utf-8",
+            )
+            _required, _reason, dependency_state = _backend_dependency_install_required(
+                backend_cwd=backend,
+                manager="poetry",
+                environment_ready=lambda: True,
+            )
+            _write_backend_bootstrap_state(backend_cwd=backend, state=dependency_state)
+            _runtime_required, _runtime_reason, runtime_state = _backend_runtime_prep_required(
+                backend_cwd=backend,
+                manager="poetry",
+                env={},
+                backend_env_file=None,
+                backend_env_is_default=False,
+                skip_local_db_env=False,
+                migrations_enabled=False,
+            )
+            _write_backend_runtime_prep_state(backend_cwd=backend, state=runtime_state)
+            runtime = _RuntimeStub(repo)
+
+            _prepare_backend_runtime(
+                runtime,
+                context=_Context(root=repo),
+                backend_cwd=backend,
+                backend_log_path="",
+                project_env_base={},
+                route=None,
+                backend_env_file=None,
+                backend_env_is_default=False,
+            )
+
+            self.assertIn(["poetry", "install"], runtime.bootstrap_commands)
+            self.assertTrue(
+                any(event.get("reason") == "poetry_environment_missing_dependencies" for event in runtime.events)
+            )
 
     def test_backend_bootstrap_state_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
