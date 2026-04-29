@@ -560,6 +560,8 @@ def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
     rendered, count = _PROMPT_ARGUMENT_LINE_RE.subn(replace_standalone, raw_body, count=1)
     if count:
         return rendered
+    if replacement:
+        return f"{raw_body.rstrip()}\n\n{replacement}\n"
     return raw_body
 
 
