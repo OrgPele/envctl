@@ -1,24 +1,19 @@
 name: Tests
 
-# Runs the canonical contributor validation lane on every PR targeting `main`
-# and on every push to a branch that has an open PR against `main`. The lane
-# matches `docs/developer/contributing.md`:
+# Runs the canonical contributor validation lane on every PR targeting `main`.
+# The lane matches `docs/developer/contributing.md`:
 #
 #   .venv/bin/python -m pytest -q
 #   .venv/bin/python -m build
 #   .venv/bin/python scripts/release_shipability_gate.py --repo .
 #
-# Triggered on pull_request so PR creation/sync against `main` runs CI, and on
-# push to non-`main` branches so subsequent commits to a branch with an open
-# PR re-run automatically. Pushes to `main` itself are skipped (release.yml
-# owns post-merge work).
+# `pull_request` already fires on PR open, reopen, and every push to the head
+# branch (the `synchronize` event), so a separate `push` trigger would just
+# double the runs. Post-merge work on `main` is handled by `release.yml`.
 
 on:
   pull_request:
     branches:
-      - main
-  push:
-    branches-ignore:
       - main
 
 permissions:
