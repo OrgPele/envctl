@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -76,6 +77,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
 
     def test_spinner_auto_uses_prompt_toolkit_when_rich_missing(self) -> None:
         with (
+            patch.dict("os.environ", {}, clear=True),
             patch("envctl_engine.ui.spinner_service._rich_available", return_value=False),
             patch("envctl_engine.ui.spinner_service._prompt_toolkit_available", return_value=True),
         ):
@@ -119,7 +121,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
         events: list[dict[str, object]] = []
 
         def emit(event_name: str, **payload: object) -> None:
-            item = {"event": event_name}
+            item: dict[str, object] = {"event": event_name}
             item.update(payload)
             events.append(item)
 
@@ -227,7 +229,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
                 min_ms=0,
                 verbose_events=False,
             ),
-            stream=stream,
+            stream=cast(Any, stream),
             start_immediately=False,
         )
         operation._started = True  # noqa: SLF001
@@ -257,7 +259,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
                 min_ms=0,
                 verbose_events=False,
             ),
-            stream=stream,
+            stream=cast(Any, stream),
             start_immediately=False,
         )
         operation._started = True  # noqa: SLF001
@@ -311,7 +313,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
                 min_ms=120,
                 verbose_events=False,
             ),
-            stream=stream,
+            stream=cast(Any, stream),
             start_immediately=False,
         )
         operation.fail("cleanup failed")
