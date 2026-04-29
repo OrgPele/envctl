@@ -108,6 +108,33 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
         self.assertTrue(terminated)
         self.assertEqual(calls, [("group", 3210)])
 
+    def test_terminate_service_record_accepts_verified_listener_child_ownership(self) -> None:
+        calls: list[tuple[str, int]] = []
+        skips: list[dict[str, object]] = []
+
+        def pid_owns_port(pid: int, port: int) -> bool:
+            return pid == 222 and port == 9000
+
+        runtime = SimpleNamespace(
+            _emit=lambda event, **payload: skips.append(payload) if event == "cleanup.skip" else None,
+            process_runner=SimpleNamespace(
+                pid_owns_port=pid_owns_port,
+                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
+            ),
+        )
+
+        terminated = terminate_service_record(
+            runtime,
+            SimpleNamespace(name="Main Frontend", pid=111, actual_port=9000, listener_pids=[222]),
+            aggressive=False,
+            verify_ownership=True,
+        )
+
+        self.assertTrue(terminated)
+        self.assertEqual(calls, [("group", 111)])
+        self.assertEqual(skips, [])
+
     def test_blast_worktree_before_delete_updates_state_and_emits_finish(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         saved_states: list[RunState] = []
