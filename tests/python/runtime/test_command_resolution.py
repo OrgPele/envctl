@@ -110,6 +110,28 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.command[:5], ["poetry", "run", "python", "-m", "uvicorn"])
             self.assertIn("8000", result.command)
 
+    def test_configured_backend_command_rejects_missing_backend_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".omx").mkdir(parents=True, exist_ok=True)
+
+            with self.assertRaises(CommandResolutionError) as cm:
+                resolve_service_start_command(
+                    service_name="backend",
+                    project_root=root,
+                    port=8000,
+                    env={},
+                    config_raw={
+                        "BACKEND_DIR": "backend",
+                        "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                    },
+                    command_exists=lambda exe: exe in {"python", "python3", "python3.12"},
+                )
+
+            self.assertEqual(cm.exception.code, "missing_service_directory")
+            self.assertIn("Configured backend directory not found", str(cm.exception))
+            self.assertIn(str(root / "backend"), str(cm.exception))
+
     def test_configured_backend_explicit_runner_is_not_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

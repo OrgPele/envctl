@@ -90,6 +90,12 @@ def resolve_service_start_command(
     env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
+        _validate_configured_service_layout(
+            service_name=service_name,
+            project_root=project_root,
+            config_raw=config_raw,
+            raw_command=raw,
+        )
         service_root = _configured_service_root(
             service_name=service_name,
             project_root=project_root,
@@ -436,6 +442,40 @@ def _configured_service_root(*, service_name: str, project_root: Path, config_ra
         if candidate.is_dir():
             return candidate
     return project_root
+
+
+def _validate_configured_service_layout(
+    *,
+    service_name: str,
+    project_root: Path,
+    config_raw: Mapping[str, str],
+    raw_command: str,
+) -> None:
+    if service_name != "backend":
+        return
+    if not _configured_command_requires_python_backend_layout(raw_command):
+        return
+    raw_dir = str(config_raw.get("BACKEND_DIR", "backend") or "backend").strip() or "backend"
+    candidate = (project_root / raw_dir).resolve()
+    if candidate.is_dir():
+        return
+    raise CommandResolutionError(
+        "missing_service_directory",
+        f"Configured backend directory not found: {candidate}",
+    )
+
+
+def _configured_command_requires_python_backend_layout(raw_command: str) -> bool:
+    try:
+        parts = shlex.split(raw_command.replace("{port}", "0"))
+    except ValueError:
+        return False
+    if len(parts) < 4:
+        return False
+    executable = parts[0]
+    if executable not in {"python", "python3", "python3.12"}:
+        return False
+    return parts[1:4] == ["-m", "uvicorn", "app.main:app"]
 
 
 def _split_and_validate(
