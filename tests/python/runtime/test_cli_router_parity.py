@@ -78,6 +78,13 @@ class CliRouterParityTests(unittest.TestCase):
 
         self.assertEqual(route.flags.get("dependency_scope"), "isolated")
 
+    def test_setup_worktrees_allows_isolated_dependency_scope(self) -> None:
+        route = parse_route(["--setup-worktrees", "feature-a", "1", "--isolated-deps"], env={})
+
+        self.assertEqual(route.mode, "main")
+        self.assertEqual(route.flags.get("dependency_scope"), "isolated")
+        self.assertEqual(route.flags.get("setup_worktrees"), [{"feature": "feature-a", "count": "1"}])
+
     def test_start_and_restart_default_to_entire_system_scope(self) -> None:
         self.assertEqual(parse_route([], env={}).flags.get("runtime_scope"), "entire-system")
         self.assertEqual(parse_route(["--project", "feature-a-1"], env={}).flags.get("runtime_scope"), "entire-system")

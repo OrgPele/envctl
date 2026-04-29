@@ -960,6 +960,27 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn("Keep `$ARGUMENTS` literal in prose.", resolved)
             self.assertEqual(resolved.count("$ARGUMENTS"), 1)
 
+    def test_resolve_codex_direct_prompt_body_appends_arguments_for_stale_installed_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._skill_target(home=home, preset="review_worktree_imp")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                self._skill_body_wrapper(
+                    "Review prompt body without the generated argument sentinel.\n"
+                ),
+                encoding="utf-8",
+            )
+
+            resolved = resolve_codex_direct_prompt_body(
+                preset="review_worktree_imp",
+                env={"HOME": tmpdir},
+                arguments='Project: feature-a-1\nReview bundle: "/tmp/review.md"',
+            )
+
+            self.assertIn("Review prompt body without the generated argument sentinel.", resolved)
+            self.assertIn('Review bundle: "/tmp/review.md"', resolved)
+
     def test_resolve_codex_direct_prompt_body_supports_create_plan_auto_codex(self) -> None:
         resolved = resolve_codex_direct_prompt_body(
             preset="create_plan_auto_codex",

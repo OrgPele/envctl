@@ -881,10 +881,14 @@ def _validate_dependency_scope_flags(state: _ParserState) -> None:
     scope = state.flags.get("dependency_scope")
     if scope is None:
         return
-    if scope == "isolated" and state.mode == "main":
+    if scope == "isolated" and state.mode == "main" and not _route_sets_up_worktrees(state):
         raise RouteError("Main always uses shared dependencies; --isolated-deps only applies to --trees.")
     if scope == "shared" and state.flags.get("launch_dependencies") is False:
         raise RouteError("--shared-deps requires managed dependencies; remove --no-deps, --only-backend, --only-frontend, or --no-infra.")
+
+
+def _route_sets_up_worktrees(state: _ParserState) -> bool:
+    return "setup_worktrees" in state.flags or "setup_worktree" in state.flags
 
 
 def _handle_env_assignment(flags: dict[str, object], token: str) -> None:

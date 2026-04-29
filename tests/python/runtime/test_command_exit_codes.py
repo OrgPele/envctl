@@ -560,7 +560,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(payload["results"][0]["path"], str(target))
             self.assertTrue(target.exists())
             written = target.read_text(encoding="utf-8")
-            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --ulw --headless --tmux-new-session", written)
+            self.assertIn("envctl --plan <category>/<slug> --tmux --opencode --headless --tmux-new-session", written)
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
 
     def test_install_prompts_cli_run_keeps_with_codex_skills_as_compatibility_noop(self) -> None:

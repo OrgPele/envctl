@@ -327,6 +327,8 @@ def resolve_dependency_env_templates(
         template = str(getattr(entry, "template", ""))
         line_number = int(getattr(entry, "line_number", 0) or 0)
         _validate_dependency_env_entry(name, line_number=line_number, seen_names=seen_names)
+        if name in resolved:
+            raise RuntimeError(f"duplicate launch env key {name} in .envctl launch env section")
         placeholders, skip_line = _collect_dependency_template_placeholders(
             name=name,
             template=template,
@@ -361,12 +363,22 @@ def _resolve_scoped_dependency_env(
     for section_label, entries, errors in sections:
         if errors:
             raise RuntimeError(f"Invalid .envctl {section_label} section: " + "; ".join(errors))
+        if _section_overrides_existing_keys(entries, resolved):
+            resolved = {key: value for key, value in resolved.items() if key not in _section_entry_names(entries)}
         resolved = resolve_dependency_env_templates(
             entries,
             canonical_dependency_env=canonical_dependency_env,
             resolved_env_base=resolved,
         )
     return resolved
+
+
+def _section_entry_names(entries: tuple[object, ...]) -> set[str]:
+    return {str(getattr(entry, "name", "")).strip() for entry in entries if str(getattr(entry, "name", "")).strip()}
+
+
+def _section_overrides_existing_keys(entries: tuple[object, ...], resolved: dict[str, str]) -> bool:
+    return bool(_section_entry_names(entries).intersection(resolved))
 
 
 def _dependency_template_sections_for_service(
