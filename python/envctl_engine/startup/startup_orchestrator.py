@@ -427,7 +427,9 @@ class StartupOrchestrator:
         if not selected_by_cwd:
             return
         listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
-        terminate_pid = getattr(rt.process_runner, "terminate", None)
+        process_runtime = self._process_runtime(rt)
+        port_allocator = port_allocator_impl(rt)
+        terminate_pid = getattr(process_runtime, "terminate", None)
         if not callable(listener_pids_for_port) or not callable(terminate_pid):
             return
         seen_pids: set[int] = set()
@@ -441,7 +443,7 @@ class StartupOrchestrator:
                             continue
                         seen_pids.add(pid)
                         if terminate_pid(pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
-                            rt.port_planner.release(port)
+                            port_allocator.release(port)
 
     @staticmethod
     def _process_cwd(pid: int) -> str | None:
