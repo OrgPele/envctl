@@ -189,6 +189,134 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                 self.assertIn("n8n=", message)
             print_summary_mock.assert_not_called()
 
+    def test_tree_shared_dependency_progress_does_not_render_main_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-b" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "true",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_REQUIREMENTS_STRICT": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_UI_SPINNER_MODE": "on",
+                    "ENVCTL_BACKEND_START_CMD": "echo backend",
+                    "ENVCTL_FRONTEND_START_CMD": "echo frontend",
+                },
+            )
+
+            class _FakeProcess:
+                def __init__(self, pid: int) -> None:
+                    self.pid = pid
+
+            class _FakeRunner:
+                _pid = 9200
+
+                def run(self, *_args, **_kwargs):  # noqa: ANN001
+                    import subprocess
+
+                    return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+                def start(self, *_args, **_kwargs):  # noqa: ANN001
+                    self._pid += 1
+                    return _FakeProcess(self._pid)
+
+                @staticmethod
+                def wait_for_pid_port(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def wait_for_port(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def pid_owns_port(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def find_pid_listener_port(*_args, **_kwargs):  # noqa: ANN001
+                    return None
+
+                @staticmethod
+                def terminate(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def is_pid_running(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+            engine.process_runner = _FakeRunner()  # type: ignore[assignment]
+            calls: list[tuple[str, str, str]] = []
+
+            class _GroupStub:
+                def __init__(self, projects, **_kwargs):  # noqa: ANN001
+                    self._projects = list(projects)
+
+                def __enter__(self):
+                    calls.append(("enter", ",".join(self._projects), ""))
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+                    _ = exc_type, exc, tb
+                    calls.append(("exit", "", ""))
+                    return False
+
+                def update_project(self, project: str, message: str) -> None:
+                    calls.append(("update", project, message))
+
+                def mark_success(self, project: str, message: str) -> None:
+                    calls.append(("success", project, message))
+
+                def mark_failure(self, project: str, message: str) -> None:
+                    calls.append(("failure", project, message))
+
+                def print_detail(self, project: str, message: str) -> None:
+                    calls.append(("detail", project, message))
+
+            with (
+                patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
+                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch.object(engine, "_print_summary"),
+            ):
+                policy_mock.side_effect = lambda *_args, **_kwargs: type(
+                    "_Policy",
+                    (),
+                    {
+                        "mode": "on",
+                        "enabled": True,
+                        "reason": "",
+                        "backend": "rich",
+                        "min_ms": 120,
+                        "verbose_events": False,
+                        "style": "dots",
+                    },
+                )()
+                code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertFalse(any(project == "Main" for _kind, project, _message in calls))
+            self.assertFalse(any(message.startswith("Main:") for _kind, _project, message in calls))
+            self.assertTrue(
+                any(
+                    kind == "update" and project in {"feature-a-1", "feature-b-1"} and "shared requirements" in message
+                    for kind, project, message in calls
+                )
+            )
+
     def test_parallel_startup_renders_project_warning_under_matching_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
