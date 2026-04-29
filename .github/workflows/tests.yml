@@ -1,0 +1,61 @@
+name: Tests
+
+# Runs the canonical contributor validation lane on every PR targeting `main`
+# and on every push to a branch that has an open PR against `main`. The lane
+# matches `docs/developer/contributing.md`:
+#
+#   .venv/bin/python -m pytest -q
+#   .venv/bin/python -m build
+#   .venv/bin/python scripts/release_shipability_gate.py --repo .
+#
+# Triggered on pull_request so PR creation/sync against `main` runs CI, and on
+# push to non-`main` branches so subsequent commits to a branch with an open
+# PR re-run automatically. Pushes to `main` itself are skipped (release.yml
+# owns post-merge work).
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Create venv and install dev extras
+        run: |
+          set -euo pipefail
+          python3.12 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e '.[dev]'
+
+      - name: Run pytest
+        run: .venv/bin/python -m pytest -q
+
+      - name: Build wheel and sdist
+        run: .venv/bin/python -m build
+
+      - name: Release shipability gate
+        run: .venv/bin/python scripts/release_shipability_gate.py --repo .
