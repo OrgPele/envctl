@@ -10,6 +10,12 @@ name: Tests
 # `pull_request` already fires on PR open, reopen, and every push to the head
 # branch (the `synchronize` event), so a separate `push` trigger would just
 # double the runs. Post-merge work on `main` is handled by `release.yml`.
+#
+# Pytest runs through pytest-xdist with `--dist=loadscope` so tests in the
+# same module/class stay on the same worker (the suite has class-level
+# os.environ patching and tempdir fixtures that break under load-balancing).
+# `-n 4` matches the runner tier, keeping behavior reproducible regardless of
+# the host core count.
 
 on:
   pull_request:
@@ -20,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,8 +35,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,7 +51,7 @@ jobs:
           .venv/bin/python -m pip install -e '.[dev]'
 
       - name: Run pytest
-        run: .venv/bin/python -m pytest -q
+        run: .venv/bin/python -m pytest -q -n 4 --dist=loadscope
 
       - name: Build wheel and sdist
         run: .venv/bin/python -m build
