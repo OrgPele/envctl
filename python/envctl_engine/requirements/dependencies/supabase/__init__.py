@@ -14,7 +14,10 @@ def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]
     db_password = runtime._command_override_value("SUPABASE_DB_PASSWORD") or "supabase-db-password"
     db_name = runtime._command_override_value("DB_NAME") or "postgres"
     database_url = f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{port}/{db_name}"
-    public_url = browser_backend_url(host=resolve_public_host(env=runtime.env, config=runtime.config), port=int(port))
+    public_url = browser_backend_url(
+        host=resolve_public_host(env=getattr(runtime, "env", None), config=getattr(runtime, "config", None)),
+        port=int(port),
+    )
     return {
         "DB_HOST": db_host,
         "DB_PORT": str(port),
