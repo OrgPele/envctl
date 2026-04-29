@@ -1953,8 +1953,17 @@ class StartupOrchestrator:
         *,
         mode: str,
         route: Route | None = None,
+        progress_project: str | None = None,
+        shared_progress: bool = False,
     ) -> RequirementsResult:
-        return start_requirements_for_project_impl(self, context, mode=mode, route=route)
+        return start_requirements_for_project_impl(
+            self,
+            context,
+            mode=mode,
+            route=route,
+            progress_project=progress_project,
+            shared_progress=shared_progress,
+        )
 
     def _requirements_timing_enabled(self, route: Route | None) -> bool:
         return requirements_timing_enabled_impl(self, route)

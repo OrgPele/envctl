@@ -169,6 +169,8 @@ class StartupOrchestratorLike(Protocol):
         *,
         mode: str,
         route: Route | None = None,
+        progress_project: str | None = None,
+        shared_progress: bool = False,
     ) -> RequirementsResult: ...
     def start_project_context(
         self,
