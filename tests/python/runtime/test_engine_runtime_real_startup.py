@@ -2392,8 +2392,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             rendered = out.getvalue()
             self.assertEqual(code, 1)
-            self.assertIn("missing_service_directory", rendered)
-            self.assertIn(str(tree_root / "backend"), rendered)
+            self.assertIn("No tree paths found for requested project filter(s): feature-a.", rendered)
+            self.assertIn("No projects discovered for selected mode.", rendered)
+            self.assertNotIn("missing_service_directory", rendered)
             self.assertNotIn("No module named uvicorn", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
 
