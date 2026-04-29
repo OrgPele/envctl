@@ -11,7 +11,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
-from envctl_engine.state.models import RequirementsResult
+from envctl_engine.state.models import PortPlan, RequirementsResult
 
 _DOCKER_SOCKET_PATTERNS = (
     re.compile(r"unix://(?P<path>[^\s;]+docker\.sock)"),
@@ -89,6 +89,8 @@ def start_requirements_for_project(
     *,
     mode: str,
     route: Route | None = None,
+    progress_project: str | None = None,
+    shared_progress: bool = False,
 ) -> RequirementsResult:
     rt = orchestrator.runtime
     port_allocator = resolve_port_allocator(rt)
@@ -104,7 +106,7 @@ def start_requirements_for_project(
         definition.id: context.ports[definition.resources[0].legacy_port_key] for definition in definitions
     }
 
-    def plan_for_dependency(dependency_id: str) -> object:
+    def plan_for_dependency(dependency_id: str) -> PortPlan:
         return definition_ports[dependency_id]
 
     skip_infrastructure_hooks = route is not None and route.flags.get("launch_dependencies") is False
@@ -154,16 +156,20 @@ def start_requirements_for_project(
     def emit_requirements_progress() -> None:
         if not enabled_definitions:
             return
-        orchestrator._report_progress(
-            route,
-            format_requirements_progress_message(
-                active=active_requirements,
-                pending=pending_requirements,
-            ),
-            project=context.name,
+        progress_message = format_requirements_progress_message(
+            active=active_requirements,
+            pending=pending_requirements,
         )
+        if shared_progress:
+            progress_message = progress_message.replace("requirements", "shared requirements", 1)
+        if route is not None:
+            orchestrator._report_progress(
+                route,
+                progress_message,
+                project=progress_project or context.name,
+            )
 
-    def run_component(component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:
+    def run_component(component: str, plan: PortPlan, *, strict: bool = False) -> RequirementOutcome:
         component_started = time.monotonic()
         with progress_state_lock:
             pending_requirements.discard(component)
@@ -286,7 +292,7 @@ def start_requirements_for_project(
             "simulated": outcome.simulated,
             "enabled": enabled_lookup[definition.id],
             "reason_code": outcome.reason_code,
-            "failure_class": outcome.failure_class.value if getattr(outcome, "failure_class", None) else None,
+            "failure_class": outcome.failure_class.value if outcome.failure_class is not None else None,
             "error": outcome.error,
             "container_name": outcome.container_name,
         }
