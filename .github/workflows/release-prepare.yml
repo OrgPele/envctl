@@ -1,0 +1,164 @@
+name: Release prepare
+
+# Bumps `pyproject.toml` + `README.md` and writes
+# `docs/changelog/RELEASE_NOTES_<version>.md` from the PR body that triggered
+# the release. Opens a `release/<version>` PR. Once that PR merges to `main`,
+# `release-publish.yml` tags and publishes the GitHub Release.
+#
+# Trigger by running this workflow from the Actions tab. The required input is
+# a PR number whose body becomes the release notes; bump defaults to `patch`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to source release notes from (use the PR you just merged)."
+        required: true
+        type: string
+      bump:
+        description: "Semver bump applied to the current pyproject version."
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: "Optional explicit MAJOR.MINOR.PATCH version (overrides bump)."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release-tmp
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,url,mergedAt,state \
+            > .release-tmp/pr.json
+
+          state=$(jq -r '.state' .release-tmp/pr.json)
+          if [ "$state" != "MERGED" ]; then
+            echo "::error::PR #$PR_NUMBER is not merged (state=$state). Merge it first, then rerun this workflow." >&2
+            exit 1
+          fi
+
+          jq -r '.body // ""' .release-tmp/pr.json > .release-tmp/pr-body.md
+          jq -r '.title' .release-tmp/pr.json > .release-tmp/pr-title.txt
+          jq -r '.url'   .release-tmp/pr.json > .release-tmp/pr-url.txt
+
+          {
+            echo "title=$(cat .release-tmp/pr-title.txt)"
+            echo "url=$(cat .release-tmp/pr-url.txt)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${VERSION:-}" ]; then
+            new=$(python scripts/prepare_release.py compute-version --version "$VERSION")
+          else
+            new=$(python scripts/prepare_release.py compute-version --bump "${BUMP:-patch}")
+          fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "Next version: $new"
+
+      - name: Apply version + write release notes
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${VERSION:-}" ]; then
+            python scripts/prepare_release.py apply \
+              --version "$VERSION" \
+              --notes-body-file .release-tmp/pr-body.md
+          else
+            python scripts/prepare_release.py apply \
+              --bump "${BUMP:-patch}" \
+              --notes-body-file .release-tmp/pr-body.md
+          fi
+
+      - name: Create release branch and push
+        id: branch
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          branch="release/${NEW_VERSION}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "$branch"
+          git add pyproject.toml README.md "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
+          git commit -m "Prepare envctl ${NEW_VERSION} release"
+          git push --force-with-lease origin "$branch"
+
+      - name: Open release pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          SOURCE_PR_TITLE: ${{ steps.pr.outputs.title }}
+          SOURCE_PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          set -euo pipefail
+          body_file=".release-tmp/release-pr-body.md"
+          {
+            echo "Bumps envctl to **${NEW_VERSION}** and stages the release notes derived from ${SOURCE_PR_URL}."
+            echo
+            echo "Once this PR merges, \`release-publish.yml\` will tag \`v${NEW_VERSION}\`, build the wheel + sdist, and create the GitHub Release using \`docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md\`."
+            echo
+            echo "Source PR: ${SOURCE_PR_TITLE} (${SOURCE_PR_URL})"
+          } > "$body_file"
+
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Prepare envctl ${NEW_VERSION} release" \
+              --body-file "$body_file"
+            echo "Updated existing release PR #$existing"
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$BRANCH" \
+              --title "Prepare envctl ${NEW_VERSION} release" \
+              --body-file "$body_file"
+          fi
