@@ -275,7 +275,7 @@ def run_dashboard_command_loop(
             )
 
             if not should_continue:
-                print("Exiting interactive mode (services continue running).")
+                print(_interactive_exit_message(normalized_command))
                 rt._emit("ui.command_loop.exit", reason="user_exit")
                 return 0
     finally:
@@ -426,6 +426,12 @@ def _command_success_message(command: str | None, *, exiting: bool) -> str | Non
         # spinner success footer ("+ pr complete").
         return None
     return f"{command} complete"
+
+
+def _interactive_exit_message(command: str | None) -> str:
+    if command in {"stop-all", "blast-all"}:
+        return "Exiting interactive mode."
+    return "Exiting interactive mode (services continue running)."
 
 
 def _command_label(command: str | None) -> str:

@@ -192,6 +192,31 @@ class DashboardLoopTests(unittest.TestCase):
         self.assertIn(("succeed", "Command finished; leaving interactive mode..."), spinner_calls)
         self.assertNotIn(("update", "Routing test command..."), spinner_calls)
 
+    def test_stop_all_exit_message_does_not_claim_services_continue_running(self) -> None:
+        state = RunState(run_id="run-0", mode="main")
+        runtime = _RuntimeStub(state)
+
+        def handle_command(_raw: str, current: RunState, _rt: object):  # noqa: ANN001
+            return False, current
+
+        out = StringIO()
+        with (
+            patch("envctl_engine.ui.dashboard.terminal_ui.RuntimeTerminalUI._can_interactive_tty", return_value=True),
+            redirect_stdout(out),
+        ):
+            code = run_dashboard_command_loop(
+                state=state,
+                runtime=runtime,
+                handle_command=handle_command,
+                sanitize=lambda value: value,
+                input_provider=lambda _prompt: "stop-all",
+            )
+
+        output = strip_ansi(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertIn("Exiting interactive mode.", output)
+        self.assertNotIn("Exiting interactive mode (services continue running).", output)
+
     def test_dashboard_loop_hides_irrelevant_sections_when_commands_are_disabled(self) -> None:
         state = RunState(
             run_id="run-plan",
