@@ -58,17 +58,12 @@ When behavior changes, update:
 
 ## Cutting a Release
 
-Releases are produced by two GitHub Actions workflows:
+Releases are produced by `.github/workflows/release.yml`. From the Actions tab, run **Release** and pick a bump kind (`patch` is the default; pass an explicit `--version` to override). The workflow:
 
-- `.github/workflows/release-prepare.yml` (manual) bumps `pyproject.toml` and the README badges and writes `docs/changelog/RELEASE_NOTES_<version>.md` from the body of a source PR. It opens a `release/<version>` PR.
-- `.github/workflows/release-publish.yml` (push to `main`) tags `v<version>`, builds the wheel + sdist, and publishes a GitHub Release using the matching release notes file.
-
-Typical flow:
-
-1. Merge the PR(s) you want shipped into `main`.
-2. From the Actions tab, run **Release prepare**, passing the merged PR number and the bump kind (`patch` is the default; use `--version` to override).
-3. Review and merge the auto-opened release PR.
-4. The publish workflow will tag and ship the GitHub Release automatically.
+1. Computes the next version from `pyproject.toml`.
+2. Aggregates merged PR titles since the previous version tag using GitHub's auto-generated release notes.
+3. Updates `pyproject.toml`, the README badges, and writes `docs/changelog/RELEASE_NOTES_<version>.md`.
+4. Commits the bump to `main`, tags the new version, builds wheel + sdist, and creates the GitHub Release.
 
 If you need to dry-run the version bump locally, `python scripts/prepare_release.py compute-version --bump patch` prints the next version without modifying any files.
 
