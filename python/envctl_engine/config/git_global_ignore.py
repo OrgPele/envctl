@@ -8,6 +8,7 @@ from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
 
 _BLOCK_START = "# >>> envctl managed global ignores >>>"
 _BLOCK_END = "# <<< envctl managed global ignores <<<"
+DEFAULT_GLOBAL_GITIGNORE_PATH = Path("~/.gitignore_global")
 
 
 @dataclass(slots=True)
@@ -70,7 +71,7 @@ def ensure_envctl_global_ignores(base_dir: Path) -> GlobalIgnoreStatus:
 def configure_envctl_global_ignores(base_dir: Path, *, excludes_path: Path | None = None) -> GlobalIgnoreStatus:
     patterns = envctl_local_artifact_patterns()
     resolved_path = (
-        excludes_path.expanduser() if excludes_path is not None else Path("~/.gitignore_global").expanduser()
+        excludes_path.expanduser() if excludes_path is not None else DEFAULT_GLOBAL_GITIGNORE_PATH.expanduser()
     )
     try:
         _set_configured_global_excludes_path(base_dir, resolved_path)

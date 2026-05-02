@@ -30,6 +30,8 @@ from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, S
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
 
+FAKE_WORKTREE_GITDIR_CONTENT = "gitdir: /tmp/fake-worktree\n"
+
 
 class _TtyStringIO(StringIO):
     def isatty(self) -> bool:
@@ -245,7 +247,7 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
                 return SimpleNamespace(returncode=1, stdout="", stderr="simulated git worktree failure")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
-            (target / ".git").write_text("gitdir: /tmp/fake-worktree\n", encoding="utf-8")
+            (target / ".git").write_text(FAKE_WORKTREE_GITDIR_CONTENT, encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
 

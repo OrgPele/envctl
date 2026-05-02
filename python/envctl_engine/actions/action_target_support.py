@@ -72,6 +72,11 @@ def execute_targeted_action(
     print_noninteractive_failures: bool = True,
     print_noninteractive_successes: bool = True,
 ) -> int:
+    def should_print_failure() -> bool:
+        return (not interactive_command and print_noninteractive_failures) or (
+            interactive_command and interactive_print_failures
+        )
+
     failures = 0
     for context in build_action_target_contexts(targets):
         emit_status(f"Running {command_name} for {context.name} ({context.index}/{context.total})...")
@@ -81,10 +86,7 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {raw_error}"
             if on_failure is not None:
                 on_failure(context, raw_error)
-            should_print_failure = (not interactive_command and print_noninteractive_failures) or (
-                interactive_command and interactive_print_failures
-            )
-            if should_print_failure:
+            if should_print_failure():
                 printer(message)
             if interactive_command:
                 if failure_status_formatter is not None:
@@ -105,10 +107,7 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {error}"
             if on_failure is not None:
                 on_failure(context, error)
-            should_print_failure = (not interactive_command and print_noninteractive_failures) or (
-                interactive_command and interactive_print_failures
-            )
-            if should_print_failure:
+            if should_print_failure():
                 printer(message)
             if interactive_command:
                 if failure_status_formatter is not None:

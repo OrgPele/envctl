@@ -10,6 +10,18 @@ from envctl_engine.planning import discover_tree_projects
 
 
 class DiscoveryTopologyTests(unittest.TestCase):
+    def assert_discovers_only_good_feature_with_stale_artifacts(self, artifact_dirs: list[str]) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            trees = repo / "trees"
+            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            for artifact_dir in artifact_dirs:
+                (trees / "stale-feature" / "1" / artifact_dir).mkdir(parents=True, exist_ok=True)
+
+            projects = discover_tree_projects(repo, "trees")
+
+            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+
     def test_prefers_nested_feature_iteration_roots_over_app_leaf_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -48,38 +60,13 @@ class DiscoveryTopologyTests(unittest.TestCase):
             self.assertEqual([name for name, _ in first], ["feature-a-1", "feature-z-1", "feature-z-2"])
 
     def test_ignores_omx_only_stale_iteration_dirs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            trees = repo / "trees"
-            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
-            (trees / "stale-feature" / "1" / ".omx").mkdir(parents=True, exist_ok=True)
-
-            projects = discover_tree_projects(repo, "trees")
-
-            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+        self.assert_discovers_only_good_feature_with_stale_artifacts([".omx"])
 
     def test_ignores_envctl_state_only_stale_iteration_dirs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            trees = repo / "trees"
-            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
-            (trees / "stale-feature" / "1" / ".envctl-state").mkdir(parents=True, exist_ok=True)
-
-            projects = discover_tree_projects(repo, "trees")
-
-            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+        self.assert_discovers_only_good_feature_with_stale_artifacts([".envctl-state"])
 
     def test_ignores_state_only_stale_iteration_dirs_with_multiple_artifact_dirs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            trees = repo / "trees"
-            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
-            (trees / "stale-feature" / "1" / ".omx").mkdir(parents=True, exist_ok=True)
-            (trees / "stale-feature" / "1" / ".envctl-state").mkdir(parents=True, exist_ok=True)
-
-            projects = discover_tree_projects(repo, "trees")
-
-            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+        self.assert_discovers_only_good_feature_with_stale_artifacts([".omx", ".envctl-state"])
 
     def test_discovers_flat_trees_dash_feature_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
