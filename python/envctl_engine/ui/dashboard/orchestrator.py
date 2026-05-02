@@ -18,6 +18,13 @@ from envctl_engine.actions.project_action_domain import (
 from envctl_engine.planning.plan_agent_launch_support import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
+from envctl_engine.shared.dashboard_metadata import (
+    canonical_dashboard_service_name,
+    dashboard_configured_missing_services_by_project,
+    dashboard_global_configured_service_types,
+    dashboard_project_configured_services,
+    dashboard_stopped_services_by_project,
+)
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
@@ -1386,7 +1393,7 @@ class DashboardOrchestrator:
             else:
                 route.flags = {**route.flags, "restart_include_requirements": False}
             return route
-        if self._has_dashboard_stopped_services(state):
+        if self._has_restartable_inactive_services(state):
             return self._apply_restart_resource_selection(route, state, runtime_any)
         projects = self._project_names_from_state(state, runtime_any)
         selected_projects = self._select_dashboard_projects(
@@ -1593,10 +1600,22 @@ class DashboardOrchestrator:
     def _has_dashboard_stopped_services(state: RunState) -> bool:
         return bool(DashboardOrchestrator._dashboard_stopped_services_by_project(state))
 
+    @staticmethod
+    def _has_restartable_inactive_services(state: RunState) -> bool:
+        return bool(
+            DashboardOrchestrator._dashboard_stopped_services_by_project(state)
+            or dashboard_configured_missing_services_by_project(state)
+        )
+
     def _restart_project_order(self, state: RunState, runtime: Any) -> list[str]:
         names = self._stop_project_order(state, runtime)
         seen = {name.casefold() for name in names}
         for project_name in self._dashboard_stopped_services_by_project(state):
+            if project_name.casefold() in seen:
+                continue
+            seen.add(project_name.casefold())
+            names.append(project_name)
+        for project_name in dashboard_project_configured_services(state):
             if project_name.casefold() in seen:
                 continue
             seen.add(project_name.casefold())
@@ -1616,26 +1635,26 @@ class DashboardOrchestrator:
                 if service_name in active_names:
                     continue
                 services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
+        configured_missing = dashboard_configured_missing_services_by_project(state)
+        if configured_missing:
+            runtime._emit(
+                "dashboard.restart.configured_missing_offered",
+                run_id=state.run_id,
+                services={project: sorted(services) for project, services in configured_missing.items()},
+            )
+        for project_name, services in configured_missing.items():
+            existing_types = {service_type for _name, service_type, _stopped in services_by_project.get(project_name, [])}
+            for service_type, service_name in services.items():
+                if service_type in existing_types:
+                    continue
+                services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
         for services in services_by_project.values():
             services.sort(key=lambda item: (0 if item[1] == "backend" else 1, item[2], item[0].casefold()))
         return services_by_project
 
     @staticmethod
     def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
-        raw = state.metadata.get("dashboard_stopped_services")
-        if not isinstance(raw, list):
-            return {}
-        stopped: dict[str, dict[str, str]] = {}
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            project = str(item.get("project", "") or "").strip()
-            service_type = str(item.get("type", "") or "").strip().lower()
-            name = str(item.get("name", "") or "").strip()
-            if not project or service_type not in {"backend", "frontend"}:
-                continue
-            stopped.setdefault(project, {})[service_type] = name or f"{project} {service_type.title()}"
-        return stopped
+        return dashboard_stopped_services_by_project(state)
 
     def _default_interactive_targets(self, route: Route, state: RunState, rt: object) -> Route:
         _ = state, rt
@@ -1949,18 +1968,21 @@ class DashboardOrchestrator:
             if service_type and service_type not in seen:
                 seen.add(service_type)
                 ordered.append(service_type)
-        if ordered:
+        configured_by_project = dashboard_project_configured_services(state)
+        if configured_by_project:
+            for project_name in project_names:
+                for service_type in sorted(configured_by_project.get(project_name, set())):
+                    if service_type in seen:
+                        continue
+                    seen.add(service_type)
+                    ordered.append(service_type)
             return ordered
-        configured_service_types_raw = state.metadata.get("dashboard_configured_service_types")
-        if isinstance(configured_service_types_raw, list):
-            for service_type in configured_service_types_raw:
-                normalized = str(service_type).strip().lower()
-                if normalized not in {"backend", "frontend"}:
+        if not ordered:
+            for service_type in sorted(dashboard_global_configured_service_types(state)):
+                if service_type in seen:
                     continue
-                if normalized in seen:
-                    continue
-                seen.add(normalized)
-                ordered.append(normalized)
+                seen.add(service_type)
+                ordered.append(service_type)
         return ordered
 
     @staticmethod
@@ -1988,6 +2010,21 @@ class DashboardOrchestrator:
                 service_type = "frontend"
             if service_type and service_type.casefold() in requested_types:
                 selected.append(service_name)
+        configured_by_project = dashboard_project_configured_services(state)
+        active_names = set(state.services)
+        stopped_by_project = DashboardOrchestrator._dashboard_stopped_services_by_project(state)
+        selected_names = set(selected)
+        for project_name in project_names:
+            configured_types = configured_by_project.get(project_name, set())
+            stopped_types = stopped_by_project.get(project_name, {})
+            for service_type in sorted(configured_types):
+                service_name = canonical_dashboard_service_name(project_name, service_type)
+                if service_type.casefold() not in requested_types:
+                    continue
+                if service_name in active_names or service_type in stopped_types or service_name in selected_names:
+                    continue
+                selected.append(service_name)
+                selected_names.add(service_name)
         return selected
 
     @staticmethod

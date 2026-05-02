@@ -6,6 +6,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from typing import Any, cast
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -205,7 +206,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         )
         runtime._latest_state = state
 
-        selector_calls: list[dict[str, object]] = []
+        selector_calls: list[dict[str, Any]] = []
 
         def fake_stop_selector(**kwargs):  # noqa: ANN001
             selector_calls.append(kwargs)
@@ -256,7 +257,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             },
         )
         runtime._latest_state = state
-        selector_calls: list[dict[str, object]] = []
+        selector_calls: list[dict[str, Any]] = []
 
         def fake_stop_selector(**kwargs):  # noqa: ANN001
             selector_calls.append(kwargs)
@@ -293,7 +294,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             },
         )
         runtime._latest_state = state
-        selector_calls: list[dict[str, object]] = []
+        selector_calls: list[dict[str, Any]] = []
 
         def fake_stop_selector(**kwargs):  # noqa: ANN001
             selector_calls.append(kwargs)
@@ -865,7 +866,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             },
         )
         runtime._latest_state = state
-        selector_calls: list[dict[str, object]] = []
+        selector_calls: list[dict[str, Any]] = []
 
         def fake_restart_selector(**kwargs):  # noqa: ANN001
             selector_calls.append(kwargs)
@@ -894,6 +895,82 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Frontend"])
         self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["frontend"])
         self.assertFalse(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))
+
+    def test_interactive_restart_offers_project_configured_missing_backend(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            metadata={"dashboard_project_configured_services": {"Main": ["backend", "frontend"]}},
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, Any]] = []
+
+        def fake_restart_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__RESTART__:service:Main Backend"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(len(selector_calls), 1)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("Backend — Main (stopped)", labels)
+        self.assertIn("Frontend — Main", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "restart")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Backend"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["backend"])
+        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))
+
+    def test_interactive_restart_does_not_offer_unconfigured_missing_backend(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            metadata={"dashboard_project_configured_services": {"Main": ["frontend"]}},
+        )
+        route = Route(command="restart", mode="main", raw_args=["restart"], passthrough_args=[], projects=[], flags={})
+
+        updated = orchestrator._apply_restart_selection(route, state, runtime)
+
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(updated.projects, ["Main"])
+        self.assertEqual(updated.flags.get("services"), ["Main Frontend"])
+        self.assertEqual(updated.flags.get("restart_service_types"), ["frontend"])
 
     def test_interactive_shortcuts_map_to_action_commands(self) -> None:
         runtime = _RuntimeStub()
@@ -2469,7 +2546,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
         self.assertIsNotNone(runtime.last_dispatched_route)
-        self.assertEqual(runtime.last_dispatched_route.command, "errors")
+        self.assertEqual(cast(Any, runtime.last_dispatched_route).command, "errors")
         self.assertEqual(
             runtime.read_prompts,
             ["Press Enter to return to dashboard (manual confirmation required): "],
