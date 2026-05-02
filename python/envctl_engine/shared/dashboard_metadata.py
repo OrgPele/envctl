@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
+from envctl_engine.runtime.command_resolution import suggest_service_start_command
 from envctl_engine.state.models import RunState
 
 DASHBOARD_CONFIGURED_SERVICE_TYPES_KEY = "dashboard_configured_service_types"
@@ -73,6 +75,22 @@ def dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str
 
 def canonical_dashboard_service_name(project: str, service_type: str) -> str:
     return f"{str(project).strip()} {str(service_type).strip().title()}"
+
+
+def dashboard_project_service_configured(
+    *,
+    service_type: str,
+    project_root: Path,
+    env: Mapping[str, str],
+    config_raw: Mapping[str, str],
+) -> bool:
+    normalized = str(service_type).strip().lower()
+    if normalized not in DASHBOARD_APP_SERVICE_TYPES:
+        return False
+    env_key = f"ENVCTL_{normalized.upper()}_START_CMD"
+    if str(env.get(env_key) or config_raw.get(env_key) or "").strip():
+        return True
+    return suggest_service_start_command(service_name=normalized, project_root=project_root) is not None
 
 
 def dashboard_configured_missing_services_by_project(state: RunState) -> dict[str, dict[str, str]]:

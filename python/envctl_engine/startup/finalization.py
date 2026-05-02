@@ -5,6 +5,7 @@ from typing import cast
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.dashboard_metadata import (
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    dashboard_project_service_configured,
     serialize_dashboard_project_configured_services,
 )
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
@@ -154,17 +155,27 @@ def _build_pointer_map(runtime: StartupRuntime, run_id: str) -> dict[str, str]:
 
 
 def _dashboard_project_configured_services(runtime: StartupRuntime, session: StartupSession) -> dict[str, list[str]]:
-    service_types = {
-        service_name
-        for service_name in ("backend", "frontend")
-        if runtime._service_enabled_for_mode(session.runtime_mode, service_name)
-    }
-    if not service_types:
-        return {}
-    return serialize_dashboard_project_configured_services(
-        {
-            str(context.name).strip(): service_types
-            for context in session.selected_contexts
-            if str(getattr(context, "name", "")).strip()
+    env = dict(getattr(runtime, "env", {}) or {})
+    config_raw = dict(getattr(runtime.config, "raw", {}) or {})
+    configured_by_project: dict[str, set[str]] = {}
+    for context in session.selected_contexts:
+        project = str(getattr(context, "name", "") or "").strip()
+        project_root = getattr(context, "root", None)
+        if not project or project_root is None:
+            continue
+        service_types = {
+            service_name
+            for service_name in ("backend", "frontend")
+            if runtime._service_enabled_for_mode(session.runtime_mode, service_name)
+            and dashboard_project_service_configured(
+                service_type=service_name,
+                project_root=project_root,
+                env=env,
+                config_raw=config_raw,
+            )
         }
+        if service_types:
+            configured_by_project[project] = service_types
+    return serialize_dashboard_project_configured_services(
+        configured_by_project
     )

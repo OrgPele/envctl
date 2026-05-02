@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from typing import Any, cast
 from pathlib import Path
@@ -17,6 +18,8 @@ from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 class _FinalizationRuntime:
     def __init__(self, *, enabled_service_types: set[str]) -> None:
         self.config = SimpleNamespace(runtime_scope_id="test-scope")
+        self.env: dict[str, str] = {}
+        self.config.raw = {}
         self.enabled_service_types = enabled_service_types
 
     @staticmethod
@@ -218,6 +221,10 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
     def test_success_run_state_writes_project_scoped_configured_services(self) -> None:
         route = parse_route(["--only-frontend"], env={})
         runtime = _FinalizationRuntime(enabled_service_types={"backend", "frontend"})
+        runtime.env = {
+            "ENVCTL_BACKEND_START_CMD": "python -m http.server {port}",
+            "ENVCTL_FRONTEND_START_CMD": "python -m http.server {port}",
+        }
         session = StartupSession(
             requested_route=route,
             effective_route=route,
@@ -243,6 +250,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
     def test_success_run_state_omits_unconfigured_project_service_types(self) -> None:
         route = parse_route([], env={})
         runtime = _FinalizationRuntime(enabled_service_types={"frontend"})
+        runtime.env = {"ENVCTL_FRONTEND_START_CMD": "python -m http.server {port}"}
         session = StartupSession(
             requested_route=route,
             effective_route=route,
@@ -255,6 +263,30 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         state = build_success_run_state(cast(Any, runtime), session)
 
         self.assertEqual(state.metadata.get("dashboard_project_configured_services"), {"Main": ["frontend"]})
+
+    def test_success_run_state_omits_backend_for_frontend_only_project_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frontend = root / "frontend"
+            frontend.mkdir(parents=True)
+            (frontend / "package.json").write_text('{"scripts":{"dev":"vite"}}', encoding="utf-8")
+
+            route = parse_route([], env={})
+            runtime = _FinalizationRuntime(enabled_service_types={"backend", "frontend"})
+            runtime.config.raw = {}
+            runtime.env = {}
+            session = StartupSession(
+                requested_route=route,
+                effective_route=route,
+                requested_command="start",
+                runtime_mode="main",
+                run_id="run-1",
+                selected_contexts=cast(Any, [SimpleNamespace(name="Main", root=root)]),
+            )
+
+            state = build_success_run_state(cast(Any, runtime), session)
+
+            self.assertEqual(state.metadata.get("dashboard_project_configured_services"), {"Main": ["frontend"]})
 
 
 if __name__ == "__main__":
