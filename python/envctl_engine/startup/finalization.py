@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from typing import cast
+
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.dashboard_metadata import (
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    dashboard_project_service_configured,
+    serialize_dashboard_project_configured_services,
+)
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -31,7 +38,7 @@ def build_planning_dashboard_state(
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=runtime_mode,
-        project_contexts=project_contexts,
+        project_contexts=cast(list[object], project_contexts),
         base_metadata=base_metadata,
     )
     metadata.update(
@@ -73,7 +80,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=session.runtime_mode,
-        project_contexts=session.selected_contexts,
+        project_contexts=cast(list[object], session.selected_contexts),
         base_metadata=session.base_metadata,
     )
     metadata.update(
@@ -82,6 +89,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             "repo_scope_id": runtime.config.runtime_scope_id,
         }
     )
+    configured_by_project = _dashboard_project_configured_services(runtime, session)
+    if configured_by_project:
+        metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = configured_by_project
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
     if session.plan_agent_launch_result is not None:
@@ -142,3 +152,30 @@ def _build_pointer_map(runtime: StartupRuntime, run_id: str) -> dict[str, str]:
         "events": str(run_dir / "events.jsonl"),
         "runtime_readiness_report": str(run_dir / "runtime_readiness_report.json"),
     }
+
+
+def _dashboard_project_configured_services(runtime: StartupRuntime, session: StartupSession) -> dict[str, list[str]]:
+    env = dict(getattr(runtime, "env", {}) or {})
+    config_raw = dict(getattr(runtime.config, "raw", {}) or {})
+    configured_by_project: dict[str, set[str]] = {}
+    for context in session.selected_contexts:
+        project = str(getattr(context, "name", "") or "").strip()
+        project_root = getattr(context, "root", None)
+        if not project or project_root is None:
+            continue
+        service_types = {
+            service_name
+            for service_name in ("backend", "frontend")
+            if runtime._service_enabled_for_mode(session.runtime_mode, service_name)
+            and dashboard_project_service_configured(
+                service_type=service_name,
+                project_root=project_root,
+                env=env,
+                config_raw=config_raw,
+            )
+        }
+        if service_types:
+            configured_by_project[project] = service_types
+    return serialize_dashboard_project_configured_services(
+        configured_by_project
+    )

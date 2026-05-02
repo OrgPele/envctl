@@ -17,7 +17,8 @@ class DiscoveryTopologyTests(unittest.TestCase):
             (trees / "feature-a" / "1" / "backend" / "src").mkdir(parents=True, exist_ok=True)
             (trees / "feature-a" / "1" / "frontend" / "src").mkdir(parents=True, exist_ok=True)
             (trees / "feature-a" / "2" / "backend").mkdir(parents=True, exist_ok=True)
-            (trees / "feature-b" / "1" / "node_modules").mkdir(parents=True, exist_ok=True)
+            (trees / "feature-b" / "1" / "package.json").parent.mkdir(parents=True, exist_ok=True)
+            (trees / "feature-b" / "1" / "package.json").write_text("{}\n", encoding="utf-8")
             (trees / "flat-tree-x" / "backend").mkdir(parents=True, exist_ok=True)
             (trees / "flat-tree-y" / "frontend").mkdir(parents=True, exist_ok=True)
 
@@ -36,9 +37,9 @@ class DiscoveryTopologyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             trees = repo / "trees"
-            (trees / "feature-z" / "2").mkdir(parents=True, exist_ok=True)
-            (trees / "feature-z" / "1").mkdir(parents=True, exist_ok=True)
-            (trees / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (trees / "feature-z" / "2" / "backend").mkdir(parents=True, exist_ok=True)
+            (trees / "feature-z" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (trees / "feature-a" / "1" / "backend").mkdir(parents=True, exist_ok=True)
 
             first = discover_tree_projects(repo, "trees")
             second = discover_tree_projects(repo, "trees")
@@ -46,13 +47,24 @@ class DiscoveryTopologyTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual([name for name, _ in first], ["feature-a-1", "feature-z-1", "feature-z-2"])
 
+    def test_ignores_omx_only_stale_iteration_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            trees = repo / "trees"
+            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (trees / "stale-feature" / "1" / ".omx").mkdir(parents=True, exist_ok=True)
+
+            projects = discover_tree_projects(repo, "trees")
+
+            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+
     def test_discovers_flat_trees_dash_feature_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
-            (repo / "trees-feature-c" / "1").mkdir(parents=True, exist_ok=True)
-            (repo / "trees-feature-c" / "2").mkdir(parents=True, exist_ok=True)
-            (repo / "trees-feature-d" / "5").mkdir(parents=True, exist_ok=True)
-            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees-feature-c" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "trees-feature-c" / "2" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "trees-feature-d" / "5" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1" / "backend").mkdir(parents=True, exist_ok=True)
 
             projects = discover_tree_projects(repo, "trees")
             names = [name for name, _root in projects]
@@ -65,10 +77,10 @@ class DiscoveryTopologyTests(unittest.TestCase):
     def test_discovers_flat_feature_roots_for_nested_trees_dir_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
-            (repo / "work" / "trees-feature-c" / "1").mkdir(parents=True, exist_ok=True)
-            (repo / "work" / "trees-feature-c" / "2").mkdir(parents=True, exist_ok=True)
-            (repo / "work" / "trees-feature-d" / "5").mkdir(parents=True, exist_ok=True)
-            (repo / "work" / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-c" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-c" / "2" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees-feature-d" / "5" / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "work" / "trees" / "feature-a" / "1" / "backend").mkdir(parents=True, exist_ok=True)
 
             projects = discover_tree_projects(repo, "work/trees")
             names = [name for name, _root in projects]
