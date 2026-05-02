@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from envctl_engine.dashboard_metadata import (
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    serialize_dashboard_project_configured_services,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
@@ -82,6 +86,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             "repo_scope_id": runtime.config.runtime_scope_id,
         }
     )
+    project_configured_services = _project_configured_services_metadata(runtime, session)
+    if project_configured_services:
+        metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = project_configured_services
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
     if session.plan_agent_launch_result is not None:
@@ -130,6 +137,21 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         run_state.metadata["failed"] = True
     run_state.pointers = _build_pointer_map(runtime, session.run_id)
     return run_state
+
+
+def _project_configured_services_metadata(
+    runtime: StartupRuntime, session: StartupSession
+) -> dict[str, list[str]]:
+    configured: dict[str, list[str]] = {}
+    for context in session.selected_contexts:
+        service_types = [
+            service_type
+            for service_type in ("backend", "frontend")
+            if runtime._service_enabled_for_mode(session.runtime_mode, service_type)
+        ]
+        if service_types:
+            configured[str(context.name)] = service_types
+    return serialize_dashboard_project_configured_services(configured)
 
 
 def _build_pointer_map(runtime: StartupRuntime, run_id: str) -> dict[str, str]:

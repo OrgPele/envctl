@@ -6,12 +6,62 @@ from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.runtime.command_router import parse_route
+from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.engine_runtime_env import requirement_enabled_for_mode
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
+from envctl_engine.startup.finalization import build_success_run_state
+from envctl_engine.startup.session import StartupSession
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
+    def test_restart_synthetic_backend_service_selects_configured_backend_only(self) -> None:
+        route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags["_restart_request"] = True
+
+        selected = StartupOrchestrator._restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"backend", "frontend"},
+        )
+
+        self.assertEqual(selected, {"backend"})
+
+    def test_restart_synthetic_backend_service_is_rejected_for_frontend_only_profile(self) -> None:
+        route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags["_restart_request"] = True
+
+        selected = StartupOrchestrator._restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"frontend"},
+        )
+
+        self.assertEqual(selected, set())
+
+    def test_build_run_state_writes_project_scoped_configured_services(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda mode, service_name: service_name in {"backend", "frontend"},
+        )
+        context = SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})
+        route = Route(command="up", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="up",
+            runtime_mode="main",
+            run_id="run-1",
+            selected_contexts=[context],
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertEqual(
+            state.metadata.get("dashboard_project_configured_services"),
+            {"Main": ["backend", "frontend"]},
+        )
+
     def test_restart_service_types_respect_default_service_set(self) -> None:
         route = parse_route(["restart", "--service", "Main Frontend"], env={"ENVCTL_DEFAULT_MODE": "main"})
         route.flags["_restart_request"] = True
