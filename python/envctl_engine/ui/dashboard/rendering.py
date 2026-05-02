@@ -309,7 +309,7 @@ def _print_dashboard_dependency_rows(
         return
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)) or definition.id == "postgres" or definition.id == "redis":
+        if not bool(component.get("enabled", False)) or definition.id == "postgres":
             continue
         port = component.get("final") or component.get("requested")
         runtime_status = str(component.get("runtime_status", "")).strip().lower()

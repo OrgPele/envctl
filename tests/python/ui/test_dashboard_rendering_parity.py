@@ -430,6 +430,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 requirements={
                     "Main": RequirementsResult(
                         project="Main",
+                        redis={"enabled": True, "runtime_status": "healthy", "final": 6380, "success": True},
                         n8n={"enabled": True, "runtime_status": "healthy", "final": 5678, "success": True},
                     ),
                 },
@@ -443,9 +444,11 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn("Backend: http://192.0.2.42:8000", output)
             self.assertIn("Frontend: http://192.0.2.42:9000", output)
+            self.assertIn("redis: http://192.0.2.42:6380 [Healthy]", output)
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertNotIn("http://localhost:8000", output)
             self.assertNotIn("http://localhost:9000", output)
+            self.assertNotIn("http://localhost:6380", output)
             self.assertNotIn("http://localhost:5678", output)
 
             runtime_projection = build_runtime_map(state)["projection"]

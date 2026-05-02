@@ -13,6 +13,8 @@ Implemented project-scoped dashboard metadata for configured backend/frontend se
 - Plan-agent follow-up prompts are now backed by private bundled markdown templates so queue text can be edited without changing Python code.
 - Browser E2E follow-up prompts now include the original plan file path when available, plus current localhost runtime addresses from envctl state so validation can start from ready host/port values instead of asking the user to start services.
 - Dashboard AI session rows now also associate OMX tmux sessions by normalized feature slug when pane paths/windows do not identify the worktree directly.
+- Dashboard dependency rows now show enabled redis alongside other running dependencies, and restart selection offers
+  running dependencies even when all app services are already active.
 
 ### Verification
 - `uv tool run ruff check python tests scripts` -> passed

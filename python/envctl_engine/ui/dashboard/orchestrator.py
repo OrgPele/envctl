@@ -1392,7 +1392,7 @@ class DashboardOrchestrator:
             else:
                 route.flags = {**route.flags, "restart_include_requirements": False}
             return route
-        if self._has_restartable_inactive_services(state):
+        if self._has_restartable_inactive_services(state) or self._stop_dependencies_by_project(state):
             return self._apply_restart_resource_selection(route, state, runtime_any)
         projects = self._project_names_from_state(state, runtime_any)
         selected_projects = self._select_dashboard_projects(
