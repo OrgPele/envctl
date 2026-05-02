@@ -328,6 +328,25 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertTrue(
                 {project for project, _message in requirement_updates}.issubset({"feature-a-1", "feature-b-1"})
             )
+
+            isolated_updates: list[tuple[str, str]] = []
+            isolated_route = parse_route(["--tree", "--isolated-deps"], env={})
+            isolated_route.flags["_spinner_update_project"] = lambda project, message: isolated_updates.append(
+                (project, message)
+            )
+            isolated_context = ProjectContext(
+                name="feature-a-1",
+                root=repo / "trees" / "feature-a" / "1",
+                ports=engine.port_planner.plan_project_stack("feature-a-1", index=0),
+            )
+            engine.startup_orchestrator.start_requirements_for_project(
+                isolated_context,
+                mode="trees",
+                route=isolated_route,
+            )
+            self.assertTrue(isolated_updates)
+            self.assertNotIn("None", {project for project, _message in isolated_updates})
+            self.assertEqual({project for project, _message in isolated_updates}, {"feature-a-1"})
             print_summary_mock.assert_not_called()
 
     def test_parallel_startup_renders_project_warning_under_matching_project(self) -> None:

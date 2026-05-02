@@ -14,6 +14,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.requirements_execution import (
+    REQUIREMENTS_PROGRESS_PROJECT_FLAG,
     maybe_prewarm_docker,
     requirements_failure_message,
     requirements_for_restart_context,
@@ -159,7 +160,7 @@ def _load_or_start_shared_main_requirements(
     )
     progress_project_name = str(progress_project or "").strip()
     if progress_project_name:
-        shared_route.flags["_requirements_progress_project"] = progress_project_name
+        shared_route.flags[REQUIREMENTS_PROGRESS_PROJECT_FLAG] = progress_project_name
     requirements = requirements_for_restart_context(orchestrator, context=main_context, mode="main", route=shared_route)
     rt._emit("requirements.shared.start", project="Main")
     return requirements
