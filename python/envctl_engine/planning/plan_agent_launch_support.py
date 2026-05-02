@@ -134,6 +134,7 @@ class PlanAgentLaunchConfig:
     direct_prompt_enabled: bool
     ulw_loop_prefix: bool
     ulw_suffix: bool
+    pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ralph", "team"] = ""
 
 
@@ -225,6 +226,16 @@ def _browser_e2e_instruction_text() -> str:
     )
 
 
+def _pr_review_comments_instruction_text() -> str:
+    return (
+        "$gh-address-comments\n\n"
+        "Inspect all unresolved PR review comments and review threads on the current branch PR, then address ALL "
+        "actionable comments. Implement required fixes, update tests as needed, commit and push the follow-up work, "
+        "then wait for GitHub status checks and final PR confirmation before closing out the task. If every comment "
+        "is already resolved or non-actionable, report that evidence instead of making unnecessary edits."
+    )
+
+
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
     normalized = str(raw or "").strip()
     if not normalized:
@@ -258,6 +269,7 @@ def _build_plan_agent_workflow(
     preset: str,
     codex_cycles: int,
     direct_prompt_enabled: bool = False,
+    pr_review_comments_followup_enable: bool = True,
 ) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
@@ -269,6 +281,10 @@ def _build_plan_agent_workflow(
         steps = [initial_step]
         if normalized_cli == "codex":
             steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
+            if pr_review_comments_followup_enable:
+                steps.append(
+                    _PlanAgentWorkflowStep(kind="queue_message", text=_pr_review_comments_instruction_text())
+                )
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
             codex_cycles=bounded_cycles,
@@ -279,6 +295,10 @@ def _build_plan_agent_workflow(
         if cycle == bounded_cycles:
             steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task"))
             steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
+            if pr_review_comments_followup_enable:
+                steps.append(
+                    _PlanAgentWorkflowStep(kind="queue_message", text=_pr_review_comments_instruction_text())
+                )
             continue
         if cycle == 1:
             completion_text = _first_cycle_completion_instruction_text()
@@ -387,6 +407,11 @@ def resolve_plan_agent_launch_config(
         preset=preset,
         codex_cycles=codex_cycles,
         codex_cycles_warning=codex_cycles_warning,
+        pr_review_comments_followup_enable=parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE")
+            or config.raw.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"),
+            True,
+        ),
         shell=shell,
         require_cmux_context=parse_bool(
             env_map.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT")
@@ -445,6 +470,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
     target_workspace = (
@@ -465,6 +491,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "direct_prompt_enabled": launch_config.direct_prompt_enabled,
         "ulw_loop_prefix": launch_config.ulw_loop_prefix,
         "ulw_suffix": launch_config.ulw_suffix,
+        "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
         "require_cmux_context": launch_config.require_cmux_context,
         "workspace_id": workspace_id,
         "configured_workspace": target_workspace or None,
@@ -603,6 +630,7 @@ def launch_plan_agent_terminals(
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     base_payload = {
         "enabled": launch_config.enabled,
@@ -2036,6 +2064,8 @@ def _complete_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     try:
         error = _run_surface_bootstrap(
@@ -2125,6 +2155,8 @@ def _run_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     error = _prepare_surface(
         runtime,

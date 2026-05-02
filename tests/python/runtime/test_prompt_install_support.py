@@ -664,6 +664,9 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("fall back to the git CLI", codex)
         self.assertIn("wait for GitHub status checks to complete", codex)
         self.assertIn("all required checks have passed", codex)
+        self.assertIn("Inspect all unresolved PR review comments", codex)
+        self.assertIn("address ALL actionable comments", codex)
+        self.assertIn("wait for final PR confirmation", codex)
         self.assertIn("PR status and URL", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertIn("envctl --backend --headless", codex)
@@ -701,6 +704,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("PR title and body/message are finalized to a high standard", finalize_prompt.body)
         self.assertIn("wait for GitHub status checks to complete", finalize_prompt.body)
         self.assertIn("all required checks pass", finalize_prompt.body)
+        self.assertIn("Inspect all unresolved PR review comments", finalize_prompt.body)
+        self.assertIn("address ALL actionable comments", finalize_prompt.body)
 
         review_prompt = _load_template("review_task_imp")
         self.assertIn(".envctl-commit-message.md", review_prompt.body)

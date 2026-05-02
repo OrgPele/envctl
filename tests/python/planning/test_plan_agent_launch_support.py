@@ -27,6 +27,7 @@ _finalization_instruction_text = cast(Any, getattr(launch_support, "_finalizatio
 _first_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_first_cycle_completion_instruction_text", None))
 _intermediate_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None))
 _browser_e2e_instruction_text = cast(Any, getattr(launch_support, "_browser_e2e_instruction_text", None))
+_pr_review_comments_instruction_text = cast(Any, getattr(launch_support, "_pr_review_comments_instruction_text", None))
 _wait_for_codex_queue_ready = cast(Any, getattr(launch_support, "_wait_for_codex_queue_ready", None))
 _workflow_step_prompt_text = cast(Any, getattr(launch_support, "_workflow_step_prompt_text", None))
 _WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarget", None))
@@ -550,6 +551,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(codex_config.cli, "codex")
         self.assertEqual(codex_config.preset, "implement_task")
         self.assertEqual(codex_config.codex_cycles, 4)
+        self.assertTrue(codex_config.pr_review_comments_followup_enable)
         self.assertEqual(codex_workflow.mode, "codex_cycles")
         self.assertEqual(codex_workflow.codex_cycles, 4)
 
@@ -564,7 +566,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(omx_config.omx_workflow, "ralph")
         self.assertEqual(omx_config.codex_cycles, 0)
         self.assertEqual(omx_config.codex_cycles_warning, "omx_workflow_disables_codex_cycles")
+        self.assertTrue(omx_config.pr_review_comments_followup_enable)
         self.assertEqual(omx_workflow.mode, "single_prompt")
+
+    def test_resolve_plan_agent_launch_config_allows_pr_review_comment_followup_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false\n",
+                encoding="utf-8",
+            )
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "features/example", "--omx", "--ralph"], env={}),
+            )
+            workflow = _build_plan_agent_workflow(
+                cli=launch_config.cli,
+                preset=launch_config.preset,
+                codex_cycles=launch_config.codex_cycles,
+                direct_prompt_enabled=launch_config.direct_prompt_enabled,
+                pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
+            )
+
+        self.assertFalse(launch_config.pr_review_comments_followup_enable)
+        self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
     def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -679,8 +714,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(launch_config.omx_workflow, workflow_name)
                     self.assertEqual(launch_config.codex_cycles, 0)
                     self.assertEqual(workflow.codex_cycles, 0)
-                    self.assertEqual(len(workflow.steps), 2)
+                    self.assertEqual(len(workflow.steps), 3)
                     self.assertEqual(workflow.steps[1].text, _browser_e2e_instruction_text())
+                    self.assertEqual(workflow.steps[2].text, _pr_review_comments_instruction_text())
 
     def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -841,9 +877,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertIsNone(error)
-            self.assertEqual(send_text_mock.call_count, 2)
+            self.assertEqual(send_text_mock.call_count, 3)
             self.assertEqual(send_prompt_mock.call_count, 3)
-            self.assertEqual(queue_mock.call_count, 5)
+            self.assertEqual(queue_mock.call_count, 6)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -855,7 +891,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 5,
+                        "queued_steps": 6,
                         "transport": "tmux",
                     }
                 ],
@@ -1654,6 +1690,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_build_plan_agent_workflow_uses_single_prompt_by_default(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_browser_e2e_instruction_text)
+        self.assertIsNotNone(_pr_review_comments_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
 
         self.assertEqual(workflow.mode, "single_prompt")
@@ -1662,6 +1699,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1675,6 +1713,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [
                 ("submit_direct_prompt", "ship_release"),
                 ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1691,6 +1730,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1711,6 +1751,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1734,6 +1775,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -2157,7 +2199,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(workflow.mode, "codex_cycles")
         self.assertEqual(workflow.codex_cycles, 10)
-        self.assertEqual(len(workflow.steps), 2 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(len(workflow.steps), 3 + (1 + 3 * (workflow.codex_cycles - 1)))
 
     def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2305,7 +2347,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 5,
+                        "queued_steps": 6,
                     }
                 ],
             )

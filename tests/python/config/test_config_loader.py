@@ -29,6 +29,19 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.default_mode, "trees")
             self.assertEqual(config.backend_port_base, 8100)
 
+    def test_load_config_exposes_plan_agent_pr_review_comment_followup_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertFalse(config.plan_agent_pr_review_comments_enable)
+            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"], "false")
+
     def test_envctl_sh_is_parsed_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
