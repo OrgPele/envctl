@@ -15,6 +15,8 @@ Implemented project-scoped dashboard metadata for configured backend/frontend se
 - Dashboard AI session rows now also associate OMX tmux sessions by normalized feature slug when pane paths/windows do not identify the worktree directly.
 - Dashboard dependency rows now show enabled redis alongside other running dependencies, and restart selection offers
   running dependencies even when all app services are already active.
+- Shared tree dependency startup progress is now attributed to the tree project that is waiting on the shared
+  dependency startup instead of rendering a misleading `Main: Preparing requirements...` line.
 
 ### Verification
 - `uv tool run ruff check python tests scripts` -> passed

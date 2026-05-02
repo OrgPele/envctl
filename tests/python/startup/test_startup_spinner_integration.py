@@ -16,6 +16,7 @@ from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.startup.startup_progress import ProjectSpinnerGroup
 from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
@@ -188,6 +189,145 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                 self.assertIn("db=", message)
                 self.assertIn("redis=", message)
                 self.assertIn("n8n=", message)
+            print_summary_mock.assert_not_called()
+
+    def test_shared_tree_requirements_progress_uses_tree_project_not_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-b" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "true",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_REQUIREMENTS_STRICT": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_UI_SPINNER_MODE": "on",
+                    "ENVCTL_BACKEND_START_CMD": "echo backend",
+                    "ENVCTL_FRONTEND_START_CMD": "echo frontend",
+                },
+            )
+
+            class _FakeProcess:
+                def __init__(self, pid: int) -> None:
+                    self.pid = pid
+
+            class _FakeRunner:
+                _pid = 9200
+
+                def run(self, *_args, **_kwargs):  # noqa: ANN001
+                    import subprocess
+
+                    return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+                def start(self, *_args, **_kwargs):  # noqa: ANN001
+                    self._pid += 1
+                    return _FakeProcess(self._pid)
+
+                @staticmethod
+                def wait_for_pid_port(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def pid_owns_port(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def find_pid_listener_port(*_args, **_kwargs):  # noqa: ANN001
+                    return None
+
+                @staticmethod
+                def terminate(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+                @staticmethod
+                def is_pid_running(*_args, **_kwargs):  # noqa: ANN001
+                    return True
+
+            engine.process_runner = _FakeRunner()  # type: ignore[assignment]
+
+            def fake_start_requirement_component(context, component, plan, reserve_next, **_kwargs):  # noqa: ANN001
+                final_port = reserve_next(plan.final)
+                return RequirementOutcome(
+                    service_name=component,
+                    success=True,
+                    requested_port=plan.requested,
+                    final_port=final_port,
+                    retries=0,
+                )
+
+            engine._start_requirement_component = fake_start_requirement_component  # type: ignore[method-assign]
+            calls: list[tuple[str, str, str]] = []
+
+            class _GroupStub:
+                def __init__(self, projects, **_kwargs):  # noqa: ANN001
+                    self._projects = list(projects)
+
+                def __enter__(self):
+                    calls.append(("enter", ",".join(self._projects), ""))
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+                    _ = exc_type, exc, tb
+                    calls.append(("exit", "", ""))
+                    return False
+
+                def update_project(self, project: str, message: str) -> None:
+                    calls.append(("update", project, message))
+
+                def mark_success(self, project: str, message: str) -> None:
+                    calls.append(("success", project, message))
+
+                def mark_failure(self, project: str, message: str) -> None:
+                    calls.append(("failure", project, message))
+
+                def print_detail(self, project: str, message: str) -> None:
+                    calls.append(("detail", project, message))
+
+            with (
+                patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
+                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch.object(engine, "_print_summary") as print_summary_mock,
+            ):
+                policy_mock.side_effect = lambda *_args, **_kwargs: type(
+                    "_Policy",
+                    (),
+                    {
+                        "mode": "on",
+                        "enabled": True,
+                        "reason": "",
+                        "backend": "rich",
+                        "min_ms": 120,
+                        "verbose_events": False,
+                        "style": "dots",
+                    },
+                )()
+                code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            requirement_updates = [
+                (project, message)
+                for kind, project, message in calls
+                if kind == "update" and "requirements" in message.lower()
+            ]
+            self.assertTrue(requirement_updates)
+            self.assertNotIn("Main", {project for project, _message in requirement_updates})
+            self.assertTrue(
+                {project for project, _message in requirement_updates}.issubset({"feature-a-1", "feature-b-1"})
+            )
             print_summary_mock.assert_not_called()
 
     def test_parallel_startup_renders_project_warning_under_matching_project(self) -> None:

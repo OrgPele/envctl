@@ -154,13 +154,16 @@ def start_requirements_for_project(
     def emit_requirements_progress() -> None:
         if not enabled_definitions:
             return
+        progress_project = str(
+            route.flags.get("_requirements_progress_project") if route is not None else context.name
+        ).strip()
         orchestrator._report_progress(
             route,
             format_requirements_progress_message(
                 active=active_requirements,
                 pending=pending_requirements,
             ),
-            project=context.name,
+            project=progress_project or context.name,
         )
 
     def run_component(component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:
