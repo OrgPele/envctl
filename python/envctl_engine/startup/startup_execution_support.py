@@ -117,7 +117,11 @@ def _shared_main_requirements(orchestrator: StartupOrchestratorLike, *, route: R
         return requirements
 
 
-def _load_or_start_shared_main_requirements(orchestrator: StartupOrchestratorLike, *, route: Route) -> RequirementsResult:
+def _load_or_start_shared_main_requirements(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    route: Route,
+) -> RequirementsResult:
     rt = orchestrator.runtime
     existing = rt._try_load_existing_state(mode="main", strict_mode_match=True)
     if existing is not None:

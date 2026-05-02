@@ -159,7 +159,9 @@ def evaluate_run_reuse(
     current_identity = _startup_identity_payload(runtime, runtime_mode=runtime_mode, project_contexts=contexts)
     previous_identity = candidate.metadata.get("startup_identity")
     if isinstance(previous_identity, dict):
-        if str(previous_identity.get("fingerprint", "")).strip() != str(current_identity.get("fingerprint", "")).strip():
+        previous_fingerprint = str(previous_identity.get("fingerprint", "")).strip()
+        current_fingerprint = str(current_identity.get("fingerprint", "")).strip()
+        if previous_fingerprint != current_fingerprint:
             return RunReuseDecision(
                 candidate_state=candidate,
                 decision_kind="fresh_run",

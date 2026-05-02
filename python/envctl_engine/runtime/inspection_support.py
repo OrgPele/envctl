@@ -212,7 +212,9 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         "trees_backend_dependency_env_section_present": local_state.trees_backend_dependency_env_section_present,
         "trees_backend_dependency_env_templates": _template_entries(local_state.trees_backend_dependency_env_templates),
         "trees_frontend_dependency_env_section_present": local_state.trees_frontend_dependency_env_section_present,
-        "trees_frontend_dependency_env_templates": _template_entries(local_state.trees_frontend_dependency_env_templates),
+        "trees_frontend_dependency_env_templates": _template_entries(
+            local_state.trees_frontend_dependency_env_templates
+        ),
         "plan_agent": {
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,

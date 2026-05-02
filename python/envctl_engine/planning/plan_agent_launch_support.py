@@ -2364,7 +2364,8 @@ def _runtime_addresses_prompt_section(runtime: Any) -> str:
         return ""
     lines = [
         "## Current envctl runtime addresses",
-        "Use these currently known localhost addresses when validating or debugging. They are generated from saved envctl runtime state; verify them again if you restart services.",
+        "Use these currently known localhost addresses when validating or debugging. "
+        "They are generated from saved envctl runtime state; verify them again if you restart services.",
     ]
     dependency_lines = _dependency_address_lines(state)
     service_lines = _service_address_lines(state)
@@ -2415,7 +2416,8 @@ def _dependency_address_lines(state: RunState) -> list[str]:
             if key in seen:
                 continue
             seen.add(key)
-            rows.append(f"{_dependency_label(dependency_id)} ({project_name}): {_dependency_address(dependency_id, port)}")
+            address = _dependency_address(dependency_id, port)
+            rows.append(f"{_dependency_label(dependency_id)} ({project_name}): {address}")
     return rows
 
 

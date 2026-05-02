@@ -92,7 +92,9 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
             {
                 **asdict(save_result.ignore_status),
                 "target_path": (
-                    str(save_result.ignore_status.target_path) if save_result.ignore_status.target_path is not None else None
+                    str(save_result.ignore_status.target_path)
+                    if save_result.ignore_status.target_path is not None
+                    else None
                 ),
                 "managed_patterns": list(save_result.ignore_status.managed_patterns),
             }

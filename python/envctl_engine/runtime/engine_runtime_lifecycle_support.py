@@ -617,7 +617,12 @@ def blast_worktree_before_delete(
 
     if blast_mode:
         _blast_tree_listener_ports(runtime, project_name=normalized_project, ports=target_ports, warnings=warnings)
-        _blast_tree_cwd_processes(runtime, project_name=normalized_project, project_root=resolved_root, warnings=warnings)
+        _blast_tree_cwd_processes(
+            runtime,
+            project_name=normalized_project,
+            project_root=resolved_root,
+            warnings=warnings,
+        )
         fingerprint_path_fn = getattr(runtime, "_supabase_fingerprint_path", None)
         if callable(fingerprint_path_fn):
             try:
@@ -628,7 +633,12 @@ def blast_worktree_before_delete(
                 pass
         _cleanup_artifact_paths(runtime, project_name=normalized_project, paths=artifact_paths, warnings=warnings)
     elif source_command == "self-destruct-worktree":
-        _blast_tree_cwd_processes(runtime, project_name=normalized_project, project_root=resolved_root, warnings=warnings)
+        _blast_tree_cwd_processes(
+            runtime,
+            project_name=normalized_project,
+            project_root=resolved_root,
+            warnings=warnings,
+        )
 
     _remove_tree_containers(
         runtime,

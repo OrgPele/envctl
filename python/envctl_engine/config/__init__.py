@@ -441,10 +441,11 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         resolved[key] = value
     explicit_values: dict[str, str] = dict(local_state.parsed_values)
     explicit_values.update(env)
+    visual_host_fallback = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
     if "ENVCTL_UI_VISUAL_HOST" not in explicit_values:
-        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
+        resolved["ENVCTL_UI_VISUAL_HOST"] = visual_host_fallback
     elif not str(resolved.get("ENVCTL_UI_VISUAL_HOST") or "").strip():
-        resolved["ENVCTL_UI_VISUAL_HOST"] = str(resolved.get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
+        resolved["ENVCTL_UI_VISUAL_HOST"] = visual_host_fallback
     _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()

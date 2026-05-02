@@ -69,7 +69,9 @@ def ensure_envctl_global_ignores(base_dir: Path) -> GlobalIgnoreStatus:
 
 def configure_envctl_global_ignores(base_dir: Path, *, excludes_path: Path | None = None) -> GlobalIgnoreStatus:
     patterns = envctl_local_artifact_patterns()
-    resolved_path = excludes_path.expanduser() if excludes_path is not None else Path("~/.gitignore_global").expanduser()
+    resolved_path = (
+        excludes_path.expanduser() if excludes_path is not None else Path("~/.gitignore_global").expanduser()
+    )
     try:
         _set_configured_global_excludes_path(base_dir, resolved_path)
         updated = _update_envctl_managed_block(resolved_path, patterns)

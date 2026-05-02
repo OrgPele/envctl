@@ -81,7 +81,10 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {raw_error}"
             if on_failure is not None:
                 on_failure(context, raw_error)
-            if (not interactive_command and print_noninteractive_failures) or (interactive_command and interactive_print_failures):
+            should_print_failure = (not interactive_command and print_noninteractive_failures) or (
+                interactive_command and interactive_print_failures
+            )
+            if should_print_failure:
                 printer(message)
             if interactive_command:
                 if failure_status_formatter is not None:
@@ -102,7 +105,10 @@ def execute_targeted_action(
             message = f"{command_name} action failed for {context.name}: {error}"
             if on_failure is not None:
                 on_failure(context, error)
-            if (not interactive_command and print_noninteractive_failures) or (interactive_command and interactive_print_failures):
+            should_print_failure = (not interactive_command and print_noninteractive_failures) or (
+                interactive_command and interactive_print_failures
+            )
+            if should_print_failure:
                 printer(message)
             if interactive_command:
                 if failure_status_formatter is not None:
