@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from envctl_engine.dashboard_metadata import (
+    APP_SERVICE_TYPES,
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
     serialize_dashboard_project_configured_services,
 )
@@ -146,7 +147,7 @@ def _project_configured_services_metadata(
     for context in session.selected_contexts:
         service_types = [
             service_type
-            for service_type in ("backend", "frontend")
+            for service_type in APP_SERVICE_TYPES
             if runtime._service_enabled_for_mode(session.runtime_mode, service_type)
         ]
         if service_types:

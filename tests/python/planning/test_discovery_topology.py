@@ -58,6 +58,29 @@ class DiscoveryTopologyTests(unittest.TestCase):
 
             self.assertEqual([name for name, _root in projects], ["good-feature-1"])
 
+    def test_ignores_envctl_state_only_stale_iteration_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            trees = repo / "trees"
+            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (trees / "stale-feature" / "1" / ".envctl-state").mkdir(parents=True, exist_ok=True)
+
+            projects = discover_tree_projects(repo, "trees")
+
+            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+
+    def test_ignores_state_only_stale_iteration_dirs_with_multiple_artifact_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            trees = repo / "trees"
+            (trees / "good-feature" / "1" / "backend").mkdir(parents=True, exist_ok=True)
+            (trees / "stale-feature" / "1" / ".omx").mkdir(parents=True, exist_ok=True)
+            (trees / "stale-feature" / "1" / ".envctl-state").mkdir(parents=True, exist_ok=True)
+
+            projects = discover_tree_projects(repo, "trees")
+
+            self.assertEqual([name for name, _root in projects], ["good-feature-1"])
+
     def test_discovers_flat_trees_dash_feature_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

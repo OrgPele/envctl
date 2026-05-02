@@ -174,6 +174,35 @@ class _RuntimeStubMissingProjectResolver(_RuntimeStub):
 
 
 class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
+    @staticmethod
+    def _state_with_active_frontend_and_project_configured_services(
+        configured_services: list[str],
+        *,
+        stopped_services: list[dict[str, str]] | None = None,
+    ) -> RunState:
+        metadata: dict[str, object] = {
+            "project_roots": {"Main": "."},
+            "dashboard_project_configured_services": {"Main": configured_services},
+        }
+        if stopped_services is not None:
+            metadata["dashboard_stopped_services"] = stopped_services
+        return RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            metadata=metadata,
+        )
+
     def test_interactive_stop_shortcut_opens_scope_selector(self) -> None:
         runtime = _RuntimeStub()
         runtime.next_selection = TargetSelection(project_names=["Dependencies only"])
@@ -898,25 +927,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
     def test_interactive_restart_offers_project_configured_missing_backend(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
-        state = RunState(
-            run_id="run-1",
-            mode="main",
-            services={
-                "Main Frontend": ServiceRecord(
-                    name="Main Frontend",
-                    type="frontend",
-                    cwd=".",
-                    pid=101,
-                    requested_port=9000,
-                    actual_port=9000,
-                    status="running",
-                ),
-            },
-            metadata={
-                "project_roots": {"Main": "."},
-                "dashboard_project_configured_services": {"Main": ["backend", "frontend"]},
-            },
-        )
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
         runtime._latest_state = state
         selector_calls: list[dict[str, object]] = []
 
@@ -948,31 +959,79 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
     def test_interactive_restart_does_not_offer_unconfigured_missing_backend(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)
-        state = RunState(
-            run_id="run-1",
-            mode="main",
-            services={
-                "Main Frontend": ServiceRecord(
-                    name="Main Frontend",
-                    type="frontend",
-                    cwd=".",
-                    pid=101,
-                    requested_port=9000,
-                    actual_port=9000,
-                    status="running",
-                ),
-            },
-            metadata={
-                "project_roots": {"Main": "."},
-                "dashboard_project_configured_services": {"Main": ["frontend"]},
-            },
-        )
+        state = self._state_with_active_frontend_and_project_configured_services(["frontend"])
         route = Route(command="restart", mode="main", raw_args=["restart"], passthrough_args=[], projects=[], flags={})
 
         updated = orchestrator._apply_restart_selection(route, state, runtime)
 
         self.assertIsNotNone(updated)
         self.assertNotIn("Main Backend", updated.flags.get("services", []))  # type: ignore[union-attr]
+
+    def test_restart_services_merges_configured_missing_and_stopped_services_without_duplicates(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(
+            ["backend", "frontend"],
+            stopped_services=[
+                {"name": "Main Backend", "project": "Main", "type": "backend"},
+            ],
+        )
+
+        self.assertEqual(
+            orchestrator._restart_services_by_project(state, runtime),
+            {"Main": [("Main Backend", "backend", True), ("Main Frontend", "frontend", False)]},
+        )
+
+    def test_service_names_for_projects_and_types_filters_configured_missing_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
+
+        self.assertEqual(
+            orchestrator._service_names_for_projects_and_types(
+                state,
+                runtime,
+                project_names=["Main"],
+                service_types=["backend"],
+            ),
+            ["Main Backend"],
+        )
+        self.assertEqual(
+            orchestrator._service_names_for_projects_and_types(
+                state,
+                runtime,
+                project_names=["Other"],
+                service_types=["backend", "frontend"],
+            ),
+            [],
+        )
+
+    def test_configured_missing_restart_event_is_emitted_only_when_missing_services_exist(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime._emit = lambda event, **payload: events.append((event, payload))  # type: ignore[method-assign]
+
+        configured_state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
+        orchestrator._restart_services_by_project(configured_state, runtime)
+        self.assertEqual(
+            events,
+            [
+                (
+                    "dashboard.restart.configured_missing_offered",
+                    {
+                        "run_id": "run-1",
+                        "services": {"Main": ["backend"]},
+                        "metadata_key": "dashboard_project_configured_services",
+                    },
+                )
+            ],
+        )
+
+        events.clear()
+        frontend_only_state = self._state_with_active_frontend_and_project_configured_services(["frontend"])
+        orchestrator._restart_services_by_project(frontend_only_state, runtime)
+        self.assertEqual(events, [])
 
     def test_interactive_shortcuts_map_to_action_commands(self) -> None:
         runtime = _RuntimeStub()

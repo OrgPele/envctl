@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -908,7 +909,14 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
 
-            def start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+            def start_project_context(
+                *,
+                context: ProjectContext,
+                mode: str,
+                route: Any,
+                run_id: str,
+            ) -> ProjectStartupResult:
+                _ = context, mode, run_id
                 self.assertTrue(bool(route.flags.get("_restart_request")))
                 self.assertEqual(route.flags.get("services"), ["Main Backend"])
                 self.assertEqual(route.flags.get("restart_service_types"), ["backend"])

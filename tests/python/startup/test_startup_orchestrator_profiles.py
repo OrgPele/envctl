@@ -14,37 +14,35 @@ from envctl_engine.startup.session import StartupSession
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
-    def test_restart_synthetic_backend_service_selects_configured_backend_only(self) -> None:
+    def _assert_restart_service_types_for_main_backend(
+        self,
+        *,
+        default_service_types: set[str],
+        expected: set[str],
+    ) -> None:
         route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
         route.flags["_restart_request"] = True
 
         selected = StartupOrchestrator._restart_service_types_for_project(
             route=route,
             project_name="Main",
-            default_service_types={"backend", "frontend"},
+            default_service_types=default_service_types,
         )
 
-        self.assertEqual(selected, {"backend"})
+        self.assertEqual(selected, expected)
 
-    def test_restart_synthetic_backend_service_is_rejected_for_frontend_only_profile(self) -> None:
-        route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
-        route.flags["_restart_request"] = True
-
-        selected = StartupOrchestrator._restart_service_types_for_project(
-            route=route,
-            project_name="Main",
-            default_service_types={"frontend"},
-        )
-
-        self.assertEqual(selected, set())
-
-    def test_build_run_state_writes_project_scoped_configured_services(self) -> None:
+    @staticmethod
+    def _build_run_state_with_configured_services(
+        *,
+        enabled_service_types: set[str],
+        context_names: list[str],
+    ):
         runtime = SimpleNamespace(
             config=SimpleNamespace(runtime_scope_id="scope-1"),
             _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
-            _service_enabled_for_mode=lambda mode, service_name: service_name in {"backend", "frontend"},
+            _service_enabled_for_mode=lambda mode, service_name: service_name in enabled_service_types,
         )
-        context = SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})
+        contexts = [SimpleNamespace(name=name, root=Path(f"/tmp/repo/{name}"), ports={}) for name in context_names]
         route = Route(command="up", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
         session = StartupSession(
             requested_route=route,
@@ -52,14 +50,50 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             requested_command="up",
             runtime_mode="main",
             run_id="run-1",
-            selected_contexts=[context],
+            selected_contexts=contexts,
+        )
+        return build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+    def test_restart_synthetic_backend_service_selects_configured_backend_only(self) -> None:
+        self._assert_restart_service_types_for_main_backend(
+            default_service_types={"backend", "frontend"},
+            expected={"backend"},
         )
 
-        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+    def test_restart_synthetic_backend_service_is_rejected_for_frontend_only_profile(self) -> None:
+        self._assert_restart_service_types_for_main_backend(
+            default_service_types={"frontend"},
+            expected=set(),
+        )
+
+    def test_build_run_state_writes_project_scoped_configured_services(self) -> None:
+        state = self._build_run_state_with_configured_services(
+            enabled_service_types={"backend", "frontend"},
+            context_names=["Main"],
+        )
 
         self.assertEqual(
             state.metadata.get("dashboard_project_configured_services"),
             {"Main": ["backend", "frontend"]},
+        )
+
+    def test_build_run_state_omits_project_scoped_configured_services_when_no_services_enabled(self) -> None:
+        state = self._build_run_state_with_configured_services(
+            enabled_service_types=set(),
+            context_names=["Main"],
+        )
+
+        self.assertNotIn("dashboard_project_configured_services", state.metadata)
+
+    def test_build_run_state_writes_project_scoped_configured_services_for_multiple_contexts(self) -> None:
+        state = self._build_run_state_with_configured_services(
+            enabled_service_types={"frontend"},
+            context_names=["Zeta", "Alpha"],
+        )
+
+        self.assertEqual(
+            state.metadata.get("dashboard_project_configured_services"),
+            {"Alpha": ["frontend"], "Zeta": ["frontend"]},
         )
 
     def test_restart_service_types_respect_default_service_set(self) -> None:

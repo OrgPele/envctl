@@ -6,13 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _ITERATION_RE = re.compile(r"^(?:\d+|iter[-_]?\d+)$", re.IGNORECASE)
+OMX_ARTIFACT_DIR_NAME = ".omx"
+ENVCTL_STATE_DIR_NAME = ".envctl-state"
+STATE_ONLY_TREE_PROJECT_ROOT_ENTRIES = frozenset({OMX_ARTIFACT_DIR_NAME, ENVCTL_STATE_DIR_NAME})
 _IGNORED_DIR_NAMES = {
     ".git",
     ".hg",
     ".svn",
     ".venv",
-    ".omx",
-    ".envctl-state",
+    OMX_ARTIFACT_DIR_NAME,
+    ENVCTL_STATE_DIR_NAME,
     "venv",
     "__pycache__",
     "node_modules",
@@ -339,7 +342,7 @@ def _looks_like_tree_project_root(path: Path) -> bool:
     except OSError:
         return False
     entry_names = {entry.name for entry in entries}
-    if entry_names and entry_names.issubset({".omx"}):
+    if entry_names and entry_names.issubset(STATE_ONLY_TREE_PROJECT_ROOT_ENTRIES):
         return False
     return True
 

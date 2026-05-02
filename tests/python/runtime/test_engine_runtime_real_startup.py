@@ -245,6 +245,7 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
                 return SimpleNamespace(returncode=1, stdout="", stderr="simulated git worktree failure")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
+            (target / ".git").write_text("gitdir: /tmp/fake-worktree\n", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
 
