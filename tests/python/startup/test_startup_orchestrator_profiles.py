@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any, cast
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +9,22 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.engine_runtime_env import requirement_enabled_for_mode
+from envctl_engine.startup.finalization import build_success_run_state
+from envctl_engine.startup.session import StartupSession
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
+
+
+class _FinalizationRuntime:
+    def __init__(self, *, enabled_service_types: set[str]) -> None:
+        self.config = SimpleNamespace(runtime_scope_id="test-scope")
+        self.enabled_service_types = enabled_service_types
+
+    @staticmethod
+    def _run_dir_path(run_id: str) -> Path:
+        return Path("/runtime") / run_id
+
+    def _service_enabled_for_mode(self, mode: str, service_name: str) -> bool:
+        return mode == "main" and service_name in self.enabled_service_types
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
@@ -20,6 +36,34 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             route=route,
             project_name="Main",
             default_service_types={"backend"},
+        )
+
+        self.assertEqual(selected, set())
+
+    def test_restart_synthetic_service_name_selects_configured_backend(self) -> None:
+        route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags["_restart_request"] = True
+        route.flags["services"] = ["Main Backend"]
+        route.flags["restart_service_types"] = ["backend"]
+
+        selected = StartupOrchestrator._restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"backend", "frontend"},
+        )
+
+        self.assertEqual(selected, {"backend"})
+
+    def test_restart_synthetic_service_name_respects_frontend_only_configuration(self) -> None:
+        route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags["_restart_request"] = True
+        route.flags["services"] = ["Main Backend"]
+        route.flags["restart_service_types"] = ["backend"]
+
+        selected = StartupOrchestrator._restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"frontend"},
         )
 
         self.assertEqual(selected, set())
@@ -170,6 +214,47 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, {"frontend"})
+
+    def test_success_run_state_writes_project_scoped_configured_services(self) -> None:
+        route = parse_route(["--only-frontend"], env={})
+        runtime = _FinalizationRuntime(enabled_service_types={"backend", "frontend"})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="main",
+            run_id="run-1",
+            selected_contexts=cast(
+                Any,
+                [
+                    SimpleNamespace(name="Main", root=Path("/repo")),
+                    SimpleNamespace(name="Feature", root=Path("/repo/trees/feature")),
+                ],
+            ),
+        )
+
+        state = build_success_run_state(cast(Any, runtime), session)
+
+        self.assertEqual(
+            state.metadata.get("dashboard_project_configured_services"),
+            {"Feature": ["backend", "frontend"], "Main": ["backend", "frontend"]},
+        )
+
+    def test_success_run_state_omits_unconfigured_project_service_types(self) -> None:
+        route = parse_route([], env={})
+        runtime = _FinalizationRuntime(enabled_service_types={"frontend"})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="main",
+            run_id="run-1",
+            selected_contexts=cast(Any, [SimpleNamespace(name="Main", root=Path("/repo"))]),
+        )
+
+        state = build_success_run_state(cast(Any, runtime), session)
+
+        self.assertEqual(state.metadata.get("dashboard_project_configured_services"), {"Main": ["frontend"]})
 
 
 if __name__ == "__main__":
