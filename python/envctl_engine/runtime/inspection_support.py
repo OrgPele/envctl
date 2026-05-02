@@ -212,12 +212,16 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         "trees_backend_dependency_env_section_present": local_state.trees_backend_dependency_env_section_present,
         "trees_backend_dependency_env_templates": _template_entries(local_state.trees_backend_dependency_env_templates),
         "trees_frontend_dependency_env_section_present": local_state.trees_frontend_dependency_env_section_present,
-        "trees_frontend_dependency_env_templates": _template_entries(local_state.trees_frontend_dependency_env_templates),
+        "trees_frontend_dependency_env_templates": _template_entries(
+            local_state.trees_frontend_dependency_env_templates
+        ),
         "plan_agent": {
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,
             "preset": runtime.config.plan_agent_preset,
             "codex_cycles": runtime.config.plan_agent_codex_cycles,
+            "browser_e2e": runtime.config.plan_agent_browser_e2e_enable,
+            "pr_review_comments": runtime.config.plan_agent_pr_review_comments_enable,
             "shell": runtime.config.plan_agent_shell,
             "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
             "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,

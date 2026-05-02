@@ -16,6 +16,7 @@ _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
+_PROMPT_TEMPLATE_EXCLUSION_PREFIX = "_"
 _CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
 _PROMPT_ARGUMENT_PLACEHOLDER = "$ARGUMENTS"
 _CODEX_SKILL_ARGUMENT_SENTINEL = "additional user instructions supplied with the invoking prompt"
@@ -503,6 +504,8 @@ def _template_files() -> tuple[Traversable, ...]:
     for entry in template_root.iterdir():
         if not entry.is_file() or not entry.name.endswith(_PROMPT_TEMPLATE_SUFFIX):
             continue
+        if entry.name.startswith(_PROMPT_TEMPLATE_EXCLUSION_PREFIX):
+            continue
         files.append(entry)
     return tuple(sorted(files, key=lambda item: item.name))
 
@@ -690,7 +693,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "frontend are both needed but managed dependencies are explicitly disabled, mocked, externalized, "
                 "or proven unnecessary. Use `envctl --dependencies --headless` for DB/Redis or infrastructure-only "
                 "validation. For UI/product work, run Playwright E2E validation against the running service before "
-                "claiming completion. Before final handoff, run the final relevant validation after the code is complete "
+                "claiming completion. Before final handoff, run the final relevant validation after the code "
+                "is complete "
                 "and report the result. When a runtime was needed or started, report the actual addresses/URLs for "
                 "started dependencies, backend, and frontend, or say explicitly which components were not started. "
                 "At the end, kill the scope you started with "
@@ -751,8 +755,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create an envctl implementation plan",
             description=(
                 "Use when you explicitly want the envctl create_plan workflow to produce a plan artifact for "
-                "implementation work and infer the smallest safe envctl launch scope. Invoke it explicitly as "
-                "$envctl-create-plan."
+                "implementation work and default envctl follow-up launches to full-stack E2E scope. Invoke it "
+                "explicitly as $envctl-create-plan."
             ),
         ),
         "create_plan_auto_codex": CodexSkillMetadata(
@@ -761,8 +765,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch Codex implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-codex to create an envctl "
-                "implementation plan and automatically launch the Codex implementation workflow with the smallest "
-                "safe inferred envctl launch scope."
+                "implementation plan and automatically launch the Codex implementation workflow with full-stack "
+                "E2E scope by default."
             ),
         ),
         "create_plan_auto_opencode": CodexSkillMetadata(
@@ -771,8 +775,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch OpenCode ULW implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-opencode to create an envctl "
-                "implementation plan and automatically launch the OpenCode ULW implementation workflow with the "
-                "smallest safe inferred envctl launch scope."
+                "implementation plan and automatically launch the OpenCode ULW implementation workflow with "
+                "full-stack E2E scope by default."
             ),
         ),
         "create_plan_auto_omx": CodexSkillMetadata(
@@ -781,8 +785,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch OMX Ralph implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
-                "implementation plan and automatically launch the OMX Ralph implementation workflow with the smallest "
-                "safe inferred envctl launch scope."
+                "implementation plan and automatically launch the OMX Ralph implementation workflow with full-stack "
+                "E2E scope by default."
             ),
         ),
         "ship_release": CodexSkillMetadata(

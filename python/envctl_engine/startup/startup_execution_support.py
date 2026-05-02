@@ -14,6 +14,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.requirements_execution import (
+    REQUIREMENTS_PROGRESS_PROJECT_FLAG,
     maybe_prewarm_docker,
     requirements_failure_message,
     requirements_for_restart_context,
@@ -94,10 +95,15 @@ def _requirements_for_project_context(
 ) -> RequirementsResult:
     if mode != "trees" or effective_dependency_scope(route, mode) != "shared":
         return requirements_for_restart_context(orchestrator, context=context, mode=mode, route=route)
-    return _shared_main_requirements(orchestrator, route=route)
+    return _shared_main_requirements(orchestrator, route=route, progress_project=context.name)
 
 
-def _shared_main_requirements(orchestrator: StartupOrchestratorLike, *, route: Route) -> RequirementsResult:
+def _shared_main_requirements(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    route: Route,
+    progress_project: str | None = None,
+) -> RequirementsResult:
     cached = getattr(orchestrator, "_shared_dependency_requirements", None)
     if isinstance(cached, RequirementsResult):
         return cached
@@ -105,19 +111,32 @@ def _shared_main_requirements(orchestrator: StartupOrchestratorLike, *, route: R
     if lock is None:
         return _annotate_shared_main_requirements(
             orchestrator,
-            _load_or_start_shared_main_requirements(orchestrator, route=route),
+            _load_or_start_shared_main_requirements(
+                orchestrator,
+                route=route,
+                progress_project=progress_project,
+            ),
         )
     with lock:
         cached = getattr(orchestrator, "_shared_dependency_requirements", None)
         if isinstance(cached, RequirementsResult):
             return cached
-        requirements = _load_or_start_shared_main_requirements(orchestrator, route=route)
+        requirements = _load_or_start_shared_main_requirements(
+            orchestrator,
+            route=route,
+            progress_project=progress_project,
+        )
         requirements = _annotate_shared_main_requirements(orchestrator, requirements)
         setattr(orchestrator, "_shared_dependency_requirements", requirements)
         return requirements
 
 
-def _load_or_start_shared_main_requirements(orchestrator: StartupOrchestratorLike, *, route: Route) -> RequirementsResult:
+def _load_or_start_shared_main_requirements(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    route: Route,
+    progress_project: str | None = None,
+) -> RequirementsResult:
     rt = orchestrator.runtime
     existing = rt._try_load_existing_state(mode="main", strict_mode_match=True)
     if existing is not None:
@@ -139,6 +158,9 @@ def _load_or_start_shared_main_requirements(orchestrator: StartupOrchestratorLik
         projects=route.projects,
         flags={key: value for key, value in route.flags.items() if key != "dependency_scope"},
     )
+    progress_project_name = str(progress_project or "").strip()
+    if progress_project_name:
+        shared_route.flags[REQUIREMENTS_PROGRESS_PROJECT_FLAG] = progress_project_name
     requirements = requirements_for_restart_context(orchestrator, context=main_context, mode="main", route=shared_route)
     rt._emit("requirements.shared.start", project="Main")
     return requirements

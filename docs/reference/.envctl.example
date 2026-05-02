@@ -75,6 +75,26 @@ TREES_SUPABASE_ENABLE=false
 TREES_N8N_ENABLE=false
 
 # ==========================================
+# Plan-agent prompt follow-ups
+# ==========================================
+
+# Codex-only queued workflow count for plan-agent launches.
+# 0 submits one implementation prompt plus enabled follow-ups.
+# 1 queues implement_task -> finalize_task plus enabled follow-ups.
+# 2+ adds continue/implement cycles before finalization.
+ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
+
+# Queue an extra Codex/OMX prompt after implementation/finalization to run
+# browser-based E2E validation with $browser-use against the full envctl stack.
+# Set to false to skip this follow-up for repos where browser E2E is not applicable.
+ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
+
+# Queue an extra Codex/OMX prompt after the implementation/browser-E2E prompts
+# to inspect unresolved PR review comments and address all actionable feedback.
+# Set to false to skip this follow-up for repos where PR comment handling is manual.
+ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
+
+# ==========================================
 # Service launch env templates
 # ==========================================
 

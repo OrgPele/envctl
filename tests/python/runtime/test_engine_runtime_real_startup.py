@@ -30,6 +30,8 @@ from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, S
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
 
+FAKE_WORKTREE_GITDIR_CONTENT = "gitdir: /tmp/fake-worktree\n"
+
 
 class _TtyStringIO(StringIO):
     def isatty(self) -> bool:
@@ -245,6 +247,7 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
                 return SimpleNamespace(returncode=1, stdout="", stderr="simulated git worktree failure")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
+            (target / ".git").write_text(FAKE_WORKTREE_GITDIR_CONTENT, encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
 
@@ -2392,8 +2395,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             rendered = out.getvalue()
             self.assertEqual(code, 1)
-            self.assertIn("missing_service_directory", rendered)
-            self.assertIn(str(tree_root / "backend"), rendered)
+            self.assertIn("No tree paths found for requested project filter(s): feature-a.", rendered)
+            self.assertIn("No projects discovered for selected mode.", rendered)
+            self.assertNotIn("missing_service_directory", rendered)
             self.assertNotIn("No module named uvicorn", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
 

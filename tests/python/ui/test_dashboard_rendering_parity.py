@@ -36,6 +36,49 @@ class DashboardRenderingParityTests(unittest.TestCase):
             "ENVCTL_DEFAULT_MODE": "main",
         }
 
+    def _render_dashboard_for_active_frontend(
+        self,
+        configured_services: list[str],
+        *,
+        stopped_services: list[dict[str, str]] | None = None,
+    ) -> tuple[str, list[tuple[str, dict[str, object]]]]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            emitted: list[tuple[str, dict[str, object]]] = []
+            engine._emit = lambda event, **payload: emitted.append((event, payload))  # type: ignore[method-assign]
+
+            metadata: dict[str, object] = {
+                "project_roots": {"Main": str(repo)},
+                "dashboard_project_configured_services": {"Main": configured_services},
+            }
+            if stopped_services is not None:
+                metadata["dashboard_stopped_services"] = stopped_services
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=2222,
+                        status="running",
+                    ),
+                },
+                metadata=metadata,
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            return buffer.getvalue(), emitted
+
     def test_dashboard_truncates_long_project_names_and_respects_no_color(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -201,6 +244,47 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Frontend: not running [Stopped]", output)
             self.assertNotIn("Frontend: n/a [Unknown]", output)
 
+    def test_dashboard_shows_project_configured_missing_backend_for_active_frontend(self) -> None:
+        output, _events = self._render_dashboard_for_active_frontend(["backend", "frontend"])
+
+        self.assertIn("services: 2 total | 1 running | 1 not running | 0 starting/unknown | 0 issues", output)
+        self.assertIn("Backend: not running [Stopped]", output)
+        self.assertIn("Frontend: http://localhost:9000", output)
+        self.assertNotIn("Backend: n/a [Unknown]", output)
+
+    def test_dashboard_does_not_show_unconfigured_backend_for_frontend_only_project(self) -> None:
+        output, _events = self._render_dashboard_for_active_frontend(["frontend"])
+
+        self.assertIn("services: 1 total | 1 running | 0 starting/unknown | 0 issues", output)
+        self.assertNotIn("Backend:", output)
+        self.assertIn("Frontend: http://localhost:9000", output)
+
+    def test_dashboard_counts_stopped_and_configured_missing_service_once(self) -> None:
+        output, _events = self._render_dashboard_for_active_frontend(
+            ["backend", "frontend"],
+            stopped_services=[{"name": "Main Backend", "project": "Main", "type": "backend"}],
+        )
+
+        self.assertIn("services: 2 total | 1 running | 1 not running | 0 starting/unknown | 0 issues", output)
+        self.assertEqual(output.count("Backend: not running [Stopped]"), 1)
+
+    def test_dashboard_emits_configured_missing_services_event(self) -> None:
+        _output, events = self._render_dashboard_for_active_frontend(["frontend", "backend"])
+
+        configured_missing_events = [
+            payload for event, payload in events if event == "dashboard.configured_missing_services"
+        ]
+        self.assertEqual(
+            configured_missing_events,
+            [
+                {
+                    "run_id": "run-1",
+                    "services": {"Main": ["backend"]},
+                    "metadata_key": "dashboard_project_configured_services",
+                }
+            ],
+        )
+
     def test_dashboard_shows_all_stopped_rows_after_entire_worktree_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -346,6 +430,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 requirements={
                     "Main": RequirementsResult(
                         project="Main",
+                        redis={"enabled": True, "runtime_status": "healthy", "final": 6380, "success": True},
                         n8n={"enabled": True, "runtime_status": "healthy", "final": 5678, "success": True},
                     ),
                 },
@@ -359,9 +444,11 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn("Backend: http://192.0.2.42:8000", output)
             self.assertIn("Frontend: http://192.0.2.42:9000", output)
+            self.assertIn("redis: http://192.0.2.42:6380 [Healthy]", output)
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertNotIn("http://localhost:8000", output)
             self.assertNotIn("http://localhost:9000", output)
+            self.assertNotIn("http://localhost:6380", output)
             self.assertNotIn("http://localhost:5678", output)
 
             runtime_projection = build_runtime_map(state)["projection"]
@@ -590,6 +677,67 @@ class DashboardRenderingParityTests(unittest.TestCase):
             )
             self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
             self.assertNotIn("command:", output)
+
+    def test_dashboard_renders_omx_ai_session_matching_feature_slug_even_when_iteration_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "broken_dashboard_configured_missing_service_visibility-2"
+            project_root = repo / "trees" / "broken_dashboard_configured_missing_service_visibility" / "2"
+            plan_path = repo / "todo" / "plans" / "broken" / "dashboard-configured-missing-service-visibility.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {project: str(project_root)},
+                    "dashboard_configured_service_types": ["backend"],
+                    "dashboard_runs_disabled": True,
+                    "dashboard_banner": "envctl runs are disabled for trees; planning and action commands remain available.",
+                },
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk",
+                            "windows": "zsh",
+                            "paths": str(repo),
+                            "attach": (
+                                "tmux attach-session -t "
+                                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk"
+                            ),
+                            "kill": (
+                                "tmux kill-session -t "
+                                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk"
+                            ),
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("", ""),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(
+                "AI session: tmux attach-session -t "
+                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk (detached)",
+                output,
+            )
+            self.assertNotIn("○ Run AI:", output)
 
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

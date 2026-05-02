@@ -111,7 +111,9 @@ def runtime_dependency_failure_message(
         return "\n".join(lines)
     lines.append("The installed envctl environment is incomplete and needs its packaged dependencies repaired.")
     lines.append("If you installed envctl with pipx, run: pipx reinstall envctl")
-    lines.append("Otherwise reinstall envctl in the same Python environment so its declared dependencies are installed.")
+    lines.append(
+        "Otherwise reinstall envctl in the same Python environment so its declared dependencies are installed."
+    )
     return "\n".join(lines)
 
 

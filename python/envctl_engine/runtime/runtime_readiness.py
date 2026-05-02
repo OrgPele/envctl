@@ -85,7 +85,9 @@ def evaluate_runtime_readiness(
     report_generated_at = (
         str(report_payload.get("generated_at", "")).strip() if isinstance(report_payload, dict) else ""
     )
-    manifest_generated_at = str(manifest_payload.get("generated_at", "")).strip() if isinstance(manifest_payload, dict) else ""
+    manifest_generated_at = (
+        str(manifest_payload.get("generated_at", "")).strip() if isinstance(manifest_payload, dict) else ""
+    )
 
     return RuntimeReadinessResult(
         passed=not errors,

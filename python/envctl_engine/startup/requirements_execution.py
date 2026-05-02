@@ -17,6 +17,7 @@ _DOCKER_SOCKET_PATTERNS = (
     re.compile(r"unix://(?P<path>[^\s;]+docker\.sock)"),
     re.compile(r"dial unix (?P<path>[^\s:;]+docker\.sock)"),
 )
+REQUIREMENTS_PROGRESS_PROJECT_FLAG = "_requirements_progress_project"
 
 
 def format_requirements_progress_message(*, active: set[str], pending: set[str]) -> str:
@@ -154,13 +155,15 @@ def start_requirements_for_project(
     def emit_requirements_progress() -> None:
         if not enabled_definitions:
             return
+        progress_project_flag = route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG) if route is not None else None
+        progress_project = str(progress_project_flag).strip() if progress_project_flag is not None else context.name
         orchestrator._report_progress(
             route,
             format_requirements_progress_message(
                 active=active_requirements,
                 pending=pending_requirements,
             ),
-            project=context.name,
+            project=progress_project or context.name,
         )
 
     def run_component(component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:

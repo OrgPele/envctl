@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -57,6 +58,12 @@ _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
 _PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
+_PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
+_FINALIZATION_INSTRUCTION_TEMPLATE = "_plan_agent_finalization_instruction"
+_FIRST_CYCLE_COMPLETION_TEMPLATE = "_plan_agent_first_cycle_completion"
+_INTERMEDIATE_CYCLE_COMPLETION_TEMPLATE = "_plan_agent_intermediate_cycle_completion"
+_BROWSER_E2E_FOLLOWUP_TEMPLATE = "_plan_agent_browser_e2e_followup"
+_PR_REVIEW_COMMENTS_FOLLOWUP_TEMPLATE = "_plan_agent_pr_review_comments_followup"
 _PLAN_AGENT_CODEX_CYCLE_CAP = 10
 _REVIEW_WORKTREE_PRESET = "review_worktree_imp"
 _WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
@@ -134,6 +141,8 @@ class PlanAgentLaunchConfig:
     direct_prompt_enabled: bool
     ulw_loop_prefix: bool
     ulw_suffix: bool
+    browser_e2e_followup_enable: bool = True
+    pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ralph", "team"] = ""
 
 
@@ -201,15 +210,34 @@ class _PlanAgentWorkflow:
 
 
 def _finalization_instruction_text() -> str:
-    return _slash_command("codex", "finalize_task")
+    return _load_plan_agent_followup_prompt(_FINALIZATION_INSTRUCTION_TEMPLATE)
 
 
 def _first_cycle_completion_instruction_text() -> str:
-    return "When the current implementation pass finishes, commit the work, push the branch, and open or update the PR."
+    return _load_plan_agent_followup_prompt(_FIRST_CYCLE_COMPLETION_TEMPLATE)
 
 
 def _intermediate_cycle_completion_instruction_text() -> str:
-    return "When the current implementation pass finishes, commit the work and push the branch."
+    return _load_plan_agent_followup_prompt(_INTERMEDIATE_CYCLE_COMPLETION_TEMPLATE)
+
+
+def _browser_e2e_instruction_text() -> str:
+    return _load_plan_agent_followup_prompt(_BROWSER_E2E_FOLLOWUP_TEMPLATE)
+
+
+def _pr_review_comments_instruction_text() -> str:
+    return _load_plan_agent_followup_prompt(_PR_REVIEW_COMMENTS_FOLLOWUP_TEMPLATE)
+
+
+def _load_plan_agent_followup_prompt(name: str) -> str:
+    template_name = f"{str(name).strip()}.md"
+    template_file = resources.files(_PROMPT_TEMPLATE_PACKAGE).joinpath(template_name)
+    if not template_file.is_file():
+        raise LookupError(f"Missing plan-agent follow-up prompt template: {template_name}")
+    body = template_file.read_text(encoding="utf-8").strip()
+    if not body:
+        raise ValueError(f"Plan-agent follow-up prompt template is empty: {template_name}")
+    return body
 
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
@@ -245,6 +273,8 @@ def _build_plan_agent_workflow(
     preset: str,
     codex_cycles: int,
     direct_prompt_enabled: bool = False,
+    browser_e2e_followup_enable: bool = True,
+    pr_review_comments_followup_enable: bool = True,
 ) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
@@ -253,15 +283,29 @@ def _build_plan_agent_workflow(
     else:
         initial_step = _PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command(cli, preset))
     if normalized_cli != "codex" or bounded_cycles <= 0:
+        steps = [initial_step]
+        if normalized_cli == "codex":
+            if browser_e2e_followup_enable:
+                steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
+            if pr_review_comments_followup_enable:
+                steps.append(
+                    _PlanAgentWorkflowStep(kind="queue_message", text=_pr_review_comments_instruction_text())
+                )
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
             codex_cycles=bounded_cycles,
-            steps=(initial_step,),
+            steps=tuple(steps),
         )
     steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")]
     for cycle in range(1, bounded_cycles + 1):
         if cycle == bounded_cycles:
             steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task"))
+            if browser_e2e_followup_enable:
+                steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
+            if pr_review_comments_followup_enable:
+                steps.append(
+                    _PlanAgentWorkflowStep(kind="queue_message", text=_pr_review_comments_instruction_text())
+                )
             continue
         if cycle == 1:
             completion_text = _first_cycle_completion_instruction_text()
@@ -370,6 +414,16 @@ def resolve_plan_agent_launch_config(
         preset=preset,
         codex_cycles=codex_cycles,
         codex_cycles_warning=codex_cycles_warning,
+        browser_e2e_followup_enable=parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE")
+            or config.raw.get("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"),
+            True,
+        ),
+        pr_review_comments_followup_enable=parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE")
+            or config.raw.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"),
+            True,
+        ),
         shell=shell,
         require_cmux_context=parse_bool(
             env_map.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT")
@@ -428,6 +482,8 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
     target_workspace = (
@@ -448,6 +504,8 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "direct_prompt_enabled": launch_config.direct_prompt_enabled,
         "ulw_loop_prefix": launch_config.ulw_loop_prefix,
         "ulw_suffix": launch_config.ulw_suffix,
+        "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
+        "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
         "require_cmux_context": launch_config.require_cmux_context,
         "workspace_id": workspace_id,
         "configured_workspace": target_workspace or None,
@@ -586,6 +644,8 @@ def launch_plan_agent_terminals(
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     base_payload = {
         "enabled": launch_config.enabled,
@@ -593,6 +653,8 @@ def launch_plan_agent_terminals(
         "created_worktree_count": len(created_worktrees),
         "workflow_mode": workflow.mode,
         "codex_cycles": launch_config.codex_cycles,
+        "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
+        "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
     }
     if str(getattr(route, "command", "")).strip() != "plan" or bool(getattr(route, "flags", {}).get("planning_prs")):
         runtime._emit("planning.agent_launch.skipped", reason="inapplicable_route", **base_payload)
@@ -1856,6 +1918,7 @@ def _queue_tmux_codex_workflow_steps(
             launch_config=launch_config,
             cli=cli,
             step=step,
+            worktree=worktree,
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"
@@ -2019,6 +2082,9 @@ def _complete_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     try:
         error = _run_surface_bootstrap(
@@ -2108,6 +2174,9 @@ def _run_surface_bootstrap(
         cli=launch_config.cli,
         preset=launch_config.preset,
         codex_cycles=launch_config.codex_cycles,
+        direct_prompt_enabled=launch_config.direct_prompt_enabled,
+        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
+        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     error = _prepare_surface(
         runtime,
@@ -2274,10 +2343,58 @@ def _workflow_step_prompt_text(
     launch_config: PlanAgentLaunchConfig,
     cli: str,
     step: _PlanAgentWorkflowStep,
+    worktree: CreatedPlanWorktree | None = None,
 ) -> tuple[str, str | None]:
     if step.kind not in {"submit_direct_prompt", "queue_direct_prompt"}:
-        return step.text, None
+        return _shape_queue_message_text(runtime, step.text, worktree=worktree), None
     return _resolve_preset_submission_text(runtime, launch_config=launch_config, cli=cli, preset=step.text)
+
+
+def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanWorktree | None = None) -> str:
+    if str(text).strip() != _browser_e2e_instruction_text().strip():
+        return text
+    sections = [
+        section
+        for section in (
+            _original_task_source_prompt_section(runtime, worktree=worktree),
+            _runtime_addresses_prompt_section(runtime),
+        )
+        if section
+    ]
+    if not sections:
+        return text
+    return f"{str(text).rstrip()}\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _original_task_source_prompt_section(
+    runtime: Any,
+    *,
+    worktree: CreatedPlanWorktree | None,
+) -> str:
+    if worktree is None:
+        return ""
+    plan_path = _original_plan_file_path(runtime, str(worktree.plan_file or ""))
+    main_task_path = Path(worktree.root) / "MAIN_TASK.md"
+    lines = [
+        "## Original task source for E2E validation",
+        "MAIN_TASK.md may be rewritten by cycle prompts. Use this original plan file before the current "
+        "MAIN_TASK.md when validating the end-to-end requirement.",
+    ]
+    if plan_path is not None:
+        lines.append(f'- Original plan file: "{plan_path}"')
+    lines.append(f'- Seeded worktree task file: "{main_task_path}"')
+    return "\n".join(lines)
+
+
+def _original_plan_file_path(runtime: Any, plan_file: str) -> Path | None:
+    normalized = str(plan_file or "").strip()
+    if not normalized:
+        return None
+    raw_path = Path(normalized).expanduser()
+    if raw_path.is_absolute():
+        return raw_path
+    planning_dir = Path(getattr(getattr(runtime, "config", None), "planning_dir", "todo/plans"))
+    return (planning_dir / raw_path).resolve()
 
 
 def _shape_prompt_text(
@@ -2364,7 +2481,8 @@ def _runtime_addresses_prompt_section(runtime: Any) -> str:
         return ""
     lines = [
         "## Current envctl runtime addresses",
-        "Use these currently known localhost addresses when validating or debugging. They are generated from saved envctl runtime state; verify them again if you restart services.",
+        "Use these currently known localhost addresses when validating or debugging. "
+        "They are generated from saved envctl runtime state; verify them again if you restart services.",
     ]
     dependency_lines = _dependency_address_lines(state)
     service_lines = _service_address_lines(state)
@@ -2415,7 +2533,8 @@ def _dependency_address_lines(state: RunState) -> list[str]:
             if key in seen:
                 continue
             seen.add(key)
-            rows.append(f"{_dependency_label(dependency_id)} ({project_name}): {_dependency_address(dependency_id, port)}")
+            address = _dependency_address(dependency_id, port)
+            rows.append(f"{_dependency_label(dependency_id)} ({project_name}): {address}")
     return rows
 
 
@@ -2594,6 +2713,7 @@ def _queue_codex_workflow_steps(
             launch_config=launch_config,
             cli=cli,
             step=step,
+            worktree=worktree,
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"

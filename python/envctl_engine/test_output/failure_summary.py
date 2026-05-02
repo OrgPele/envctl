@@ -66,7 +66,8 @@ def summary_excerpt_from_entry(entry: Mapping[str, object], *, max_lines: int = 
         if not path.is_file():
             continue
         try:
-            return extract_failure_summary_excerpt(path.read_text(encoding="utf-8", errors="ignore"), max_lines=max_lines)
+            content = path.read_text(encoding="utf-8", errors="ignore")
+            return extract_failure_summary_excerpt(content, max_lines=max_lines)
         except OSError:
             continue
     return []

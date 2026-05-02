@@ -9,6 +9,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from importlib import resources
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -26,6 +27,8 @@ _build_plan_agent_workflow = cast(Any, getattr(launch_support, "_build_plan_agen
 _finalization_instruction_text = cast(Any, getattr(launch_support, "_finalization_instruction_text", None))
 _first_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_first_cycle_completion_instruction_text", None))
 _intermediate_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None))
+_browser_e2e_instruction_text = cast(Any, getattr(launch_support, "_browser_e2e_instruction_text", None))
+_pr_review_comments_instruction_text = cast(Any, getattr(launch_support, "_pr_review_comments_instruction_text", None))
 _wait_for_codex_queue_ready = cast(Any, getattr(launch_support, "_wait_for_codex_queue_ready", None))
 _workflow_step_prompt_text = cast(Any, getattr(launch_support, "_workflow_step_prompt_text", None))
 _WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarget", None))
@@ -549,6 +552,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(codex_config.cli, "codex")
         self.assertEqual(codex_config.preset, "implement_task")
         self.assertEqual(codex_config.codex_cycles, 4)
+        self.assertTrue(codex_config.pr_review_comments_followup_enable)
         self.assertEqual(codex_workflow.mode, "codex_cycles")
         self.assertEqual(codex_workflow.codex_cycles, 4)
 
@@ -563,7 +567,74 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(omx_config.omx_workflow, "ralph")
         self.assertEqual(omx_config.codex_cycles, 0)
         self.assertEqual(omx_config.codex_cycles_warning, "omx_workflow_disables_codex_cycles")
+        self.assertTrue(omx_config.pr_review_comments_followup_enable)
         self.assertEqual(omx_workflow.mode, "single_prompt")
+
+    def test_resolve_plan_agent_launch_config_allows_pr_review_comment_followup_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false\n",
+                encoding="utf-8",
+            )
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "features/example", "--omx", "--ralph"], env={}),
+            )
+            workflow = _build_plan_agent_workflow(
+                cli=launch_config.cli,
+                preset=launch_config.preset,
+                codex_cycles=launch_config.codex_cycles,
+                direct_prompt_enabled=launch_config.direct_prompt_enabled,
+                pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
+            )
+
+        self.assertFalse(launch_config.pr_review_comments_followup_enable)
+        self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
+
+    def test_resolve_plan_agent_launch_config_allows_browser_e2e_followup_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false\n",
+                encoding="utf-8",
+            )
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "features/example"], env={}),
+            )
+            workflow = _build_plan_agent_workflow(
+                cli=launch_config.cli,
+                preset=launch_config.preset,
+                codex_cycles=launch_config.codex_cycles,
+                direct_prompt_enabled=launch_config.direct_prompt_enabled,
+                browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
+                pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
+            )
+
+        self.assertFalse(launch_config.browser_e2e_followup_enable)
+        self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
+        self.assertIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
     def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -678,7 +749,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(launch_config.omx_workflow, workflow_name)
                     self.assertEqual(launch_config.codex_cycles, 0)
                     self.assertEqual(workflow.codex_cycles, 0)
-                    self.assertEqual(len(workflow.steps), 1)
+                    self.assertEqual(len(workflow.steps), 3)
+                    self.assertEqual(workflow.steps[1].text, _browser_e2e_instruction_text())
+                    self.assertEqual(workflow.steps[2].text, _pr_review_comments_instruction_text())
 
     def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -839,9 +912,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertIsNone(error)
-            self.assertEqual(send_text_mock.call_count, 1)
+            self.assertEqual(send_text_mock.call_count, 3)
             self.assertEqual(send_prompt_mock.call_count, 3)
-            self.assertEqual(queue_mock.call_count, 4)
+            self.assertEqual(queue_mock.call_count, 6)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -853,7 +926,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 4,
+                        "queued_steps": 6,
                         "transport": "tmux",
                     }
                 ],
@@ -1651,12 +1724,56 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_build_plan_agent_workflow_uses_single_prompt_by_default(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        self.assertIsNotNone(_pr_review_comments_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
 
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
-            [("submit_direct_prompt", "implement_task")],
+            [
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
+            ],
+        )
+
+    def test_browser_e2e_followup_requires_main_task_browser_visible_validation_and_fix_loop(self) -> None:
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        prompt = _browser_e2e_instruction_text()
+
+        self.assertIn("$browser-use", prompt)
+        self.assertIn("MAIN_TASK.md", prompt)
+        self.assertIn("completely implemented end-to-end", prompt)
+        self.assertIn("visible in the browser", prompt)
+        self.assertIn("fix any issue", prompt)
+        self.assertIn("introduced by the implementation", prompt)
+
+    def test_plan_agent_followup_prompts_are_loaded_from_markdown_templates(self) -> None:
+        self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_first_cycle_completion_instruction_text)
+        self.assertIsNotNone(_intermediate_cycle_completion_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        self.assertIsNotNone(_pr_review_comments_instruction_text)
+
+        template_root = resources.files("envctl_engine.runtime.prompt_templates")
+
+        def assert_prompt_matches_template(prompt_text: Any, template_name: str) -> None:
+            self.assertEqual(
+                prompt_text(),
+                template_root.joinpath(template_name).read_text(encoding="utf-8").strip(),
+            )
+
+        assert_prompt_matches_template(_finalization_instruction_text, "_plan_agent_finalization_instruction.md")
+        assert_prompt_matches_template(_first_cycle_completion_instruction_text, "_plan_agent_first_cycle_completion.md")
+        assert_prompt_matches_template(
+            _intermediate_cycle_completion_instruction_text,
+            "_plan_agent_intermediate_cycle_completion.md",
+        )
+        assert_prompt_matches_template(_browser_e2e_instruction_text, "_plan_agent_browser_e2e_followup.md")
+        assert_prompt_matches_template(
+            _pr_review_comments_instruction_text,
+            "_plan_agent_pr_review_comments_followup.md",
         )
 
     def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
@@ -1666,12 +1783,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
-            [("submit_direct_prompt", "ship_release")],
+            [
+                ("submit_direct_prompt", "ship_release"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
+            ],
         )
 
-    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_message(self) -> None:
+    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_and_browser_e2e_messages(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -1680,6 +1802,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1687,6 +1811,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
         self.assertIsNotNone(_first_cycle_completion_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=2)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -1698,6 +1823,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1720,6 +1847,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -1943,6 +2072,65 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("Frontend (feature-a Frontend): http://localhost:9201", prompt_text)
         self.assertNotIn("Supabase (feature-a): http://localhost:5633", prompt_text)
 
+    def test_browser_e2e_followup_injects_original_plan_and_runtime_addresses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            original_plan.write_text("# Original task\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
+            runtime.state_repository = _StateRepositoryHarness(
+                RunState(
+                    run_id="run-1",
+                    mode="trees",
+                    services={
+                        "feature-a Frontend": ServiceRecord(
+                            name="feature-a Frontend",
+                            type="frontend",
+                            cwd=str(worktree_root / "frontend"),
+                            actual_port=9300,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a": RequirementsResult(
+                            project="feature-a",
+                            components={"postgres": {"enabled": True, "success": True, "final": 5500}},
+                        )
+                    },
+                )
+            )
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=launch_support._PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_browser_e2e_instruction_text(),
+                ),
+                worktree=CreatedPlanWorktree(
+                    name="feature-a-1",
+                    root=worktree_root,
+                    plan_file="implementations/feature-a.md",
+                ),
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("## Original task source for E2E validation", prompt_text)
+        self.assertIn(str(original_plan), prompt_text)
+        self.assertIn("Use this original plan file before the current MAIN_TASK.md", prompt_text)
+        self.assertIn("## Current envctl runtime addresses", prompt_text)
+        self.assertIn("Postgres (feature-a): localhost:5500", prompt_text)
+        self.assertIn("Frontend (feature-a Frontend): http://localhost:9300", prompt_text)
+
     def test_runtime_addresses_are_not_injected_for_other_direct_presets(self) -> None:
         runtime = _RuntimeHarness(
             config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
@@ -2143,7 +2331,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(workflow.mode, "codex_cycles")
         self.assertEqual(workflow.codex_cycles, 10)
-        self.assertEqual(len(workflow.steps), 1 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(len(workflow.steps), 3 + (1 + 3 * (workflow.codex_cycles - 1)))
 
     def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2291,7 +2479,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 4,
+                        "queued_steps": 6,
                     }
                 ],
             )
@@ -2324,7 +2512,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_codex_cycle_queue_types_message_before_waiting_for_tab_ready(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
-        queued_steps = workflow.steps[1:]
+        queued_steps = workflow.steps[1:2]
         self.assertEqual(len(queued_steps), 1)
         pasted_texts: list[str] = []
         sent_keys: list[str] = []
@@ -2752,6 +2940,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "created_worktree_count": 1,
                     "workflow_mode": "codex_cycles",
                     "codex_cycles": 3,
+                    "browser_e2e_followup_enable": True,
+                    "pr_review_comments_followup_enable": True,
                 }
             ],
         )

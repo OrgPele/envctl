@@ -464,14 +464,18 @@ class ActionCommandOrchestrator:
         repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
         if repo_root is None:
             return None
-        candidates = [SimpleNamespace(name=name, root=root) for name, root in discover_tree_projects(repo_root, trees_dir_name)]
+        candidates = [
+            SimpleNamespace(name=name, root=root)
+            for name, root in discover_tree_projects(repo_root, trees_dir_name)
+        ]
         matches = [candidate for candidate in candidates if Path(str(getattr(candidate, "root"))).resolve() == cwd]
         if len(matches) != 1:
             return None
         return matches[0]
 
     def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
-        normalized_trees_dir = str(trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")).strip().rstrip("/")
+        configured_trees_dir = trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")
+        normalized_trees_dir = str(configured_trees_dir).strip().rstrip("/")
         repo_root_from_layout = self._repo_root_from_worktree_layout(worktree_root, normalized_trees_dir)
         if repo_root_from_layout is not None:
             return repo_root_from_layout
@@ -495,7 +499,12 @@ class ActionCommandOrchestrator:
         common_dir_raw = str(getattr(common, "stdout", "") or "").strip()
         if not common_dir_raw:
             return top_level
-        common_dir = (worktree_root / common_dir_raw).resolve() if not Path(common_dir_raw).is_absolute() else Path(common_dir_raw).resolve()
+        common_dir_path = Path(common_dir_raw)
+        common_dir = (
+            (worktree_root / common_dir_path).resolve()
+            if not common_dir_path.is_absolute()
+            else common_dir_path.resolve()
+        )
         if common_dir.name == ".git":
             return common_dir.parent
         if common_dir.name == "worktrees" and common_dir.parent.name == ".git":
@@ -548,7 +557,12 @@ parent_pid = int(sys.argv[4])
 
 for _ in range(200):
     try:
-        subprocess.run(["kill", "-0", str(parent_pid)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["kill", "-0", str(parent_pid)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         time.sleep(0.1)
     except Exception:
         break
@@ -744,7 +758,11 @@ if result.returncode != 0:
             print_noninteractive_successes=False,
         )
         if not interactive_command:
-            target_names = [str(getattr(target, "name", "")).strip() for target in targets if str(getattr(target, "name", "")).strip()]
+            target_names = [
+                str(getattr(target, "name", "")).strip()
+                for target in targets
+                if str(getattr(target, "name", "")).strip()
+            ]
             self._deferred_post_action_output = lambda: self._print_migrate_result_summary(
                 mode=route.mode,
                 project_names=target_names,
@@ -1466,7 +1484,12 @@ if result.returncode != 0:
                 use_color=use_color,
             )
             if record.status == "success":
-                print(f"{ActionCommandOrchestrator._render_migrate_symbol('✓', status='success', use_color=use_color)} migrate succeeded for {project_name}")
+                success_symbol = ActionCommandOrchestrator._render_migrate_symbol(
+                    "✓",
+                    status="success",
+                    use_color=use_color,
+                )
+                print(f"{success_symbol} migrate succeeded for {project_name}")
                 continue
             if record.status != "failed":
                 continue
@@ -1499,7 +1522,9 @@ if result.returncode != 0:
     def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
         if len(records) <= 1:
             return ()
-        visible_hint_lists = [ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records]
+        visible_hint_lists = [
+            ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records
+        ]
         if not visible_hint_lists:
             return ()
         shared = set(visible_hint_lists[0])
@@ -1648,7 +1673,8 @@ if result.returncode != 0:
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
-        cleaned = strip_ansi("\n".join(part for part in [str(stdout or ""), str(stderr or "")] if str(part or "").strip()))
+        output_parts = [str(stdout or ""), str(stderr or "")]
+        cleaned = strip_ansi("\n".join(part for part in output_parts if str(part or "").strip()))
         lines = [line.rstrip() for line in cleaned.splitlines()]
         label_map = {
             "output directory": "output_dir",
@@ -2308,7 +2334,11 @@ if result.returncode != 0:
         normalized = cleaned.replace("\\", "/").lower()
         if "alembic/env.py" not in normalized:
             return []
-        if "validationerror" not in normalized and "field required" not in normalized and "type=missing" not in normalized:
+        if (
+            "validationerror" not in normalized
+            and "field required" not in normalized
+            and "type=missing" not in normalized
+        ):
             return []
 
         missing_vars = [
@@ -2320,10 +2350,12 @@ if result.returncode != 0:
             return []
         joined_vars = ", ".join(missing_vars)
         return [
-            f"hint: migrate failed before Alembic reached revisions because required env vars were missing ({joined_vars}).",
+            "hint: migrate failed before Alembic reached revisions because required env vars "
+            f"were missing ({joined_vars}).",
             "hint: envctl migrate loads backend env from backend/.env by default.",
             "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
-            "hint: APP_ENV_FILE is exported when an env file is found, and running projects reuse current dependency URLs when available.",
+            "hint: APP_ENV_FILE is exported when an env file is found, and running projects "
+            "reuse current dependency URLs when available.",
         ]
 
     @staticmethod

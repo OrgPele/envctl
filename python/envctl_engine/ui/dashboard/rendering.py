@@ -5,12 +5,19 @@ from __future__ import annotations
 import concurrent.futures
 from datetime import datetime
 import json
+import re
 import shutil
 import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, cast
 
+from envctl_engine.dashboard_metadata import (
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    dashboard_configured_missing_services_by_project,
+    dashboard_project_configured_services_from_metadata,
+    normalize_dashboard_service_types,
+)
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -49,9 +56,17 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         if isinstance(metadata_roots, dict):
             projection = {str(project).strip(): {} for project in metadata_roots if str(project).strip()}
     stopped_services = _dashboard_stopped_services_by_project(state)
-    if stopped_services:
+    project_configured_services = _dashboard_project_configured_services(state)
+    configured_missing_services = dashboard_configured_missing_services_by_project(
+        configured_services=project_configured_services,
+        stopped_services=stopped_services,
+        active_service_names=set(state.services),
+    )
+    if stopped_services or project_configured_services:
         projection = dict(projection)
         for project in stopped_services:
+            projection.setdefault(project, {})
+        for project in project_configured_services:
             projection.setdefault(project, {})
     terminal_width, _ = self._terminal_size()
     project_name_budget = max(20, terminal_width - 4)
@@ -68,7 +83,18 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     dim = palette["dim"]
     separator = "=" * 56
     runs_disabled_dashboard = _dashboard_runs_disabled(state)
-    stopped_service_count = _dashboard_visible_stopped_service_count(state, stopped_services=stopped_services)
+    stopped_service_count = _dashboard_visible_stopped_service_count(
+        state,
+        stopped_services=stopped_services,
+        configured_missing_services=configured_missing_services,
+    )
+    if configured_missing_services:
+        self._emit(
+            "dashboard.configured_missing_services",
+            run_id=state.run_id,
+            services={project: sorted(service_types) for project, service_types in configured_missing_services.items()},
+            metadata_key=DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+        )
     service_statuses = [
         str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()
     ]
@@ -126,8 +152,13 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         backend_service = state.services.get(f"{project} Backend")
         frontend_service = state.services.get(f"{project} Frontend")
         stopped_for_project = stopped_services.get(project, {})
-        backend_stopped = backend_service is None and "backend" in stopped_for_project
-        frontend_stopped = frontend_service is None and "frontend" in stopped_for_project
+        configured_missing_for_project = configured_missing_services.get(project, set())
+        backend_stopped = backend_service is None and (
+            "backend" in stopped_for_project or "backend" in configured_missing_for_project
+        )
+        frontend_stopped = frontend_service is None and (
+            "frontend" in stopped_for_project or "frontend" in configured_missing_for_project
+        )
         project_display = self._truncate_text(project, project_name_budget)
         project_color = project_colors[project_index % len(project_colors)]
         project_pr = project_prs.get(project)
@@ -278,7 +309,7 @@ def _print_dashboard_dependency_rows(
         return
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)) or definition.id == "postgres" or definition.id == "redis":
+        if not bool(component.get("enabled", False)) or definition.id == "postgres":
             continue
         port = component.get("final") or component.get("requested")
         runtime_status = str(component.get("runtime_status", "")).strip().lower()
@@ -452,10 +483,11 @@ def _dashboard_project_root(self: Any, *, state: RunState, project: str) -> Path
 
 
 def _dashboard_configured_service_types(state: RunState) -> set[str]:
-    raw = state.metadata.get("dashboard_configured_service_types")
-    if not isinstance(raw, list):
-        return set()
-    return {str(service_type).strip().lower() for service_type in raw if str(service_type).strip()}
+    return set(normalize_dashboard_service_types(state.metadata.get("dashboard_configured_service_types")))
+
+
+def _dashboard_project_configured_services(state: RunState) -> dict[str, set[str]]:
+    return dashboard_project_configured_services_from_metadata(state.metadata)
 
 
 def _dashboard_configured_service_total(*, projection: Mapping[str, object], configured_service_types: set[str]) -> int:
@@ -485,12 +517,21 @@ def _dashboard_visible_stopped_service_count(
     state: RunState,
     *,
     stopped_services: Mapping[str, Mapping[str, str]],
+    configured_missing_services: Mapping[str, set[str]] | None = None,
 ) -> int:
+    seen: set[str] = set()
     count = 0
     for project, services in stopped_services.items():
         for service_type, stopped_name in services.items():
             service_name = stopped_name or f"{project} {service_type.title()}"
-            if service_name not in state.services:
+            if service_name not in state.services and service_name not in seen:
+                seen.add(service_name)
+                count += 1
+    for project, service_types in (configured_missing_services or {}).items():
+        for service_type in service_types:
+            service_name = f"{project} {service_type.title()}"
+            if service_name not in state.services and service_name not in seen:
+                seen.add(service_name)
                 count += 1
     return count
 
@@ -750,6 +791,8 @@ def _print_dashboard_ai_session_row(
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:
     if project_root is not None and _dashboard_session_matches_project_root(project_root=project_root, session=session):
         return True
+    if _dashboard_session_name_matches_project(project=project, session_name=str(session.get("name", "") or "")):
+        return True
     return _dashboard_window_matches_project(project=project, window_name=str(session.get("windows", "") or ""))
 
 
@@ -775,6 +818,31 @@ def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool
     normalized_expected = str(expected_window).strip().lower()
     normalized_windows = {part.strip().lower() for part in str(window_name).split(",") if part.strip()}
     return normalized_expected in normalized_windows
+
+
+def _dashboard_session_name_matches_project(*, project: str, session_name: str) -> bool:
+    project_feature = _dashboard_project_feature_slug(project)
+    session_feature = _dashboard_omx_session_feature_slug(session_name)
+    return bool(project_feature and session_feature and project_feature == session_feature)
+
+
+def _dashboard_project_feature_slug(project: str) -> str:
+    normalized = str(project or "").strip()
+    normalized = re.sub(r"-\d+$", "", normalized)
+    return _dashboard_normalized_feature_slug(normalized)
+
+
+def _dashboard_omx_session_feature_slug(session_name: str) -> str:
+    normalized = str(session_name or "").strip().lower()
+    match = re.fullmatch(r"omx-\d+-(?P<feature>.+)-\d+-[a-z0-9]+", normalized)
+    if match is None:
+        return ""
+    feature = re.sub(r"-\d+$", "", match.group("feature"))
+    return _dashboard_normalized_feature_slug(feature)
+
+
+def _dashboard_normalized_feature_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 
 
 def _dashboard_project_root_from_state(*, state: RunState, project: str) -> Path | None:
