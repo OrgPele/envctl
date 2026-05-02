@@ -55,6 +55,11 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.plan_agent_browser_e2e_enable)
             self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "false")
 
+    def test_envctl_example_documents_plan_agent_codex_cycles(self) -> None:
+        example = (REPO_ROOT / "docs" / "reference" / ".envctl.example").read_text(encoding="utf-8")
+
+        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", example)
+
     def test_envctl_sh_is_parsed_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
