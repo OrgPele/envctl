@@ -675,6 +675,67 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn(f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md --opencode", output)
             self.assertNotIn("command:", output)
 
+    def test_dashboard_renders_omx_ai_session_matching_feature_slug_even_when_iteration_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "broken_dashboard_configured_missing_service_visibility-2"
+            project_root = repo / "trees" / "broken_dashboard_configured_missing_service_visibility" / "2"
+            plan_path = repo / "todo" / "plans" / "broken" / "dashboard-configured-missing-service-visibility.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {project: str(project_root)},
+                    "dashboard_configured_service_types": ["backend"],
+                    "dashboard_runs_disabled": True,
+                    "dashboard_banner": "envctl runs are disabled for trees; planning and action commands remain available.",
+                },
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk",
+                            "windows": "zsh",
+                            "paths": str(repo),
+                            "attach": (
+                                "tmux attach-session -t "
+                                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk"
+                            ),
+                            "kill": (
+                                "tmux kill-session -t "
+                                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk"
+                            ),
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("", ""),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(
+                "AI session: tmux attach-session -t "
+                "omx-1-broken-dashboard-configured-missing-service-visibility-1-1777741524847-dhd0zk (detached)",
+                output,
+            )
+            self.assertNotIn("○ Run AI:", output)
+
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

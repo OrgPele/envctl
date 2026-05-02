@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 from datetime import datetime
 import json
+import re
 import shutil
 import sys
 import time
@@ -790,6 +791,8 @@ def _print_dashboard_ai_session_row(
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:
     if project_root is not None and _dashboard_session_matches_project_root(project_root=project_root, session=session):
         return True
+    if _dashboard_session_name_matches_project(project=project, session_name=str(session.get("name", "") or "")):
+        return True
     return _dashboard_window_matches_project(project=project, window_name=str(session.get("windows", "") or ""))
 
 
@@ -815,6 +818,31 @@ def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool
     normalized_expected = str(expected_window).strip().lower()
     normalized_windows = {part.strip().lower() for part in str(window_name).split(",") if part.strip()}
     return normalized_expected in normalized_windows
+
+
+def _dashboard_session_name_matches_project(*, project: str, session_name: str) -> bool:
+    project_feature = _dashboard_project_feature_slug(project)
+    session_feature = _dashboard_omx_session_feature_slug(session_name)
+    return bool(project_feature and session_feature and project_feature == session_feature)
+
+
+def _dashboard_project_feature_slug(project: str) -> str:
+    normalized = str(project or "").strip()
+    normalized = re.sub(r"-\d+$", "", normalized)
+    return _dashboard_normalized_feature_slug(normalized)
+
+
+def _dashboard_omx_session_feature_slug(session_name: str) -> str:
+    normalized = str(session_name or "").strip().lower()
+    match = re.fullmatch(r"omx-\d+-(?P<feature>.+)-\d+-[a-z0-9]+", normalized)
+    if match is None:
+        return ""
+    feature = re.sub(r"-\d+$", "", match.group("feature"))
+    return _dashboard_normalized_feature_slug(feature)
+
+
+def _dashboard_normalized_feature_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 
 
 def _dashboard_project_root_from_state(*, state: RunState, project: str) -> Path | None:
