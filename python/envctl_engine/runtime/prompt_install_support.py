@@ -16,6 +16,7 @@ _SUPPORTED_CLIS: Final[tuple[str, ...]] = ("codex", "claude", "opencode")
 _DEFAULT_PRESET = "all"
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _PROMPT_TEMPLATE_SUFFIX = ".md"
+_PROMPT_TEMPLATE_EXCLUSION_PREFIX = "_"
 _CODEX_SKILL_FEATURE_FLAG = "ENVCTL_EXPERIMENTAL_CODEX_SKILLS"
 _PROMPT_ARGUMENT_PLACEHOLDER = "$ARGUMENTS"
 _CODEX_SKILL_ARGUMENT_SENTINEL = "additional user instructions supplied with the invoking prompt"
@@ -503,7 +504,7 @@ def _template_files() -> tuple[Traversable, ...]:
     for entry in template_root.iterdir():
         if not entry.is_file() or not entry.name.endswith(_PROMPT_TEMPLATE_SUFFIX):
             continue
-        if entry.name.startswith("_"):
+        if entry.name.startswith(_PROMPT_TEMPLATE_EXCLUSION_PREFIX):
             continue
         files.append(entry)
     return tuple(sorted(files, key=lambda item: item.name))

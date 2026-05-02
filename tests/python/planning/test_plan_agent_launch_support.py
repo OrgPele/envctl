@@ -1724,25 +1724,22 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         template_root = resources.files("envctl_engine.runtime.prompt_templates")
 
-        self.assertEqual(
-            _finalization_instruction_text(),
-            template_root.joinpath("_plan_agent_finalization_instruction.md").read_text(encoding="utf-8").strip(),
+        def assert_prompt_matches_template(prompt_text: Any, template_name: str) -> None:
+            self.assertEqual(
+                prompt_text(),
+                template_root.joinpath(template_name).read_text(encoding="utf-8").strip(),
+            )
+
+        assert_prompt_matches_template(_finalization_instruction_text, "_plan_agent_finalization_instruction.md")
+        assert_prompt_matches_template(_first_cycle_completion_instruction_text, "_plan_agent_first_cycle_completion.md")
+        assert_prompt_matches_template(
+            _intermediate_cycle_completion_instruction_text,
+            "_plan_agent_intermediate_cycle_completion.md",
         )
-        self.assertEqual(
-            _first_cycle_completion_instruction_text(),
-            template_root.joinpath("_plan_agent_first_cycle_completion.md").read_text(encoding="utf-8").strip(),
-        )
-        self.assertEqual(
-            _intermediate_cycle_completion_instruction_text(),
-            template_root.joinpath("_plan_agent_intermediate_cycle_completion.md").read_text(encoding="utf-8").strip(),
-        )
-        self.assertEqual(
-            _browser_e2e_instruction_text(),
-            template_root.joinpath("_plan_agent_browser_e2e_followup.md").read_text(encoding="utf-8").strip(),
-        )
-        self.assertEqual(
-            _pr_review_comments_instruction_text(),
-            template_root.joinpath("_plan_agent_pr_review_comments_followup.md").read_text(encoding="utf-8").strip(),
+        assert_prompt_matches_template(_browser_e2e_instruction_text, "_plan_agent_browser_e2e_followup.md")
+        assert_prompt_matches_template(
+            _pr_review_comments_instruction_text,
+            "_plan_agent_pr_review_comments_followup.md",
         )
 
     def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
