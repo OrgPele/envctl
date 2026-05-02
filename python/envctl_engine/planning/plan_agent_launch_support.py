@@ -1918,6 +1918,7 @@ def _queue_tmux_codex_workflow_steps(
             launch_config=launch_config,
             cli=cli,
             step=step,
+            worktree=worktree,
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"
@@ -2342,10 +2343,58 @@ def _workflow_step_prompt_text(
     launch_config: PlanAgentLaunchConfig,
     cli: str,
     step: _PlanAgentWorkflowStep,
+    worktree: CreatedPlanWorktree | None = None,
 ) -> tuple[str, str | None]:
     if step.kind not in {"submit_direct_prompt", "queue_direct_prompt"}:
-        return step.text, None
+        return _shape_queue_message_text(runtime, step.text, worktree=worktree), None
     return _resolve_preset_submission_text(runtime, launch_config=launch_config, cli=cli, preset=step.text)
+
+
+def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanWorktree | None = None) -> str:
+    if str(text).strip() != _browser_e2e_instruction_text().strip():
+        return text
+    sections = [
+        section
+        for section in (
+            _original_task_source_prompt_section(runtime, worktree=worktree),
+            _runtime_addresses_prompt_section(runtime),
+        )
+        if section
+    ]
+    if not sections:
+        return text
+    return f"{str(text).rstrip()}\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _original_task_source_prompt_section(
+    runtime: Any,
+    *,
+    worktree: CreatedPlanWorktree | None,
+) -> str:
+    if worktree is None:
+        return ""
+    plan_path = _original_plan_file_path(runtime, str(worktree.plan_file or ""))
+    main_task_path = Path(worktree.root) / "MAIN_TASK.md"
+    lines = [
+        "## Original task source for E2E validation",
+        "MAIN_TASK.md may be rewritten by cycle prompts. Use this original plan file before the current "
+        "MAIN_TASK.md when validating the end-to-end requirement.",
+    ]
+    if plan_path is not None:
+        lines.append(f'- Original plan file: "{plan_path}"')
+    lines.append(f'- Seeded worktree task file: "{main_task_path}"')
+    return "\n".join(lines)
+
+
+def _original_plan_file_path(runtime: Any, plan_file: str) -> Path | None:
+    normalized = str(plan_file or "").strip()
+    if not normalized:
+        return None
+    raw_path = Path(normalized).expanduser()
+    if raw_path.is_absolute():
+        return raw_path
+    planning_dir = Path(getattr(getattr(runtime, "config", None), "planning_dir", "todo/plans"))
+    return (planning_dir / raw_path).resolve()
 
 
 def _shape_prompt_text(
@@ -2664,6 +2713,7 @@ def _queue_codex_workflow_steps(
             launch_config=launch_config,
             cli=cli,
             step=step,
+            worktree=worktree,
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"

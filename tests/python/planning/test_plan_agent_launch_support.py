@@ -2072,6 +2072,65 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("Frontend (feature-a Frontend): http://localhost:9201", prompt_text)
         self.assertNotIn("Supabase (feature-a): http://localhost:5633", prompt_text)
 
+    def test_browser_e2e_followup_injects_original_plan_and_runtime_addresses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            original_plan.write_text("# Original task\n", encoding="utf-8")
+            runtime = _RuntimeHarness(
+                config=load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
+            runtime.state_repository = _StateRepositoryHarness(
+                RunState(
+                    run_id="run-1",
+                    mode="trees",
+                    services={
+                        "feature-a Frontend": ServiceRecord(
+                            name="feature-a Frontend",
+                            type="frontend",
+                            cwd=str(worktree_root / "frontend"),
+                            actual_port=9300,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a": RequirementsResult(
+                            project="feature-a",
+                            components={"postgres": {"enabled": True, "success": True, "final": 5500}},
+                        )
+                    },
+                )
+            )
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=launch_support._PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_browser_e2e_instruction_text(),
+                ),
+                worktree=CreatedPlanWorktree(
+                    name="feature-a-1",
+                    root=worktree_root,
+                    plan_file="implementations/feature-a.md",
+                ),
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("## Original task source for E2E validation", prompt_text)
+        self.assertIn(str(original_plan), prompt_text)
+        self.assertIn("Use this original plan file before the current MAIN_TASK.md", prompt_text)
+        self.assertIn("## Current envctl runtime addresses", prompt_text)
+        self.assertIn("Postgres (feature-a): localhost:5500", prompt_text)
+        self.assertIn("Frontend (feature-a Frontend): http://localhost:9300", prompt_text)
+
     def test_runtime_addresses_are_not_injected_for_other_direct_presets(self) -> None:
         runtime = _RuntimeHarness(
             config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),

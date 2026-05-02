@@ -10,6 +10,7 @@ Implemented project-scoped dashboard metadata for configured backend/frontend se
 - Added `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE`, defaulting to `true`; set it to a false boolean value in `.envctl` or the environment to skip the `$browser-use` E2E follow-up when browser validation is not applicable.
 - Added `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE`, defaulting to `true`; set it to a false boolean value in `.envctl` or the environment to skip the final PR review-comments follow-up when comment handling is manual.
 - Plan-agent follow-up prompts are now backed by private bundled markdown templates so queue text can be edited without changing Python code.
+- Browser E2E follow-up prompts now include the original plan file path when available, plus current localhost runtime addresses from envctl state so validation can start from ready host/port values instead of asking the user to start services.
 
 ### Verification
 - `uv tool run ruff check python tests scripts` -> passed
