@@ -13,6 +13,11 @@ from typing import Any, Mapping, cast
 
 from envctl_engine.state.models import RunState
 from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.shared.dashboard_metadata import (
+    dashboard_configured_missing_services_by_project,
+    dashboard_global_configured_service_types,
+    dashboard_stopped_services_by_project,
+)
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -49,10 +54,20 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         if isinstance(metadata_roots, dict):
             projection = {str(project).strip(): {} for project in metadata_roots if str(project).strip()}
     stopped_services = _dashboard_stopped_services_by_project(state)
+    configured_missing_services = dashboard_configured_missing_services_by_project(state)
     if stopped_services:
         projection = dict(projection)
         for project in stopped_services:
             projection.setdefault(project, {})
+    if configured_missing_services:
+        projection = dict(projection)
+        for project in configured_missing_services:
+            projection.setdefault(project, {})
+        self._emit(
+            "dashboard.configured_missing_services",
+            run_id=state.run_id,
+            services={project: sorted(services) for project, services in configured_missing_services.items()},
+        )
     terminal_width, _ = self._terminal_size()
     project_name_budget = max(20, terminal_width - 4)
     palette = self._dashboard_palette()
@@ -68,7 +83,11 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     dim = palette["dim"]
     separator = "=" * 56
     runs_disabled_dashboard = _dashboard_runs_disabled(state)
-    stopped_service_count = _dashboard_visible_stopped_service_count(state, stopped_services=stopped_services)
+    stopped_service_count = _dashboard_visible_stopped_service_count(
+        state,
+        stopped_services=stopped_services,
+        configured_missing_services=configured_missing_services,
+    )
     service_statuses = [
         str(getattr(service, "status", "unknown") or "unknown").strip().lower() for service in state.services.values()
     ]
@@ -126,8 +145,11 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         backend_service = state.services.get(f"{project} Backend")
         frontend_service = state.services.get(f"{project} Frontend")
         stopped_for_project = stopped_services.get(project, {})
+        configured_missing_for_project = configured_missing_services.get(project, {})
         backend_stopped = backend_service is None and "backend" in stopped_for_project
         frontend_stopped = frontend_service is None and "frontend" in stopped_for_project
+        backend_configured_missing = backend_service is None and "backend" in configured_missing_for_project
+        frontend_configured_missing = frontend_service is None and "frontend" in configured_missing_for_project
         project_display = self._truncate_text(project, project_name_budget)
         project_color = project_colors[project_index % len(project_colors)]
         project_pr = project_prs.get(project)
@@ -141,12 +163,12 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
         else:
             print(f"  {bold}{project_color}{project_display}{reset}")
         show_configured_backend = runs_disabled_dashboard and "backend" in configured_service_types
-        if backend_service is not None or backend_stopped or show_configured_backend:
+        if backend_service is not None or backend_stopped or backend_configured_missing or show_configured_backend:
             self._print_dashboard_service_row(
                 label="Backend",
                 service=backend_service,
                 url=str(backend_url) if backend_url else None,
-                stopped_not_running=backend_stopped,
+                stopped_not_running=backend_stopped or backend_configured_missing,
                 configured_not_running=bool(
                     runs_disabled_dashboard and backend_service is None and "backend" in configured_service_types
                 ),
@@ -158,12 +180,12 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 reset=reset,
             )
         show_configured_frontend = runs_disabled_dashboard and "frontend" in configured_service_types
-        if frontend_service is not None or frontend_stopped or show_configured_frontend:
+        if frontend_service is not None or frontend_stopped or frontend_configured_missing or show_configured_frontend:
             self._print_dashboard_service_row(
                 label="Frontend",
                 service=frontend_service,
                 url=str(frontend_url) if frontend_url else None,
-                stopped_not_running=frontend_stopped,
+                stopped_not_running=frontend_stopped or frontend_configured_missing,
                 configured_not_running=bool(
                     runs_disabled_dashboard and frontend_service is None and "frontend" in configured_service_types
                 ),
@@ -452,10 +474,7 @@ def _dashboard_project_root(self: Any, *, state: RunState, project: str) -> Path
 
 
 def _dashboard_configured_service_types(state: RunState) -> set[str]:
-    raw = state.metadata.get("dashboard_configured_service_types")
-    if not isinstance(raw, list):
-        return set()
-    return {str(service_type).strip().lower() for service_type in raw if str(service_type).strip()}
+    return dashboard_global_configured_service_types(state)
 
 
 def _dashboard_configured_service_total(*, projection: Mapping[str, object], configured_service_types: set[str]) -> int:
@@ -465,32 +484,28 @@ def _dashboard_configured_service_total(*, projection: Mapping[str, object], con
 
 
 def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
-    raw = state.metadata.get("dashboard_stopped_services")
-    if not isinstance(raw, list):
-        return {}
-    stopped: dict[str, dict[str, str]] = {}
-    for item in raw:
-        if not isinstance(item, Mapping):
-            continue
-        project = str(item.get("project", "") or "").strip()
-        service_type = str(item.get("type", "") or "").strip().lower()
-        name = str(item.get("name", "") or "").strip()
-        if not project or service_type not in {"backend", "frontend"}:
-            continue
-        stopped.setdefault(project, {})[service_type] = name
-    return stopped
+    return dashboard_stopped_services_by_project(state)
 
 
 def _dashboard_visible_stopped_service_count(
     state: RunState,
     *,
     stopped_services: Mapping[str, Mapping[str, str]],
+    configured_missing_services: Mapping[str, Mapping[str, str]] | None = None,
 ) -> int:
     count = 0
+    counted: set[str] = set()
     for project, services in stopped_services.items():
         for service_type, stopped_name in services.items():
             service_name = stopped_name or f"{project} {service_type.title()}"
-            if service_name not in state.services:
+            if service_name not in state.services and service_name not in counted:
+                counted.add(service_name)
+                count += 1
+    for project, services in (configured_missing_services or {}).items():
+        for service_type, service_name in services.items():
+            normalized_name = service_name or f"{project} {service_type.title()}"
+            if normalized_name not in state.services and normalized_name not in counted:
+                counted.add(normalized_name)
                 count += 1
     return count
 

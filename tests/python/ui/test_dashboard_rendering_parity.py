@@ -11,6 +11,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -201,6 +202,81 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Frontend: not running [Stopped]", output)
             self.assertNotIn("Frontend: n/a [Unknown]", output)
 
+    def test_dashboard_shows_project_configured_missing_backend_as_stopped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={
+                    "project_roots": {"Main": str(repo)},
+                    "dashboard_project_configured_services": {"Main": ["backend", "frontend"]},
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("services: 2 total | 1 running | 1 not running | 0 starting/unknown | 0 issues", output)
+            self.assertIn("Backend: not running [Stopped]", output)
+            self.assertIn("Frontend: http://localhost:9000", output)
+            self.assertNotIn("Backend: not running [Configured]", output)
+
+    def test_dashboard_does_not_infer_backend_for_project_configured_frontend_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="main",
+                services={
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={
+                    "project_roots": {"Main": str(repo)},
+                    "dashboard_project_configured_services": {"Main": ["frontend"]},
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("services: 1 total | 1 running | 0 starting/unknown | 0 issues", output)
+            self.assertIn("Frontend: http://localhost:9000", output)
+            self.assertNotIn("Backend:", output)
+
     def test_dashboard_shows_all_stopped_rows_after_entire_worktree_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -364,7 +440,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("http://localhost:9000", output)
             self.assertNotIn("http://localhost:5678", output)
 
-            runtime_projection = build_runtime_map(state)["projection"]
+            runtime_projection = cast(dict[str, dict[str, object]], build_runtime_map(state)["projection"])
             self.assertEqual(runtime_projection["Main"]["backend_url"], "http://localhost:8000")
             self.assertIsNone(runtime_projection["Main"]["frontend_url"])
 
