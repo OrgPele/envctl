@@ -100,6 +100,13 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertFalse((Path(tmpdir) / ".claude" / "commands" / "implement_task.md").exists())
             self.assertFalse((Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md").exists())
 
+    def test_available_presets_excludes_private_plan_agent_followup_templates(self) -> None:
+        presets = _available_presets()
+
+        self.assertIn("implement_task", presets)
+        self.assertNotIn("_plan_agent_browser_e2e_followup", presets)
+        self.assertNotIn("_plan_agent_pr_review_comments_followup", presets)
+
     def test_install_prompts_omitted_preset_defaults_to_all_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = SimpleNamespace(env={"HOME": tmpdir})

@@ -9,6 +9,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from importlib import resources
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -1701,6 +1702,47 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _browser_e2e_instruction_text()),
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
+        )
+
+    def test_browser_e2e_followup_requires_main_task_browser_visible_validation_and_fix_loop(self) -> None:
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        prompt = _browser_e2e_instruction_text()
+
+        self.assertIn("$browser-use", prompt)
+        self.assertIn("MAIN_TASK.md", prompt)
+        self.assertIn("completely implemented end-to-end", prompt)
+        self.assertIn("visible in the browser", prompt)
+        self.assertIn("fix any issue", prompt)
+        self.assertIn("introduced by the implementation", prompt)
+
+    def test_plan_agent_followup_prompts_are_loaded_from_markdown_templates(self) -> None:
+        self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_first_cycle_completion_instruction_text)
+        self.assertIsNotNone(_intermediate_cycle_completion_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        self.assertIsNotNone(_pr_review_comments_instruction_text)
+
+        template_root = resources.files("envctl_engine.runtime.prompt_templates")
+
+        self.assertEqual(
+            _finalization_instruction_text(),
+            template_root.joinpath("_plan_agent_finalization_instruction.md").read_text(encoding="utf-8").strip(),
+        )
+        self.assertEqual(
+            _first_cycle_completion_instruction_text(),
+            template_root.joinpath("_plan_agent_first_cycle_completion.md").read_text(encoding="utf-8").strip(),
+        )
+        self.assertEqual(
+            _intermediate_cycle_completion_instruction_text(),
+            template_root.joinpath("_plan_agent_intermediate_cycle_completion.md").read_text(encoding="utf-8").strip(),
+        )
+        self.assertEqual(
+            _browser_e2e_instruction_text(),
+            template_root.joinpath("_plan_agent_browser_e2e_followup.md").read_text(encoding="utf-8").strip(),
+        )
+        self.assertEqual(
+            _pr_review_comments_instruction_text(),
+            template_root.joinpath("_plan_agent_pr_review_comments_followup.md").read_text(encoding="utf-8").strip(),
         )
 
     def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:

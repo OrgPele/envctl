@@ -503,6 +503,8 @@ def _template_files() -> tuple[Traversable, ...]:
     for entry in template_root.iterdir():
         if not entry.is_file() or not entry.name.endswith(_PROMPT_TEMPLATE_SUFFIX):
             continue
+        if entry.name.startswith("_"):
+            continue
         files.append(entry)
     return tuple(sorted(files, key=lambda item: item.name))
 

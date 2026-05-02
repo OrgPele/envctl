@@ -1,0 +1,3 @@
+$browser-use
+
+After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have completed successfully, run browser-based E2E validation against the full `envctl --entire-system --headless` stack. Re-read the initial `MAIN_TASK.md` and verify that the requested feature is completely implemented end-to-end, using the actual runtime addresses from envctl state/health output. If the feature is browser-visible or can be observed through the browser, prove it is visible in the browser and capture evidence. You must fix any issue, regression, or mismatch introduced by the implementation before final handoff, then rerun the relevant checks, stop the exact scope you started, and report the evidence.

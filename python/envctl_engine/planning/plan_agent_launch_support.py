@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -57,6 +58,12 @@ _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
 _PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
+_PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
+_FINALIZATION_INSTRUCTION_TEMPLATE = "_plan_agent_finalization_instruction"
+_FIRST_CYCLE_COMPLETION_TEMPLATE = "_plan_agent_first_cycle_completion"
+_INTERMEDIATE_CYCLE_COMPLETION_TEMPLATE = "_plan_agent_intermediate_cycle_completion"
+_BROWSER_E2E_FOLLOWUP_TEMPLATE = "_plan_agent_browser_e2e_followup"
+_PR_REVIEW_COMMENTS_FOLLOWUP_TEMPLATE = "_plan_agent_pr_review_comments_followup"
 _PLAN_AGENT_CODEX_CYCLE_CAP = 10
 _REVIEW_WORKTREE_PRESET = "review_worktree_imp"
 _WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
@@ -202,38 +209,34 @@ class _PlanAgentWorkflow:
 
 
 def _finalization_instruction_text() -> str:
-    return _slash_command("codex", "finalize_task")
+    return _load_plan_agent_followup_prompt(_FINALIZATION_INSTRUCTION_TEMPLATE)
 
 
 def _first_cycle_completion_instruction_text() -> str:
-    return (
-        "When the current implementation pass finishes, commit the work, push the branch, open or update the PR, "
-        "then wait for GitHub status checks to complete and confirm all required checks pass."
-    )
+    return _load_plan_agent_followup_prompt(_FIRST_CYCLE_COMPLETION_TEMPLATE)
 
 
 def _intermediate_cycle_completion_instruction_text() -> str:
-    return "When the current implementation pass finishes, commit the work and push the branch."
+    return _load_plan_agent_followup_prompt(_INTERMEDIATE_CYCLE_COMPLETION_TEMPLATE)
 
 
 def _browser_e2e_instruction_text() -> str:
-    return (
-        "$browser-use\n\n"
-        "After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have "
-        "completed successfully, run browser-based E2E validation against the full `envctl --entire-system "
-        "--headless` stack. Use the actual runtime addresses from envctl state/health output, capture evidence, "
-        "stop the exact scope you started, and fix any failure before final handoff."
-    )
+    return _load_plan_agent_followup_prompt(_BROWSER_E2E_FOLLOWUP_TEMPLATE)
 
 
 def _pr_review_comments_instruction_text() -> str:
-    return (
-        "$gh-address-comments\n\n"
-        "Inspect all unresolved PR review comments and review threads on the current branch PR, then address ALL "
-        "actionable comments. Implement required fixes, update tests as needed, commit and push the follow-up work, "
-        "then wait for GitHub status checks and final PR confirmation before closing out the task. If every comment "
-        "is already resolved or non-actionable, report that evidence instead of making unnecessary edits."
-    )
+    return _load_plan_agent_followup_prompt(_PR_REVIEW_COMMENTS_FOLLOWUP_TEMPLATE)
+
+
+def _load_plan_agent_followup_prompt(name: str) -> str:
+    template_name = f"{str(name).strip()}.md"
+    template_file = resources.files(_PROMPT_TEMPLATE_PACKAGE).joinpath(template_name)
+    if not template_file.is_file():
+        raise LookupError(f"Missing plan-agent follow-up prompt template: {template_name}")
+    body = template_file.read_text(encoding="utf-8").strip()
+    if not body:
+        raise ValueError(f"Plan-agent follow-up prompt template is empty: {template_name}")
+    return body
 
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
