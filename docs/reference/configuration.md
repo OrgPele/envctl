@@ -224,7 +224,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
-| `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `2` | Codex-only queued workflow count for the post-`--plan` launcher. The default `2` queues a first follow-up telling Codex to commit, push, and open or update the PR before the final `continue_task` -> `implement_task` -> `finalize_task` round. `0` keeps the existing one-shot preset launch. `1` queues `implement_task` plus `finalize_task`. Higher values keep that first follow-up, use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
+| `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `2` | Codex-only queued workflow count for the post-`--plan` launcher. The default `2` queues a first follow-up telling Codex to commit, push, open or update the PR, and wait for GitHub status checks before the final `continue_task` -> `implement_task` -> `finalize_task` round, then queues a `$browser-use` E2E follow-up after finalization. `0` submits the single implementation prompt and queues the `$browser-use` E2E follow-up for Codex/OMX surfaces. `1` queues `implement_task`, `finalize_task`, and the `$browser-use` E2E follow-up. Higher values keep that first follow-up, use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus the queued `$browser-use` E2E follow-up for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
@@ -252,8 +252,8 @@ Alias env vars:
 
 Cycle mode notes:
 
-- the queued cycle workflow is active only for Codex and only when `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is a positive integer
-- invalid or negative values are ignored and the launcher stays on the one-shot workflow
+- the queued cycle workflow is active only for Codex and only when `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is a positive integer; the final `$browser-use` E2E follow-up is queued for Codex/OMX surfaces even when the cycle count is `0`
+- invalid or negative values are ignored and the launcher stays on the single implementation prompt plus `$browser-use` E2E follow-up workflow
 - very large values are bounded internally for safety before the workflow is expanded
 - if queue injection fails after the initial `implement_task` submit, envctl falls back to the initial one-shot launch and leaves the Codex surface running
 - the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` sets `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` only for the envctl command it launches

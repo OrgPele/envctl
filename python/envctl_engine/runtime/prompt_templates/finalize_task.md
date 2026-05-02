@@ -17,6 +17,7 @@ $ARGUMENTS
 5. Commit the work.
 6. Push the branch.
 7. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks.
+8. After creating or updating the PR, wait for GitHub status checks to complete (for example, `gh pr checks --watch` when available), verify that all required checks pass, and fix/re-push if any check fails before final handoff.
 
 ## Non-negotiables
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.

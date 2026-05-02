@@ -205,11 +205,24 @@ def _finalization_instruction_text() -> str:
 
 
 def _first_cycle_completion_instruction_text() -> str:
-    return "When the current implementation pass finishes, commit the work, push the branch, and open or update the PR."
+    return (
+        "When the current implementation pass finishes, commit the work, push the branch, open or update the PR, "
+        "then wait for GitHub status checks to complete and confirm all required checks pass."
+    )
 
 
 def _intermediate_cycle_completion_instruction_text() -> str:
     return "When the current implementation pass finishes, commit the work and push the branch."
+
+
+def _browser_e2e_instruction_text() -> str:
+    return (
+        "$browser-use\n\n"
+        "After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have "
+        "completed successfully, run browser-based E2E validation against the full `envctl --entire-system "
+        "--headless` stack. Use the actual runtime addresses from envctl state/health output, capture evidence, "
+        "stop the exact scope you started, and fix any failure before final handoff."
+    )
 
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
@@ -253,15 +266,19 @@ def _build_plan_agent_workflow(
     else:
         initial_step = _PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command(cli, preset))
     if normalized_cli != "codex" or bounded_cycles <= 0:
+        steps = [initial_step]
+        if normalized_cli == "codex":
+            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
             codex_cycles=bounded_cycles,
-            steps=(initial_step,),
+            steps=tuple(steps),
         )
     steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")]
     for cycle in range(1, bounded_cycles + 1):
         if cycle == bounded_cycles:
             steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task"))
+            steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
             continue
         if cycle == 1:
             completion_text = _first_cycle_completion_instruction_text()

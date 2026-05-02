@@ -26,6 +26,7 @@ _build_plan_agent_workflow = cast(Any, getattr(launch_support, "_build_plan_agen
 _finalization_instruction_text = cast(Any, getattr(launch_support, "_finalization_instruction_text", None))
 _first_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_first_cycle_completion_instruction_text", None))
 _intermediate_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None))
+_browser_e2e_instruction_text = cast(Any, getattr(launch_support, "_browser_e2e_instruction_text", None))
 _wait_for_codex_queue_ready = cast(Any, getattr(launch_support, "_wait_for_codex_queue_ready", None))
 _workflow_step_prompt_text = cast(Any, getattr(launch_support, "_workflow_step_prompt_text", None))
 _WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarget", None))
@@ -678,7 +679,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(launch_config.omx_workflow, workflow_name)
                     self.assertEqual(launch_config.codex_cycles, 0)
                     self.assertEqual(workflow.codex_cycles, 0)
-                    self.assertEqual(len(workflow.steps), 1)
+                    self.assertEqual(len(workflow.steps), 2)
+                    self.assertEqual(workflow.steps[1].text, _browser_e2e_instruction_text())
 
     def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -839,9 +841,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertIsNone(error)
-            self.assertEqual(send_text_mock.call_count, 1)
+            self.assertEqual(send_text_mock.call_count, 2)
             self.assertEqual(send_prompt_mock.call_count, 3)
-            self.assertEqual(queue_mock.call_count, 4)
+            self.assertEqual(queue_mock.call_count, 5)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -853,7 +855,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 4,
+                        "queued_steps": 5,
                         "transport": "tmux",
                     }
                 ],
@@ -1651,12 +1653,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_build_plan_agent_workflow_uses_single_prompt_by_default(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
 
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
-            [("submit_direct_prompt", "implement_task")],
+            [
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+            ],
         )
 
     def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
@@ -1666,12 +1672,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
-            [("submit_direct_prompt", "ship_release")],
+            [
+                ("submit_direct_prompt", "ship_release"),
+                ("queue_message", _browser_e2e_instruction_text()),
+            ],
         )
 
-    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_message(self) -> None:
+    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_and_browser_e2e_messages(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -1680,6 +1690,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
             ],
         )
 
@@ -1687,6 +1698,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
         self.assertIsNotNone(_first_cycle_completion_instruction_text)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=2)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -1698,6 +1710,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
             ],
         )
 
@@ -1720,6 +1733,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
             ],
         )
 
@@ -2143,7 +2157,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(workflow.mode, "codex_cycles")
         self.assertEqual(workflow.codex_cycles, 10)
-        self.assertEqual(len(workflow.steps), 1 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(len(workflow.steps), 2 + (1 + 3 * (workflow.codex_cycles - 1)))
 
     def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2291,7 +2305,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 4,
+                        "queued_steps": 5,
                     }
                 ],
             )
@@ -2324,7 +2338,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_codex_cycle_queue_types_message_before_waiting_for_tab_ready(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
-        queued_steps = workflow.steps[1:]
+        queued_steps = workflow.steps[1:2]
         self.assertEqual(len(queued_steps), 1)
         pasted_texts: list[str] = []
         sent_keys: list[str] = []

@@ -106,11 +106,11 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `2`, so Codex launches first queue a commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
+- default/unset is `2`, so Codex launches first queue a commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, and a queued `$browser-use` E2E follow-up
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
-- `0` keeps the current one-shot launch behavior
-- `2` queues a plain follow-up asking Codex to commit, push, and open or update the PR after the first pass, then queues `continue_task`, `implement_task`, and `finalize_task`
-- `3` or more keep that first commit/push/PR follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` for the final round
+- `0` submits the single implementation prompt and queues the `$browser-use` E2E follow-up for Codex/OMX surfaces
+- `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, and a `$browser-use` E2E follow-up
+- `3` or more keep that first commit/push/PR/status-check follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus the queued `$browser-use` E2E follow-up for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
@@ -121,9 +121,9 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 The installed create-plan skills connect planning documents to these launch paths:
 
 - `$envctl-create-plan` stays plan-only and approval-first.
-- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --headless --tmux-new-session`; OpenCode prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`; OpenCode prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.
 

@@ -83,14 +83,14 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
-## Launch scope minimization
-Before showing or running any envctl worktree-and-prompt follow-up, infer the smallest safe launch scope from the researched change surface and the user's request:
+## Launch scope default
+Before showing or running any envctl worktree-and-prompt follow-up, default implementation launches to the full stack with `--entire-system` so every feature plan starts with dependencies plus all configured backend/frontend services available for E2E validation.
 
-- For backend-only changes, include `--only-backend` so envctl launches only the backend app service and skips frontend, managed dependencies, and dependency prep.
-- For frontend-only changes, include `--only-frontend` so envctl launches only the frontend app service and skips backend, managed dependencies, and dependency prep.
-- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, or anything uncertain, use no minimization flag and run all configured parts.
-- For plans that need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that do not require backend, frontend, managed dependencies, or dependency prep), include `--no-infra`.
-- For explicitly requested dependency/container/infrastructure verification, do not use `--no-infra`; prefer the broader scope needed to prove the plan safely.
+- For backend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-backend` or repo evidence proves full-stack startup is impossible or actively harmful.
+- For frontend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-frontend` or repo evidence proves full-stack startup is impossible or actively harmful.
+- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, browser-visible behavior, or anything uncertain, use `--entire-system`.
+- For plans that truly need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that cannot benefit from backend, frontend, managed dependencies, or dependency prep), include `--no-infra` and explain why full-stack E2E does not apply.
+- For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
@@ -110,13 +110,13 @@ If the envctl launch command exits non-zero, report the plan path, attempted com
 If launch succeeds, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and that implementation work is now delegated to the launched session.
 The prompt must not begin implementing in the original planning session after launching envctl.
 
-Run the launch command after the plan path exists and selector derivation succeeds. If launch scope minimization selects any flags, insert them immediately before `--headless`; if it selects no flags, run exactly this command:
+Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
 
 ```bash
-cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --headless --tmux-new-session
+cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session
 ```
 
-For example, a frontend-only plan should run `cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --only-frontend --headless --tmux-new-session`, and a no-runtime-infrastructure plan should use `--no-infra`.
+For example, a frontend-only plan still keeps `--entire-system` by default; use `--only-frontend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
 OMX-managed launches are Codex-only, and `--ralph` is the loop mechanism for this surface. Codex cycle settings are intentionally not used here because the plan-agent launch resolver disables Codex cycles when an OMX workflow is selected; Ralph owns its own persistence loop.
 

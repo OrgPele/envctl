@@ -130,9 +130,9 @@ Behavior:
 Auto-launch create-plan presets:
 
 - `create_plan` remains plan-only and approval-first; `$envctl-create-plan` writes the plan and asks before running envctl.
-- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
-- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --headless --tmux-new-session`; OpenCode launches prepend `/ulw-loop` by default.
-- `create_plan_auto_omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`.
+- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
+- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`; OpenCode launches prepend `/ulw-loop` by default.
+- `create_plan_auto_omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`.
 - Each auto preset creates/syncs implementation worktrees and starts a fresh implementation session; use it only when you want implementation to start immediately.
 - Refresh installed prompt files with `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes`.
 
@@ -380,9 +380,9 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot launch behavior
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `finalize_task`
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, and a queued `$browser-use` E2E follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues the `$browser-use` E2E follow-up for Codex/OMX surfaces
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, and the `$browser-use` E2E follow-up
 
 Degraded plan-agent handoff:
 
@@ -396,8 +396,8 @@ Optional dashboard review-tab launch:
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR follow-up, then `continue_task`, `implement_task`, and `finalize_task`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` for the last round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, and a queued `$browser-use` E2E follow-up
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus the queued `$browser-use` E2E follow-up for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
 

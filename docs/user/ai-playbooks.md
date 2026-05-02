@@ -68,9 +68,9 @@ All Codex presets now install as explicit-only skills. Run `envctl install-promp
 Create-plan skill behavior:
 
 - `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
-- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --headless --tmux-new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`. OMX-managed launches are Codex-only, and Ralph owns the loop instead of Codex cycles.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`. OMX-managed launches are Codex-only, and Ralph owns the loop instead of Codex cycles.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -122,12 +122,12 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 
 Codex-only cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `finalize_task`
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, and a queued `$browser-use` E2E follow-up
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` keeps the one-shot preset launch
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task` plus `finalize_task`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR follow-up after the first pass, then `continue_task`, `implement_task`, and `finalize_task`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues the `$browser-use` E2E follow-up for Codex/OMX surfaces
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, and the `$browser-use` E2E follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, and a queued `$browser-use` E2E follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR/status-check follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` plus the queued `$browser-use` E2E follow-up for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself
