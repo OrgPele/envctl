@@ -896,7 +896,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         runtime._latest_state = state
         selector_calls: list[dict[str, object]] = []
 
-        def fake_restart_selector(**kwargs):  # noqa: ANN001
+        def fake_restart_selector(**kwargs: object) -> list[str]:
             selector_calls.append(kwargs)
             return ["__RESTART__:service:Main Frontend"]
 
@@ -931,7 +931,7 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         runtime._latest_state = state
         selector_calls: list[dict[str, object]] = []
 
-        def fake_restart_selector(**kwargs):  # noqa: ANN001
+        def fake_restart_selector(**kwargs: object) -> list[str]:
             selector_calls.append(kwargs)
             return ["__RESTART__:service:Main Backend"]
 
