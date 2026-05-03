@@ -1576,6 +1576,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
         self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
         self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertTrue(payload["plan_agent_launch"]["codex_goal_enable"])
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
@@ -1661,6 +1662,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["cli"], "opencode")
         self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
         self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertFalse(payload["plan_agent_launch"]["codex_goal_enable"])
 
     def test_explain_startup_json_reports_omx_plan_agent_transport(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1686,6 +1688,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
+        self.assertTrue(payload["plan_agent_launch"]["codex_goal_enable"])
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
     def test_explain_startup_json_reports_omx_workflow_modifier(self) -> None:

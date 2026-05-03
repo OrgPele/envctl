@@ -62,6 +62,7 @@ pass `--interactive` only when you want prompts.
 | `--keep-plan` | Keep planning files in place after execution. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
 | `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
+| `--codex-goal` / `--no-codex-goal` | For Codex `--plan` launches, explicitly enable or disable the best-effort `/goal` submitted before the implementation prompt. OpenCode does not support goals. |
 | `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
 | `--tmux-new-session` | For AI-driven `--plan` launches, create a fresh tmux or OMX-managed session instead of attaching to an existing one. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly. |

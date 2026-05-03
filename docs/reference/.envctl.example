@@ -84,6 +84,10 @@ TREES_N8N_ENABLE=false
 # 2+ adds continue/implement cycles before finalization.
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 
+# Submit a best-effort Codex /goal before the first plan-agent implementation
+# prompt. Applies only to Codex launches; OpenCode ignores it.
+ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true
+
 # Queue an extra Codex/OMX prompt after implementation/finalization to run
 # browser-based E2E validation with $browser-use against the full envctl stack.
 # Set to false to skip this follow-up for repos where browser E2E is not applicable.

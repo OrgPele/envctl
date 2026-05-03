@@ -853,6 +853,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertTrue(launch_events)
             self.assertEqual(launch_events[-1].get("status"), "launched")
             self.assertTrue(launch_events[-1].get("implementation_session_running"))
+            self.assertTrue(launch_events[-1].get("codex_goal_enable"))
             warning_events = [event for event in engine.events if event.get("event") == "startup.project.warning"]
             self.assertTrue(warning_events)
             self.assertEqual(warning_events[-1].get("reason"), "plan_agent_handoff_local_startup_failed")

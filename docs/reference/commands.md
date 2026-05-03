@@ -361,6 +361,8 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
+- `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits a best-effort Codex `/goal` before the first implementation prompt; use `--no-codex-goal` or set it to `false` to opt out
+- `--codex-goal` explicitly enables goal submission for Codex launches; `--codex-goal --opencode` fails fast because OpenCode has no equivalent command
 - `$envctl-create-plan-auto-codex` overrides that cycle count to `4` for its one launch command only; the global default remains `2`
 - OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
@@ -385,6 +387,7 @@ Optional plan-agent launch config for `--plan`:
 - by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- for `--omx --ralph`, envctl sets the Codex goal first and then submits the existing `$ralph`-wrapped implementation prompt
 
 Degraded plan-agent handoff:
 

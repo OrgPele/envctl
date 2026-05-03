@@ -144,6 +144,7 @@ class PlanAgentLaunchConfig:
     browser_e2e_followup_enable: bool = True
     pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ralph", "team"] = ""
+    codex_goal_enable: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -258,6 +259,24 @@ def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> st
     if launch_config.cli == "codex" and launch_config.codex_cycles > 0:
         return _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
     return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
+
+
+def _codex_goal_text_for_worktree(worktree: CreatedPlanWorktree) -> str:
+    selector = str(worktree.plan_file or "").strip() or str(worktree.name or "").strip() or "selected plan"
+    worktree_name = str(worktree.name or "").strip() or "selected worktree"
+    return (
+        f"Implement envctl plan {selector} in worktree {worktree_name}.\n"
+        "Treat MAIN_TASK.md in this worktree as the authoritative specification; "
+        "implement, verify, commit, and prepare the PR according to the queued envctl workflow."
+    )
+
+
+def _should_submit_codex_goal(launch_config: PlanAgentLaunchConfig) -> bool:
+    return str(launch_config.cli).strip().lower() == "codex" and bool(launch_config.codex_goal_enable)
+
+
+def _codex_goal_command_for_worktree(worktree: CreatedPlanWorktree) -> str:
+    return "/goal " + " ".join(_codex_goal_text_for_worktree(worktree).split())
 
 
 def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
@@ -406,6 +425,18 @@ def resolve_plan_agent_launch_config(
     if omx_workflow and codex_cycles > 0:
         codex_cycles = 0
         codex_cycles_warning = codex_cycles_warning or "omx_workflow_disables_codex_cycles"
+    route_goal_flag = route_flags.get("codex_goal")
+    if route_goal_flag is None:
+        configured_goal_enable = parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE")
+            or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"),
+            True,
+        )
+    else:
+        configured_goal_enable = bool(route_goal_flag)
+    if bool(route_goal_flag) and cli != "codex":
+        raise ValueError("--codex-goal is only supported for Codex plan-agent launches.")
+    codex_goal_enable = bool(configured_goal_enable and cli == "codex")
     return PlanAgentLaunchConfig(
         enabled=enabled,
         transport=transport,
@@ -435,6 +466,7 @@ def resolve_plan_agent_launch_config(
         ulw_loop_prefix=ulw_loop_prefix,
         ulw_suffix=ulw_suffix,
         omx_workflow=omx_workflow,
+        codex_goal_enable=codex_goal_enable,
     )
 
 
@@ -500,6 +532,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "codex_cycles": launch_config.codex_cycles,
         "omx_workflow": launch_config.omx_workflow or None,
         "workflow_warning": launch_config.codex_cycles_warning,
+        "codex_goal_enable": launch_config.codex_goal_enable,
         "shell": launch_config.shell,
         "direct_prompt_enabled": launch_config.direct_prompt_enabled,
         "ulw_loop_prefix": launch_config.ulw_loop_prefix,
@@ -653,6 +686,7 @@ def launch_plan_agent_terminals(
         "created_worktree_count": len(created_worktrees),
         "workflow_mode": workflow.mode,
         "codex_cycles": launch_config.codex_cycles,
+        "codex_goal_enable": launch_config.codex_goal_enable,
         "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
         "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
     }
@@ -1626,6 +1660,15 @@ def _run_tmux_existing_session_workflow(
     worktree: CreatedPlanWorktree,
 ) -> str | None:
     _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    if _should_submit_codex_goal(launch_config):
+        goal_error = _submit_tmux_codex_goal(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree,
+        )
+        if goal_error is not None:
+            return goal_error
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -1766,18 +1809,19 @@ def _launch_tmux_cli_bootstrap_commands(
     ]
 
 
-def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> None:
+def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> bool:
     normalized_cli = str(cli).strip().lower()
     timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
-        return
+        return True
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
         if _screen_looks_ready(normalized_cli, screen):
-            return
+            return True
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
@@ -1807,6 +1851,54 @@ def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text
         error = (paste_result.stderr or "").strip()[:200]
         runtime._emit("planning.agent_launch.failed", reason="tmux_paste_buffer_failed", error=error)
         return f"tmux_paste_buffer_failed: {error}"
+    return None
+
+
+def _submit_tmux_codex_goal(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    send_error = _send_tmux_prompt(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        text=_codex_goal_command_for_worktree(worktree),
+    )
+    if send_error is not None:
+        return send_error
+    enter_error = _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter")
+    if enter_error is not None:
+        return enter_error
+    runtime._emit(
+        "planning.agent_launch.codex_goal_submitted",
+        session_name=session_name,
+        window_name=window_name,
+        worktree=worktree.name,
+        plan_file=worktree.plan_file,
+        transport="tmux",
+    )
+    try:
+        ready_after_goal = _wait_for_tmux_cli_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli="codex",
+        )
+    except Exception:
+        ready_after_goal = False
+    if not ready_after_goal:
+        runtime._emit(
+            "planning.agent_launch.codex_goal_fallback",
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree.name,
+            plan_file=worktree.plan_file,
+            transport="tmux",
+            reason="goal_readiness_timeout",
+        )
     return None
 
 
@@ -1846,6 +1938,15 @@ def _run_tmux_worktree_bootstrap(
         if error is not None:
             return error
     _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    if _should_submit_codex_goal(launch_config):
+        goal_error = _submit_tmux_codex_goal(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree,
+        )
+        if goal_error is not None:
+            return goal_error
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -2196,6 +2297,15 @@ def _run_surface_bootstrap(
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    if _should_submit_codex_goal(launch_config):
+        goal_error = _submit_codex_goal(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            worktree=worktree,
+        )
+        if goal_error is not None:
+            return goal_error
     initial_step = workflow.steps[0]
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
@@ -2738,6 +2848,54 @@ def _submit_direct_prompt_workflow_step(
         key="enter",
         failure_event=failure_event,
     )
+
+
+def _submit_codex_goal(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    paste_error = _paste_surface_text(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        text=_codex_goal_command_for_worktree(worktree),
+    )
+    if paste_error is not None:
+        return paste_error
+    enter_error = _send_surface_key(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        key="enter",
+    )
+    if enter_error is not None:
+        return enter_error
+    runtime._emit(
+        "planning.agent_launch.codex_goal_submitted",
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        worktree=worktree.name,
+        plan_file=worktree.plan_file,
+        transport="cmux",
+    )
+    try:
+        ready_after_goal = _wait_for_cli_ready(runtime, workspace_id=workspace_id, surface_id=surface_id, cli="codex")
+    except Exception:
+        ready_after_goal = False
+    if not ready_after_goal:
+        runtime._emit(
+            "planning.agent_launch.codex_goal_fallback",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            worktree=worktree.name,
+            plan_file=worktree.plan_file,
+            transport="cmux",
+            reason="goal_readiness_timeout",
+        )
+    return None
 
 
 def _queue_codex_workflow_steps(
@@ -3773,18 +3931,19 @@ def _cli_ready_delay_seconds(cli: str) -> float:
     return float(_CLI_READY_DELAY_SECONDS_BY_CLI.get(normalized, _DEFAULT_CLI_READY_DELAY_SECONDS))
 
 
-def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> None:
+def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> bool:
     normalized_cli = str(cli).strip().lower()
     timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
-        return
+        return True
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if _screen_looks_ready(normalized_cli, screen):
-            return
+            return True
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def _read_surface_screen(runtime: Any, *, workspace_id: str, surface_id: str) -> str:

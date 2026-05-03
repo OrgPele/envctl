@@ -800,6 +800,94 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.cli_command, "codex --dangerously-bypass-approvals-and-sandbox")
         self.assertTrue(launch_config.enabled)
 
+    def test_resolve_plan_agent_launch_config_resolves_codex_goal_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            codex_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux"], env={}),
+            )
+            opencode_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+            disabled_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--no-codex-goal"], env={}),
+            )
+            forced_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false"},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--codex-goal"], env={}),
+            )
+
+        self.assertTrue(codex_config.codex_goal_enable)
+        self.assertFalse(opencode_config.codex_goal_enable)
+        self.assertFalse(disabled_config.codex_goal_enable)
+        self.assertTrue(forced_config.codex_goal_enable)
+
+    def test_resolve_plan_agent_launch_config_rejects_codex_goal_for_configured_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                }
+            )
+
+            with self.assertRaisesRegex(ValueError, "--codex-goal is only supported for Codex"):
+                launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--codex-goal"], env={}),
+                )
+
+    def test_inspect_plan_agent_launch_reports_codex_goal_enable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+
+            payload = launch_support.inspect_plan_agent_launch(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--tmux"], env={}),
+            )
+
+        self.assertTrue(payload["codex_goal_enable"])
+
+    def test_codex_goal_text_for_worktree_uses_plan_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+
+            text = launch_support._codex_goal_text_for_worktree(
+                CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/example.md")
+            )
+            fallback = launch_support._codex_goal_text_for_worktree(
+                CreatedPlanWorktree(name="feature-b-1", root=repo, plan_file="")
+            )
+
+        self.assertIn("Implement envctl plan features/example.md in worktree feature-a-1.", text)
+        self.assertIn("Treat MAIN_TASK.md in this worktree as the authoritative specification", text)
+        self.assertIn("Implement envctl plan feature-b-1 in worktree feature-b-1.", fallback)
+
     def test_launch_sequence_uses_tmux_commands_for_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -887,6 +975,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 direct_prompt_enabled=False,
                 ulw_loop_prefix=False,
                 ulw_suffix=False,
+                codex_goal_enable=False,
             )
             workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=2)
 
@@ -931,6 +1020,57 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     }
                 ],
             )
+
+    def test_tmux_codex_goal_submits_before_initial_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="tmux",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                codex_goal_enable=True,
+            )
+            workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+            order: list[str] = []
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal",
+                    side_effect=lambda *_args, **_kwargs: order.append("goal") or None,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step",
+                    side_effect=lambda *_args, prompt_text, **_kwargs: order.append(prompt_text) or None,
+                ),
+            ):
+                error = _run_tmux_worktree_bootstrap(
+                    rt,
+                    session_name="envctl-test-session",
+                    window_name="feature-a-1",
+                    launch_config=launch_config,
+                    workflow=workflow,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(order, ["goal", "IMPLEMENT TASK BODY"])
 
     def test_omx_launch_spawns_managed_session_and_bootstraps_existing_tmux_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1002,13 +1142,22 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     )
                     workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
                     submitted_prompts: list[str] = []
+                    order: list[str] = []
 
                     with (
                         patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
                         patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
                         patch(
+                            "envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal",
+                            side_effect=lambda *_args, **_kwargs: order.append("goal") or None,
+                        ),
+                        patch(
                             "envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step",
-                            side_effect=lambda *_args, prompt_text, **_kwargs: submitted_prompts.append(prompt_text) or None,
+                            side_effect=lambda *_args, prompt_text, **_kwargs: (
+                                order.append("prompt"),
+                                submitted_prompts.append(prompt_text),
+                            )[1]
+                            or None,
                         ),
                     ):
                         error = launch_support._run_tmux_existing_session_workflow(
@@ -1021,7 +1170,53 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         )
 
                     self.assertIsNone(error)
+                    self.assertEqual(order, ["goal", "prompt"])
                     self.assertEqual(submitted_prompts, [f"${workflow_name}\n\nIMPLEMENT TASK BODY"])
+
+    def test_tmux_codex_goal_disabled_and_opencode_skip_goal_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+
+            for cli, goal_enabled in (("codex", False), ("opencode", True)):
+                with self.subTest(cli=cli, goal_enabled=goal_enabled):
+                    launch_config = launch_support.PlanAgentLaunchConfig(
+                        enabled=True,
+                        transport="tmux",
+                        cli=cli,
+                        cli_command=cli,
+                        preset="implement_task",
+                        codex_cycles=0,
+                        codex_cycles_warning=None,
+                        shell="zsh",
+                        require_cmux_context=True,
+                        cmux_workspace="",
+                        direct_prompt_enabled=cli == "opencode",
+                        ulw_loop_prefix=False,
+                        ulw_suffix=False,
+                        codex_goal_enable=goal_enabled,
+                    )
+                    workflow = _build_plan_agent_workflow(cli=cli, preset="implement_task", codex_cycles=0)
+                    with (
+                        patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
+                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal") as goal_mock,
+                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
+                    ):
+                        error = launch_support._run_tmux_existing_session_workflow(
+                            rt,
+                            session_name="tmux-feature-session",
+                            window_name="%42",
+                            launch_config=launch_config,
+                            workflow=workflow,
+                            worktree=worktree,
+                        )
+
+                    self.assertIsNone(error)
+                    goal_mock.assert_not_called()
 
     def test_omx_workflow_launch_does_not_double_wrap_existing_keyword(self) -> None:
         for workflow_name in ("ralph", "team"):
@@ -2954,6 +3149,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -3023,18 +3219,88 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     }
                 ],
             )
+
+    def test_cmux_codex_goal_submits_before_initial_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="cmux",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="workspace:7",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                codex_goal_enable=True,
+            )
+            order: list[str] = []
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._prepare_surface", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._submit_codex_goal",
+                    side_effect=lambda *_args, **_kwargs: order.append("goal") or None,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._submit_direct_prompt_workflow_step",
+                    side_effect=lambda *_args, prompt_text, **_kwargs: order.append(prompt_text) or None,
+                ),
+            ):
+                error = launch_support._run_surface_bootstrap(
+                    rt,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(order, ["goal", "IMPLEMENT TASK BODY"])
+
+    def test_codex_goal_readiness_timeout_falls_back_to_initial_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=False),
+                patch("envctl_engine.planning.plan_agent_launch_support._paste_surface_text", return_value=None) as paste_mock,
+            ):
+                error = launch_support._submit_codex_goal(
+                    rt,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                )
+
+            self.assertIsNone(error)
+            self.assertTrue(str(paste_mock.call_args.kwargs["text"]).startswith("/goal "))
             self.assertEqual(
-                self._events(rt, "planning.agent_launch.workflow_queue_failed"),
+                self._events(rt, "planning.agent_launch.codex_goal_fallback"),
                 [
                     {
-                        "event": "planning.agent_launch.workflow_queue_failed",
+                        "event": "planning.agent_launch.codex_goal_fallback",
                         "workspace_id": "workspace:7",
                         "surface_id": "surface:9",
                         "worktree": "feature-a-1",
-                        "cli": "codex",
-                        "workflow_mode": "codex_cycles",
-                        "codex_cycles": 1,
-                        "reason": "queue_send_failed",
+                        "plan_file": "a.md",
+                        "transport": "cmux",
+                        "reason": "goal_readiness_timeout",
                     }
                 ],
             )
@@ -3096,6 +3362,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "created_worktree_count": 1,
                     "workflow_mode": "codex_cycles",
                     "codex_cycles": 3,
+                    "codex_goal_enable": True,
                     "browser_e2e_followup_enable": True,
                     "pr_review_comments_followup_enable": True,
                 }

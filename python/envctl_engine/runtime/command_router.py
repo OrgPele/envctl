@@ -133,6 +133,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--team",
     "--codex",
     "--opencode",
+    "--codex-goal",
     "--ulw",
     "--tmux-new-session",
     "--with-codex-skills",
@@ -209,6 +210,7 @@ SPECIAL_FLAGS = {
     "--isolated-deps",
     "--isolated-dependency",
     "--isolated-dependencies",
+    "--no-codex-goal",
 }
 
 _ENV_ASSIGNMENT_KEYS = {
@@ -810,6 +812,8 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         _set_dependency_scope(flags, "shared")
     elif token in {"--isolated-dep", "--isolated-deps", "--isolated-dependency", "--isolated-dependencies"}:
         _set_dependency_scope(flags, "isolated")
+    elif token == "--no-codex-goal":
+        flags["codex_goal"] = False
     elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
         flags["seed_requirements_from_base"] = False
     elif token in {"fresh=true", "FRESH=true"}:
@@ -1019,6 +1023,8 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
         raise RouteError("Use only one of --codex or --opencode.")
     if bool(state.flags.get("omx")) and bool(state.flags.get("opencode")):
         raise RouteError("--opencode is only supported with cmux or --tmux plan-agent launches; --omx uses Codex.")
+    if bool(state.flags.get("codex_goal")) and bool(state.flags.get("opencode")):
+        raise RouteError("--codex-goal is only supported for Codex plan-agent launches.")
 
 
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
@@ -1109,6 +1115,7 @@ def _boolean_flag_name(token: str) -> str:
         "--team": "team",
         "--codex": "codex",
         "--opencode": "opencode",
+        "--codex-goal": "codex_goal",
         "--ulw": "ulw",
         "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",

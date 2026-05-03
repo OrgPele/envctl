@@ -1806,6 +1806,11 @@ class StartupOrchestrator:
     def _emit_plan_agent_launch_state(self, session: StartupSession, launch_result: object) -> None:
         attach_target = getattr(launch_result, "attach_target", None)
         session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
+        launch_config = resolve_plan_agent_launch_config(
+            self.runtime.config,
+            getattr(self.runtime, "env", {}),
+            route=session.effective_route,
+        )
         launched_worktrees: list[str] = []
         failed_worktrees: list[str] = []
         for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
@@ -1825,6 +1830,7 @@ class StartupOrchestrator:
             failed_worktrees=failed_worktrees,
             session_name=session_name or None,
             implementation_session_running=session.plan_agent_session_started,
+            codex_goal_enable=launch_config.codex_goal_enable,
         )
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:

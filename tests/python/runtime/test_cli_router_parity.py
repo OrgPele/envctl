@@ -62,6 +62,16 @@ class CliRouterParityTests(unittest.TestCase):
         with self.assertRaises(RouteError):
             parse_route(["definitely-unknown-command"], env={})
 
+    def test_plan_agent_codex_goal_flags_are_parsed_and_validated(self) -> None:
+        enabled = parse_route(["--plan", "feature-a", "--codex-goal"], env={})
+        self.assertTrue(enabled.flags.get("codex_goal"))
+
+        disabled = parse_route(["--plan", "feature-a", "--no-codex-goal"], env={})
+        self.assertEqual(disabled.flags.get("codex_goal"), False)
+
+        with self.assertRaisesRegex(RouteError, "--codex-goal is only supported for Codex"):
+            parse_route(["--plan", "feature-a", "--opencode", "--codex-goal"], env={})
+
     def test_shared_dependency_scope_flags_are_parsed(self) -> None:
         route = parse_route(["--trees"], env={})
 

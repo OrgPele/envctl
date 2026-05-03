@@ -368,6 +368,8 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--team              OMX-only: start the launched Codex session in Team mode",
             "--codex             force Codex for tmux launches",
             "--opencode          force OpenCode for tmux launches",
+            "--codex-goal        explicitly submit Codex /goal before the implementation prompt",
+            "--no-codex-goal     disable Codex /goal submission for this launch",
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
             "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
         ),
