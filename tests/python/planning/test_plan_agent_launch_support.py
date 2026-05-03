@@ -1134,6 +1134,71 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "--dangerously-bypass-approvals-and-sandbox",
             )
 
+    def test_omx_spawn_preserves_codex_config_discovery_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            codex_home = home / ".codex"
+            repo.mkdir(parents=True, exist_ok=True)
+            codex_home.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "TMUX": "/tmp/tmux-0/default,1,0",
+                    "TMUX_PANE": "%7",
+                    "ENVCTL_ONLY": "yes",
+                },
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="ralph",
+            )
+            popen_calls: list[dict[str, object]] = []
+
+            class _DummyPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    session_path = Path(str(kwargs["cwd"])) / ".omx" / "state" / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    session_path.write_text('{"session_id":"omx-abc123"}\n', encoding="utf-8")
+
+                def poll(self):
+                    return 0
+
+            with (
+                patch.dict(os.environ, {"HOME": str(home)}, clear=True),
+                patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen),
+            ):
+                error = launch_support._spawn_omx_session_for_worktree(
+                    rt,
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            env = cast(dict[str, str], popen_calls[0]["env"])
+            self.assertEqual(env["HOME"], str(home))
+            self.assertEqual(env["CODEX_HOME"], str(codex_home))
+            self.assertEqual(env["ENVCTL_ONLY"], "yes")
+            self.assertNotIn("TMUX", env)
+            self.assertNotIn("TMUX_PANE", env)
+
     def test_find_existing_omx_attach_target_records_active_pane_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
