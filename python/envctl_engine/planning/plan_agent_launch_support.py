@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import re
 import shlex
 import shutil
@@ -3653,6 +3654,19 @@ def _tmux_active_pane_id(runtime: Any, session_name: str) -> str:
     return str(getattr(result, "stdout", "")).strip()
 
 
+def _omx_launch_env(runtime: Any) -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(dict(getattr(runtime, "env", {})))
+    home = str(env.get("HOME") or "").strip()
+    if home and not str(env.get("CODEX_HOME") or "").strip():
+        codex_home = Path(home).expanduser() / ".codex"
+        if codex_home.exists():
+            env["CODEX_HOME"] = str(codex_home)
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
+    return env
+
+
 def _spawn_omx_session_for_worktree(
     runtime: Any,
     *,
@@ -3666,9 +3680,7 @@ def _spawn_omx_session_for_worktree(
     if wants_bypass:
         command.append("--madmax")
     popen_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
-    env = dict(getattr(runtime, "env", {}))
-    env.pop("TMUX", None)
-    env.pop("TMUX_PANE", None)
+    env = _omx_launch_env(runtime)
     if launch_config.omx_workflow == "team":
         env["OMX_TEAM_WORKER_LAUNCH_ARGS"] = _CODEX_BYPASS_FLAGS
     try:
