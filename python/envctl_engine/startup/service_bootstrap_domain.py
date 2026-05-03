@@ -1251,7 +1251,13 @@ def _skip_local_db_env(self: Any, *, backend_env_file: Path | None, backend_env_
     return skip
 
 
-def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
+def _backend_skip_toggle_for_context(context: ProjectContextLike) -> str:
+    if str(getattr(context, "name", "")).strip() == "Main":
+        return "MAIN_BACKEND_ENABLE=false"
+    return "TREES_BACKEND_ENABLE=false"
+
+
+def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path, *, skip_toggle: str) -> str:
     lower_error = error.lower()
     if "poetry install" in step.lower() or "poetry" in lower_error:
         if "set `packages`" in error or "no packages found" in lower_error:
@@ -1259,16 +1265,16 @@ def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
                 f"\nTip: this project has pyproject.toml but does not use Poetry.\n"
                 f"Fix: create a venv manually in {cwd}:\n"
                 f"  python -m venv venv && source venv/bin/activate && pip install -e .\n"
-                f"Or add TREES_BACKEND_ENABLE=false to your .envctl to skip backend bootstrap."
+                f"Or add {skip_toggle} to your .envctl to skip backend bootstrap."
             )
         if "lock file" in lower_error or "poetry.lock" in lower_error:
             return (
                 f"\nTip: Poetry lock file is missing. Run `poetry lock` in {cwd},\n"
-                f"or set TREES_BACKEND_ENABLE=false in .envctl to skip bootstrap."
+                f"or set {skip_toggle} in .envctl to skip bootstrap."
             )
         return (
             "\nTip: Poetry install failed. Check that the project is configured for Poetry.\n"
-            "If this project uses pip/setuptools instead, add TREES_BACKEND_ENABLE=false to .envctl."
+            f"If this project uses pip/setuptools instead, add {skip_toggle} to .envctl."
         )
     if "pip install" in lower_error or "pip" in lower_error:
         return (
@@ -1303,7 +1309,7 @@ def _run_backend_bootstrap_command(
                 handle.write(f"[envctl] backend bootstrap step failed ({step}): {error}\n")
         except OSError:
             pass
-    suggestion = _bootstrap_failure_suggestion(step, error, cwd)
+    suggestion = _bootstrap_failure_suggestion(step, error, cwd, skip_toggle=_backend_skip_toggle_for_context(context))
     log_hint = f"\nLog: {backend_log_path}" if backend_log_path else ""
     raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}{log_hint}\n{suggestion}")
 

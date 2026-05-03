@@ -19,6 +19,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_file,
     _resolve_frontend_env_file,
     _run_backend_migration_step,
+    _run_backend_bootstrap_command,
     _rewrite_database_url_to_asyncpg,
     _write_backend_bootstrap_state,
     _write_backend_runtime_prep_state,
@@ -593,6 +594,47 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             retry_env["ASYNC_DATABASE_URL"],
             "postgresql+asyncpg://svc_user:svc_pass@localhost:5432/svc_db",
         )
+
+
+    def test_poetry_lock_failure_suggests_main_backend_toggle_for_main_context(self) -> None:
+        class _RuntimeStub:
+            config = SimpleNamespace(base_dir=Path("/repo"), raw={})
+            env: dict[str, str] = {}
+            events: list[dict[str, object]] = []
+
+            @staticmethod
+            def _command_result_error_text(*, result):  # noqa: ANN001
+                return str(result.stderr)
+
+            @staticmethod
+            def _emit(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+                return None
+
+        class _FailingRunner:
+            @staticmethod
+            def run(command, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = command, cwd, env, timeout
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr="pyproject.toml changed significantly since poetry.lock was last generated",
+                )
+
+        runtime = _RuntimeStub()
+        runtime.process_runner = _FailingRunner()
+
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaisesRegex(RuntimeError, "MAIN_BACKEND_ENABLE=false") as caught:
+            _run_backend_bootstrap_command(
+                runtime,
+                context=SimpleNamespace(name="Main"),
+                command=["poetry", "install"],
+                cwd=Path(tmpdir),
+                backend_log_path="",
+                env={},
+                step="poetry install",
+            )
+
+        self.assertNotIn("TREES_BACKEND_ENABLE=false", str(caught.exception))
 
     def test_backend_migration_warning_hyperlinks_backend_log_path(self) -> None:
         class _RuntimeStub:
