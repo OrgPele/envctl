@@ -1631,6 +1631,7 @@ def _run_tmux_existing_session_workflow(
         launch_config=launch_config,
         cli=launch_config.cli,
         step=workflow.steps[0],
+        worktree=worktree,
     )
     if resolution_error is not None:
         return resolution_error
@@ -1850,6 +1851,7 @@ def _run_tmux_worktree_bootstrap(
         launch_config=launch_config,
         cli=launch_config.cli,
         step=workflow.steps[0],
+        worktree=worktree,
     )
     if resolution_error is not None:
         return resolution_error
@@ -1922,21 +1924,12 @@ def _queue_tmux_codex_workflow_steps(
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"
-        if step.kind == "queue_direct_prompt":
-            send_error = _send_tmux_prompt(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_text,
-            )
-        else:
-            send_error = _send_tmux_text(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_text,
-                emit_failure_event=False,
-            )
+        send_error = _send_tmux_prompt(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=queued_text,
+        )
         if send_error is not None:
             return "queue_send_failed"
         if not _queue_tmux_codex_message(
@@ -1944,7 +1937,7 @@ def _queue_tmux_codex_workflow_steps(
             session_name=session_name,
             window_name=window_name,
             text=queued_text,
-            require_text_match=step.kind != "queue_direct_prompt",
+            require_text_match=False,
         ):
             return "queue_not_ready"
     runtime._emit(
@@ -2209,6 +2202,7 @@ def _run_surface_bootstrap(
         launch_config=launch_config,
         cli=launch_config.cli,
         step=initial_step,
+        worktree=worktree,
     )
     if resolution_error is not None:
         return resolution_error
@@ -2347,7 +2341,13 @@ def _workflow_step_prompt_text(
 ) -> tuple[str, str | None]:
     if step.kind not in {"submit_direct_prompt", "queue_direct_prompt"}:
         return _shape_queue_message_text(runtime, step.text, worktree=worktree), None
-    return _resolve_preset_submission_text(runtime, launch_config=launch_config, cli=cli, preset=step.text)
+    return _resolve_preset_submission_text(
+        runtime,
+        launch_config=launch_config,
+        cli=cli,
+        preset=step.text,
+        worktree=worktree,
+    )
 
 
 def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanWorktree | None = None) -> str:
@@ -2357,7 +2357,7 @@ def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanW
         section
         for section in (
             _original_task_source_prompt_section(runtime, worktree=worktree),
-            _runtime_addresses_prompt_section(runtime),
+            _runtime_addresses_prompt_section(runtime, worktree=worktree),
         )
         if section
     ]
@@ -2431,6 +2431,7 @@ def _resolve_preset_submission_text(
     cli: str,
     preset: str,
     arguments: str = "",
+    worktree: CreatedPlanWorktree | None = None,
 ) -> tuple[str, str | None]:
     normalized_cli = str(cli).strip().lower()
     direct_prompt = _uses_direct_submission(
@@ -2457,7 +2458,12 @@ def _resolve_preset_submission_text(
     except (LookupError, OSError, ValueError) as exc:
         return "", f"prompt_resolution_failed: {exc}"
     if direct_prompt:
-        resolved = _append_runtime_addresses_for_preset(runtime, preset=preset, prompt_text=resolved)
+        resolved = _append_runtime_addresses_for_preset(
+            runtime,
+            preset=preset,
+            prompt_text=resolved,
+            worktree=worktree,
+        )
     return _shape_prompt_text(
         resolved,
         direct_prompt=direct_prompt,
@@ -2466,16 +2472,22 @@ def _resolve_preset_submission_text(
     )
 
 
-def _append_runtime_addresses_for_preset(runtime: Any, *, preset: str, prompt_text: str) -> str:
+def _append_runtime_addresses_for_preset(
+    runtime: Any,
+    *,
+    preset: str,
+    prompt_text: str,
+    worktree: CreatedPlanWorktree | None = None,
+) -> str:
     if str(preset).strip() != "implement_task":
         return prompt_text
-    context = _runtime_addresses_prompt_section(runtime)
+    context = _runtime_addresses_prompt_section(runtime, worktree=worktree)
     if not context:
         return prompt_text
     return f"{prompt_text.rstrip()}\n\n{context}\n"
 
 
-def _runtime_addresses_prompt_section(runtime: Any) -> str:
+def _runtime_addresses_prompt_section(runtime: Any, *, worktree: CreatedPlanWorktree | None = None) -> str:
     state = _latest_runtime_state(runtime)
     if state is None:
         return ""
@@ -2484,8 +2496,8 @@ def _runtime_addresses_prompt_section(runtime: Any) -> str:
         "Use these currently known localhost addresses when validating or debugging. "
         "They are generated from saved envctl runtime state; verify them again if you restart services.",
     ]
-    dependency_lines = _dependency_address_lines(state)
-    service_lines = _service_address_lines(state)
+    dependency_lines = _dependency_address_lines(state, worktree=worktree)
+    service_lines = _service_address_lines(state, worktree=worktree)
     if dependency_lines:
         lines.append("Dependencies:")
         lines.extend(f"- {line}" for line in dependency_lines)
@@ -2518,10 +2530,12 @@ def _latest_runtime_state(runtime: Any) -> RunState | None:
     return None
 
 
-def _dependency_address_lines(state: RunState) -> list[str]:
+def _dependency_address_lines(state: RunState, *, worktree: CreatedPlanWorktree | None = None) -> list[str]:
     rows: list[str] = []
     seen: set[tuple[str, int]] = set()
     for project_name, requirements in state.requirements.items():
+        if not _state_project_matches_worktree(project_name, worktree):
+            continue
         for dependency_id in ("postgres", "redis", "supabase", "n8n"):
             component = requirements.component(dependency_id)
             if not bool(component.get("enabled", False)):
@@ -2538,9 +2552,11 @@ def _dependency_address_lines(state: RunState) -> list[str]:
     return rows
 
 
-def _service_address_lines(state: RunState) -> list[str]:
+def _service_address_lines(state: RunState, *, worktree: CreatedPlanWorktree | None = None) -> list[str]:
     rows: list[str] = []
     for service in state.services.values():
+        if not _state_service_matches_worktree(service, worktree):
+            continue
         service_type = str(service.type or "").strip().lower()
         if service_type not in {"backend", "frontend"}:
             continue
@@ -2550,6 +2566,34 @@ def _service_address_lines(state: RunState) -> list[str]:
         label = "Backend" if service_type == "backend" else "Frontend"
         rows.append(f"{label} ({service.name}): http://localhost:{int(port)}")
     return rows
+
+
+def _state_project_matches_worktree(project_name: object, worktree: CreatedPlanWorktree | None) -> bool:
+    if worktree is None:
+        return True
+    normalized_project = str(project_name or "").strip().casefold()
+    normalized_worktree = str(worktree.name or "").strip().casefold()
+    if normalized_project == normalized_worktree:
+        return True
+    return bool(normalized_project and normalized_worktree.startswith(f"{normalized_project}-"))
+
+
+def _state_service_matches_worktree(service: object, worktree: CreatedPlanWorktree | None) -> bool:
+    if worktree is None:
+        return True
+    service_name = str(getattr(service, "name", "") or "").strip()
+    worktree_name = str(worktree.name or "").strip()
+    if worktree_name and service_name.casefold().startswith(f"{worktree_name.casefold()} "):
+        return True
+    cwd_raw = str(getattr(service, "cwd", "") or "").strip()
+    if not cwd_raw:
+        return False
+    try:
+        cwd = Path(cwd_raw).expanduser().resolve(strict=False)
+        root = Path(worktree.root).expanduser().resolve(strict=False)
+    except OSError:
+        return False
+    return cwd == root or root in cwd.parents
 
 
 def _component_port(component: Mapping[str, object]) -> int | None:
@@ -2717,22 +2761,13 @@ def _queue_codex_workflow_steps(
         )
         if resolution_error is not None:
             return "queue_prompt_resolution_failed"
-        if step.kind == "queue_direct_prompt":
-            send_error = _paste_surface_text(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_text,
-                emit_failure_event=False,
-            )
-        else:
-            send_error = _send_surface_text(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_text,
-                emit_failure_event=False,
-            )
+        send_error = _paste_surface_text(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=queued_text,
+            emit_failure_event=False,
+        )
         if send_error is not None:
             return "queue_send_failed"
         if not _queue_codex_message(
@@ -2740,7 +2775,7 @@ def _queue_codex_workflow_steps(
             workspace_id=workspace_id,
             surface_id=surface_id,
             text=queued_text,
-            require_text_match=step.kind != "queue_direct_prompt",
+            require_text_match=False,
         ):
             return "queue_not_ready"
     runtime._emit(

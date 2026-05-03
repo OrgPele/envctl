@@ -912,8 +912,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertIsNone(error)
-            self.assertEqual(send_text_mock.call_count, 3)
-            self.assertEqual(send_prompt_mock.call_count, 3)
+            self.assertEqual(send_text_mock.call_count, 0)
+            self.assertEqual(send_prompt_mock.call_count, 6)
             self.assertEqual(queue_mock.call_count, 6)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
@@ -2072,6 +2072,53 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("Frontend (feature-a Frontend): http://localhost:9201", prompt_text)
         self.assertNotIn("Supabase (feature-a): http://localhost:5633", prompt_text)
 
+    def test_worktree_prompt_does_not_inject_runtime_addresses_from_other_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            target_root = repo / "trees" / "feature-b" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+            runtime = _RuntimeHarness(
+                config=load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
+            runtime.state_repository = _StateRepositoryHarness(
+                RunState(
+                    run_id="run-previous",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Backend": ServiceRecord(
+                            name="feature-a-1 Backend",
+                            type="backend",
+                            cwd=str(repo / "trees" / "feature-a" / "1" / "backend"),
+                            actual_port=8201,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            components={"redis": {"enabled": True, "success": True, "final": 6420}},
+                        )
+                    },
+                )
+            )
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task"),
+                worktree=CreatedPlanWorktree(name="feature-b-1", root=target_root, plan_file="features/feature-b.md"),
+            )
+
+        self.assertIsNone(error)
+        self.assertNotIn("## Current envctl runtime addresses", prompt_text)
+        self.assertNotIn("feature-a", prompt_text)
+        self.assertNotIn("localhost:8201", prompt_text)
+        self.assertNotIn("redis://localhost:6420", prompt_text)
+
     def test_browser_e2e_followup_injects_original_plan_and_runtime_addresses(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2130,6 +2177,115 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("## Current envctl runtime addresses", prompt_text)
         self.assertIn("Postgres (feature-a): localhost:5500", prompt_text)
         self.assertIn("Frontend (feature-a Frontend): http://localhost:9300", prompt_text)
+
+    def test_browser_e2e_followup_omits_stale_runtime_addresses_for_other_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-b" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            runtime = _RuntimeHarness(
+                config=load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
+            runtime.state_repository = _StateRepositoryHarness(
+                RunState(
+                    run_id="run-previous",
+                    mode="trees",
+                    services={
+                        "feature-a-1 Frontend": ServiceRecord(
+                            name="feature-a-1 Frontend",
+                            type="frontend",
+                            cwd=str(repo / "trees" / "feature-a" / "1" / "frontend"),
+                            actual_port=9300,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-a-1": RequirementsResult(
+                            project="feature-a-1",
+                            components={"n8n": {"enabled": True, "success": True, "final": 5780}},
+                        )
+                    },
+                )
+            )
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=launch_support._PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_browser_e2e_instruction_text(),
+                ),
+                worktree=CreatedPlanWorktree(
+                    name="feature-b-1",
+                    root=worktree_root,
+                    plan_file="features/feature-b.md",
+                ),
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("## Original task source for E2E validation", prompt_text)
+        self.assertNotIn("## Current envctl runtime addresses", prompt_text)
+        self.assertNotIn("feature-a", prompt_text)
+        self.assertNotIn("localhost:9300", prompt_text)
+        self.assertNotIn("http://localhost:5780", prompt_text)
+
+    def test_browser_e2e_followup_injects_matching_worktree_runtime_addresses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-b" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            runtime = _RuntimeHarness(
+                config=load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
+            runtime.state_repository = _StateRepositoryHarness(
+                RunState(
+                    run_id="run-current",
+                    mode="trees",
+                    services={
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(worktree_root / "backend"),
+                            actual_port=8300,
+                            status="running",
+                        )
+                    },
+                    requirements={
+                        "feature-b-1": RequirementsResult(
+                            project="feature-b-1",
+                            components={"redis": {"enabled": True, "success": True, "final": 6421}},
+                        )
+                    },
+                )
+            )
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=launch_support._PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_browser_e2e_instruction_text(),
+                ),
+                worktree=CreatedPlanWorktree(
+                    name="feature-b-1",
+                    root=worktree_root,
+                    plan_file="features/feature-b.md",
+                ),
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("## Current envctl runtime addresses", prompt_text)
+        self.assertIn("Redis (feature-b-1): redis://localhost:6421", prompt_text)
+        self.assertIn("Backend (feature-b-1 Backend): http://localhost:8300", prompt_text)
+
 
     def test_runtime_addresses_are_not_injected_for_other_direct_presets(self) -> None:
         runtime = _RuntimeHarness(
@@ -3069,7 +3225,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 rt.process_runner.calls,
             )
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 2)
-            self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
+            self.assertIn(0.15, [call.args[0] for call in sleep_mock.call_args_list])
             self.assertIn(0.1, [call.args[0] for call in sleep_mock.call_args_list[1:]])
 
     def test_created_default_workspace_reuses_single_starter_surface(self) -> None:
