@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-04-29T13:54:11+00:00",
+  "generated_at": "2026-05-04T22:07:55+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -65,6 +65,7 @@
       "--clear-ports",
       "--cli",
       "--codex",
+      "--codex-goal",
       "--codex-tmux",
       "--command",
       "--command-only",
@@ -111,6 +112,7 @@
       "--frontend-log-profile",
       "--frontend-test-runner",
       "--fullstack",
+      "--goal",
       "--headless",
       "--health",
       "--help",
@@ -147,9 +149,11 @@
       "--migrate",
       "--migrate-hooks",
       "--no-auto-resume",
+      "--no-codex-goal",
       "--no-copy-db-storage",
       "--no-dependencies",
       "--no-deps",
+      "--no-goal",
       "--no-infra",
       "--no-infrastructure",
       "--no-interactive",

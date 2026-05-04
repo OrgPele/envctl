@@ -118,7 +118,7 @@ cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --entire-system 
 
 For example, a frontend-only plan still keeps `--entire-system` by default; use `--only-frontend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
-OMX-managed launches are Codex-only, and `--ralph` is the loop mechanism for this surface. Codex cycle settings are intentionally not used here because the plan-agent launch resolver disables Codex cycles when an OMX workflow is selected; Ralph owns its own persistence loop.
+OMX-managed launches are Codex-only, and `--ralph` is the persistence workflow for this surface. Codex `/goal` framing is submitted first when enabled, Ralph wraps the initial implementation prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Set `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` when you want only the initial Ralph prompt plus enabled final follow-ups.
 
 ## Final response format
 1. Path of the plan file created.

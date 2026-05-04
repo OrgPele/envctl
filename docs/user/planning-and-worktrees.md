@@ -125,7 +125,7 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 The installed create-plan skills connect planning documents to these launch paths:
 
 - `$envctl-create-plan` stays plan-only and approval-first.
-- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
+- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
 - `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`; OpenCode prepends `/ulw-loop` by default.
 - `$envctl-create-plan-auto-omx` writes the plan, derives the selector, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`.
 

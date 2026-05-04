@@ -78,11 +78,16 @@ TREES_N8N_ENABLE=false
 # Plan-agent prompt follow-ups
 # ==========================================
 
-# Codex-only queued workflow count for plan-agent launches.
+# Codex TUI queued workflow count for plan-agent launches, including OMX-managed Codex sessions.
+# OpenCode ignores this setting.
 # 0 submits one implementation prompt plus enabled follow-ups.
 # 1 queues implement_task -> finalize_task plus enabled follow-ups.
 # 2+ adds continue/implement cycles before finalization.
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
+
+# Submit a concise Codex `/goal` session frame before the implementation prompt.
+# Applies to Codex cmux, tmux, and OMX-managed tmux launches; OpenCode ignores it.
+ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true
 
 # Queue an extra Codex/OMX prompt after implementation/finalization to run
 # browser-based E2E validation with $browser-use against the full envctl stack.

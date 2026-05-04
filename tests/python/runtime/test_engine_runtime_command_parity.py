@@ -1717,8 +1717,10 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 payload = json.loads(buffer.getvalue())
                 self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
                 self.assertEqual(payload["plan_agent_launch"]["omx_workflow"], workflow_name)
-                self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
-                self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 0)
+                self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+                self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+                self.assertIsNone(payload["plan_agent_launch"]["workflow_warning"])
+                self.assertTrue(payload["plan_agent_launch"]["codex_goal_enable"])
 
     def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()

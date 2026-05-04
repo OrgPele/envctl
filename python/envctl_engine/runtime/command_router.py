@@ -131,6 +131,10 @@ _BOOLEAN_FLAG_TOKENS = (
     "--omx",
     "--ralph",
     "--team",
+    "--goal",
+    "--codex-goal",
+    "--no-goal",
+    "--no-codex-goal",
     "--codex",
     "--opencode",
     "--ulw",
@@ -1019,6 +1023,11 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
         raise RouteError("Use only one of --codex or --opencode.")
     if bool(state.flags.get("omx")) and bool(state.flags.get("opencode")):
         raise RouteError("--opencode is only supported with cmux or --tmux plan-agent launches; --omx uses Codex.")
+    if bool(state.flags.get("opencode")) and (bool(state.flags.get("goal")) or bool(state.flags.get("codex_goal"))):
+        raise RouteError(
+            "Codex /goal framing is only supported with Codex plan-agent launches; "
+            "use --codex or omit --opencode."
+        )
 
 
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
@@ -1107,6 +1116,10 @@ def _boolean_flag_name(token: str) -> str:
         "--omx": "omx",
         "--ralph": "ralph",
         "--team": "team",
+        "--goal": "goal",
+        "--codex-goal": "codex_goal",
+        "--no-goal": "no_goal",
+        "--no-codex-goal": "no_codex_goal",
         "--codex": "codex",
         "--opencode": "opencode",
         "--ulw": "ulw",

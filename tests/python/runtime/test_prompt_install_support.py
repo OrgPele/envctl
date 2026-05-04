@@ -594,8 +594,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 "command": "envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session",
                 "phrases": (
                     "OMX-managed launches are Codex-only",
-                    "`--ralph` is the loop mechanism for this surface",
-                    "Codex cycle settings are intentionally not used here",
+                    "`--ralph` is the persistence workflow for this surface",
+                    "envctl can queue the same Codex follow-up cycle workflow",
                 ),
             },
         }
