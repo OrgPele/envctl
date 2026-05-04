@@ -113,12 +113,12 @@ The prompt must not begin implementing in the original planning session after la
 Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
 
 ```bash
-cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session
+cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session
 ```
 
-For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug> --tmux --no-infra --headless --tmux-new-session`, but feature plans should keep `--entire-system` by default.
+For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan <category>/<slug> --tmux --no-infra --headless --tmux-new-session`, but feature plans should keep `--entire-system` by default.
 
-This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
+This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` matches the global default for the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
 
 ## Final response format
 1. Path of the plan file created.
