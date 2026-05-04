@@ -86,6 +86,7 @@ class StartupOrchestrator:
         self._last_progress_message_by_project: dict[str | None, str] = {}
         self._shared_dependency_lock: threading.Lock = threading.Lock()
         self._shared_dependency_requirements: RequirementsResult | None = None
+        self._shared_dependency_progress_reported: bool = False
 
     def execute(self, route: Route) -> int:
         session = self._create_session(route)

@@ -329,6 +329,18 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertTrue(
                 {project for project, _message in requirement_updates}.issubset({"feature-a-1", "feature-b-1"})
             )
+            shared_ready_updates = [
+                message for _project, message in requirement_updates if message.startswith("Shared requirements ready")
+            ]
+            self.assertTrue(shared_ready_updates)
+            self.assertLessEqual(sum("redis=" in message for _project, message in requirement_updates), 1)
+            self.assertFalse(
+                any(
+                    message.startswith(f"Requirements ready for {project}: redis=")
+                    for project, message in requirement_updates
+                    if project in {"feature-a-1", "feature-b-1"}
+                )
+            )
 
             isolated_updates: list[tuple[str, str]] = []
             isolated_route = parse_route(["--tree", "--isolated-deps"], env={})
