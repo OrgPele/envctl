@@ -18,7 +18,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
     launch_plan_agent_terminals,
     resolve_plan_agent_launch_config,
 )
-from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
+from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
@@ -41,6 +41,7 @@ from envctl_engine.startup.startup_progress import (
 from envctl_engine.startup.startup_selection_support import (
     port_allocator as port_allocator_impl,
     process_runtime as process_runtime_impl,
+    project_app_ports_text as project_app_ports_text_impl,
     project_ports_text as project_ports_text_impl,
     _restart_include_requirements as _restart_include_requirements_impl,
     _restart_selected_services as _restart_selected_services_impl,
@@ -69,6 +70,13 @@ from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
+
+
+def _project_spinner_success_message(session: StartupSession, context: ProjectContextLike) -> str:
+    dependency_scope = effective_dependency_scope(session.effective_route, session.runtime_mode)
+    if session.runtime_mode == "trees" and dependency_scope == "shared":
+        return f"startup completed ({project_app_ports_text_impl(context)})"
+    return f"startup completed ({project_ports_text_impl(context)})"
 
 
 class StartupOrchestrator:
@@ -1266,7 +1274,7 @@ class StartupOrchestrator:
                                     if use_project_spinner_group:
                                         project_spinner_group.mark_success(
                                             context.name,
-                                            f"startup completed ({project_ports_text_impl(context)})",
+                                            _project_spinner_success_message(session, context),
                                         )
                                     self._render_project_startup_warnings(
                                         context=context,

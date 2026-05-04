@@ -6,6 +6,7 @@ from envctl_engine.dashboard_metadata import (
     serialize_dashboard_project_configured_services,
 )
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -90,6 +91,10 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     project_configured_services = _project_configured_services_metadata(runtime, session)
     if project_configured_services:
         metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = project_configured_services
+    shared_dependency_project = _shared_dependency_dashboard_project(session)
+    if shared_dependency_project:
+        metadata["dashboard_dependency_scope"] = "shared"
+        metadata["dashboard_shared_dependency_project"] = shared_dependency_project
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
     if session.plan_agent_launch_result is not None:
@@ -153,6 +158,18 @@ def _project_configured_services_metadata(
         if service_types:
             configured[str(context.name)] = service_types
     return serialize_dashboard_project_configured_services(configured)
+
+
+def _shared_dependency_dashboard_project(session: StartupSession) -> str | None:
+    if session.runtime_mode != "trees":
+        return None
+    if effective_dependency_scope(session.effective_route, session.runtime_mode) != "shared":
+        return None
+    for requirements in session.merged_requirements.values():
+        project = str(getattr(requirements, "project", "") or "").strip()
+        if project:
+            return project
+    return "Main"
 
 
 def _build_pointer_map(runtime: StartupRuntime, run_id: str) -> dict[str, str]:

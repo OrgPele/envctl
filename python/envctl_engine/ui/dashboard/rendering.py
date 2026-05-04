@@ -18,7 +18,7 @@ from envctl_engine.dashboard_metadata import (
     dashboard_project_configured_services_from_metadata,
     normalize_dashboard_service_types,
 )
-from envctl_engine.state.models import RunState
+from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.color_policy import colors_enabled
@@ -122,6 +122,7 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
     )
     ordered_projects = sorted(projection)
     project_prs = _dashboard_project_pr_map(self, state=state, projects=ordered_projects)
+    shared_dependency_grouping = _dashboard_dependency_scope(state) == "shared"
     if runs_disabled_dashboard and configured_service_total > 0:
         print(f"{bold}{cyan}Configured Services:{reset}")
         print(
@@ -214,16 +215,17 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             reset=reset,
             render_launch_fallback=runs_disabled_dashboard or state.mode == "trees",
         )
-        _print_dashboard_dependency_rows(
-            self,
-            state=state,
-            project=project,
-            ok_color=green,
-            warn_color=yellow,
-            bad_color=red,
-            label_color=cyan,
-            reset=reset,
-        )
+        if not shared_dependency_grouping:
+            _print_dashboard_dependency_rows(
+                self,
+                state=state,
+                project=project,
+                ok_color=green,
+                warn_color=yellow,
+                bad_color=red,
+                label_color=cyan,
+                reset=reset,
+            )
         self._print_dashboard_tests_row(
             state=state,
             project=project,
@@ -233,6 +235,16 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
             reset=reset,
         )
         print("")
+    if shared_dependency_grouping:
+        _print_dashboard_shared_dependency_rows(
+            self,
+            state=state,
+            ok_color=green,
+            warn_color=yellow,
+            bad_color=red,
+            label_color=cyan,
+            reset=reset,
+        )
 
 
 def _print_dashboard_service_row(
@@ -307,32 +319,135 @@ def _print_dashboard_dependency_rows(
     requirements = state.requirements.get(project)
     if requirements is None:
         return
+    _print_dashboard_requirement_component_rows(
+        self,
+        requirements=requirements,
+        ok_color=ok_color,
+        warn_color=warn_color,
+        bad_color=bad_color,
+        reset=reset,
+    )
+
+
+def _print_dashboard_shared_dependency_rows(
+    self: Any,
+    *,
+    state: RunState,
+    ok_color: str,
+    warn_color: str,
+    bad_color: str,
+    label_color: str,
+    reset: str,
+) -> None:
+    requirements = _dashboard_shared_dependency_requirements(state)
+    if requirements is None or not _requirements_has_dashboard_dependencies(requirements):
+        return
+    print(f"  {label_color}Shared dependencies:{reset}")
+    _print_dashboard_requirement_component_rows(
+        self,
+        requirements=requirements,
+        ok_color=ok_color,
+        warn_color=warn_color,
+        bad_color=bad_color,
+        reset=reset,
+    )
+    print("")
+
+
+def _print_dashboard_requirement_component_rows(
+    self: Any,
+    *,
+    requirements: RequirementsResult,
+    ok_color: str,
+    warn_color: str,
+    bad_color: str,
+    reset: str,
+) -> None:
     for definition in dependency_definitions():
-        component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)) or definition.id == "postgres":
-            continue
-        port = component.get("final") or component.get("requested")
-        runtime_status = str(component.get("runtime_status", "")).strip().lower()
-        badge = dependency_status_badge(
-            runtime_status,
-            success=bool(component.get("success", False)),
-            simulated=bool(component.get("simulated", False)),
-            failure_count=len(requirements.failures or []),
-        )
-        color = _dashboard_color_for_severity(
-            badge.severity,
+        line = _dashboard_dependency_line(
+            self,
+            requirements=requirements,
+            dependency_id=definition.id,
+            display_name=definition.display_name,
             ok_color=ok_color,
             warn_color=warn_color,
             bad_color=bad_color,
+            reset=reset,
         )
-        url = (
-            "n/a"
-            if badge.severity == "failure"
-            else (_dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a")
-        )
-        icon = badge.symbol
-        status = badge.label
-        print(f"    {color}{icon}{reset} {definition.display_name}: {url} [{status}]")
+        if line is None:
+            continue
+        print(line)
+
+
+def _dashboard_dependency_line(
+    self: Any,
+    *,
+    requirements: RequirementsResult,
+    dependency_id: str,
+    display_name: str,
+    ok_color: str,
+    warn_color: str,
+    bad_color: str,
+    reset: str,
+) -> str | None:
+    component = requirements.component(dependency_id)
+    if not bool(component.get("enabled", False)) or dependency_id == "postgres":
+        return None
+    port = component.get("final") or component.get("requested")
+    runtime_status = str(component.get("runtime_status", "")).strip().lower()
+    badge = dependency_status_badge(
+        runtime_status,
+        success=bool(component.get("success", False)),
+        simulated=bool(component.get("simulated", False)),
+        failure_count=len(requirements.failures or []),
+    )
+    color = _dashboard_color_for_severity(
+        badge.severity,
+        ok_color=ok_color,
+        warn_color=warn_color,
+        bad_color=bad_color,
+    )
+    url = (
+        "n/a"
+        if badge.severity == "failure"
+        else (_dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a")
+    )
+    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{badge.label}]"
+
+
+def _dashboard_dependency_scope(state: RunState) -> str:
+    raw = state.metadata.get("dashboard_dependency_scope")
+    if isinstance(raw, str) and raw.strip().lower() in {"shared", "isolated", "none"}:
+        return raw.strip().lower()
+    return "isolated"
+
+
+def _dashboard_shared_dependency_requirements(state: RunState) -> RequirementsResult | None:
+    project_raw = state.metadata.get("dashboard_shared_dependency_project")
+    project = str(project_raw or "").strip() if isinstance(project_raw, str) else ""
+    if project:
+        direct = state.requirements.get(project)
+        if isinstance(direct, RequirementsResult):
+            return direct
+        for requirements in state.requirements.values():
+            if str(getattr(requirements, "project", "") or "").strip() == project:
+                return requirements
+    main = state.requirements.get("Main")
+    if isinstance(main, RequirementsResult):
+        return main
+    for requirements in state.requirements.values():
+        if _requirements_has_dashboard_dependencies(requirements):
+            return requirements
+    return None
+
+
+def _requirements_has_dashboard_dependencies(requirements: RequirementsResult) -> bool:
+    for definition in dependency_definitions():
+        if definition.id == "postgres":
+            continue
+        if bool(requirements.component(definition.id).get("enabled", False)):
+            return True
+    return False
 
 
 def _print_dashboard_n8n_row(*args: object, **kwargs: object) -> None:

@@ -184,11 +184,12 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             success_messages = [msg for kind, _project, msg in calls if kind == "success"]
             self.assertTrue(success_messages)
             for message in success_messages:
+                self.assertIn("startup completed", message)
                 self.assertIn("backend=", message)
                 self.assertIn("frontend=", message)
-                self.assertIn("db=", message)
-                self.assertIn("redis=", message)
-                self.assertIn("n8n=", message)
+                self.assertNotIn("db=", message)
+                self.assertNotIn("redis=", message)
+                self.assertNotIn("n8n=", message)
             print_summary_mock.assert_not_called()
 
     def test_shared_tree_requirements_progress_uses_tree_project_not_main(self) -> None:
