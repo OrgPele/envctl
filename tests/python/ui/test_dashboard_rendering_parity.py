@@ -523,6 +523,72 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertLess(output.index("feature-b-1"), output.index("Shared dependencies:"))
 
+    def test_dashboard_infers_shared_tree_dependencies_for_legacy_run_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(
+                load_config(self._config(repo, runtime)),
+                env={"NO_COLOR": "1", "ENVCTL_UI_VISUAL_HOST": "192.0.2.42"},
+            )
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            shared_requirements = RequirementsResult(
+                project="",
+                redis={"enabled": True, "runtime_status": "healthy", "final": 6380, "success": True},
+                supabase={"enabled": True, "runtime_status": "healthy", "final": 54321, "success": True},
+                n8n={"enabled": True, "runtime_status": "healthy", "final": 5678, "success": True},
+            )
+            state = RunState(
+                run_id="run-legacy-shared-deps",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(repo),
+                        requested_port=8101,
+                        actual_port=8101,
+                        pid=111,
+                        status="running",
+                    ),
+                    "feature-b-1 Frontend": ServiceRecord(
+                        name="feature-b-1 Frontend",
+                        type="frontend",
+                        cwd=str(repo),
+                        requested_port=9102,
+                        actual_port=9102,
+                        pid=222,
+                        status="running",
+                    ),
+                },
+                requirements={
+                    "feature-a-1": shared_requirements,
+                    "feature-b-1": shared_requirements,
+                },
+                metadata={
+                    "project_roots": {
+                        "feature-a-1": str(repo / "trees" / "feature-a" / "1"),
+                        "feature-b-1": str(repo / "trees" / "feature-b" / "1"),
+                    },
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Shared dependencies:", output)
+            self.assertEqual(output.count("redis:"), 1)
+            self.assertEqual(output.count("supabase:"), 1)
+            self.assertEqual(output.count("n8n:"), 1)
+            self.assertIn("redis: http://192.0.2.42:6380 [Healthy]", output)
+            self.assertIn("supabase: http://192.0.2.42:54321 [Healthy]", output)
+            self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
+            self.assertLess(output.index("feature-b-1"), output.index("Shared dependencies:"))
+
     def test_dashboard_keeps_isolated_tree_dependencies_under_each_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

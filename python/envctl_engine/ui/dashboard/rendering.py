@@ -419,7 +419,61 @@ def _dashboard_dependency_scope(state: RunState) -> str:
     raw = state.metadata.get("dashboard_dependency_scope")
     if isinstance(raw, str) and raw.strip().lower() in {"shared", "isolated", "none"}:
         return raw.strip().lower()
+    if _dashboard_legacy_tree_requirements_are_shared(state):
+        return "shared"
     return "isolated"
+
+
+def _dashboard_legacy_tree_requirements_are_shared(state: RunState) -> bool:
+    if state.mode != "trees":
+        return False
+    dependency_projects: set[str] = set()
+    dependency_keys: set[str] = set()
+    dependency_signatures: set[tuple[tuple[str, tuple[tuple[str, object], ...]], ...]] = set()
+    for key, requirements in state.requirements.items():
+        if not isinstance(requirements, RequirementsResult):
+            continue
+        if not _requirements_has_dashboard_dependencies(requirements):
+            continue
+        requirement_project = str(getattr(requirements, "project", "") or "").strip()
+        if requirement_project:
+            dependency_projects.add(requirement_project)
+        dependency_signatures.add(_dashboard_dependency_signature(requirements))
+        dependency_keys.add(str(key).strip())
+    if len(dependency_keys) < 2:
+        return False
+    if not dependency_projects:
+        return len(dependency_signatures) == 1
+    if not dependency_projects or len(dependency_projects) != 1:
+        return False
+    shared_project = next(iter(dependency_projects))
+    return bool(dependency_keys) and all(key != shared_project for key in dependency_keys)
+
+
+def _dashboard_dependency_signature(
+    requirements: RequirementsResult,
+) -> tuple[tuple[str, tuple[tuple[str, object], ...]], ...]:
+    signature: list[tuple[str, tuple[tuple[str, object], ...]]] = []
+    for definition in dependency_definitions():
+        if definition.id == "postgres":
+            continue
+        component = requirements.component(definition.id)
+        if not bool(component.get("enabled", False)):
+            continue
+        component_signature = tuple(
+            (field, component.get(field))
+            for field in (
+                "enabled",
+                "requested",
+                "final",
+                "runtime_status",
+                "success",
+                "simulated",
+                "container_name",
+            )
+        )
+        signature.append((definition.id, component_signature))
+    return tuple(signature)
 
 
 def _dashboard_shared_dependency_requirements(state: RunState) -> RequirementsResult | None:
