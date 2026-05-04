@@ -823,6 +823,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="envctl-test-session\n", stderr=""),
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="feature-a-1\n", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
                 ]
             )
 
@@ -861,6 +862,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             launch_calls = [call for call in rt.process_runner.calls if call[:2] in (["tmux", "new-session"], ["tmux", "new-window"])]
             self.assertTrue(launch_calls)
             self.assertTrue(any(call[0:5] == ["tmux", "new-session", "-d", "-s", expected_session_name] or call[0:5] == ["tmux", "new-window", "-d", "-t", expected_session_name] for call in launch_calls))
+            self.assertIn(["tmux", "set-option", "-t", expected_session_name, "mouse", "on"], rt.process_runner.calls)
             self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "-l", f"cd {shlex.quote(str(repo))}"], rt.process_runner.calls)
             self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "Enter"], rt.process_runner.calls)
             self.assertIn(["tmux", "send-keys", "-t", f"{expected_session_name}:feature-a-1", "-l", "opencode"], rt.process_runner.calls)
@@ -1610,6 +1612,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 outputs=[
                     subprocess.CompletedProcess(args=["tmux"], returncode=1, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="other\n", stderr=""),
                     subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="feature-a-1\n", stderr=""),
                 ]
@@ -1650,6 +1653,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 and call[4] == "-F"
             ]
             self.assertGreaterEqual(len(list_windows_calls), 2)
+            self.assertIn(["tmux", "set-option", "-t", "envctl-test-session", "mouse", "on"], rt.process_runner.calls)
 
     def test_resolve_plan_agent_launch_config_parses_codex_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

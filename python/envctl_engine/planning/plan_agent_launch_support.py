@@ -1447,10 +1447,24 @@ def _ensure_tmux_window(
         )
     result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
     if result.returncode == 0:
+        option_error = _enable_tmux_mouse_scrollback(runtime, session_name=session_name)
+        if option_error is not None:
+            return option_error
         wait_error = _wait_for_tmux_window_ready(runtime, session_name=session_name, window_name=window_name)
         if wait_error is None:
             return None
         return wait_error
+    return _tmux_completed_process_error_text(result)
+
+
+def _enable_tmux_mouse_scrollback(runtime: Any, *, session_name: str) -> str | None:
+    result = _run_tmux_probe(
+        runtime,
+        ("tmux", "set-option", "-t", session_name, "mouse", "on"),
+        cwd=Path(runtime.config.base_dir).resolve(),
+    )
+    if result.returncode == 0:
+        return None
     return _tmux_completed_process_error_text(result)
 
 
