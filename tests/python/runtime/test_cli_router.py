@@ -88,6 +88,32 @@ class CliRouterTests(unittest.TestCase):
                 with self.assertRaises(RouteError):
                     parse_route(args, env={})
 
+    def test_codex_goal_flags_are_parsed(self) -> None:
+        for token, flag_name in (
+            ("--goal", "goal"),
+            ("--codex-goal", "codex_goal"),
+            ("--no-goal", "no_goal"),
+            ("--no-codex-goal", "no_codex_goal"),
+        ):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", token], env={})
+                self.assertEqual(route.command, "plan")
+                self.assertTrue(route.flags.get(flag_name))
+
+    def test_codex_goal_positive_flags_reject_opencode(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--goal", "--opencode"],
+            ["--plan", "feature-a", "--codex-goal", "--opencode"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
+
+    def test_codex_goal_negative_flags_allow_opencode(self) -> None:
+        for token in ("--no-goal", "--no-codex-goal"):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", token, "--opencode"], env={})
+                self.assertTrue(route.flags.get("opencode"))
 
     def test_plan_agent_cli_flags_reject_conflicting_or_unsupported_combinations(self) -> None:
         for args in (

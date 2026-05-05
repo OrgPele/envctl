@@ -71,7 +71,7 @@ Create-plan skill behavior:
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
 - `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
 - `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`. OMX-managed launches are Codex-only, and Ralph owns the loop instead of Codex cycles.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ralph --entire-system --headless --tmux-new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ralph wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -123,7 +123,7 @@ The optional dashboard review-tab flow reuses the same AI CLI and cmux transport
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 
-Codex-only cycle mode:
+Codex TUI cycle mode:
 
 - default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`

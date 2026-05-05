@@ -48,16 +48,15 @@ def start_project_context(
     requirements = _requirements_for_project_context(orchestrator, context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):
         raise RuntimeError(_requirements_failure_message(context.name, requirements))
-    orchestrator._report_progress(
-        route,
-        f"Requirements ready for {context.name}: "
-        + " ".join(
-            f"{definition.id}={_component_port_summary(requirements, definition.id)}"
-            for definition in dependency_definitions()
-            if bool(requirements.component(definition.id).get("enabled", False))
-        ),
-        project=context.name,
+    requirements_progress_message = _requirements_ready_progress_message(
+        orchestrator,
+        context=context,
+        mode=mode,
+        route=route,
+        requirements=requirements,
     )
+    if requirements_progress_message is not None:
+        orchestrator._report_progress(route, requirements_progress_message, project=context.name)
     project_services = orchestrator.start_project_services(
         context,
         requirements=requirements,
@@ -96,6 +95,46 @@ def _requirements_for_project_context(
     if mode != "trees" or effective_dependency_scope(route, mode) != "shared":
         return requirements_for_restart_context(orchestrator, context=context, mode=mode, route=route)
     return _shared_main_requirements(orchestrator, route=route, progress_project=context.name)
+
+
+def _requirements_ready_progress_message(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    context: ProjectContextLike,
+    mode: str,
+    route: Route,
+    requirements: RequirementsResult,
+) -> str | None:
+    component_summary = _requirements_component_summary(requirements)
+    if mode != "trees" or effective_dependency_scope(route, mode) != "shared":
+        return f"Requirements ready for {context.name}: " + component_summary
+    if not component_summary:
+        return None
+    if _claim_first_shared_dependency_progress(orchestrator):
+        return "Shared requirements ready: " + component_summary
+    return "Shared requirements ready"
+
+
+def _requirements_component_summary(requirements: RequirementsResult) -> str:
+    return " ".join(
+        f"{definition.id}={_component_port_summary(requirements, definition.id)}"
+        for definition in dependency_definitions()
+        if bool(requirements.component(definition.id).get("enabled", False))
+    )
+
+
+def _claim_first_shared_dependency_progress(orchestrator: StartupOrchestratorLike) -> bool:
+    lock = getattr(orchestrator, "_shared_dependency_lock", None)
+    if lock is None:
+        already_reported = bool(getattr(orchestrator, "_shared_dependency_progress_reported", False))
+        setattr(orchestrator, "_shared_dependency_progress_reported", True)
+        return not already_reported
+    with lock:
+        already_reported = bool(getattr(orchestrator, "_shared_dependency_progress_reported", False))
+        if already_reported:
+            return False
+        setattr(orchestrator, "_shared_dependency_progress_reported", True)
+        return True
 
 
 def _shared_main_requirements(

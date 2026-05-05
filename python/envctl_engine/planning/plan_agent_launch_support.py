@@ -55,6 +55,7 @@ _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH = Path(".omx") / "state" / "tmux-extended-
 _OMX_TMUX_LOCK_STALE_SECONDS = 30.0
 _CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
+_CODEX_QUEUE_MAX_TAB_ATTEMPTS = 2
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
@@ -84,6 +85,11 @@ _CODEX_READY_MARKERS = (
     "directory:",
 )
 _CODEX_QUEUE_READY_HINT = "tab to queue message"
+_CODEX_QUEUE_CONFIRMED_MARKERS = (
+    "queued follow-up",
+    "queued follow-up messages",
+    "follow-up inputs",
+)
 _OPENCODE_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›❯»][ \t]*.*$")
 _OPENCODE_LOADING_MARKERS = (
     "loading",
@@ -145,6 +151,7 @@ class PlanAgentLaunchConfig:
     browser_e2e_followup_enable: bool = True
     pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ralph", "team"] = ""
+    codex_goal_enable: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -210,6 +217,17 @@ class _PlanAgentWorkflow:
     steps: tuple[_PlanAgentWorkflowStep, ...]
 
 
+class _QueueFailure(str):
+    step_index: int | None
+    step_kind: str | None
+
+    def __new__(cls, reason: str, *, step_index: int | None = None, step_kind: str | None = None) -> "_QueueFailure":
+        obj = str.__new__(cls, reason)
+        obj.step_index = step_index
+        obj.step_kind = step_kind
+        return obj
+
+
 def _finalization_instruction_text() -> str:
     return _load_plan_agent_followup_prompt(_FINALIZATION_INSTRUCTION_TEMPLATE)
 
@@ -256,9 +274,13 @@ def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
 
 
 def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> str:
-    if launch_config.cli == "codex" and launch_config.codex_cycles > 0:
+    if _codex_tui_queue_workflow_supported(launch_config) and launch_config.codex_cycles > 0:
         return _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
     return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
+
+
+def _codex_tui_queue_workflow_supported(launch_config: PlanAgentLaunchConfig) -> bool:
+    return launch_config.cli == "codex" and launch_config.transport in {"cmux", "tmux", "omx"}
 
 
 def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
@@ -404,9 +426,17 @@ def resolve_plan_agent_launch_config(
         omx_workflow = "ralph"
     elif bool(route_flags.get("team")):
         omx_workflow = "team"
-    if omx_workflow and codex_cycles > 0:
-        codex_cycles = 0
-        codex_cycles_warning = codex_cycles_warning or "omx_workflow_disables_codex_cycles"
+    goal_enabled = False
+    if cli == "codex":
+        goal_enabled = parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE")
+            or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"),
+            True,
+        )
+        if bool(route_flags.get("goal")) or bool(route_flags.get("codex_goal")):
+            goal_enabled = True
+        if bool(route_flags.get("no_goal")) or bool(route_flags.get("no_codex_goal")):
+            goal_enabled = False
     return PlanAgentLaunchConfig(
         enabled=enabled,
         transport=transport,
@@ -436,6 +466,7 @@ def resolve_plan_agent_launch_config(
         ulw_loop_prefix=ulw_loop_prefix,
         ulw_suffix=ulw_suffix,
         omx_workflow=omx_workflow,
+        codex_goal_enable=goal_enabled,
     )
 
 
@@ -501,6 +532,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "codex_cycles": launch_config.codex_cycles,
         "omx_workflow": launch_config.omx_workflow or None,
         "workflow_warning": launch_config.codex_cycles_warning,
+        "codex_goal_enable": launch_config.codex_goal_enable,
         "shell": launch_config.shell,
         "direct_prompt_enabled": launch_config.direct_prompt_enabled,
         "ulw_loop_prefix": launch_config.ulw_loop_prefix,
@@ -654,6 +686,7 @@ def launch_plan_agent_terminals(
         "created_worktree_count": len(created_worktrees),
         "workflow_mode": workflow.mode,
         "codex_cycles": launch_config.codex_cycles,
+        "codex_goal_enable": launch_config.codex_goal_enable,
         "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
         "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
     }
@@ -1641,6 +1674,19 @@ def _run_tmux_existing_session_workflow(
     worktree: CreatedPlanWorktree,
 ) -> str | None:
     _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    goal_error = _maybe_submit_tmux_codex_goal(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+        transport="omx",
+    )
+    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
+        return goal_error
+    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
+        _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -1671,8 +1717,10 @@ def _run_tmux_existing_session_workflow(
             queued_steps=queued_steps,
             launch_config=launch_config,
             cli=launch_config.cli,
+            transport="omx",
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 session_name=session_name,
@@ -1683,6 +1731,7 @@ def _run_tmux_existing_session_workflow(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="omx",
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -1694,9 +1743,138 @@ def _run_tmux_existing_session_workflow(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="omx",
+                **failure_context,
             )
             return None
     return None
+
+
+def _codex_goal_text_for_worktree(
+    *,
+    worktree: CreatedPlanWorktree,
+    preset: str,
+    workflow_mode: str,
+    omx_workflow: str,
+) -> str:
+    plan_selector = str(worktree.plan_file or "").strip() or str(worktree.name).strip() or "selected plan"
+    lines = [
+        f"Implement the envctl plan-agent task for {plan_selector} in this worktree.",
+        "Authoritative source: MAIN_TASK.md in the current worktree.",
+        f"Initial preset: {str(preset).strip() or _DEFAULT_PRESET}.",
+        f"Workflow mode: {str(workflow_mode).strip() or _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT}.",
+    ]
+    normalized_omx = str(omx_workflow or "").strip().lower()
+    if normalized_omx:
+        lines.append(f"OMX workflow: ${normalized_omx}; keep its completion contract active after this goal frame.")
+    lines.append("Complete the implementation, run relevant tests, commit, and open/update the PR when green.")
+    return " ".join(lines)
+
+
+def _emit_codex_goal_event(
+    runtime: Any,
+    event: str,
+    *,
+    cli: str,
+    workflow: _PlanAgentWorkflow,
+    transport: str,
+    worktree: CreatedPlanWorktree,
+    reason: str | None = None,
+    **target: object,
+) -> None:
+    payload: dict[str, object] = {
+        **target,
+        "worktree": worktree.name,
+        "cli": cli,
+        "workflow_mode": workflow.mode,
+        "codex_cycles": workflow.codex_cycles,
+        "transport": transport,
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    runtime._emit(event, **payload)
+
+
+def _maybe_submit_tmux_codex_goal(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+    transport: str,
+) -> str | None:
+    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
+        return None
+    goal_text = _codex_goal_text_for_worktree(
+        worktree=worktree,
+        preset=launch_config.preset,
+        workflow_mode=workflow.mode,
+        omx_workflow=launch_config.omx_workflow,
+    )
+    error = _submit_tmux_codex_goal(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        goal_text=goal_text,
+    )
+    if error is None:
+        _emit_codex_goal_event(
+            runtime,
+            "planning.agent_launch.codex_goal_submitted",
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            workflow=workflow,
+            transport=transport,
+            worktree=worktree,
+        )
+        return None
+    if error == "codex_goal_ready_timeout":
+        _emit_codex_goal_event(
+            runtime,
+            "planning.agent_launch.codex_goal_fallback",
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            workflow=workflow,
+            transport=transport,
+            worktree=worktree,
+            reason=error,
+        )
+        return error
+    return error
+
+
+def _submit_tmux_codex_goal(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    goal_text: str,
+) -> str | None:
+    submit_error = _submit_tmux_prompt_workflow_step(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        prompt_text=f"/goal {goal_text}",
+        cli="codex",
+    )
+    if submit_error is not None:
+        return submit_error
+    if not _wait_for_tmux_prompt_ready_after_goal(runtime, session_name=session_name, window_name=window_name):
+        return "codex_goal_ready_timeout"
+    return None
+
+
+def _wait_for_tmux_prompt_ready_after_goal(runtime: Any, *, session_name: str, window_name: str) -> bool:
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _screen_looks_ready("codex", screen):
+            return True
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def _wrap_omx_initial_prompt_for_workflow(text: str, *, workflow: str) -> str:
@@ -1861,6 +2039,19 @@ def _run_tmux_worktree_bootstrap(
         if error is not None:
             return error
     _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    goal_error = _maybe_submit_tmux_codex_goal(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+        transport="tmux",
+    )
+    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
+        return goal_error
+    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
+        _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -1890,8 +2081,10 @@ def _run_tmux_worktree_bootstrap(
             queued_steps=queued_steps,
             launch_config=launch_config,
             cli=launch_config.cli,
+            transport="tmux",
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 session_name=session_name,
@@ -1902,6 +2095,7 @@ def _run_tmux_worktree_bootstrap(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="tmux",
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -1913,6 +2107,7 @@ def _run_tmux_worktree_bootstrap(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="tmux",
+                **failure_context,
             )
             return None
     return None
@@ -1928,8 +2123,9 @@ def _queue_tmux_codex_workflow_steps(
     queued_steps: tuple[_PlanAgentWorkflowStep, ...],
     launch_config: PlanAgentLaunchConfig,
     cli: str,
+    transport: str = "tmux",
 ) -> str | None:
-    for step in queued_steps:
+    for step_index, step in enumerate(queued_steps):
         queued_text, resolution_error = _workflow_step_prompt_text(
             runtime,
             launch_config=launch_config,
@@ -1938,7 +2134,7 @@ def _queue_tmux_codex_workflow_steps(
             worktree=worktree,
         )
         if resolution_error is not None:
-            return "queue_prompt_resolution_failed"
+            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
         send_error = _send_tmux_prompt(
             runtime,
             session_name=session_name,
@@ -1946,7 +2142,7 @@ def _queue_tmux_codex_workflow_steps(
             text=queued_text,
         )
         if send_error is not None:
-            return "queue_send_failed"
+            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
         if not _queue_tmux_codex_message(
             runtime,
             session_name=session_name,
@@ -1954,7 +2150,7 @@ def _queue_tmux_codex_workflow_steps(
             text=queued_text,
             require_text_match=False,
         ):
-            return "queue_not_ready"
+            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
     runtime._emit(
         "planning.agent_launch.workflow_queued",
         session_name=session_name,
@@ -1964,7 +2160,8 @@ def _queue_tmux_codex_workflow_steps(
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         queued_steps=len(queued_steps),
-        transport="tmux",
+        queued_steps_confirmed=len(queued_steps),
+        transport=transport,
     )
     return None
 
@@ -1978,10 +2175,18 @@ def _queue_tmux_codex_message(
     require_text_match: bool = True,
 ) -> bool:
     deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    tab_sent = False
+    tab_attempts = 0
     while time.monotonic() < deadline:
         screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
+            screen,
+            text,
+            require_text_match=require_text_match,
+        ):
+            return True
         if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
+            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
+                return False
             tab_error = _send_tmux_key(
                 runtime,
                 session_name=session_name,
@@ -1991,13 +2196,22 @@ def _queue_tmux_codex_message(
             )
             if tab_error is not None:
                 return False
-            tab_sent = True
+            tab_attempts += 1
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
-        if tab_sent:
-            return True
         time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
     return False
+
+
+def _queue_failure_event_context(reason: str) -> dict[str, object]:
+    context: dict[str, object] = {}
+    step_index = getattr(reason, "step_index", None)
+    if step_index is not None:
+        context["queue_failed_step_index"] = step_index
+    step_kind = getattr(reason, "step_kind", None)
+    if step_kind:
+        context["queue_failed_step_kind"] = step_kind
+    return context
 
 
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
@@ -2211,6 +2425,23 @@ def _run_surface_bootstrap(
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    goal_error = _maybe_submit_surface_codex_goal(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+    )
+    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
+        return goal_error
+    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
+        _wait_for_cli_ready(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            cli=launch_config.cli,
+        )
     initial_step = workflow.steps[0]
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
@@ -2251,6 +2482,7 @@ def _run_surface_bootstrap(
             cli=launch_config.cli,
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 workspace_id=workspace_id,
@@ -2260,6 +2492,8 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
+                transport="cmux",
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -2270,6 +2504,8 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
+                transport="cmux",
+                **failure_context,
             )
             return None
     return None
@@ -2344,6 +2580,77 @@ def _run_review_surface_bootstrap(
         prompt_text=prompt_text,
         failure_event="dashboard.review_tab.failed",
     )
+
+
+def _maybe_submit_surface_codex_goal(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
+    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
+        return None
+    goal_text = _codex_goal_text_for_worktree(
+        worktree=worktree,
+        preset=launch_config.preset,
+        workflow_mode=workflow.mode,
+        omx_workflow=launch_config.omx_workflow,
+    )
+    error = _submit_surface_codex_goal(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        goal_text=goal_text,
+    )
+    if error is None:
+        _emit_codex_goal_event(
+            runtime,
+            "planning.agent_launch.codex_goal_submitted",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            cli=launch_config.cli,
+            workflow=workflow,
+            transport="cmux",
+            worktree=worktree,
+        )
+        return None
+    if error == "codex_goal_ready_timeout":
+        _emit_codex_goal_event(
+            runtime,
+            "planning.agent_launch.codex_goal_fallback",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            cli=launch_config.cli,
+            workflow=workflow,
+            transport="cmux",
+            worktree=worktree,
+            reason=error,
+        )
+        return error
+    return error
+
+
+def _submit_surface_codex_goal(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    goal_text: str,
+) -> str | None:
+    submit_error = _submit_direct_prompt_workflow_step(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        prompt_text=f"/goal {goal_text}",
+    )
+    if submit_error is not None:
+        return submit_error
+    if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
+        return "codex_goal_ready_timeout"
+    return None
 
 
 def _workflow_step_prompt_text(
@@ -2766,7 +3073,7 @@ def _queue_codex_workflow_steps(
     launch_config: PlanAgentLaunchConfig,
     cli: str,
 ) -> str | None:
-    for step in queued_steps:
+    for step_index, step in enumerate(queued_steps):
         queued_text, resolution_error = _workflow_step_prompt_text(
             runtime,
             launch_config=launch_config,
@@ -2775,7 +3082,7 @@ def _queue_codex_workflow_steps(
             worktree=worktree,
         )
         if resolution_error is not None:
-            return "queue_prompt_resolution_failed"
+            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
         send_error = _paste_surface_text(
             runtime,
             workspace_id=workspace_id,
@@ -2784,7 +3091,7 @@ def _queue_codex_workflow_steps(
             emit_failure_event=False,
         )
         if send_error is not None:
-            return "queue_send_failed"
+            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
         if not _queue_codex_message(
             runtime,
             workspace_id=workspace_id,
@@ -2792,7 +3099,7 @@ def _queue_codex_workflow_steps(
             text=queued_text,
             require_text_match=False,
         ):
-            return "queue_not_ready"
+            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
     runtime._emit(
         "planning.agent_launch.workflow_queued",
         workspace_id=workspace_id,
@@ -2802,6 +3109,8 @@ def _queue_codex_workflow_steps(
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         queued_steps=len(queued_steps),
+        queued_steps_confirmed=len(queued_steps),
+        transport="cmux",
     )
     return None
 
@@ -2834,7 +3143,7 @@ def _queue_codex_message(
     deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
     normalized_text = str(text).strip()
     picker_submitted = False
-    tab_sent = False
+    tab_attempts = 0
     while time.monotonic() < deadline:
         screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if (
@@ -2854,7 +3163,15 @@ def _queue_codex_message(
             picker_submitted = True
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
+        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
+            screen,
+            text,
+            require_text_match=require_text_match,
+        ):
+            return True
         if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
+            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
+                return False
             tab_error = _send_surface_key(
                 runtime,
                 workspace_id=workspace_id,
@@ -2864,11 +3181,9 @@ def _queue_codex_message(
             )
             if tab_error is not None:
                 return False
-            tab_sent = True
+            tab_attempts += 1
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
-        if tab_sent:
-            return True
         time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
     return False
 
@@ -2891,6 +3206,34 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
         )
     if not first_visible_line:
         return False
+    return _normalized_screen_text(first_visible_line) in normalized_screen
+
+
+def _codex_queue_screen_confirms_queued(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    if any(marker in normalized_screen for marker in _CODEX_QUEUE_CONFIRMED_MARKERS):
+        return True
+    if _CODEX_QUEUE_READY_HINT in normalized_screen:
+        return False
+    if _codex_queue_text_is_visible(screen, text, require_text_match=require_text_match):
+        return False
+    return True
+
+
+def _codex_queue_text_is_visible(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    normalized_text = _normalized_screen_text(text)
+    if normalized_text and normalized_text in normalized_screen:
+        return True
+    first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not first_visible_line:
+        return False
+    if not require_text_match and "pasted content" in normalized_screen:
+        return True
     return _normalized_screen_text(first_visible_line) in normalized_screen
 
 

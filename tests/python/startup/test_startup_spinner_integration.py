@@ -184,11 +184,12 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             success_messages = [msg for kind, _project, msg in calls if kind == "success"]
             self.assertTrue(success_messages)
             for message in success_messages:
+                self.assertIn("startup completed", message)
                 self.assertIn("backend=", message)
                 self.assertIn("frontend=", message)
-                self.assertIn("db=", message)
-                self.assertIn("redis=", message)
-                self.assertIn("n8n=", message)
+                self.assertNotIn("db=", message)
+                self.assertNotIn("redis=", message)
+                self.assertNotIn("n8n=", message)
             print_summary_mock.assert_not_called()
 
     def test_shared_tree_requirements_progress_uses_tree_project_not_main(self) -> None:
@@ -327,6 +328,18 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertNotIn("Main", {project for project, _message in requirement_updates})
             self.assertTrue(
                 {project for project, _message in requirement_updates}.issubset({"feature-a-1", "feature-b-1"})
+            )
+            shared_ready_updates = [
+                message for _project, message in requirement_updates if message.startswith("Shared requirements ready")
+            ]
+            self.assertTrue(shared_ready_updates)
+            self.assertLessEqual(sum("redis=" in message for _project, message in requirement_updates), 1)
+            self.assertFalse(
+                any(
+                    message.startswith(f"Requirements ready for {project}: redis=")
+                    for project, message in requirement_updates
+                    if project in {"feature-a-1", "feature-b-1"}
+                )
             )
 
             isolated_updates: list[tuple[str, str]] = []

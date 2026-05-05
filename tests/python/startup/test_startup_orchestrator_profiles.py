@@ -11,6 +11,7 @@ from envctl_engine.runtime.engine_runtime_env import requirement_enabled_for_mod
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.startup.finalization import build_success_run_state
 from envctl_engine.startup.session import StartupSession
+from envctl_engine.state.models import RequirementsResult
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
@@ -95,6 +96,57 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             state.metadata.get("dashboard_project_configured_services"),
             {"Alpha": ["frontend"], "Zeta": ["frontend"]},
         )
+
+    def test_build_run_state_marks_tree_shared_dependency_dashboard_scope(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, _service_name: False,
+        )
+        contexts = [
+            SimpleNamespace(name="feature-a-1", root=Path("/tmp/repo/trees/feature-a/1"), ports={}),
+            SimpleNamespace(name="feature-b-1", root=Path("/tmp/repo/trees/feature-b/1"), ports={}),
+        ]
+        route = parse_route(["--trees"], env={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="trees",
+            run_id="run-1",
+            selected_contexts=contexts,
+            requirements_by_project={
+                "feature-a-1": RequirementsResult(project="Main", redis={"enabled": True, "success": True}),
+                "feature-b-1": RequirementsResult(project="Main", redis={"enabled": True, "success": True}),
+            },
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertEqual(state.metadata.get("dashboard_dependency_scope"), "shared")
+        self.assertEqual(state.metadata.get("dashboard_shared_dependency_project"), "Main")
+
+    def test_build_run_state_does_not_mark_isolated_tree_dependency_dashboard_scope(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, _service_name: False,
+        )
+        contexts = [SimpleNamespace(name="feature-a-1", root=Path("/tmp/repo/trees/feature-a/1"), ports={})]
+        route = parse_route(["--trees", "--isolated-deps"], env={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="trees",
+            run_id="run-1",
+            selected_contexts=contexts,
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertNotEqual(state.metadata.get("dashboard_dependency_scope"), "shared")
+        self.assertNotIn("dashboard_shared_dependency_project", state.metadata)
 
     def test_restart_service_types_respect_default_service_set(self) -> None:
         route = parse_route(["restart", "--service", "Main Frontend"], env={"ENVCTL_DEFAULT_MODE": "main"})

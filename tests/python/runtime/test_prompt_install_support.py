@@ -598,8 +598,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                     "Recommended Codex-equivalent cycles: <n>",
                     "informational",
                     "OMX-managed launches are Codex-only",
-                    "`--ralph` is the loop mechanism for this surface",
-                    "Codex cycle settings are intentionally not used here",
+                    "`--ralph` is the persistence workflow for this surface",
+                    "envctl can queue the same Codex follow-up cycle workflow",
                 ),
             },
         }

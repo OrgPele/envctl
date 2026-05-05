@@ -55,6 +55,23 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.plan_agent_browser_e2e_enable)
             self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "false")
 
+    def test_load_config_exposes_plan_agent_codex_goal_default_and_false_toggle(self) -> None:
+        default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
+        self.assertTrue(default_config.plan_agent_codex_goal_enable)
+        self.assertEqual(default_config.raw["ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"], "true")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=false\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertFalse(config.plan_agent_codex_goal_enable)
+            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"], "false")
+
     def test_envctl_example_documents_plan_agent_codex_cycles(self) -> None:
         example = (REPO_ROOT / "docs" / "reference" / ".envctl.example").read_text(encoding="utf-8")
 

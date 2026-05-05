@@ -266,6 +266,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -565,10 +566,148 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(omx_config.transport, "omx")
         self.assertEqual(omx_config.cli, "codex")
         self.assertEqual(omx_config.omx_workflow, "ralph")
-        self.assertEqual(omx_config.codex_cycles, 0)
-        self.assertEqual(omx_config.codex_cycles_warning, "omx_workflow_disables_codex_cycles")
+        self.assertEqual(omx_config.codex_cycles, 4)
+        self.assertIsNone(omx_config.codex_cycles_warning)
         self.assertTrue(omx_config.pr_review_comments_followup_enable)
-        self.assertEqual(omx_workflow.mode, "single_prompt")
+        self.assertEqual(omx_workflow.mode, "codex_cycles")
+
+    def test_resolve_plan_agent_launch_config_goal_defaults_and_route_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
+
+            codex_default = launch_support.resolve_plan_agent_launch_config(
+                config, {}, route=parse_route(["--plan", "feature-a", "--tmux"], env={})
+            )
+            opencode_default = launch_support.resolve_plan_agent_launch_config(
+                config, {}, route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={})
+            )
+            disabled = launch_support.resolve_plan_agent_launch_config(
+                config, {}, route=parse_route(["--plan", "feature-a", "--tmux", "--no-goal", "--goal"], env={})
+            )
+            enabled_by_route = launch_support.resolve_plan_agent_launch_config(
+                load_config({
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                }),
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--goal"], env={}),
+            )
+
+        self.assertTrue(codex_default.codex_goal_enable)
+        self.assertFalse(opencode_default.codex_goal_enable)
+        self.assertFalse(disabled.codex_goal_enable)
+        self.assertTrue(enabled_by_route.codex_goal_enable)
+
+    def test_omx_goal_then_ralph_then_cycle_queue_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime_dir)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex",
+                preset="implement_task",
+                codex_cycles=1,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="ralph",
+                codex_goal_enable=True,
+            )
+            workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+            submitted: list[str] = []
+            queued: list[str] = []
+
+            def fake_submit(*_args, prompt_text, **_kwargs):  # noqa: ANN202, ANN001
+                submitted.append(prompt_text)
+                return None
+
+            def fake_queue(*_args, queued_steps, **_kwargs):  # noqa: ANN202, ANN001
+                queued.extend(step.kind for step in queued_steps)
+                return None
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
+                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
+                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
+            ):
+                error = launch_support._run_tmux_existing_session_workflow(
+                    rt,
+                    session_name="session",
+                    window_name="window",
+                    launch_config=launch_config,
+                    workflow=workflow,
+                    worktree=worktree,
+                )
+
+        self.assertIsNone(error)
+        self.assertEqual(len(submitted), 1)
+        self.assertTrue(submitted[0].startswith("$ralph"))
+        self.assertEqual(queued, ["queue_direct_prompt", "queue_message", "queue_message"])
+
+    def test_omx_goal_fallback_still_submits_ralph_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime_dir)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="ralph",
+                codex_goal_enable=True,
+            )
+            workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+            submitted: list[str] = []
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value="codex_goal_ready_timeout"),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=lambda *_args, prompt_text, **_kwargs: submitted.append(prompt_text) or None),
+                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
+            ):
+                error = launch_support._run_tmux_existing_session_workflow(
+                    rt,
+                    session_name="session",
+                    window_name="window",
+                    launch_config=launch_config,
+                    workflow=workflow,
+                    worktree=worktree,
+                )
+
+        self.assertIsNone(error)
+        self.assertTrue(submitted[0].startswith("$ralph"))
+        self.assertEqual(
+            self._events(rt, "planning.agent_launch.codex_goal_fallback")[0]["reason"],
+            "codex_goal_ready_timeout",
+        )
 
     def test_resolve_plan_agent_launch_config_allows_pr_review_comment_followup_toggle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -717,9 +856,33 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(launch_config.transport, "omx")
                     self.assertEqual(launch_config.cli, "codex")
                     self.assertEqual(launch_config.omx_workflow, workflow_name)
-                    self.assertEqual(launch_config.codex_cycles, 0)
+                    self.assertEqual(launch_config.codex_cycles, 2)
 
-    def test_resolve_plan_agent_launch_config_disables_codex_cycles_for_omx_workflows(self) -> None:
+    def test_resolve_plan_agent_launch_config_keeps_cycles_for_plain_omx(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--omx"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "omx")
+        self.assertEqual(launch_config.cli, "codex")
+        self.assertEqual(launch_config.codex_cycles, 3)
+        self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_keeps_cycles_for_omx_workflows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -747,11 +910,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     )
 
                     self.assertEqual(launch_config.omx_workflow, workflow_name)
-                    self.assertEqual(launch_config.codex_cycles, 0)
-                    self.assertEqual(workflow.codex_cycles, 0)
-                    self.assertEqual(len(workflow.steps), 3)
-                    self.assertEqual(workflow.steps[1].text, _browser_e2e_instruction_text())
-                    self.assertEqual(workflow.steps[2].text, _pr_review_comments_instruction_text())
+                    self.assertEqual(launch_config.codex_cycles, 3)
+                    self.assertIsNone(launch_config.codex_cycles_warning)
+                    self.assertEqual(workflow.mode, "codex_cycles")
+                    self.assertEqual(workflow.codex_cycles, 3)
+                    self.assertEqual(len(workflow.steps), 10)
+                    self.assertEqual(workflow.steps[1].text, _first_cycle_completion_instruction_text())
+                    self.assertEqual(workflow.steps[-2].text, _browser_e2e_instruction_text())
+                    self.assertEqual(workflow.steps[-1].text, _pr_review_comments_instruction_text())
 
     def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -929,9 +1095,77 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
                         "queued_steps": 6,
+                        "queued_steps_confirmed": 6,
                         "transport": "tmux",
                     }
                 ],
+            )
+
+    def test_tmux_codex_workflow_queue_failure_emits_fallback_with_step_context(self) -> None:
+        self.assertIsNotNone(_run_tmux_worktree_bootstrap)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="tmux",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=1,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+            )
+            workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+
+            def resolve_step(*_args, step, **_kwargs):
+                return (f"resolved::{step.kind}::{step.text}", None)
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=resolve_step),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_message", return_value=False),
+            ):
+                error = _run_tmux_worktree_bootstrap(
+                    rt,
+                    session_name="envctl-test-session",
+                    window_name="feature-a-1",
+                    launch_config=launch_config,
+                    workflow=workflow,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            expected = {
+                "session_name": "envctl-test-session",
+                "window_name": "feature-a-1",
+                "worktree": "feature-a-1",
+                "cli": "codex",
+                "workflow_mode": "codex_cycles",
+                "codex_cycles": 1,
+                "reason": "queue_not_ready",
+                "transport": "tmux",
+                "queue_failed_step_index": 0,
+                "queue_failed_step_kind": "queue_direct_prompt",
+            }
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.workflow_queue_failed"),
+                [{"event": "planning.agent_launch.workflow_queue_failed", **expected}],
+            )
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.workflow_fallback"),
+                [{"event": "planning.agent_launch.workflow_fallback", **expected}],
             )
 
     def test_omx_launch_spawns_managed_session_and_bootstraps_existing_tmux_session(self) -> None:
@@ -1001,6 +1235,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         ulw_loop_prefix=False,
                         ulw_suffix=False,
                         omx_workflow=workflow_name,
+                        codex_goal_enable=False,
                     )
                     workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
                     submitted_prompts: list[str] = []
@@ -2705,6 +2940,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
                         "queued_steps": 6,
+                        "queued_steps_confirmed": 6,
+                        "transport": "cmux",
                     }
                 ],
             )
@@ -2968,6 +3205,156 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(queued)
         self.assertEqual(sent_keys, ["tab"])
 
+    def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body"
+        stuck_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "  Direct queued prompt body\n"
+            "  tab to queue message\n"
+        )
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            return None
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=stuck_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_codex_message(
+                runtime, workspace_id="workspace:7", surface_id="surface:9", text=queued_text, require_text_match=False
+            )
+
+        self.assertFalse(queued)
+        self.assertEqual(sent_keys, ["tab", "tab"])
+
+    def test_tmux_codex_queue_confirms_message_after_tab(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body"
+        state = {"stage": "typed"}
+        queue_hint_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "  Direct queued prompt body\n"
+            "  tab to queue message\n"
+        )
+        committed_screen = "• Queued follow-up messages\n"
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            if key == "tab":
+                state["stage"] = "committed"
+            return None
+
+        def fake_read_screen(*_args, **_kwargs):  # noqa: ANN202, ANN001
+            return queue_hint_screen if state["stage"] == "typed" else committed_screen
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=fake_read_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_tmux_codex_message(
+                runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
+            )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_keys, ["tab"])
+
+    def test_tmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body"
+        stuck_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "  Direct queued prompt body\n"
+            "  tab to queue message\n"
+        )
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            return None
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=stuck_screen),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_tmux_codex_message(
+                runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
+            )
+
+        self.assertFalse(queued)
+        self.assertEqual(sent_keys, ["tab", "tab"])
+
+    def test_tmux_codex_queue_accepts_pasted_content_only_after_post_tab_confirmation(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Direct queued prompt body\nwith multiple lines"
+        state = {"stage": "typed"}
+        queue_hint_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "› [Pasted Content 6674 chars]\n"
+            "  tab to queue message\n"
+        )
+        committed_screen = "• Queued follow-up messages\n"
+        runtime = _RuntimeHarness(
+            config=load_config({"RUN_REPO_ROOT": "/tmp/repo", "RUN_SH_RUNTIME_DIR": "/tmp/runtime"}),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+
+        def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
+            sent_keys.append(key)
+            if key == "tab":
+                state["stage"] = "committed"
+            return None
+
+        with (
+            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
+            patch(
+                "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                side_effect=lambda *_args, **_kwargs: queue_hint_screen if state["stage"] == "typed" else committed_screen,
+            ),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+        ):
+            queued = launch_support._queue_tmux_codex_message(
+                runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
+            )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_keys, ["tab"])
+
     def test_review_prompt_arguments_preserve_newlines_for_direct_codex_submission(self) -> None:
         rendered = launch_support._review_prompt_arguments(
             project_name="feature-a-1",
@@ -3023,6 +3410,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -3089,6 +3477,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 1,
                         "reason": "queue_send_failed",
+                        "queue_failed_step_index": 0,
+                        "queue_failed_step_kind": "queue_direct_prompt",
+                        "transport": "cmux",
                     }
                 ],
             )
@@ -3104,6 +3495,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 1,
                         "reason": "queue_send_failed",
+                        "queue_failed_step_index": 0,
+                        "queue_failed_step_kind": "queue_direct_prompt",
+                        "transport": "cmux",
                     }
                 ],
             )
@@ -3165,6 +3559,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "created_worktree_count": 1,
                     "workflow_mode": "codex_cycles",
                     "codex_cycles": 3,
+                    "codex_goal_enable": True,
                     "browser_e2e_followup_enable": True,
                     "pr_review_comments_followup_enable": True,
                 }
