@@ -95,6 +95,17 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
+## Codex cycle recommendation
+Before launching envctl, assign `recommended_codex_cycles=<n>` where `<n>` is exactly one integer from `0` through `8`. Use this rubric:
+
+- `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
+- `1-2`: small localized code or test changes with low integration risk.
+- `3-4`: normal multi-file feature or fix requiring implementation, verification, and at least one follow-up pass.
+- `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
+- `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
+
+Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
+
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
 
@@ -113,18 +124,18 @@ The prompt must not begin implementing in the original planning session after la
 Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
 
 ```bash
-cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session
+cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session
 ```
 
-For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan <category>/<slug> --tmux --no-infra --headless --tmux-new-session`, but feature plans should keep `--entire-system` by default.
+For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --tmux --no-infra --headless --tmux-new-session`, but feature plans should keep `--entire-system` by default.
 
-This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` matches the global default for the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
+This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
 
 ## Final response format
 1. Path of the plan file created.
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
-4. Launch surface selected and exact command executed.
+4. Recommended Codex cycles selected, one-sentence rationale, launch surface selected, and exact command executed.
 5. Launch result, including attach/reconnect guidance when envctl prints it.
 6. Risk register (only if non-empty).
 

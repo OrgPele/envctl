@@ -570,10 +570,12 @@ class PromptInstallSupportTests(unittest.TestCase):
         expected = {
             "create_plan_auto_codex": {
                 "command": (
-                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 "
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> "
                     "envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session"
                 ),
                 "phrases": (
+                    "recommended_codex_cycles=<n>",
+                    "exactly one integer from `0` through `8`",
                     "uses the `implement_task` preset through the current plan-agent default",
                     "envctl queues the rendered follow-up prompts/messages",
                     "envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`",
@@ -593,6 +595,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             "create_plan_auto_omx": {
                 "command": "envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session",
                 "phrases": (
+                    "Recommended Codex-equivalent cycles: <n>",
+                    "informational",
                     "OMX-managed launches are Codex-only",
                     "`--ralph` is the persistence workflow for this surface",
                     "envctl can queue the same Codex follow-up cycle workflow",
@@ -634,6 +638,23 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertIn("no runtime infrastructure", body)
                 self.assertIn("--no-infra", body)
                 self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
+
+    def test_create_plan_templates_require_bounded_codex_cycle_recommendation(self) -> None:
+        for preset in ("create_plan", "create_plan_auto_codex", "create_plan_auto_omx"):
+            with self.subTest(preset=preset):
+                body = _load_template(preset).body
+
+                self.assertIn("Codex cycle recommendation", body)
+                self.assertIn("exactly one integer from `0` through `8`", body)
+                self.assertIn("Prefer the smallest number", body)
+                self.assertIn("Rollout / verification", body)
+
+    def test_create_plan_templates_do_not_embed_fixed_auto_codex_cycle_command(self) -> None:
+        fixed_command = "ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>"
+
+        for preset in ("create_plan", "create_plan_auto_codex", "create_plan_auto_omx"):
+            with self.subTest(preset=preset):
+                self.assertNotIn(fixed_command, _load_template(preset).body)
 
     def test_install_prompts_can_install_implement_plan_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -757,11 +778,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --omx",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx",
             plan_prompt.body,
         )
         self.assertIn(
@@ -817,7 +838,15 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux --entire-system --headless",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless",
+            plan_prompt.body,
+        )
+        self.assertNotIn(
+            "cd <repo> && envctl --plan <selector> --tmux --entire-system",
+            plan_prompt.body,
+        )
+        self.assertNotIn(
+            "cd <repo> && envctl --plan <selector> --omx --entire-system",
             plan_prompt.body,
         )
         self.assertIn("--tmux-new-session", plan_prompt.body)
@@ -832,9 +861,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean run the separate repo-scoped commands one after another)",
             plan_prompt.body,
         )
-        self.assertIn("offer to configure the Codex cycle count", plan_prompt.body)
+        self.assertIn("recommended Codex cycles: <n>", plan_prompt.body)
         self.assertIn("selected launch choice includes Codex or OMX-managed Codex", plan_prompt.body)
-        self.assertIn("the current runtime default is `2`", plan_prompt.body)
         self.assertIn("if the selected launch choice does not involve Codex, say that the Codex cycle count setting is ignored", plan_prompt.body)
         self.assertNotIn("CMUX=true", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_CLI=", plan_prompt.body)
@@ -842,7 +870,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("--tmux --opencode", plan_prompt.body)
         self.assertNotIn("--tmux --codex", plan_prompt.body)
         self.assertNotIn("AI CLI choice: `codex`, `opencode`, or `both`", plan_prompt.body)
-        self.assertIn("one tmux Codex command and one OMX-managed Codex command", plan_prompt.body)
+        self.assertIn(
+            "one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` "
+            "and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`",
+            plan_prompt.body,
+        )
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
         self.assertIn("keep research narrow", plan_prompt.body)
         self.assertIn("CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH", plan_prompt.body)
@@ -1021,7 +1053,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", resolved)
+        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", resolved)
+        self.assertIn("exactly one integer from `0` through `8`", resolved)
         self.assertIn("Auto launch Codex after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_supports_create_plan_auto_opencode(self) -> None:

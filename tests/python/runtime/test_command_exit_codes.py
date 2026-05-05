@@ -532,7 +532,9 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertTrue(target.exists())
             written = target.read_text(encoding="utf-8")
             self.assertIn("$envctl-create-plan-auto-codex", written)
-            self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", written)
+            self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", written)
+            self.assertIn("exactly one integer from `0` through `8`", written)
+            self.assertNotIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>", written)
             self.assertIn("--tmux-new-session", written)
 
     def test_install_prompts_cli_run_installs_create_plan_auto_opencode_command(self) -> None:
