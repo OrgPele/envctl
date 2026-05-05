@@ -55,6 +55,7 @@ _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH = Path(".omx") / "state" / "tmux-extended-
 _OMX_TMUX_LOCK_STALE_SECONDS = 30.0
 _CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
+_CODEX_QUEUE_MAX_TAB_ATTEMPTS = 2
 _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
@@ -84,6 +85,11 @@ _CODEX_READY_MARKERS = (
     "directory:",
 )
 _CODEX_QUEUE_READY_HINT = "tab to queue message"
+_CODEX_QUEUE_CONFIRMED_MARKERS = (
+    "queued follow-up",
+    "queued follow-up messages",
+    "follow-up inputs",
+)
 _OPENCODE_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›❯»][ \t]*.*$")
 _OPENCODE_LOADING_MARKERS = (
     "loading",
@@ -208,6 +214,17 @@ class _PlanAgentWorkflow:
     mode: str
     codex_cycles: int
     steps: tuple[_PlanAgentWorkflowStep, ...]
+
+
+class _QueueFailure(str):
+    step_index: int | None
+    step_kind: str | None
+
+    def __new__(cls, reason: str, *, step_index: int | None = None, step_kind: str | None = None) -> "_QueueFailure":
+        obj = str.__new__(cls, reason)
+        obj.step_index = step_index
+        obj.step_kind = step_kind
+        return obj
 
 
 def _finalization_instruction_text() -> str:
@@ -1673,6 +1690,7 @@ def _run_tmux_existing_session_workflow(
             cli=launch_config.cli,
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 session_name=session_name,
@@ -1683,6 +1701,7 @@ def _run_tmux_existing_session_workflow(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="omx",
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -1694,6 +1713,7 @@ def _run_tmux_existing_session_workflow(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="omx",
+                **failure_context,
             )
             return None
     return None
@@ -1892,6 +1912,7 @@ def _run_tmux_worktree_bootstrap(
             cli=launch_config.cli,
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 session_name=session_name,
@@ -1902,6 +1923,7 @@ def _run_tmux_worktree_bootstrap(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="tmux",
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -1913,6 +1935,7 @@ def _run_tmux_worktree_bootstrap(
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
                 transport="tmux",
+                **failure_context,
             )
             return None
     return None
@@ -1929,7 +1952,7 @@ def _queue_tmux_codex_workflow_steps(
     launch_config: PlanAgentLaunchConfig,
     cli: str,
 ) -> str | None:
-    for step in queued_steps:
+    for step_index, step in enumerate(queued_steps):
         queued_text, resolution_error = _workflow_step_prompt_text(
             runtime,
             launch_config=launch_config,
@@ -1938,7 +1961,7 @@ def _queue_tmux_codex_workflow_steps(
             worktree=worktree,
         )
         if resolution_error is not None:
-            return "queue_prompt_resolution_failed"
+            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
         send_error = _send_tmux_prompt(
             runtime,
             session_name=session_name,
@@ -1946,7 +1969,7 @@ def _queue_tmux_codex_workflow_steps(
             text=queued_text,
         )
         if send_error is not None:
-            return "queue_send_failed"
+            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
         if not _queue_tmux_codex_message(
             runtime,
             session_name=session_name,
@@ -1954,7 +1977,7 @@ def _queue_tmux_codex_workflow_steps(
             text=queued_text,
             require_text_match=False,
         ):
-            return "queue_not_ready"
+            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
     runtime._emit(
         "planning.agent_launch.workflow_queued",
         session_name=session_name,
@@ -1964,6 +1987,7 @@ def _queue_tmux_codex_workflow_steps(
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         queued_steps=len(queued_steps),
+        queued_steps_confirmed=len(queued_steps),
         transport="tmux",
     )
     return None
@@ -1978,10 +2002,18 @@ def _queue_tmux_codex_message(
     require_text_match: bool = True,
 ) -> bool:
     deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    tab_sent = False
+    tab_attempts = 0
     while time.monotonic() < deadline:
         screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
+            screen,
+            text,
+            require_text_match=require_text_match,
+        ):
+            return True
         if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
+            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
+                return False
             tab_error = _send_tmux_key(
                 runtime,
                 session_name=session_name,
@@ -1991,13 +2023,22 @@ def _queue_tmux_codex_message(
             )
             if tab_error is not None:
                 return False
-            tab_sent = True
+            tab_attempts += 1
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
-        if tab_sent:
-            return True
         time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
     return False
+
+
+def _queue_failure_event_context(reason: str) -> dict[str, object]:
+    context: dict[str, object] = {}
+    step_index = getattr(reason, "step_index", None)
+    if step_index is not None:
+        context["queue_failed_step_index"] = step_index
+    step_kind = getattr(reason, "step_kind", None)
+    if step_kind:
+        context["queue_failed_step_kind"] = step_kind
+    return context
 
 
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
@@ -2251,6 +2292,7 @@ def _run_surface_bootstrap(
             cli=launch_config.cli,
         )
         if queue_error_reason is not None:
+            failure_context = _queue_failure_event_context(queue_error_reason)
             runtime._emit(
                 "planning.agent_launch.workflow_queue_failed",
                 workspace_id=workspace_id,
@@ -2260,6 +2302,7 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
+                **failure_context,
             )
             runtime._emit(
                 "planning.agent_launch.workflow_fallback",
@@ -2270,6 +2313,7 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
+                **failure_context,
             )
             return None
     return None
@@ -2766,7 +2810,7 @@ def _queue_codex_workflow_steps(
     launch_config: PlanAgentLaunchConfig,
     cli: str,
 ) -> str | None:
-    for step in queued_steps:
+    for step_index, step in enumerate(queued_steps):
         queued_text, resolution_error = _workflow_step_prompt_text(
             runtime,
             launch_config=launch_config,
@@ -2775,7 +2819,7 @@ def _queue_codex_workflow_steps(
             worktree=worktree,
         )
         if resolution_error is not None:
-            return "queue_prompt_resolution_failed"
+            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
         send_error = _paste_surface_text(
             runtime,
             workspace_id=workspace_id,
@@ -2784,7 +2828,7 @@ def _queue_codex_workflow_steps(
             emit_failure_event=False,
         )
         if send_error is not None:
-            return "queue_send_failed"
+            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
         if not _queue_codex_message(
             runtime,
             workspace_id=workspace_id,
@@ -2792,7 +2836,7 @@ def _queue_codex_workflow_steps(
             text=queued_text,
             require_text_match=False,
         ):
-            return "queue_not_ready"
+            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
     runtime._emit(
         "planning.agent_launch.workflow_queued",
         workspace_id=workspace_id,
@@ -2802,6 +2846,7 @@ def _queue_codex_workflow_steps(
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         queued_steps=len(queued_steps),
+        queued_steps_confirmed=len(queued_steps),
     )
     return None
 
@@ -2834,7 +2879,7 @@ def _queue_codex_message(
     deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
     normalized_text = str(text).strip()
     picker_submitted = False
-    tab_sent = False
+    tab_attempts = 0
     while time.monotonic() < deadline:
         screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if (
@@ -2854,7 +2899,15 @@ def _queue_codex_message(
             picker_submitted = True
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
+        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
+            screen,
+            text,
+            require_text_match=require_text_match,
+        ):
+            return True
         if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
+            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
+                return False
             tab_error = _send_surface_key(
                 runtime,
                 workspace_id=workspace_id,
@@ -2864,11 +2917,9 @@ def _queue_codex_message(
             )
             if tab_error is not None:
                 return False
-            tab_sent = True
+            tab_attempts += 1
             time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
             continue
-        if tab_sent:
-            return True
         time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
     return False
 
@@ -2891,6 +2942,34 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
         )
     if not first_visible_line:
         return False
+    return _normalized_screen_text(first_visible_line) in normalized_screen
+
+
+def _codex_queue_screen_confirms_queued(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    if any(marker in normalized_screen for marker in _CODEX_QUEUE_CONFIRMED_MARKERS):
+        return True
+    if _CODEX_QUEUE_READY_HINT in normalized_screen:
+        return False
+    if _codex_queue_text_is_visible(screen, text, require_text_match=require_text_match):
+        return False
+    return True
+
+
+def _codex_queue_text_is_visible(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    normalized_text = _normalized_screen_text(text)
+    if normalized_text and normalized_text in normalized_screen:
+        return True
+    first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not first_visible_line:
+        return False
+    if not require_text_match and "pasted content" in normalized_screen:
+        return True
     return _normalized_screen_text(first_visible_line) in normalized_screen
 
 
