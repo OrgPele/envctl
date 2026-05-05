@@ -258,7 +258,7 @@ Cycle mode notes:
 - invalid or negative values are ignored and the launcher stays on the single implementation prompt plus enabled follow-ups
 - very large values are bounded internally for safety before the workflow is expanded
 - if queue injection fails after the initial `implement_task` submit, envctl falls back to the initial one-shot launch and leaves the Codex surface running
-- the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` sets `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` only for the envctl command it launches
+- the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` uses the same `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` value for the envctl command it launches
 - `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--tmux --opencode` with the default `/ulw-loop` prefix
 - `$envctl-create-plan-auto-omx` ignores Codex cycles and uses `--omx --ralph`, because the OMX/Ralph workflow owns its own loop
 
