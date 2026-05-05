@@ -94,6 +94,17 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
+## Codex cycle recommendation
+Before writing the final response, choose exactly one integer from `0` through `8` as the recommended Codex cycle count for implementation depth. Use this rubric:
+
+- `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
+- `1-2`: small localized code or test changes with low integration risk.
+- `3-4`: normal multi-file feature or fix requiring implementation, verification, and at least one follow-up pass.
+- `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
+- `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
+
+Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
+
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
 - Do not run `envctl` unless the user explicitly says yes.
@@ -139,7 +150,7 @@ Record the inferred launch scope in the plan's Rollout / verification section an
   - include only these explicit defaults in that final question unless repo evidence for this specific task requires different values:
     - AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx` (multi-launch choices mean run the separate repo-scoped commands one after another)
   - do not mention any other launch settings, defaults, or override knobs in the user-facing question
-  - if the selected launch choice includes Codex or OMX-managed Codex, offer to configure the Codex cycle count and make clear that the current runtime default is `2` unless the user chooses another value
+  - if the selected launch choice includes Codex or OMX-managed Codex, include `recommended Codex cycles: <n>` using the computed recommendation and offer Codex manual commands with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` explicitly instead of relying on the runtime default
   - if the selected launch choice does not involve Codex, say that the Codex cycle count setting is ignored
 
 ## Final response format

@@ -95,6 +95,17 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
+## Codex cycle recommendation
+Before launching envctl, choose exactly one integer from `0` through `8` as an informational Codex-equivalent implementation-depth recommendation. Use this rubric:
+
+- `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
+- `1-2`: small localized code or test changes with low integration risk.
+- `3-4`: normal multi-file feature or fix requiring implementation, verification, and at least one follow-up pass.
+- `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
+- `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
+
+Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags. This recommendation is informational on the OMX Ralph surface; do not add `ENVCTL_PLAN_AGENT_CODEX_CYCLES` to the launch command.
+
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
 
@@ -120,11 +131,13 @@ For example, a frontend-only plan still keeps `--entire-system` by default; use 
 
 OMX-managed launches are Codex-only, and `--ralph` is the loop mechanism for this surface. Codex cycle settings are intentionally not used here because the plan-agent launch resolver disables Codex cycles when an OMX workflow is selected; Ralph owns its own persistence loop.
 
+In the final response, include `Recommended Codex-equivalent cycles: <n>` and mark it informational. Also state: `OMX Ralph selected; Codex cycle queueing is not applied on this surface.`
+
 ## Final response format
 1. Path of the plan file created.
 2. One-paragraph summary of the plan intent.
 3. Files referenced during research (short list).
-4. Launch surface selected and exact command executed.
+4. Informational recommended Codex-equivalent cycles, one-sentence rationale, launch surface selected, and exact command executed.
 5. Launch result, including attach/reconnect guidance when envctl prints it.
 6. Risk register (only if non-empty).
 
