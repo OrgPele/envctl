@@ -360,7 +360,8 @@ Optional plan-agent launch config for `--plan`:
 - `envctl --plan <selector> --omx --team` enters the Team OMX workflow inside that OMX-managed Codex session
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex-only queued cycle workflow; the default is `2`
+- `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
 - `$envctl-create-plan-auto-codex` uses that default cycle count of `2` for its launch command; the global default remains `2`
 - OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself

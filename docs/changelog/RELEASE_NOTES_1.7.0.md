@@ -16,7 +16,7 @@ It also tightens two important operator paths: first-run configuration now prese
 - Registers explicit-only Codex skill metadata for `$envctl-create-plan-auto-codex`, `$envctl-create-plan-auto-opencode`, and `$envctl-create-plan-auto-omx`.
 - Keeps the existing `$envctl-create-plan` preset approval-first; auto-launch behavior is available only through the new explicit presets.
 - Locks the generated launch commands for each surface:
-  - Codex: `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <selector> --tmux --headless --tmux-new-session`
+  - Codex: `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --headless --tmux-new-session`
   - OpenCode/ULW: `envctl --plan <selector> --tmux --opencode --ulw --headless --tmux-new-session`
   - OMX/Ralph: `envctl --plan <selector> --omx --ralph --headless --tmux-new-session`
 

@@ -49,7 +49,7 @@ Key behavior changes:
 - Added repo evidence that `CYCLES=3` resolves to `plan_agent.codex_cycles=3` in `show-config --json`.
 - Added repo evidence that `CYCLES=3` resolves to `plan_agent_launch.codex_cycles=3` and `workflow_mode=codex_cycles` in `explain-startup --plan --json`.
 - Added repo evidence that the real `--plan` path prints `Plan agent launch queued Codex cycle workflow (cycles=3)` rather than silently falling back to `1`.
-- Added repo evidence that canonical precedence still wins (`CYCLES=2 ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` resolves to `4`) and that invalid shorthand values remain non-crashing with `workflow_warning=invalid_codex_cycles`.
+- Added repo evidence that canonical precedence still wins (`CYCLES=2 ENVCTL_PLAN_AGENT_CODEX_CYCLES=<canonical>` resolves to `4`) and that invalid shorthand values remain non-crashing with `workflow_warning=invalid_codex_cycles`.
 
 Files / modules touched:
 - `docs/changelog/broken_envctl_plan_agent_cycles_alias_falls_back_to_default-1_changelog.md`
@@ -67,7 +67,7 @@ Live verification commands + results:
   - `PATH=/Users/kfiramar/projects/current/envctl/trees/broken_envctl_plan_agent_cycles_alias_falls_back_to_default/1/.venv/bin:$PATH ENVCTL_USE_REPO_WRAPPER=1 RUN_SH_RUNTIME_DIR=/tmp/envctl-cycles-alias-live-explain-venv CYCLES=3 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true ./bin/envctl --explain-startup --plan refactoring/envctl-bash-deletion-ledger-and-prune-plan --json`
   - Result: `plan_agent_launch.codex_cycles` was `3` and `workflow_mode` was `codex_cycles`.
 - Canonical precedence:
-  - `PATH=/Users/kfiramar/projects/current/envctl/trees/broken_envctl_plan_agent_cycles_alias_falls_back_to_default/1/.venv/bin:$PATH ENVCTL_USE_REPO_WRAPPER=1 RUN_SH_RUNTIME_DIR=/tmp/envctl-cycles-alias-live-precedence-venv CYCLES=2 ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true ./bin/envctl --explain-startup --plan refactoring/envctl-bash-deletion-ledger-and-prune-plan --json`
+  - `PATH=/Users/kfiramar/projects/current/envctl/trees/broken_envctl_plan_agent_cycles_alias_falls_back_to_default/1/.venv/bin:$PATH ENVCTL_USE_REPO_WRAPPER=1 RUN_SH_RUNTIME_DIR=/tmp/envctl-cycles-alias-live-precedence-venv CYCLES=2 ENVCTL_PLAN_AGENT_CODEX_CYCLES=<canonical> ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true ./bin/envctl --explain-startup --plan refactoring/envctl-bash-deletion-ledger-and-prune-plan --json`
   - Result: `plan_agent_launch.codex_cycles` was `4`.
 - Invalid shorthand:
   - `PATH=/Users/kfiramar/projects/current/envctl/trees/broken_envctl_plan_agent_cycles_alias_falls_back_to_default/1/.venv/bin:$PATH ENVCTL_USE_REPO_WRAPPER=1 RUN_SH_RUNTIME_DIR=/tmp/envctl-cycles-alias-live-invalid-venv CYCLES=bad ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true ./bin/envctl --explain-startup --plan refactoring/envctl-bash-deletion-ledger-and-prune-plan --json`
