@@ -27,6 +27,10 @@ def project_ports_text(context: ProjectContextLike) -> str:
     )
 
 
+def project_app_ports_text(context: ProjectContextLike) -> str:
+    return f"backend={context.ports['backend'].final} frontend={context.ports['frontend'].final}"
+
+
 def state_project_names(*, runtime: StartupRuntime, state: RunState) -> set[str]:
     names = {str(name).strip() for name in state.requirements.keys() if str(name).strip()}
     for service_name in state.services:
