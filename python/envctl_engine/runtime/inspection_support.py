@@ -220,6 +220,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             "cli": runtime.config.plan_agent_cli,
             "preset": runtime.config.plan_agent_preset,
             "codex_cycles": runtime.config.plan_agent_codex_cycles,
+            "codex_goal_enable": runtime.config.plan_agent_codex_goal_enable,
             "browser_e2e": runtime.config.plan_agent_browser_e2e_enable,
             "pr_review_comments": runtime.config.plan_agent_pr_review_comments_enable,
             "shell": runtime.config.plan_agent_shell,
@@ -252,6 +253,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"preferred_port_strategy: {preferred_strategy}")
     print(f"plan_agent_terminals_enabled: {payload['plan_agent']['enabled']}")
     print(f"plan_agent_codex_cycles: {payload['plan_agent']['codex_cycles']}")
+    print(f"plan_agent_codex_goal_enable: {payload['plan_agent']['codex_goal_enable']}")
     return 0
 
 

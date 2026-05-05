@@ -570,7 +570,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         expected = {
             "create_plan_auto_codex": {
                 "command": (
-                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 "
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 "
                     "envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session"
                 ),
                 "phrases": (
@@ -594,8 +594,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 "command": "envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session",
                 "phrases": (
                     "OMX-managed launches are Codex-only",
-                    "`--ralph` is the loop mechanism for this surface",
-                    "Codex cycle settings are intentionally not used here",
+                    "`--ralph` is the persistence workflow for this surface",
+                    "envctl can queue the same Codex follow-up cycle workflow",
                 ),
             },
         }
@@ -1013,14 +1013,15 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertIn('Review bundle: "/tmp/review.md"', resolved)
 
     def test_resolve_codex_direct_prompt_body_supports_create_plan_auto_codex(self) -> None:
-        resolved = resolve_codex_direct_prompt_body(
-            preset="create_plan_auto_codex",
-            env={},
-            arguments="Auto launch Codex after planning",
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resolved = resolve_codex_direct_prompt_body(
+                preset="create_plan_auto_codex",
+                env={"HOME": tmpdir},
+                arguments="Auto launch Codex after planning",
+            )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4", resolved)
+        self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", resolved)
         self.assertIn("Auto launch Codex after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_supports_create_plan_auto_opencode(self) -> None:
