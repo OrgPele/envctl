@@ -124,17 +124,17 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system`
-  - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --entire-system`
-  - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --omx --entire-system`
+  - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system`
+  - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx --entire-system`
   - if you show an OMX-managed Ralph launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph --entire-system`
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team --entire-system`
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system --headless`
-  - if you show a headless Codex tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --entire-system --headless`
+  - if you show a headless Codex tmux launch command, include `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless`
   - when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
   - when you explain how to reconnect to a launched tmux session later, use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`
   - if an existing tmux session may already exist and the user wants another one without being prompted, include `--tmux-new-session` in the shown command
-  - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex tmux command and one OpenCode tmux command
-  - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one tmux Codex command and one OMX-managed Codex command
+  - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex tmux command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OpenCode tmux command without that env var
+  - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
   - when the user selects multiple AI launch choices, state clearly that each command creates its own separate session; do not describe them as one shared session
   - do not claim that envctl can launch multiple CLIs or launch surfaces in one combined command; multi-launch follow-up means executing the separate repo-scoped commands one after another behind the scenes
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name

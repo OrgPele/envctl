@@ -778,11 +778,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --omx",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx",
             plan_prompt.body,
         )
         self.assertIn(
@@ -838,7 +838,15 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux --entire-system --headless",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless",
+            plan_prompt.body,
+        )
+        self.assertNotIn(
+            "cd <repo> && envctl --plan <selector> --tmux --entire-system",
+            plan_prompt.body,
+        )
+        self.assertNotIn(
+            "cd <repo> && envctl --plan <selector> --omx --entire-system",
             plan_prompt.body,
         )
         self.assertIn("--tmux-new-session", plan_prompt.body)
@@ -862,7 +870,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("--tmux --opencode", plan_prompt.body)
         self.assertNotIn("--tmux --codex", plan_prompt.body)
         self.assertNotIn("AI CLI choice: `codex`, `opencode`, or `both`", plan_prompt.body)
-        self.assertIn("one tmux Codex command and one OMX-managed Codex command", plan_prompt.body)
+        self.assertIn(
+            "one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` "
+            "and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`",
+            plan_prompt.body,
+        )
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
         self.assertIn("keep research narrow", plan_prompt.body)
         self.assertIn("CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH", plan_prompt.body)
