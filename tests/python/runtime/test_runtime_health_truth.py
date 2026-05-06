@@ -478,7 +478,9 @@ class RuntimeHealthTruthTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         rendered = out.getvalue()
-        self.assertIn("Listener PID: 12345,12346", rendered)
+        self.assertIn("(PID: 12345)", rendered)
+        self.assertIn("Listener PID: 12346", rendered)
+        self.assertNotIn("Listener PID: 12345", rendered)
 
     def test_dashboard_keeps_projection_during_startup_grace_period(self) -> None:
         services = {

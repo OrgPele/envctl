@@ -304,7 +304,11 @@ def _print_dashboard_service_row(
     listener_suffix = ""
     listener_pids = getattr(service, "listener_pids", None)
     if isinstance(listener_pids, list):
-        rendered_listener_pids = [str(value) for value in listener_pids if isinstance(value, int) and value > 0]
+        rendered_listener_pids = [
+            str(value)
+            for value in listener_pids
+            if isinstance(value, int) and value > 0 and not (isinstance(pid, int) and value == pid)
+        ]
         if rendered_listener_pids:
             listener_suffix = f" [Listener PID: {','.join(rendered_listener_pids)}]"
     if listener_expected is None:
