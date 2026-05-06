@@ -136,6 +136,111 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertEqual(events[0][0], "resume.restore.execution")
         self.assertEqual(events[-1][0], "resume.restore.timing")
 
+    def test_restore_missing_restarts_only_stale_services_when_requirements_are_healthy(self) -> None:
+        released_ports: list[int] = []
+        terminated_services: list[str] = []
+        startup_routes: list[object] = []
+
+        class RecordingPortAllocator:
+            def reserve_next(self, preferred: int, *, owner: str) -> int:
+                _ = owner
+                return preferred
+
+            def update_final_port(self, plan: object, final_port: int, *, source: str) -> None:
+                _ = source
+                plan.final = final_port
+
+            def release(self, port: int) -> None:
+                released_ports.append(port)
+
+        context = SimpleNamespace(
+            name="Main",
+            root=Path("/tmp/repo"),
+            ports={
+                "backend": SimpleNamespace(assigned=8000, final=8000),
+                "frontend": SimpleNamespace(assigned=9000, final=9000),
+            },
+        )
+        requirements = RequirementsResult(project="Main", health="healthy")
+        backend = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/tmp/repo/backend",
+            pid=1111,
+            requested_port=8000,
+            actual_port=8000,
+            status="running",
+        )
+        frontend = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            pid=2222,
+            requested_port=9000,
+            actual_port=9000,
+            status="stale",
+        )
+
+        def start_project_services(_context, *, requirements, run_id, route):  # noqa: ANN001
+            _ = requirements, run_id
+            startup_routes.append(route)
+            return {
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd="/tmp/repo/frontend",
+                    pid=3333,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                )
+            }
+
+        runtime = SimpleNamespace(
+            port_planner=RecordingPortAllocator(),
+            env={},
+            config=SimpleNamespace(raw={}, base_dir=Path("/tmp/repo")),
+            _project_name_from_service=lambda name: "Main",
+            _requirements_ready=lambda value: value is requirements and value.health == "healthy",
+            _reconcile_project_requirement_truth=lambda project, req, project_root=None: [],
+            _emit=lambda event, **payload: None,
+            _tree_parallel_startup_config=lambda **kwargs: (False, 1),
+            _resume_context_for_project=lambda state, project: context,
+            _terminate_service_record=lambda service, **kwargs: terminated_services.append(service.name) or True,
+            _service_port=lambda service: service.actual_port,
+            _release_requirement_ports=lambda req: self.fail("healthy reused requirements should not be released"),
+            _reserve_project_ports=lambda ctx: self.fail("partial service restore should reserve only selected services"),
+            _start_requirements_for_project=lambda *args, **kwargs: self.fail("healthy requirements should be reused"),
+            _start_project_services=start_project_services,
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={"Main Backend": backend, "Main Frontend": frontend},
+            requirements={"Main": requirements},
+        )
+
+        errors = restore_missing(
+            SimpleNamespace(runtime=runtime),
+            state,
+            ["Main Frontend"],
+            route=parse_route(["resume", "--main"], env={}),
+            spinner_factory=lambda *args, **kwargs: _SpinnerStub(),
+            spinner_enabled_fn=lambda env: False,
+            use_spinner_policy_fn=lambda policy: nullcontext(),
+            emit_spinner_policy_fn=lambda emit, policy, context: None,
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=False, backend="rich", style="dots"),
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(terminated_services, ["Main Frontend"])
+        self.assertEqual(released_ports, [9000])
+        self.assertIs(state.services["Main Backend"], backend)
+        self.assertEqual(state.services["Main Frontend"].pid, 3333)
+        self.assertEqual(len(startup_routes), 1)
+        self.assertTrue(startup_routes[0].flags.get("_restart_request"))
+        self.assertEqual(startup_routes[0].flags.get("restart_service_types"), ["frontend"])
+
     def test_requirements_failure_message_summarizes_docker_daemon_outage(self) -> None:
         requirements = RequirementsResult(
             project="Main",
