@@ -57,6 +57,20 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false
+
+      - name: Create validation environment
+        run: |
+          set -euo pipefail
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e '.[dev]'
+
+      - name: Release shipability gate
+        run: .venv/bin/python scripts/release_shipability_gate.py --repo .
+
       - name: Resolve previous and next versions
         id: version
         env:
@@ -157,16 +171,11 @@ jobs:
           git commit -m "Release envctl ${NEW_VERSION}"
           git push origin "HEAD:main"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: false
-
       - name: Build wheel and sdist
         run: |
           set -euo pipefail
-          uv pip install --system --break-system-packages build
-          python -m build --wheel --sdist
+          rm -rf dist build *.egg-info
+          .venv/bin/python -m build --wheel --sdist
 
       - name: Create tag
         env:

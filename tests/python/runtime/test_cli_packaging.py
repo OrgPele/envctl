@@ -395,7 +395,7 @@ class CliPackagingTests(unittest.TestCase):
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = payload["project"]
         self.assertEqual(project["name"], "envctl")
-        self.assertEqual(project["scripts"]["envctl"], "envctl_engine.runtime.cli:main")
+        self.assertEqual(project["scripts"]["envctl"], "envctl_engine.runtime.launcher_cli:main")
         self.assertEqual(project["requires-python"], ">=3.12,<3.15")
         self.assertIn("rich>=13.7", project["dependencies"])
 
@@ -955,10 +955,10 @@ class CliPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             packaging_python = self._packaging_python()
             venv_dir = Path(tmpdir) / "venv"
-            subprocess.run([packaging_python, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+            subprocess.run([packaging_python, "-m", "venv", str(venv_dir)], check=True)
             python_bin = venv_dir / "bin" / "python"
             subprocess.run(
-                [str(python_bin), "-m", "pip", "install", "setuptools"],
+                [str(python_bin), "-m", "pip", "install", "--upgrade", "setuptools>=77", "packaging>=24.2"],
                 check=True,
                 capture_output=True,
                 text=True,
