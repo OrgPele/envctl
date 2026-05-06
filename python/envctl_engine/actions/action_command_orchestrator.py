@@ -879,9 +879,15 @@ if result.returncode != 0:
         specs: list[TestExecutionSpec] = []
         for service_name in sorted(service_types):
             service = rt.config.app_service_by_name(service_name) if hasattr(rt.config, "app_service_by_name") else None
-            raw_command = str(getattr(service, "test_cmd", "") or "").strip() if service is not None else ""
+            if service is None:
+                raise RuntimeError(f"Unknown additional service {service_name!r} for envctl test --service")
+            raw_command = str(getattr(service, "test_cmd", "") or "").strip()
             if not raw_command:
-                continue
+                env_suffix = str(getattr(service, "env_suffix", "") or service_name.upper().replace("-", "_"))
+                raise RuntimeError(
+                    f"No test command configured for additional service {service_name!r}. "
+                    f"Set ENVCTL_SERVICE_{env_suffix}_TEST_CMD to use envctl test --service {service_name}."
+                )
             dir_name = str(getattr(service, "dir_name", "") or "").strip()
             for target in target_contexts:
                 replacements = dict(self.action_replacements(targets, target=target.target_obj))

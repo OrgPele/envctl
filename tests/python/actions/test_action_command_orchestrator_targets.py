@@ -214,6 +214,39 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.cwd, Path("/tmp/repo/voice-runtime"))
         self.assertEqual(specs[0].spec.source, "configured_service:voice-runtime")
 
+
+    def test_build_test_execution_specs_fails_for_additional_service_without_test_command(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={"ENVCTL_BACKEND_TEST_CMD": "python -m pytest backend/tests"},
+            frontend_test_path="",
+            app_service_by_name=lambda name: SimpleNamespace(
+                name="voice-runtime",
+                test_cmd="",
+                dir_name="voice-runtime",
+            )
+            if name == "voice-runtime"
+            else None,
+        )
+        runtime.split_command = lambda raw, *, replacements: raw.split()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main", flags={"services": ["voice-runtime"]})
+        target = SimpleNamespace(name="Main", root=Path("/tmp/repo"))
+
+        with self.assertRaisesRegex(RuntimeError, "ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD"):
+            orchestrator._build_test_execution_specs(
+                route=route,
+                targets=[target],
+                target_contexts=[
+                    TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
+                ],
+                include_backend=False,
+                include_frontend=False,
+                run_all=False,
+                untested=False,
+            )
+
     def test_pr_success_handler_clears_dashboard_cache_and_emits_created_url_status(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = ActionCommandOrchestrator(runtime)

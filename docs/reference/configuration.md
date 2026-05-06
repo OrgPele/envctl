@@ -146,13 +146,13 @@ Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the upperc
 | `ENVCTL_SERVICE_<SUFFIX>_TREES_ENABLE` | `ENABLE` | Trees-mode override. |
 | `ENVCTL_SERVICE_<SUFFIX>_DIR` | `.` | Repo-relative service working directory. Startup fails if a configured non-root directory is missing or escapes the project root. |
 | `ENVCTL_SERVICE_<SUFFIX>_START_CMD` | unset | Required for enabled services. Supports `{port}`, `{project_root}`, `{service_dir}`, and `{service_name}` placeholders. |
-| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. Runs from the configured service directory. |
+| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. Runs from the configured service directory. If this is unset, `envctl test --service <slug>` fails clearly instead of falling back to generic backend/frontend tests. |
 | `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE` | unset | Required when `EXPECT_LISTENER=true`; gets normal per-project port spacing. |
 | `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers and schedulers that do not bind a port. |
 | `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
 | `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
 | `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
-| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. Dependency ids such as `redis`, `postgres`, `supabase`, or `n8n` validate the relationship and influence service ordering/metadata, but they do not by themselves enable disabled infrastructure; keep the matching `MAIN_*_ENABLE` / `TREES_*_ENABLE` dependency setting enabled when the service requires that infrastructure at runtime. |
 | `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | `true` keeps fail-fast startup. `false` records a degraded failed service with cwd/log/port/failure metadata and allows healthy independent services to continue. |
 
 Reserved additional-service slugs include `backend`, `frontend`, managed dependency ids, `all`, `services`, and `dependencies`.
