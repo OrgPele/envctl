@@ -67,6 +67,28 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual([project.name for project in projects], ["alpha", "beta"])
         self.assertEqual(orchestrator.runtime.selectors_from_passthrough(["ignored"]), set())
 
+
+    def test_resolve_targets_main_action_from_worktree_uses_current_worktree(self) -> None:
+        runtime = _RuntimeStub()
+        worktree = Path("/tmp/repo/trees/feature-a/1")
+        runtime.env["ENVCTL_INVOCATION_CWD"] = str(worktree)
+        runtime.config = SimpleNamespace(base_dir=Path("/tmp/repo"), raw={}, trees_dir_name="trees")
+        runtime._discover_projects = lambda mode: [SimpleNamespace(name="Main", root=Path("/tmp/repo"))] if mode == "main" else []
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main", raw_args=["--main", "test"])
+
+        with (
+            patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+            patch(
+                "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                return_value=[("feature-a-1", worktree)],
+            ),
+        ):
+            targets, error = orchestrator.resolve_targets(route, trees_only=False)
+
+        self.assertIsNone(error)
+        self.assertEqual([(target.name, target.root) for target in targets], [("feature-a-1", worktree)])
+
     def test_resolve_targets_uses_interactive_selection(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = ActionCommandOrchestrator(runtime)

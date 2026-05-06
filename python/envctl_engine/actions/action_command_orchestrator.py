@@ -45,6 +45,7 @@ from envctl_engine.actions.action_test_runner import run_test_action as run_test
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
@@ -359,6 +360,10 @@ class ActionCommandOrchestrator:
             if current is not None:
                 return [current], None
             return [], "self-destruct-worktree must be run from inside a discovered worktree."
+        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
+            current = self._resolve_current_worktree_target(require_configured_main_root=True)
+            if current is not None:
+                return [current], None
         if trees_only:
             candidates = rt.discover_projects(mode="trees")
         else:
@@ -458,12 +463,30 @@ class ActionCommandOrchestrator:
         print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
         return 0
 
-    def _resolve_current_worktree_target(self) -> object | None:
-        cwd = Path.cwd().resolve()
-        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
-        repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
-        if repo_root is None:
+    def _resolve_current_worktree_target(self, *, require_configured_main_root: bool = False) -> object | None:
+        invocation_cwd = str(self.runtime.env.get("ENVCTL_INVOCATION_CWD") or "").strip()
+        cwd = Path(invocation_cwd).expanduser().resolve() if invocation_cwd else Path.cwd().resolve()
+        configured_root = getattr(self.runtime.raw_runtime.config, "base_dir", None)
+        configured_root_path = (
+            Path(str(configured_root)).expanduser().resolve()
+            if configured_root is not None
+            else None
+        )
+        if require_configured_main_root and configured_root_path == cwd:
             return None
+        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
+        if require_configured_main_root:
+            if configured_root_path is None:
+                return None
+            repo_root = self._repo_root_from_worktree_layout(cwd, trees_dir_name)
+            if repo_root is None:
+                repo_root = main_repo_root_for_linked_worktree(cwd)
+            if repo_root is None or repo_root.resolve() != configured_root_path:
+                return None
+        else:
+            repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
+            if repo_root is None:
+                return None
         candidates = [
             SimpleNamespace(name=name, root=root)
             for name, root in discover_tree_projects(repo_root, trees_dir_name)

@@ -79,6 +79,7 @@ def _forward_to_engine(root: Path, repo_root: Path, argv: Sequence[str]) -> int:
     env["RUN_LAUNCHER_CONTEXT"] = "envctl"
     env["RUN_REPO_ROOT"] = str(repo_root)
     env["RUN_ENGINE_PATH"] = "python:envctl_engine.runtime.cli"
+    env["ENVCTL_INVOCATION_CWD"] = str(Path.cwd().resolve())
     return int(runtime_cli.run(list(argv), env=env))
 
 
