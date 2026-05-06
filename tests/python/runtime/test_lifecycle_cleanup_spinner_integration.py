@@ -182,6 +182,58 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(selected, {"Main Backend", "Other Backend"})
         self.assertEqual(runtime.selection_calls, [])
 
+    def test_stop_service_selector_accepts_additional_service_slug_and_display_forms(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/repo/voice-runtime",
+                    pid=2,
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        for selector in ("voice-runtime", "service:voice-runtime", "Voice Runtime", "Main Voice Runtime"):
+            with self.subTest(selector=selector):
+                route = Route(command="stop", mode="main", flags={"services": [selector], "batch": True})
+                selected = orchestrator._select_services_for_stop(state, route)
+                self.assertEqual(selected, {"Main Voice Runtime"})
+
+    def test_stopped_dashboard_metadata_preserves_additional_service_slug(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/repo/voice-runtime",
+                    pid=2,
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+            metadata={"project_roots": {"Main": "/repo"}},
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        orchestrator._remember_dashboard_stopped_services(state, {"Main Voice Runtime"})
+
+        self.assertEqual(
+            state.metadata.get("dashboard_stopped_services"),
+            [{"name": "Main Voice Runtime", "project": "Main", "type": "voice-runtime"}],
+        )
+        self.assertIn("voice-runtime", state.metadata.get("dashboard_configured_service_types", []))
+
     def test_stop_dependencies_scope_releases_requirements_without_terminating_services(self) -> None:
         runtime = _RuntimeStub()
         released: list[int] = []

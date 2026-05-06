@@ -7,6 +7,12 @@ from envctl_engine.planning import list_planning_files, planning_existing_counts
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime
+from envctl_engine.shared.services import (
+    service_display_name,
+    service_matches_selector,
+    service_project_name,
+    service_slug_from_record,
+)
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 
@@ -244,26 +250,29 @@ def _restart_selected_services(*, state: RunState, route: Route) -> set[str]:
     service_filters = route.flags.get("services")
     selected: set[str] = set()
     if isinstance(service_filters, list):
-        filter_set = {str(value).strip() for value in service_filters if str(value).strip()}
-        selected.update({name for name in state.services if name in filter_set})
+        filters = [str(value).strip() for value in service_filters if str(value).strip()]
+        for selector in filters:
+            selected.update(
+                {
+                    name
+                    for name, service in state.services.items()
+                    if name == selector or service_matches_selector(service, selector)
+                }
+            )
         return selected
 
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
-        selected_types = {
-            str(value).strip().lower()
-            for value in explicit_types
-            if str(value).strip().lower() in {"backend", "frontend"}
-        }
+        selected_types = {str(value).strip().lower() for value in explicit_types if str(value).strip()}
         project_set = {
             project.strip().lower() for project in route.projects if isinstance(project, str) and project.strip()
         }
         for name, service in state.services.items():
-            project = _project_name_from_service_name(name)
+            project = service_project_name(service) or _project_name_from_service_name(name)
             if project_set and (not project or project.lower() not in project_set):
                 continue
-            service_type = str(getattr(service, "type", "") or "").strip().lower()
-            if service_type not in {"backend", "frontend"}:
+            service_type = service_slug_from_record(service)
+            if not service_type:
                 lowered = str(name).strip().lower()
                 if lowered.endswith(" backend"):
                     service_type = "backend"
@@ -302,6 +311,15 @@ def restart_target_projects(*, state: RunState, route: Route, runtime: StartupRu
         for service_name in services:
             if not isinstance(service_name, str):
                 continue
+            matched = False
+            for name, service in state.services.items():
+                if name == service_name or service_matches_selector(service, service_name):
+                    matched = True
+                    project = service_project_name(service) or _project_name_from_service_name(name)
+                    if project:
+                        targets.add(project)
+            if matched:
+                continue
             project = _project_name_from_service_name(service_name)
             if project:
                 targets.add(project)
@@ -338,6 +356,9 @@ def _project_name_from_service_name(name: str) -> str | None:
         return str(name)[: -len(" Backend")].strip()
     if lowered.endswith(" frontend"):
         return str(name)[: -len(" Frontend")].strip()
+    parts = str(name).strip().rsplit(" ", 1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip()
     return None
 
 
@@ -371,10 +392,21 @@ def _restart_service_types_for_project(
         for raw_name in services_value:
             if not isinstance(raw_name, str):
                 continue
+            lowered = raw_name.strip().lower()
+            if lowered.startswith("service:"):
+                lowered = lowered.removeprefix("service:").strip()
+            matched_type = False
+            for service_type in configured_service_types:
+                display = service_display_name(service_type).lower()
+                project_display = f"{project_name} {service_display_name(service_type)}".strip().lower()
+                if lowered in {service_type, display, project_display}:
+                    service_types.add(service_type)
+                    matched_type = True
+            if matched_type:
+                continue
             project = _project_name_from_service_name(raw_name)
             if project and project != project_name:
                 continue
-            lowered = raw_name.strip().lower()
             if lowered.endswith(" backend"):
                 service_types.add("backend")
             elif lowered.endswith(" frontend"):
@@ -387,11 +419,7 @@ def _restart_service_types_for_project(
 
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
-        normalized = {
-            str(value).strip().lower()
-            for value in explicit_types
-            if str(value).strip().lower() in {"backend", "frontend"}
-        }
+        normalized = {str(value).strip().lower() for value in explicit_types if str(value).strip().lower()}
         if normalized:
             return _apply_startup_service_launch_flags(
                 normalized.intersection(configured_service_types or normalized),

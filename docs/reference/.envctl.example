@@ -36,7 +36,9 @@ BACKEND_PORT_BASE=8000
 FRONTEND_PORT_BASE=9000
 
 # Optional additional application services. These are repo-owned long-running
-# processes such as workers, schedulers, sidecars, or gateways.
+# processes such as workers, schedulers, sidecars, or gateways. They render in
+# dashboard rows and can be targeted as `voice-runtime`, `service:voice-runtime`,
+# `Voice Runtime`, or `Main Voice Runtime` for stop/restart/log/test commands.
 # ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
 # ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
 # ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
@@ -55,6 +57,9 @@ FRONTEND_PORT_BASE=9000
 # ENVCTL_SERVICE_WORKER_DEPENDS_ON=backend
 # ENVCTL_SERVICE_WORKER_CRITICAL=false
 # ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+# The interactive config wizard preserves these keys and service launch-env sections;
+# configured services expose canonical project/service_slug/public_url/health_url
+# fields through show-state --json, health --json, runtime maps, and dashboard rows.
 
 # Spacing between project slots in trees mode.
 PORT_SPACING=20

@@ -11,6 +11,7 @@ from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_int
+from envctl_engine.shared.services import service_matches_selector, service_project_name, service_slug_from_record
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
@@ -192,7 +193,7 @@ class LifecycleCleanupOrchestrator:
             name = str(item.get("name", "") or "").strip()
             project = str(item.get("project", "") or "").strip()
             service_type = str(item.get("type", "") or "").strip().lower()
-            if name and project and service_type in {"backend", "frontend"}:
+            if name and project and service_type:
                 by_name[name] = {"name": name, "project": project, "type": service_type}
 
         raw_roots = state.metadata.get("project_roots")
@@ -208,11 +209,13 @@ class LifecycleCleanupOrchestrator:
             service = state.services.get(service_name)
             if service is None:
                 continue
-            project = str(self.runtime._project_name_from_service(service_name) or "").strip()  # type: ignore[attr-defined]
+            project = service_project_name(service)
+            if not project:
+                project = str(self.runtime._project_name_from_service(service_name) or "").strip()  # type: ignore[attr-defined]
             if not project:
                 project = self._project_name_from_stopped_service(service_name)
             service_type = self._service_type_from_stopped_service(service_name, service)
-            if not project or service_type not in {"backend", "frontend"}:
+            if not project or not service_type:
                 continue
             by_name[service_name] = {"name": service_name, "project": project, "type": service_type}
             configured_types.add(service_type)
@@ -243,8 +246,8 @@ class LifecycleCleanupOrchestrator:
 
     @staticmethod
     def _service_type_from_stopped_service(service_name: str, service: object) -> str:
-        service_type = str(getattr(service, "type", "") or "").strip().lower()
-        if service_type in {"backend", "frontend"}:
+        service_type = service_slug_from_record(service)
+        if service_type:
             return service_type
         lowered = str(service_name).strip().lower()
         if lowered.endswith(" backend"):
@@ -290,8 +293,8 @@ class LifecycleCleanupOrchestrator:
                 target = str(raw).strip().lower()
                 if not target:
                     continue
-                for name in state.services:
-                    if name.lower() == target:
+                for name, service in state.services.items():
+                    if name.lower() == target or service_matches_selector(service, target):
                         selected.add(name)
 
         project_names = {name.lower() for name in route.projects}

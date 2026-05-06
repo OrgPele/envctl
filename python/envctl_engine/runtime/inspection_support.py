@@ -34,6 +34,7 @@ from envctl_engine.runtime.session_management import (
     kill_session,
 )
 from envctl_engine.state import state_to_dict
+from envctl_engine.state.runtime_map import build_runtime_map
 
 
 def dispatch_direct_inspection(runtime: Any, route: object) -> int:
@@ -335,6 +336,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
         "runtime_root": str(runtime.runtime_root),
         "run_state_path": str(runtime._run_state_path()),
         "state": state_to_dict(state),
+        "runtime_map": build_runtime_map(state),
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))

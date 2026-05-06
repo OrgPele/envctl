@@ -6,7 +6,7 @@ from typing import Any, cast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-from envctl_engine.config import PortDefaults, StartupProfile, discover_local_config_state
+from envctl_engine.config import AppServiceConfig, PortDefaults, StartupProfile, discover_local_config_state
 from envctl_engine.config.persistence import ManagedConfigValues, config_review_text
 from envctl_engine.ui.textual.screens.config_wizard import (
     _directory_validation_message,
@@ -76,6 +76,70 @@ class ConfigWizardTextualTests(unittest.TestCase):
                     "review",
                 ],
             )
+
+
+    def test_build_only_flow_includes_additional_services_step_when_services_are_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            local_state = discover_local_config_state(repo)
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                additional_services=(
+                    AppServiceConfig(
+                        name="voice-runtime",
+                        env_suffix="VOICE_RUNTIME",
+                        enabled_main=True,
+                        enabled_trees=False,
+                        dir_name="voice-runtime",
+                        start_cmd="python -m voice_runtime --port {port}",
+                        port_base=8010,
+                        depends_on=("backend",),
+                        critical=False,
+                    ),
+                ),
+            )
+            app = run_config_wizard_textual(local_state=local_state, initial_values=values, build_only=True)
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+            self.assertIn("additional_services", getattr(app, "_steps"))  # noqa: SLF001
+            self.assertLess(  # noqa: SLF001
+                getattr(app, "_steps").index("components"),
+                getattr(app, "_steps").index("additional_services"),
+            )
+
+    def test_managed_value_validation_blocks_additional_service_dependency_errors(self) -> None:
+        from envctl_engine.config.persistence import validate_managed_values
+
+        values = ManagedConfigValues(
+            default_mode="main",
+            main_profile=StartupProfile(True, True, True, False, False, False, False),
+            trees_profile=StartupProfile(True, True, True, False, False, False, False),
+            port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            additional_services=(
+                AppServiceConfig(
+                    name="voice-runtime",
+                    env_suffix="VOICE_RUNTIME",
+                    enabled_main=True,
+                    enabled_trees=True,
+                    dir_name="voice-runtime",
+                    start_cmd="python -m voice_runtime --port {port}",
+                    port_base=8010,
+                    depends_on=("missing-service",),
+                ),
+            ),
+        )
+
+        validation = validate_managed_values(values, require_directories=False, require_entrypoints=True)
+
+        self.assertFalse(validation.valid)
+        self.assertIn(
+            "service 'voice-runtime' depends on unknown service or dependency 'missing-service'",
+            validation.errors,
+        )
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:
         values = ManagedConfigValues(

@@ -437,6 +437,8 @@ def validate_managed_values(
         errors.append("Frontend entrypoint must not be empty.")
     _validate_profile(values.main_profile, mode="main", errors=errors)
     _validate_profile(values.trees_profile, mode="trees", errors=errors)
+    _services_from_rendered, additional_service_errors = _parse_additional_services(managed_values_to_mapping(values))
+    errors.extend(additional_service_errors)
     for service in values.additional_services:
         if (service.enabled_main or service.enabled_trees) and not str(service.start_cmd).strip():
             errors.append(f"Additional service {service.name} entrypoint must not be empty.")

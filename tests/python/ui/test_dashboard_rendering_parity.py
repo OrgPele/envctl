@@ -794,6 +794,92 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("Run AI:", output)
             self.assertLess(output.index("Frontend:"), output.index("AI session:"))
 
+    def test_dashboard_renders_additional_service_rows_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-additional-services",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo / "backend"),
+                        requested_port=8000,
+                        actual_port=8000,
+                        pid=1111,
+                        status="running",
+                    ),
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo / "frontend"),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=2222,
+                        status="running",
+                    ),
+                    "Main Voice Runtime": ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(repo / "voice-runtime"),
+                        requested_port=8010,
+                        actual_port=8012,
+                        pid=3333,
+                        status="running",
+                        log_path=str(runtime / "voice.log"),
+                        public_url="https://voice.example.test",
+                        health_url="https://voice.example.test/readyz",
+                        project="Main",
+                        service_slug="voice-runtime",
+                    ),
+                    "Main Worker": ServiceRecord(
+                        name="Main Worker",
+                        type="worker",
+                        cwd=str(repo / "worker"),
+                        pid=4444,
+                        status="running",
+                        listener_expected=False,
+                        project="Main",
+                        service_slug="worker",
+                    ),
+                },
+                metadata={
+                    "project_roots": {"Main": str(repo)},
+                    "dashboard_project_configured_services": {
+                        "Main": ["backend", "frontend", "voice-runtime", "worker", "webhook-relay"],
+                    },
+                    "dashboard_stopped_services": [
+                        {"name": "Main Webhook Relay", "project": "Main", "type": "webhook-relay"},
+                    ],
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertLess(output.index("Backend:"), output.index("Frontend:"))
+            self.assertLess(output.index("Frontend:"), output.index("Voice Runtime"))
+            self.assertIn("Voice Runtime", output)
+            self.assertIn("voice-runtime", output)
+            self.assertIn("http://localhost:8012", output)
+            self.assertIn("https://voice.example.test", output)
+            self.assertIn("https://voice.example.test/readyz", output)
+            self.assertIn("voice.log", output)
+            self.assertIn("Worker", output)
+            self.assertIn("non-listener", output)
+            self.assertIn("Webhook Relay", output)
+            self.assertIn("webhook-relay", output)
+            self.assertIn("[Stopped]", output)
+            self.assertIn("services: 5 total | 4 running | 1 not running", output)
+
     def test_dashboard_renders_run_ai_row_when_launch_command_resolves(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

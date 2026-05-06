@@ -159,7 +159,7 @@ Reserved additional-service slugs include `backend`, `frontend`, managed depende
 
 Startup plans application services in dependency layers. Built-in backend/frontend behavior is unchanged when no additional service dependencies are configured. Inside a layer, `START_ORDER` and slug order are deterministic tie-breakers; a service that depends on another app service starts only after that dependency's layer completes. Listener services use strict listener truth, while `EXPECT_LISTENER=false` workers persist `port: null`, `url: null`, and `listener_expected: false` but still keep static health/public URLs if configured.
 
-Runtime state, `show-state --json`, runtime maps, dashboard rows, and `health --json` expose canonical `project`, `service_slug`, `public_url`, `health_url`, `critical`, `degraded`, and `failure_detail` fields so external tooling does not need to parse display names. Service targeting accepts `<slug>`, `service:<slug>`, exact display names, and full service names for logs/actions where service filters are supported.
+Runtime state, `show-state --json`, runtime maps, dashboard rows, and `health --json` expose canonical `project`, `service_slug`, `public_url`, `health_url`, `critical`, `degraded`, and `failure_detail` fields so external tooling does not need to parse display names. Dashboard rows render additional listener services with final rebound URLs, public/health URLs, log paths, and port rebind notes; non-listener workers render as non-listener rows instead of unreachable URLs. Service targeting accepts `<slug>`, `service:<slug>`, exact display names, and full service names for logs, errors, tests, stop, restart, and other actions where service filters are supported.
 
 ## Migrate Env Resolution
 
@@ -251,7 +251,7 @@ The current setup/editor wizard covers:
 - entrypoints and backend/frontend test command suggestions
 - optional frontend test directory suggestions
 - canonical ports
-- advanced additional app service definitions: slug, directory, start command, port base, listener expectation, main/trees enablement, and optional test command
+- advanced additional app service definitions: slug, directory, start command, port base, listener expectation, main/trees enablement, optional test command, public URL, health URL, dependencies, start order, and critical/non-critical behavior
 
 The current flow is:
 
@@ -262,7 +262,7 @@ The current flow is:
 5. `Directories`
 6. `Entrypoints / Commands`
 7. `Ports`
-8. advanced additional app service review fields when configured
+8. advanced additional app service review fields when configured, including dependency and criticality validation before save
 9. `Review / Save`
 
 There is no simple/advanced split in the current UI.

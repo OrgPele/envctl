@@ -94,6 +94,7 @@ _STEP_TITLES = {
     "default_mode": "Default Mode",
     "components": "Components",
     "service_startup": "Long-Running Service",
+    "additional_services": "Additional App Services",
     "directories": "Directories",
     "commands": "Entrypoints / Commands",
     "ports": "Ports",
@@ -113,6 +114,10 @@ _STEP_HELP_TEXT = {
     "service_startup": (
         "This looks like a backend-only project. Choose whether envctl should keep it running automatically in "
         "main and trees. CLI tools usually should not stay running."
+    ),
+    "additional_services": (
+        "Review advanced declarative app services managed through ENVCTL_ADDITIONAL_SERVICES and "
+        "ENVCTL_SERVICE_<SUFFIX>_* keys."
     ),
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
     "commands": (
@@ -198,6 +203,8 @@ def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool)
     steps = ["welcome", "default_mode", "components"]
     if include_service_startup:
         steps.append("service_startup")
+    if values.additional_services:
+        steps.append("additional_services")
     if _visible_directory_fields(values):
         steps.append("directories")
     if _visible_command_fields(values):
@@ -806,6 +813,9 @@ def run_config_wizard_textual(
             if step == "service_startup":
                 self._render_service_startup_step(list_view)
                 return
+            if step == "additional_services":
+                self._render_additional_services_step(list_view)
+                return
             if step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
                 self._sync_directory_inputs(visible_fields)
@@ -847,6 +857,33 @@ def run_config_wizard_textual(
                         ),
                     )
                 )
+
+
+        def _render_additional_services_step(self, list_view) -> None:
+            list_view.clear()
+            items: list[ListItem] = []
+            selected_flags: list[bool] = []
+            for service in self.values.additional_services:
+                modes = []
+                if service.enabled_main:
+                    modes.append("main")
+                if service.enabled_trees:
+                    modes.append("trees")
+                mode_text = "+".join(modes) if modes else "disabled"
+                port_text = str(service.port_base) if service.port_base is not None else "non-listener"
+                critical_text = "critical" if service.critical else "non-critical"
+                deps = ",".join(service.depends_on) if service.depends_on else "none"
+                label = (
+                    f"{service.name} | dir={service.dir_name} | mode={mode_text} | "
+                    f"port={port_text} | deps={deps} | {critical_text}"
+                )
+                items.append(ListItem(Label(label, markup=False), classes=selectable_list_row_classes("config-row")))
+                selected_flags.append(False)
+            if not items:
+                items.append(ListItem(Label("No additional app services configured.", markup=False)))
+                selected_flags.append(False)
+            list_view.extend(items)
+            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _render_choice_step(self, list_view, *, selected: str, options: tuple[tuple[str, str], ...]) -> None:
             list_view.clear()
@@ -1569,7 +1606,15 @@ def run_config_wizard_textual(
                 return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"components", "service_startup", "directories", "commands", "ports", "review"}:
+            if step in {
+                "components",
+                "service_startup",
+                "additional_services",
+                "directories",
+                "commands",
+                "ports",
+                "review",
+            }:
                 validation = validate_managed_values(
                     self.values,
                     require_directories=step in {"directories", "commands", "ports", "review"},

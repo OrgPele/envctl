@@ -128,7 +128,11 @@ ready layer.
 Additional services also carry canonical state fields (`project`, `service_slug`, `public_url`, `health_url`, `critical`,
 `degraded`, and `failure_detail`). Critical services fail fast. Non-critical additional services produce degraded service
 records with cwd/log/port metadata and allow independent healthy layers to continue, making the failure visible through
-state, runtime maps, dashboard, and `health --json`.
+state, runtime maps, dashboard, and `health --json`. The dashboard renderer consumes runtime-map service projections for
+additional service rows, so listener sidecars show final rebound URLs plus public/health URLs while non-listener workers
+show explicit non-listener status. Stopped dashboard metadata stores arbitrary service slugs, not just backend/frontend.
+Direct stop/restart selection normalizes `<slug>`, `service:<slug>`, display names, and full service names through the
+shared service selector helper; restart target discovery uses canonical `project`/`service_slug` state fields when present.
 
 Guideline:
 
@@ -196,8 +200,8 @@ Operational commands include:
 - `start`
 - `plan`
 - `resume`
-- `restart`
-- `stop`
+- `restart` (including additional-service slug/display-name selectors)
+- `stop` (including additional-service slug/display-name selectors and stopped dashboard metadata)
 - `stop-all`
 - `blast-all`
 - dashboard/state/action commands
