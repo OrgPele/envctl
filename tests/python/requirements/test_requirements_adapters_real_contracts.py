@@ -12,7 +12,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container
-from envctl_engine.requirements.supabase import build_supabase_project_name, start_supabase_stack
+from envctl_engine.requirements.supabase import _probe_supabase_auth_health, build_supabase_project_name, start_supabase_stack
 from envctl_engine.requirements.core.registry import dependency_definition
 from envctl_engine.requirements.common import build_container_name
 
@@ -321,7 +321,43 @@ class _FakeComposeProcess:
         return self._stdout, self._stderr
 
 
+class _FlakyHealthRunner:
+    def __init__(self) -> None:
+        self.health_returncodes = [1, 0]
+        self.run_calls = 0
+        self.sleep_calls: list[float] = []
+
+    def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+        _ = port, host, timeout
+        return True
+
+    def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+        _ = cwd, env, timeout, process_started_callback
+        self.run_calls += 1
+        rc = self.health_returncodes.pop(0) if self.health_returncodes else 1
+        stderr = "temporary 503" if rc else ""
+        return subprocess.CompletedProcess(list(cmd), rc, "", stderr)
+
+    def sleep(self, seconds: float) -> None:
+        self.sleep_calls.append(float(seconds))
+
+
 class RequirementsAdaptersRealContractsTests(unittest.TestCase):
+    def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
+        runner = _FlakyHealthRunner()
+
+        ready, error = _probe_supabase_auth_health(
+            process_runner=runner,
+            public_port=54321,
+            health_url="http://localhost:54321/auth/v1/health",
+            env={"ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS": "1"},
+        )
+
+        self.assertTrue(ready)
+        self.assertIsNone(error)
+        self.assertEqual(runner.run_calls, 2)
+        self.assertTrue(runner.sleep_calls)
+
     def test_redis_adopts_existing_port_mapping_without_recreate_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -733,7 +769,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertIn("Supabase DB is healthy but Supabase Auth/Kong is not reachable", result.error or "")
             self.assertIn("http://localhost:54321/auth/v1/health", result.error or "")
 
-    def test_supabase_stack_starts_secondary_services_in_background_by_default(self) -> None:
+    def test_supabase_stack_starts_secondary_services_before_auth_health_probe(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             supabase_dir = root / "supabase"
@@ -742,16 +778,21 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            with mock.patch("envctl_engine.requirements.supabase._start_secondary_services_background") as background:
-                result = start_supabase_stack(
-                    process_runner=runner,
-                    project_root=root,
-                    project_name="feature-a-1",
-                    db_port=5432,
-                )
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+            )
 
             self.assertTrue(result.success)
-            background.assert_called_once()
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
 
     def test_supabase_recovers_when_initial_up_times_out_but_service_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

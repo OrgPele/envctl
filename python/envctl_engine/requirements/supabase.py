@@ -7,7 +7,6 @@ import re
 import signal
 import sys
 import subprocess
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,39 +233,29 @@ def start_supabase_stack(
         service for service in (auth_service, gateway_service) if isinstance(service, str) and service
     ]
     if secondary_services:
-        if _supabase_two_phase_enabled(env):
-            _start_secondary_services_background(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                secondary_services=secondary_services,
-            )
-        else:
-            up_secondary = _compose_run(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                args=["up", "-d", *secondary_services],
-            )
-            if up_secondary is not None:
-                if not all(
-                    _compose_timeout_recovered(
-                        process_runner=process_runner,
-                        compose_root=compose_root,
-                        compose_project_name=compose_project_name,
-                        compose_path=compose_path,
-                        env=env,
-                        service_name=service_name,
-                        probe_port=None,
-                        error=up_secondary,
-                    )
-                    for service_name in secondary_services
-                ):
-                    return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
+        up_secondary = _compose_run(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            args=["up", "-d", *secondary_services],
+        )
+        if up_secondary is not None:
+            if not all(
+                _compose_timeout_recovered(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    service_name=service_name,
+                    probe_port=None,
+                    error=up_secondary,
+                )
+                for service_name in secondary_services
+            ):
+                return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
 
     health_url = _supabase_auth_health_url(env, resolved_public_port)
     auth_ready, auth_error = _probe_supabase_auth_health(
@@ -1384,15 +1373,24 @@ def _probe_supabase_auth_health(
         "resp=urllib.request.urlopen(req, timeout=timeout); "
         "raise SystemExit(0 if 200 <= resp.status < 500 else 1)"
     )
-    result = process_runner.run(
-        [sys.executable, "-c", probe_code, health_url, str(timeout_seconds)],
-        env=env,
-        timeout=timeout_seconds + 1.0,
-    )
-    if getattr(result, "returncode", 1) == 0:
-        return True, None
-    error = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "HTTP health probe failed").strip()
-    return False, error
+    deadline = time.monotonic() + timeout_seconds
+    sleeper = getattr(process_runner, "sleep", time.sleep)
+    last_error = "HTTP health probe failed"
+    while True:
+        remaining = max(0.1, deadline - time.monotonic())
+        result = process_runner.run(
+            [sys.executable, "-c", probe_code, health_url, str(min(timeout_seconds, remaining))],
+            env=env,
+            timeout=min(timeout_seconds, remaining) + 1.0,
+        )
+        if getattr(result, "returncode", 1) == 0:
+            return True, None
+        last_error = str(
+            getattr(result, "stderr", "") or getattr(result, "stdout", "") or "HTTP health probe failed"
+        ).strip()
+        if time.monotonic() >= deadline:
+            return False, last_error
+        sleeper(min(0.25, max(0.0, deadline - time.monotonic())))
 
 
 def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
@@ -1429,36 +1427,6 @@ def _db_recreate_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool
 
 def _native_db_start_enabled(env: Mapping[str, str] | None) -> bool:
     return env_bool(env, "ENVCTL_SUPABASE_DB_START_NATIVE", False)
-
-
-def _supabase_two_phase_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_TWO_PHASE_STARTUP", True)
-
-
-def _start_secondary_services_background(
-    *,
-    process_runner,
-    compose_root: Path,
-    compose_project_name: str,
-    compose_path: Path,
-    env: Mapping[str, str] | None,
-    secondary_services: list[str],
-) -> None:
-    def _worker() -> None:
-        _compose_run(
-            process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
-            args=["up", "-d", *secondary_services],
-        )
-
-    threading.Thread(
-        target=_worker,
-        name=f"envctl-supabase-secondary-{compose_project_name}",
-        daemon=True,
-    ).start()
 
 
 def build_supabase_project_name(*, project_root: Path, project_name: str) -> str:
