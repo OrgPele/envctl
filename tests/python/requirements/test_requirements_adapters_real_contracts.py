@@ -682,6 +682,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 project_root=root,
                 project_name="feature-a-1",
                 db_port=5432,
+                public_port=54321,
                 env={"ENVCTL_SUPABASE_TWO_PHASE_STARTUP": "false"},
             )
             self.assertTrue(result.success)
@@ -707,6 +708,30 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                     for cmd in runner.commands
                 )
             )
+
+    def test_supabase_stack_fails_when_auth_kong_health_unreachable_after_db_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_overrides[5432] = True
+            runner.wait_for_port_overrides[54321] = False
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_TWO_PHASE_STARTUP": "false"},
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("Supabase DB is healthy but Supabase Auth/Kong is not reachable", result.error or "")
+            self.assertIn("http://localhost:54321/auth/v1/health", result.error or "")
 
     def test_supabase_stack_starts_secondary_services_in_background_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -125,6 +125,8 @@ retry, listener detection, log, state, and runtime-map machinery. App descriptor
 Unknown references and cycles fail before processes launch; `START_ORDER` remains the deterministic tie-breaker within a
 ready layer.
 
+Managed Supabase records and projections distinguish the Postgres resource from the public API gateway resource. `DB_PORT` remains the database listener, while `SUPABASE_PUBLIC_PORT` publishes Kong and backs `ENVCTL_SOURCE_SUPABASE_URL`. Supabase startup validates both the DB listener and `/auth/v1/health`, so failures where Postgres is healthy but Auth/Kong is unreachable are reported as dependency failures instead of producing a browser-only login refusal.
+
 Additional services also carry canonical state fields (`project`, `service_slug`, `public_url`, `health_url`, `critical`,
 `degraded`, and `failure_detail`). Critical services fail fast. Non-critical additional services produce degraded service
 records with cwd/log/port metadata and allow independent healthy layers to continue, making the failure visible through

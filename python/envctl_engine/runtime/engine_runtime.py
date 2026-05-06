@@ -411,6 +411,7 @@ class PythonEngineRuntime:
             db_base=config.db_port_base,
             redis_base=config.redis_port_base,
             n8n_base=config.n8n_port_base,
+            supabase_api_base=config.port_defaults.dependency_port("supabase", "api"),
             additional_service_bases={
                 service.name: int(service.port_base)
                 for service in getattr(config, "additional_services", ())

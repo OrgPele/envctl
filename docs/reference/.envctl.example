@@ -71,6 +71,8 @@ PORT_SPACING=20
 DB_PORT=5432
 REDIS_PORT=6379
 N8N_PORT_BASE=5678
+# Public Supabase API/Kong port. ENVCTL_SOURCE_SUPABASE_URL uses this port; DB URLs use DB_PORT.
+SUPABASE_PUBLIC_PORT=54321
 
 # ==========================================
 # Main mode startup profile

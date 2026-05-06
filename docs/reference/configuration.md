@@ -86,6 +86,9 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_REDIS_URL`
 - `ENVCTL_SOURCE_N8N_URL`
 - `ENVCTL_SOURCE_SUPABASE_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT`
+- `ENVCTL_SOURCE_SUPABASE_API_PORT`
 - `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`
 - `ENVCTL_SOURCE_ASYNC_DATABASE_URL`
 - `ENVCTL_SOURCE_DB_HOST`
@@ -110,6 +113,15 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
+## Managed Supabase Ports
+
+Managed Supabase exposes two distinct local resources:
+
+- `DB_PORT` / `ENVCTL_SOURCE_SUPABASE_DB_PORT` is the PostgreSQL host port used for database URLs such as `DATABASE_URL` and `SQLALCHEMY_DATABASE_URL`.
+- `SUPABASE_PUBLIC_PORT` / `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT` is the public Supabase API gateway port. `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL` point here, not at Postgres. Browser auth clients should use this URL for `/auth/v1/*` calls.
+
+The managed Supabase compose stack publishes Kong on `SUPABASE_PUBLIC_PORT` and readiness checks `/auth/v1/health`. If Postgres is healthy but Kong/Auth is unreachable, startup reports that split explicitly instead of marking Supabase healthy from the database listener alone.
 
 ## Additional App Services
 

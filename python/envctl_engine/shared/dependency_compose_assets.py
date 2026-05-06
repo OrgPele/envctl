@@ -64,12 +64,19 @@ def materialize_dependency_compose(
     )
 
 
-def supabase_managed_env(*, db_port: int, env: Mapping[str, str] | None = None) -> dict[str, str]:
+def supabase_managed_env(
+    *, db_port: int, public_port: int | None = None, env: Mapping[str, str] | None = None
+) -> dict[str, str]:
     values = dict(env or {})
+    resolved_public_port = int(
+        public_port or values.get("SUPABASE_PUBLIC_PORT") or values.get("SUPABASE_API_PORT") or 54321
+    )
     db_password = values.get("SUPABASE_DB_PASSWORD") or values.get("DB_PASSWORD") or "supabase-db-password"
-    public_url = values.get("SUPABASE_PUBLIC_URL") or f"http://localhost:{db_port}"
+    public_url = values.get("SUPABASE_PUBLIC_URL") or f"http://localhost:{resolved_public_port}"
     return {
         "SUPABASE_DB_PORT": str(int(db_port)),
+        "SUPABASE_PUBLIC_PORT": str(resolved_public_port),
+        "SUPABASE_API_PORT": str(resolved_public_port),
         "SUPABASE_DB_PASSWORD": db_password,
         "SUPABASE_PUBLIC_URL": public_url,
         "SUPABASE_JWT_SECRET": values.get("SUPABASE_JWT_SECRET", "supabase-local-jwt-secret"),

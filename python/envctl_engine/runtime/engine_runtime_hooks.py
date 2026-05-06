@@ -69,7 +69,8 @@ def requirements_result_from_hook_payload(
     requirements_payload = payload.get("requirements")
     requirements = requirements_payload if isinstance(requirements_payload, Mapping) else {}
 
-    def component(name: str, plan: Any) -> dict[str, object]:
+    def component(definition: Any, plan: Any) -> dict[str, object]:
+        name = definition.id
         raw = requirements.get(name) if isinstance(requirements, Mapping) else None
         raw_map = raw if isinstance(raw, Mapping) else {}
         success = bool(raw_map.get("success", True))
@@ -78,9 +79,20 @@ def requirements_result_from_hook_payload(
         if final != plan.final:
             plan.final = final
             plan.assigned = final
+        resources: dict[str, int] = {}
+        for resource in definition.resources:
+            resource_plan = context.ports.get(resource.legacy_port_key)
+            value = getattr(resource_plan, "final", None)
+            if isinstance(value, int) and value > 0:
+                resources[resource.name] = value
+        if definition.resources:
+            resources[definition.resources[0].name] = final
+            resources["primary"] = final
+            resources["requested"] = int(plan.requested)
         return {
             "requested": plan.requested,
             "final": final,
+            "resources": resources,
             "retries": retries,
             "success": success,
             "simulated": bool(raw_map.get("simulated", False)),
@@ -88,7 +100,7 @@ def requirements_result_from_hook_payload(
         }
 
     components = {
-        definition.id: component(definition.id, context.ports[definition.resources[0].legacy_port_key])
+        definition.id: component(definition, context.ports[definition.resources[0].legacy_port_key])
         for definition in dependency_definitions()
     }
     failures: list[str] = []

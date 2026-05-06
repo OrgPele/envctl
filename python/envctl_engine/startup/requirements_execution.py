@@ -108,6 +108,24 @@ def start_requirements_for_project(
     def plan_for_dependency(dependency_id: str) -> object:
         return definition_ports[dependency_id]
 
+    def resources_for_definition(definition, outcome=None) -> dict[str, int]:  # noqa: ANN001
+        resources: dict[str, int] = {}
+        for resource in definition.resources:
+            plan = context.ports.get(resource.legacy_port_key)
+            if plan is None:
+                continue
+            value = getattr(plan, "final", None)
+            if isinstance(value, int) and value > 0:
+                resources[resource.name] = value
+        if outcome is not None and definition.resources:
+            primary_name = definition.resources[0].name
+            final_port = getattr(outcome, "final_port", None)
+            if isinstance(final_port, int) and final_port > 0:
+                resources[primary_name] = final_port
+                resources["primary"] = final_port
+                resources["requested"] = int(getattr(outcome, "requested_port", final_port) or final_port)
+        return resources
+
     skip_infrastructure_hooks = route is not None and route.flags.get("launch_dependencies") is False
     if not skip_infrastructure_hooks:
         setup_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_setup_infrastructure")
@@ -119,7 +137,7 @@ def start_requirements_for_project(
                 components[definition.id] = {
                     "requested": plan.requested,
                     "final": plan.final,
-                    "resources": {"requested": plan.requested, "primary": plan.final},
+                    "resources": resources_for_definition(definition),
                     "retries": 0,
                     "success": False,
                     "simulated": False,
@@ -283,7 +301,7 @@ def start_requirements_for_project(
         components[definition.id] = {
             "requested": outcome.requested_port,
             "final": outcome.final_port,
-            "resources": {"requested": outcome.requested_port, "primary": outcome.final_port},
+            "resources": resources_for_definition(definition, outcome),
             "retries": outcome.retries,
             "success": outcome.success,
             "simulated": outcome.simulated,

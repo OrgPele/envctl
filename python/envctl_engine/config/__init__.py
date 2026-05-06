@@ -279,7 +279,7 @@ class PortDefaults:
             self.dependency_ports = {
                 "postgres": {"primary": int(db_port_base or 5432)},
                 "redis": {"primary": int(redis_port_base or 6379)},
-                "supabase": {"db": int(db_port_base or 5432)},
+                "supabase": {"db": int(db_port_base or 5432), "api": 54321},
                 "n8n": {"primary": int(n8n_port_base or 5678)},
             }
 
@@ -1239,6 +1239,8 @@ def _default_port_value(key: str) -> int:
         "DB_PORT": 5432,
         "REDIS_PORT": 6379,
         "N8N_PORT_BASE": 5678,
+        "SUPABASE_PUBLIC_PORT": 54321,
+        "SUPABASE_API_PORT": 54321,
     }
     return defaults.get(key, 0)
 

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import sys
 import subprocess
 import threading
 import time
@@ -50,6 +51,7 @@ def start_supabase_stack(
     project_root: Path,
     project_name: str,
     db_port: int,
+    public_port: int | None = None,
     runtime_root: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ContainerStartResult:
@@ -57,10 +59,14 @@ def start_supabase_stack(
         project_root=project_root,
         project_name=project_name,
     )
+    resolved_public_port = int(
+        public_port or (env or {}).get("SUPABASE_PUBLIC_PORT") or (env or {}).get("SUPABASE_API_PORT") or 54321
+    )
     compose_root, compose_path = _resolve_supabase_compose_workspace(
         project_root=project_root,
         project_name=project_name,
         db_port=db_port,
+        public_port=resolved_public_port,
         runtime_root=runtime_root,
         env=env,
     )
@@ -261,6 +267,21 @@ def start_supabase_stack(
                     for service_name in secondary_services
                 ):
                     return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
+
+    health_url = _supabase_auth_health_url(env, resolved_public_port)
+    auth_ready, auth_error = _probe_supabase_auth_health(
+        process_runner=process_runner,
+        public_port=resolved_public_port,
+        health_url=health_url,
+        env=env,
+    )
+    if not auth_ready:
+        detail = auth_error or f"Supabase Auth/Kong is not reachable at {health_url}"
+        return ContainerStartResult(
+            success=False,
+            container_name=compose_project_name,
+            error=f"Supabase DB is healthy but Supabase Auth/Kong is not reachable at {health_url}: {detail}",
+        )
 
     return ContainerStartResult(success=True, container_name=compose_project_name)
 
@@ -1268,6 +1289,7 @@ def _resolve_supabase_compose_workspace(
     project_root: Path,
     project_name: str,
     db_port: int,
+    public_port: int | None = None,
     runtime_root: Path | None,
     env: Mapping[str, str] | None,
 ) -> tuple[Path, Path]:
@@ -1283,7 +1305,7 @@ def _resolve_supabase_compose_workspace(
             project_root=project_root,
             project_name=project_name,
         ),
-        env_values=supabase_managed_env(db_port=db_port, env=env),
+        env_values=supabase_managed_env(db_port=db_port, public_port=public_port, env=env),
     )
     return materialized.stack_root, materialized.compose_file
 
@@ -1337,6 +1359,45 @@ def _extract_mount_source(line: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip()
+
+
+def _supabase_auth_health_url(env: Mapping[str, str] | None, public_port: int) -> str:
+    public_url = str((env or {}).get("SUPABASE_PUBLIC_URL") or f"http://localhost:{public_port}").rstrip("/")
+    return f"{public_url}/auth/v1/health"
+
+
+def _probe_supabase_auth_health(
+    *,
+    process_runner,
+    public_port: int,
+    health_url: str,
+    env: Mapping[str, str] | None,
+) -> tuple[bool, str | None]:
+    timeout_seconds = _auth_probe_timeout_seconds(env)
+    if public_port > 0 and not bool(process_runner.wait_for_port(public_port, timeout=timeout_seconds)):
+        return False, f"listener probe failed on port {public_port}"
+    probe_code = (
+        "import sys, urllib.request; "
+        "url=sys.argv[1]; "
+        "timeout=float(sys.argv[2]); "
+        "req=urllib.request.Request(url, headers={'Accept':'application/json'}); "
+        "resp=urllib.request.urlopen(req, timeout=timeout); "
+        "raise SystemExit(0 if 200 <= resp.status < 500 else 1)"
+    )
+    result = process_runner.run(
+        [sys.executable, "-c", probe_code, health_url, str(timeout_seconds)],
+        env=env,
+        timeout=timeout_seconds + 1.0,
+    )
+    if getattr(result, "returncode", 1) == 0:
+        return True, None
+    error = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "HTTP health probe failed").strip()
+    return False, error
+
+
+def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
+    parsed = env_float(env, "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS", 5.0, minimum=0.5)
+    return parsed if parsed > 0 else 5.0
 
 
 def _db_probe_attempts(env: Mapping[str, str] | None) -> int:

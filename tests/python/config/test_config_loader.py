@@ -147,6 +147,19 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertFalse(config.startup_enabled_for_mode("main"))
             self.assertTrue(config.startup_enabled_for_mode("trees"))
 
+    def test_load_config_exposes_supabase_db_and_public_api_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "DB_PORT=15432\nSUPABASE_PUBLIC_PORT=15421\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.port_defaults.dependency_port("supabase", "db"), 15432)
+            self.assertEqual(config.port_defaults.dependency_port("supabase", "api"), 15421)
+
     def test_load_config_reads_backend_and_frontend_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

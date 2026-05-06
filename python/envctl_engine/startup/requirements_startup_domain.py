@@ -11,6 +11,7 @@ from typing import Protocol
 from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.runtime.command_resolution import CommandResolutionError
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.requirements.core import dependency_definition
 from envctl_engine.state.models import PortPlan
 from envctl_engine.shared.protocols import CommandResult, PortAllocator, ProcessRuntime
@@ -424,6 +425,15 @@ def _requirement_listener_timeout_seconds(self: _RequirementsRuntime) -> float:
     return parsed
 
 
+def _context_port(context: ProjectContextLike, name: str) -> int | None:
+    ports = getattr(context, "ports", {})
+    if not isinstance(ports, dict):
+        return None
+    plan = ports.get(name)
+    value = getattr(plan, "final", None)
+    return int(value) if isinstance(value, int) and value > 0 else None
+
+
 def _start_requirement_with_native_adapter(
     self: _RequirementsRuntime,
     *,
@@ -492,12 +502,23 @@ def _start_requirement_with_native_adapter(
         )
     else:
         command_env = dict(command_env)
-        command_env.setdefault("ENVCTL_SUPABASE_DB_START_NATIVE", "true")
+        public_port = _context_port(context, "supabase_api")
+        if isinstance(public_port, int) and public_port > 0:
+            command_env.setdefault("SUPABASE_PUBLIC_PORT", str(public_port))
+            command_env.setdefault("SUPABASE_API_PORT", str(public_port))
+            command_env.setdefault(
+                "SUPABASE_PUBLIC_URL",
+                browser_backend_url(
+                    host=resolve_public_host(env=getattr(self, "env", None), config=getattr(self, "config", None)),
+                    port=public_port,
+                ),
+            )
         result = native_starter(
             process_runner=process_runner,
             project_root=context.root,
             project_name=context.name,
             db_port=port,
+            public_port=public_port,
             runtime_root=self.runtime_root,
             env=command_env,
         )

@@ -24,6 +24,7 @@ class PortPlanner:
         db_base: int = 5432,
         redis_base: int = 6379,
         n8n_base: int = 5678,
+        supabase_api_base: int = 54321,
         additional_service_bases: dict[str, int] | None = None,
         lock_dir: str | None = None,
         session_id: str | None = None,
@@ -43,6 +44,7 @@ class PortPlanner:
         self.db_base = db_base
         self.redis_base = redis_base
         self.n8n_base = n8n_base
+        self.supabase_api_base = supabase_api_base
         self.additional_service_bases = {
             str(name).strip().lower(): int(port)
             for name, port in (additional_service_bases or {}).items()
@@ -121,6 +123,10 @@ class PortPlanner:
         n8n_requested = requested.get(
             "n8n", self._preferred_dependency_port(project, "n8n", self.n8n_base, index=index)
         )
+        supabase_api_requested = requested.get(
+            "supabase_api",
+            self._preferred_dependency_port(project, "supabase_api", self.supabase_api_base, index=index),
+        )
         plans.update(
             {
                 "db": PortPlan(
@@ -146,6 +152,14 @@ class PortPlanner:
                     final=n8n_requested,
                     source=sources.get("n8n", "planner"),
                     retries=retries.get("n8n", 0),
+                ),
+                "supabase_api": PortPlan(
+                    project=project,
+                    requested=supabase_api_requested,
+                    assigned=supabase_api_requested,
+                    final=supabase_api_requested,
+                    source=sources.get("supabase_api", "planner"),
+                    retries=retries.get("supabase_api", 0),
                 ),
             }
         )
