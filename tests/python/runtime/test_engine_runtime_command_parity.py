@@ -1428,6 +1428,78 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertTrue(payload["headless"])
         self.assertEqual(payload["selection"]["reason"], "headless_tree_start_requires_explicit_selection")
 
+
+    def test_explain_startup_json_includes_enabled_additional_services_urls_and_warnings(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "voice-runtime" / "app").mkdir(parents=True, exist_ok=True)
+        (repo / "voice-runtime" / "app" / "main.py").write_text("# runtime\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PUBLIC_HOST": "72.61.80.25",
+                "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/envctl/start-voice-runtime.sh {port}",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8014",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL": "${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}/readyz",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH": "voice-runtime/app/main.py",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["services"]["voice-runtime"], True)
+        self.assertEqual(
+            payload["additional_service_urls"]["voice-runtime"],
+            {
+                "port": 8014,
+                "public_url": "http://72.61.80.25:8014",
+                "health_url": "http://72.61.80.25:8014/readyz",
+            },
+        )
+        warning = payload["warnings"][0]
+        self.assertEqual(warning["service"], "voice-runtime")
+        self.assertEqual(warning["reason"], "missing_command_path")
+        self.assertIn("scripts/envctl/start-voice-runtime.sh", warning["path"])
+
+    def test_preflight_json_skips_additional_service_when_enable_if_path_is_absent(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/envctl/start-voice-runtime.sh {port}",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8014",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH": "voice-runtime/app/main.py",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["preflight", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        startup = payload["startup"]
+        self.assertEqual(startup["services"]["voice-runtime"], False)
+        self.assertNotIn("voice-runtime", startup["additional_service_urls"])
+        self.assertEqual(startup["warnings"], [])
+
     def test_preflight_json_wraps_startup_explanation_in_versioned_contract(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

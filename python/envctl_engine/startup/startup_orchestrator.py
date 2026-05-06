@@ -1987,9 +1987,13 @@ class StartupOrchestrator:
         route: Route | None,
         project_name: str,
         default_service_types: set[str] | None = None,
+        additional_services: tuple[object, ...] = (),
     ) -> set[str]:
         return _restart_service_types_for_project_impl(
-            route=route, project_name=project_name, default_service_types=default_service_types
+            route=route,
+            project_name=project_name,
+            default_service_types=default_service_types,
+            additional_services=additional_services,
         )
 
     @staticmethod

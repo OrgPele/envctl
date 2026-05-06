@@ -362,15 +362,96 @@ def _project_name_from_service_name(name: str) -> str | None:
     return None
 
 
+
+def _service_filter_types_for_project(
+    *, route: Route, project_name: str, configured_service_types: set[str]
+) -> set[str]:
+    services_value = route.flags.get("services")
+    service_types: set[str] = set()
+    if not isinstance(services_value, list):
+        return service_types
+    for raw_name in services_value:
+        if not isinstance(raw_name, str):
+            continue
+        lowered = raw_name.strip().lower()
+        if lowered.startswith("service:"):
+            lowered = lowered.removeprefix("service:").strip()
+        matched_type = False
+        for service_type in configured_service_types:
+            display = service_display_name(service_type).lower()
+            project_display = f"{project_name} {service_display_name(service_type)}".strip().lower()
+            if lowered in {service_type, display, project_display}:
+                service_types.add(service_type)
+                matched_type = True
+        if matched_type:
+            continue
+        project = _project_name_from_service_name(raw_name)
+        if project and project != project_name:
+            continue
+        if lowered.endswith(" backend"):
+            service_types.add("backend")
+        elif lowered.endswith(" frontend"):
+            service_types.add("frontend")
+    return service_types
+
+
+def _expand_service_dependencies(
+    service_types: set[str], *, route: Route, project_name: str, additional_services: tuple[object, ...]
+) -> set[str]:
+    if bool(route.flags.get("ignore_service_deps")):
+        return service_types
+    expanded = set(service_types)
+    service_by_name = {str(getattr(service, "name", "")).strip().lower(): service for service in additional_services}
+    emit_dependency = route.flags.get("emit_service_dependency")
+    changed = True
+    while changed:
+        changed = False
+        for service_name in list(expanded):
+            service = service_by_name.get(service_name)
+            if service is None:
+                continue
+            for dependency in tuple(getattr(service, "depends_on", ()) or ()):  # built-in or additional service only
+                dep = str(dependency).strip().lower()
+                if dep not in {"backend", "frontend", *service_by_name.keys()}:
+                    continue
+                if dep in expanded:
+                    continue
+                expanded.add(dep)
+                changed = True
+                if callable(emit_dependency):
+                    emit_dependency(project=project_name, service=service_name, dependency=dep)
+    return expanded
+
+
 def _restart_service_types_for_project(
     *,
     route: Route | None,
     project_name: str,
     default_service_types: set[str] | None = None,
+    additional_services: tuple[object, ...] = (),
 ) -> set[str]:
     configured_service_types = set(default_service_types or {"backend", "frontend"})
     if route is None:
         return configured_service_types
+
+    services_value = route.flags.get("services")
+    if isinstance(services_value, list) and services_value:
+        service_types = _service_filter_types_for_project(
+            route=route,
+            project_name=project_name,
+            configured_service_types=configured_service_types,
+        )
+        if service_types:
+            service_types = _expand_service_dependencies(
+                service_types,
+                route=route,
+                project_name=project_name,
+                additional_services=additional_services,
+            )
+            return _apply_startup_service_launch_flags(
+                service_types.intersection(configured_service_types or service_types),
+                route=route,
+            )
 
     runtime_scope = route.flags.get("runtime_scope")
     if runtime_scope in {"backend", "frontend"}:
@@ -386,37 +467,6 @@ def _restart_service_types_for_project(
     if not bool(route.flags.get("_restart_request")):
         return _apply_startup_service_launch_flags(configured_service_types, route=route)
 
-    services_value = route.flags.get("services")
-    service_types: set[str] = set()
-    if isinstance(services_value, list):
-        for raw_name in services_value:
-            if not isinstance(raw_name, str):
-                continue
-            lowered = raw_name.strip().lower()
-            if lowered.startswith("service:"):
-                lowered = lowered.removeprefix("service:").strip()
-            matched_type = False
-            for service_type in configured_service_types:
-                display = service_display_name(service_type).lower()
-                project_display = f"{project_name} {service_display_name(service_type)}".strip().lower()
-                if lowered in {service_type, display, project_display}:
-                    service_types.add(service_type)
-                    matched_type = True
-            if matched_type:
-                continue
-            project = _project_name_from_service_name(raw_name)
-            if project and project != project_name:
-                continue
-            if lowered.endswith(" backend"):
-                service_types.add("backend")
-            elif lowered.endswith(" frontend"):
-                service_types.add("frontend")
-    if service_types:
-        return _apply_startup_service_launch_flags(
-            service_types.intersection(configured_service_types or service_types),
-            route=route,
-        )
-
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
         normalized = {str(value).strip().lower() for value in explicit_types if str(value).strip().lower()}
@@ -426,7 +476,6 @@ def _restart_service_types_for_project(
                 route=route,
             )
     return _apply_startup_service_launch_flags(configured_service_types, route=route)
-
 
 def _apply_startup_service_launch_flags(service_types: set[str], *, route: Route) -> set[str]:
     selected = set(service_types)

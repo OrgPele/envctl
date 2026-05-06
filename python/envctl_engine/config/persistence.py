@@ -205,6 +205,8 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
             rendered[f"{prefix}START_ORDER"] = str(service.start_order)
         if not service.critical:
             rendered[f"{prefix}CRITICAL"] = "false"
+        if service.enable_if_path:
+            rendered[f"{prefix}ENABLE_IF_PATH"] = service.enable_if_path
     return rendered
 
 
@@ -277,6 +279,7 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 "depends_on": list(service.depends_on),
                 "start_order": service.start_order,
                 "critical": service.critical,
+                "enable_if_path": service.enable_if_path,
             }
             for service in values.additional_services
         ],
@@ -385,6 +388,8 @@ def managed_values_from_payload(
                 mapping[f"{prefix}DEPENDS_ON"] = str(depends_on)
             if item.get("start_order") is not None:
                 mapping[f"{prefix}START_ORDER"] = str(item["start_order"])
+            if item.get("enable_if_path") is not None:
+                mapping[f"{prefix}ENABLE_IF_PATH"] = str(item.get("enable_if_path") or "")
             if item.get("critical") is not None:
                 mapping[f"{prefix}CRITICAL"] = _bool_text(bool(item["critical"]))
         if names:
@@ -560,6 +565,7 @@ def _managed_block_sections(
             f"{prefix}DEPENDS_ON",
             f"{prefix}START_ORDER",
             f"{prefix}CRITICAL",
+            f"{prefix}ENABLE_IF_PATH",
         ):
             if key in rendered:
                 append_once(service_keys, key)

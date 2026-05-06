@@ -130,6 +130,17 @@ def backend_listener_expected_for_mode(config: object, mode: str) -> bool:
     return bool(getattr(config, "main_backend_expect_listener", True))
 
 
+
+def additional_service_enabled_for_context(service: object, *, mode: str, project_root: Path) -> bool:
+    enabled_for_project = getattr(service, "enabled_for_project_root", None)
+    if callable(enabled_for_project):
+        return bool(enabled_for_project(mode, project_root))
+    enabled_for_mode = getattr(service, "enabled_for_mode", None)
+    if callable(enabled_for_mode):
+        return bool(enabled_for_mode(mode))
+    return False
+
+
 def start_project_services(
     orchestrator: StartupOrchestratorLike,
     context: ProjectContextLike,
@@ -215,19 +226,50 @@ def start_project_services(
     frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
     all_service_names_for_mode = getattr(rt.config, "all_app_service_names_for_mode", None)
     if callable(all_service_names_for_mode):
-        configured_service_types = {service_name for service_name in all_service_names_for_mode(effective_mode)}
+        try:
+            configured_service_types = {
+                service_name for service_name in all_service_names_for_mode(effective_mode, project_root=context.root)
+            }
+        except TypeError:
+            configured_service_types = {service_name for service_name in all_service_names_for_mode(effective_mode)}
     else:
         configured_service_types = {
             service_name
             for service_name in ("backend", "frontend")
             if rt._service_enabled_for_mode(effective_mode, service_name)
         }
-    backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
-    selected_service_types = orchestrator._restart_service_types_for_project(
-        route=route,
-        project_name=context.name,
-        default_service_types=configured_service_types,
+    configured_additional_services = tuple(
+        service
+        for service in getattr(rt.config, "additional_services", ())
+        if additional_service_enabled_for_context(service, mode=effective_mode, project_root=context.root)
     )
+
+    def emit_service_dependency(**payload: object) -> None:
+        rt._emit("service.dependency.selected", **payload)
+        if requirements_timing_enabled(orchestrator, route) and not orchestrator._suppress_timing_output(route):
+            print(
+                "Starting dependency service "
+                f"{payload.get('dependency')} because {payload.get('service')} depends_on={payload.get('dependency')}"
+            )
+
+    if route is not None:
+        route.flags.setdefault("emit_service_dependency", emit_service_dependency)
+    backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
+    try:
+        selected_service_types = orchestrator._restart_service_types_for_project(
+            route=route,
+            project_name=context.name,
+            default_service_types=configured_service_types,
+            additional_services=configured_additional_services,
+        )
+    except TypeError as exc:
+        if "additional_services" not in str(exc):
+            raise
+        selected_service_types = orchestrator._restart_service_types_for_project(
+            route=route,
+            project_name=context.name,
+            default_service_types=configured_service_types,
+        )
     if not selected_service_types:
         rt._emit(
             "service.attach.skipped",
@@ -350,7 +392,7 @@ def start_project_services(
             command_source=frontend_command_source,
         )
     additional_services = [
-        service for service in getattr(rt.config, "additional_services", ()) if service.name in selected_service_types
+        service for service in configured_additional_services if service.name in selected_service_types
     ]
     for service in sorted(additional_services, key=lambda item: (item.start_order, item.name)):
         plan = context.ports.get(service.name)

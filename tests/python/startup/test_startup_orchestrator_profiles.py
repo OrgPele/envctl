@@ -13,7 +13,11 @@ from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.startup.finalization import build_success_run_state
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RequirementsResult
-from envctl_engine.startup.startup_selection_support import _restart_selected_services, restart_target_projects
+from envctl_engine.startup.startup_selection_support import (
+    _restart_selected_services,
+    _restart_service_types_for_project,
+    restart_target_projects,
+)
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
@@ -162,6 +166,54 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertEqual(selected, set())
 
+
+    def test_start_service_selector_expands_configured_service_dependencies_with_event(self) -> None:
+        config = SimpleNamespace(
+            additional_services=(
+                SimpleNamespace(
+                    name="voice-runtime",
+                    depends_on=("backend",),
+                    start_order=100,
+                ),
+            )
+        )
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"services": ["voice-runtime"]},
+            raw_args=["start", "--service", "voice-runtime"],
+        )
+        emitted: list[tuple[str, dict[str, object]]] = []
+        route.flags["emit_service_dependency"] = lambda **payload: emitted.append(("emit", payload))
+
+        selected = _restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"backend", "frontend", "voice-runtime"},
+            additional_services=config.additional_services,
+        )
+
+        self.assertEqual(selected, {"backend", "voice-runtime"})
+        self.assertEqual(emitted[0][1]["service"], "voice-runtime")
+        self.assertEqual(emitted[0][1]["dependency"], "backend")
+
+    def test_start_service_selector_can_ignore_configured_service_dependencies(self) -> None:
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"services": ["voice-runtime"], "ignore_service_deps": True},
+            raw_args=["start", "--service", "voice-runtime", "--ignore-service-deps"],
+        )
+
+        selected = _restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"backend", "frontend", "voice-runtime"},
+            additional_services=(SimpleNamespace(name="voice-runtime", depends_on=("backend",), start_order=100),),
+        )
+
+        self.assertEqual(selected, {"voice-runtime"})
+
     def test_restart_additional_service_selectors_preserve_project_and_service_type(self) -> None:
         state = RunState(
             run_id="run-1",
@@ -210,6 +262,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             route=route,
             project_name="Main",
             default_service_types={"backend", "frontend", "voice-runtime"},
+            additional_services=(SimpleNamespace(name="voice-runtime", depends_on=("backend",), start_order=100),),
         )
 
         self.assertEqual(selected, {"voice-runtime"})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -352,6 +353,113 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     return 0
 
 
+
+def _additional_service_enabled_for_context(runtime: Any, mode: str, service: object, context: object) -> bool:
+    root = getattr(context, "root", None)
+    enabled_for_project = getattr(service, "enabled_for_project_root", None)
+    if callable(enabled_for_project):
+        return bool(enabled_for_project(mode, root))
+    enabled_for_mode = getattr(service, "enabled_for_mode", None)
+    if callable(enabled_for_mode):
+        return bool(enabled_for_mode(mode))
+    return False
+
+
+def _additional_service_contexts(runtime: Any, mode: str, contexts: list[object], service: object) -> list[object]:
+    return [context for context in contexts if _additional_service_enabled_for_context(runtime, mode, service, context)]
+
+
+def _render_additional_service_template(template: str, values: dict[str, str]) -> str:
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace(f"${{{key}}}", value)
+    return rendered
+
+
+def _additional_service_urls(runtime: Any, mode: str, contexts: list[object]) -> dict[str, dict[str, object]]:
+    host = str(getattr(runtime.config, "raw", {}).get("ENVCTL_PUBLIC_HOST") or "localhost").strip() or "localhost"
+    urls: dict[str, dict[str, object]] = {}
+    for service in getattr(runtime.config, "additional_services", ()):
+        enabled_contexts = _additional_service_contexts(runtime, mode, contexts, service)
+        if not enabled_contexts:
+            continue
+        context = enabled_contexts[0]
+        ports = getattr(context, "ports", {})
+        plan = ports.get(service.name) if isinstance(ports, dict) else None
+        port = int(getattr(plan, "final", 0) or 0)
+        if port <= 0 or not bool(getattr(service, "expect_listener", True)):
+            continue
+        env_suffix = str(getattr(service, "env_suffix", "") or service.name.upper().replace("-", "_"))
+        public_template = str(getattr(service, "public_url_template", "") or "").strip()
+        public_url = public_template or f"http://{host}:{port}"
+        variables = {
+            f"ENVCTL_SOURCE_SERVICE_{env_suffix}_HOST": host,
+            f"ENVCTL_SOURCE_SERVICE_{env_suffix}_PORT": str(port),
+            f"ENVCTL_SOURCE_SERVICE_{env_suffix}_URL": f"http://{host}:{port}",
+            f"ENVCTL_SOURCE_SERVICE_{env_suffix}_PUBLIC_URL": public_url,
+        }
+        public_url = _render_additional_service_template(public_url, variables)
+        variables[f"ENVCTL_SOURCE_SERVICE_{env_suffix}_PUBLIC_URL"] = public_url
+        health_template = str(getattr(service, "health_url_template", "") or "").strip()
+        health_url = _render_additional_service_template(health_template, variables) if health_template else None
+        urls[service.name] = {"port": port, "public_url": public_url, "health_url": health_url}
+    return urls
+
+
+def _additional_service_warnings(runtime: Any, mode: str, contexts: list[object]) -> list[dict[str, object]]:
+    warnings: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for service in getattr(runtime.config, "additional_services", ()):
+        for context in _additional_service_contexts(runtime, mode, contexts, service):
+            command = str(getattr(service, "start_cmd", "") or "").strip()
+            if not command:
+                continue
+            try:
+                parts = shlex.split(command)
+            except ValueError:
+                continue
+            if not parts:
+                continue
+            executable = parts[0]
+            if "/" not in executable and "\\" not in executable:
+                continue
+            service_dir = (
+                Path(getattr(context, "root")) / str(getattr(service, "dir_name", ".") or ".")
+            ).resolve(strict=False)
+            candidate = Path(executable)
+            if not candidate.is_absolute():
+                candidate = (service_dir / executable).resolve(strict=False)
+            if candidate.exists():
+                continue
+            key = (str(getattr(context, "name", "")), str(getattr(service, "name", "")), str(candidate))
+            if key in seen:
+                continue
+            seen.add(key)
+            warnings.append(
+                {
+                    "project": str(getattr(context, "name", "")),
+                    "service": str(getattr(service, "name", "")),
+                    "reason": "missing_command_path",
+                    "path": str(candidate),
+                    "message": (
+                        f"Configured service {getattr(service, 'name', '')!r} command path is missing for "
+                        f"{getattr(context, 'name', '')}: {candidate}"
+                    ),
+                }
+            )
+    return warnings
+
+
+def _startup_services_payload(runtime: Any, mode: str, contexts: list[object]) -> dict[str, bool]:
+    services = {
+        "backend": runtime.config.service_enabled_for_mode(mode, "backend"),
+        "frontend": runtime.config.service_enabled_for_mode(mode, "frontend"),
+    }
+    for service in getattr(runtime.config, "additional_services", ()):
+        services[service.name] = bool(_additional_service_contexts(runtime, mode, contexts, service))
+    return services
+
+
 def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str, object]:
     startup_route = _startup_route_for_explanation(runtime, route)
     runtime_mode = effective_start_mode(runtime, route)
@@ -533,10 +641,9 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
             "mismatch_details": run_reuse_decision.mismatch_details,
         },
         "startup_enabled": startup_enabled,
-        "services": {
-            "backend": runtime.config.service_enabled_for_mode(runtime_mode, "backend"),
-            "frontend": runtime.config.service_enabled_for_mode(runtime_mode, "frontend"),
-        },
+        "services": _startup_services_payload(runtime, runtime_mode, selected_contexts),
+        "additional_service_urls": _additional_service_urls(runtime, runtime_mode, selected_contexts),
+        "warnings": _additional_service_warnings(runtime, runtime_mode, selected_contexts),
         "dependencies": enabled_dependencies,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
         "plan_agent_launch": inspect_plan_agent_launch(runtime, route=startup_route),

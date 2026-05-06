@@ -376,6 +376,31 @@ class ConfigLoaderTests(unittest.TestCase):
                 "${ENVCTL_SOURCE_SUPABASE_URL}",
             )
 
+
+    def test_load_config_parses_additional_service_enable_if_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            config_file = repo / ".envctl"
+            config_file.write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH=voice-runtime/app/main.py",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(len(config.additional_services), 1)
+            self.assertEqual(config.additional_services[0].enable_if_path, "voice-runtime/app/main.py")
+
     def test_load_config_parses_additional_services_and_generic_launch_env_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

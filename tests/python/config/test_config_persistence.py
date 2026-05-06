@@ -832,6 +832,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
                 depends_on=("backend",),
                 critical=False,
+                enable_if_path="voice-runtime/app/main.py",
             ),
         )
 
@@ -847,6 +848,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE"], "8010")
         self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON"], "backend")
         self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL"], "false")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH"], "voice-runtime/app/main.py")
         self.assertEqual(len(reloaded.additional_services), 1)
         service = reloaded.additional_services[0]
         self.assertEqual(service.name, "voice-runtime")
@@ -854,6 +856,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(service.enabled_trees, False)
         self.assertEqual(service.depends_on, ("backend",))
         self.assertFalse(service.critical)
+        self.assertEqual(service.enable_if_path, "voice-runtime/app/main.py")
 
     def test_save_local_config_preserves_additional_service_keys_and_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -317,9 +317,25 @@ class AppServiceConfig:
     depends_on: tuple[str, ...] = ()
     start_order: int = 100
     critical: bool = True
+    enable_if_path: str = ""
 
     def enabled_for_mode(self, mode: str) -> bool:
         return self.enabled_trees if str(mode).strip().lower() == "trees" else self.enabled_main
+
+    def enabled_for_project_root(self, mode: str, project_root: Path | str | None) -> bool:
+        if not self.enabled_for_mode(mode):
+            return False
+        if not self.enable_if_path:
+            return True
+        if project_root is None:
+            return False
+        root = Path(project_root).expanduser().resolve(strict=False)
+        candidate = (root / self.enable_if_path).resolve(strict=False)
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return False
+        return candidate.exists()
 
 
 @dataclass(slots=True)
@@ -476,12 +492,26 @@ class EngineConfig:
                 return service
         return None
 
-    def all_app_service_names_for_mode(self, mode: str) -> tuple[str, ...]:
+    def app_service_enabled_for_project_root(
+        self, mode: str, service_name: str, project_root: Path | str | None
+    ) -> bool:
+        if not self.startup_enabled_for_mode(mode):
+            return False
+        service = self.app_service_by_name(service_name)
+        if service is None:
+            return False
+        return service.enabled_for_project_root(mode, project_root)
+
+    def all_app_service_names_for_mode(
+        self, mode: str, project_root: Path | str | None = None
+    ) -> tuple[str, ...]:
         names: list[str] = []
         for service_name in ("backend", "frontend"):
             if self.service_enabled_for_mode(mode, service_name):
                 names.append(service_name)
-        names.extend(service.name for service in self.additional_services if service.enabled_for_mode(mode))
+        for service in self.additional_services:
+            if service.enabled_for_project_root(mode, project_root):
+                names.append(service.name)
         return tuple(names)
 
     def requirement_enabled_for_mode(self, mode: str, requirement_name: str) -> bool:
@@ -771,6 +801,7 @@ def _parse_additional_services(resolved: Mapping[str, str]) -> tuple[tuple[AppSe
                 ),
                 start_order=parse_int(resolved.get(f"{prefix}START_ORDER"), 100),
                 critical=parse_bool(resolved.get(f"{prefix}CRITICAL"), True),
+                enable_if_path=str(resolved.get(f"{prefix}ENABLE_IF_PATH", "") or "").strip(),
             )
         )
     dependency_errors = _validate_additional_service_dependencies(services)

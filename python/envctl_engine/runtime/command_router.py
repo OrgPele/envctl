@@ -96,6 +96,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--test-parallel",
     "--service-parallel",
     "--service-prep-parallel",
+    "--ignore-service-deps",
     "--refresh-cache",
     "--fast",
     "--fast-startup",
@@ -796,6 +797,8 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["service_parallel"] = False
     elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
         flags["service_prep_parallel"] = False
+    elif token == "--ignore-service-deps":
+        flags["ignore_service_deps"] = True
     elif token == "--only-backend":
         flags["launch_backend"] = True
         flags["launch_frontend"] = False
@@ -869,7 +872,9 @@ def _apply_default_runtime_scope_policy(state: _ParserState) -> None:
         return
     if any(key in state.flags for key in ("launch_backend", "launch_frontend", "launch_dependencies")):
         return
-    if state.command == "restart" and (state.flags.get("services") or state.projects):
+    if state.command in {"start", "restart"} and state.flags.get("services"):
+        return
+    if state.command == "restart" and state.projects:
         return
     state.flags["runtime_scope"] = "entire-system"
 
