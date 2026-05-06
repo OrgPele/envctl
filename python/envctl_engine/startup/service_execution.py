@@ -546,6 +546,7 @@ def start_project_services(
                 "service_dir": str(launch.cwd),
                 "service_name": service_name,
             },
+            cwd=launch.cwd,
         )
         rt._emit(
             "service.attach.phase",

@@ -1617,8 +1617,9 @@ class PythonEngineRuntime:
         *,
         port: int | None = None,
         replacements: Mapping[str, str] | None = None,
+        cwd: str | Path | None = None,
     ) -> list[str]:
-        return runtime_split_command(self, raw, port=port, replacements=replacements)
+        return runtime_split_command(self, raw, port=port, replacements=replacements, cwd=cwd)
 
     def _command_env(self, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         return runtime_command_env(self, port=port, extra=extra)

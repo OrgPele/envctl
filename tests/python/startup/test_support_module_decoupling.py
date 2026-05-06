@@ -473,6 +473,103 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertIn(("voice-runtime",), started_layers)
         self.assertIn(("worker",), started_layers)
 
+    def test_start_project_services_resolves_additional_relative_command_from_service_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            service_root = project_root / "voice-runtime"
+            service_root.mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-relative-command"
+            service = AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="voice-runtime",
+                start_cmd="scripts/envctl/start-voice-runtime.sh {port}",
+                port_base=8010,
+            )
+            split_calls: list[dict[str, object]] = []
+
+            def start_services_with_attach(**kwargs: object) -> dict[str, ServiceRecord]:
+                records: dict[str, ServiceRecord] = {}
+                for descriptor in kwargs["descriptors"]:
+                    ok, detail, pid = descriptor.start(descriptor.requested_port)
+                    self.assertTrue(ok, detail)
+                    records["Main Voice Runtime"] = ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(service_root),
+                        requested_port=descriptor.requested_port,
+                        actual_port=descriptor.requested_port,
+                        status="running",
+                        pid=pid,
+                        project="Main",
+                        service_slug="voice-runtime",
+                    )
+                return records
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(service,),
+                    all_app_service_names_for_mode=lambda mode: ("voice-runtime",),
+                    app_service_by_name=lambda name: service if name == "voice-runtime" else None,
+                ),
+                services=SimpleNamespace(start_services_with_attach=start_services_with_attach),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
+                _service_command_source=lambda **kwargs: "configured",
+                _split_command=lambda command, **kwargs: split_calls.append({"command": command, **kwargs}) or [
+                    "scripts/envctl/start-voice-runtime.sh",
+                    str(kwargs["port"]),
+                ],
+                _detect_service_actual_port=lambda **kwargs: 8010,
+                _listener_truth_enforced=lambda: True,
+                _service_listener_failure_detail=lambda **kwargs: "",
+                _conflict_remaining={},
+                _emit=lambda event, **payload: None,
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _process_runtime=lambda rt: SimpleNamespace(
+                    start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)
+                ),
+                _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=9000),
+                    "voice-runtime": SimpleNamespace(final=8010),
+                },
+            )
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=RequirementsResult(project="Main"),
+                run_id="run-relative-command",
+                route=parse_route(["start", "--main", "--service", "voice-runtime"], env={}),
+            )
+
+        self.assertIn("Main Voice Runtime", records)
+        self.assertEqual(split_calls[0]["cwd"], service_root)
+
     def test_start_project_services_reprojects_additional_service_urls_after_rebound(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
