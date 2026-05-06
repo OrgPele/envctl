@@ -4045,6 +4045,7 @@ def _spawn_omx_session_for_worktree(
         command.append("--madmax")
     popen_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
     env = _omx_launch_env(runtime)
+    env["OMX_LAUNCH_POLICY"] = "detached-tmux"
     if launch_config.omx_workflow == "team":
         env["OMX_TEAM_WORKER_LAUNCH_ARGS"] = _CODEX_BYPASS_FLAGS
     try:
@@ -4052,7 +4053,7 @@ def _spawn_omx_session_for_worktree(
             popen_command,
             cwd=str(Path(worktree.root).resolve()),
             env=env,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -4076,7 +4077,20 @@ def _spawn_omx_session_for_worktree(
     process_stderr = getattr(process, "stderr", None)
     if process_stderr is not None:
         process_stderr.close()
+    _retain_omx_spawn_process(runtime, process)
     return None
+
+
+def _retain_omx_spawn_process(runtime: Any, process: subprocess.Popen[str]) -> None:
+    retained = getattr(runtime, "_omx_spawn_processes", None)
+    if not isinstance(retained, list):
+        retained = []
+        try:
+            setattr(runtime, "_omx_spawn_processes", retained)
+        except Exception:
+            return
+    retained[:] = [item for item in retained if getattr(item, "poll", lambda: 0)() is None]
+    retained.append(process)
 
 
 def _find_existing_omx_attach_target(
