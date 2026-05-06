@@ -321,7 +321,9 @@ def start_project_services(
         requested_port = int(getattr(plan, "final", 0) or 0) if plan is not None else 0
         service_cwd = (context.root / service.dir_name).resolve()
         if not service_cwd.is_relative_to(context.root.resolve()):
-            raise RuntimeError(f"Configured service {service.name!r} directory escapes project root: {service.dir_name}")
+            raise RuntimeError(
+                f"Configured service {service.name!r} directory escapes project root: {service.dir_name}"
+            )
         if str(service.dir_name).strip() and not service_cwd.is_dir():
             raise RuntimeError(f"Configured service {service.name!r} directory does not exist: {service_cwd}")
         service_env_base = project_env_for_service(service.name)
@@ -615,7 +617,9 @@ def start_project_services(
         if rt._listener_truth_enforced():
             detail = rt._service_listener_failure_detail(log_path=launch.log_path, pid=pid)
             error_suffix = f" ({detail})" if detail else ""
-            raise RuntimeError(f"{service_name} listener not detected for {context.name} on port {requested}{error_suffix}")
+            raise RuntimeError(
+                f"{service_name} listener not detected for {context.name} on port {requested}{error_suffix}"
+            )
         rt._emit(
             "service.failure",
             project=context.name,

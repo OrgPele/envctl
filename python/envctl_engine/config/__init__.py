@@ -1623,8 +1623,8 @@ def _strip_generic_template_sections(text: str) -> str:
     while changed:
         changed = False
         for pattern, end_builder in (
-            (_GENERIC_MODE_SERVICE_SECTION_RE, lambda match: f"# <<< envctl {match.group('mode')} service {match.group('service')} launch env <<<"),
-            (_GENERIC_SERVICE_SECTION_RE, lambda match: f"# <<< envctl service {match.group('service')} launch env <<<"),
+            (_GENERIC_MODE_SERVICE_SECTION_RE, _generic_mode_service_end_marker),
+            (_GENERIC_SERVICE_SECTION_RE, _generic_service_end_marker),
         ):
             match = pattern.search(stripped)
             if match is None:
@@ -1638,6 +1638,14 @@ def _strip_generic_template_sections(text: str) -> str:
             changed = True
             break
     return stripped
+
+
+def _generic_mode_service_end_marker(match: re.Match[str]) -> str:
+    return f"# <<< envctl {match.group('mode')} service {match.group('service')} launch env <<<"
+
+
+def _generic_service_end_marker(match: re.Match[str]) -> str:
+    return f"# <<< envctl service {match.group('service')} launch env <<<"
 
 
 def _strip_inline_template_comment(value: str) -> str:
