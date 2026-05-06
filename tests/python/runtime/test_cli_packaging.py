@@ -623,7 +623,7 @@ class CliPackagingTests(unittest.TestCase):
 
         self.assertEqual(resolved, repo.resolve())
 
-    def test_resolve_repo_root_keeps_explicit_worktree_repo_arg(self) -> None:
+    def test_resolve_repo_root_explicit_linked_worktree_uses_readable_main_envctl(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             worktree = repo / "trees" / "feature-a" / "1"
@@ -636,7 +636,55 @@ class CliPackagingTests(unittest.TestCase):
 
             resolved = resolve_repo_root(repo_arg=str(worktree), cwd=repo)
 
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_explicit_standalone_repo_stays_standalone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(repo), cwd=Path(tmpdir))
+
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_explicit_unmanaged_linked_worktree_stays_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(worktree), cwd=repo)
+
         self.assertEqual(resolved, worktree.resolve())
+
+    def test_regular_install_launcher_doctor_repo_arg_linked_worktree_reports_main_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            with self._installed_env(editable=False, install_deps=True) as env:
+                self._assert_runtime_dependencies_available(env)
+                result = subprocess.run(
+                    [str(env["script"]), "doctor", "--repo", str(worktree), "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(Path(payload["repo_root"]), repo.resolve())
 
     def test_regular_install_from_worktree_uses_main_envctl_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

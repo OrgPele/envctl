@@ -185,7 +185,7 @@ def _load_or_start_shared_main_requirements(
             return requirements
     main_context = _SharedProjectContext(
         name="Main",
-        root=rt.config.base_dir,
+        root=rt.config.execution_root,
         ports=cast(dict[str, PortPlan], cast(Any, rt.port_planner).plan_project_stack("Main", index=0)),
     )
     rt._reserve_project_ports(main_context)
@@ -215,7 +215,7 @@ def _annotate_shared_main_requirements(
         health=requirements.health,
         failures=list(requirements.failures),
     )
-    project_root = orchestrator.runtime.config.base_dir
+    project_root = orchestrator.runtime.config.execution_root
     for dependency_id, prefix in (
         ("postgres", "envctl-postgres"),
         ("redis", "envctl-redis"),

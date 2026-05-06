@@ -173,6 +173,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     _apply_runtime_effective_config_values(values, runtime.config)
     payload = {
         "base_dir": str(runtime.config.base_dir),
+        "execution_root": str(runtime.config.execution_root),
         "config_file": str(local_state.config_file_path),
         "config_exists": local_state.config_file_exists,
         "config_source": local_state.config_source,
@@ -270,6 +271,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
 
     effective = payload["effective"]
     print(f"config_file: {render_path_for_terminal(payload['config_file'], env=getattr(runtime, 'env', {}))}")
+    print(f"execution_root: {render_path_for_terminal(payload['execution_root'], env=getattr(runtime, 'env', {}))}")
     print(f"config_exists: {payload['config_exists']}")
     print(f"config_source: {payload['config_source']}")
     print(f"default_mode: {effective['default_mode']}")

@@ -10,6 +10,77 @@ from envctl_engine.config import discover_local_config_state, load_config
 
 
 class ConfigLoaderTests(unittest.TestCase):
+    def test_load_config_from_managed_linked_worktree_uses_main_repo_metadata_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text(
+                "ENVCTL_DEFAULT_MODE=trees\nBACKEND_PORT_BASE=8100\n",
+                encoding="utf-8",
+            )
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            main_config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_root)})
+            worktree_config = load_config(
+                {"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_root)}
+            )
+            local_state = discover_local_config_state(worktree_config.base_dir)
+
+            self.assertEqual(worktree_config.base_dir, repo.resolve())
+            self.assertEqual(worktree_config.default_mode, "trees")
+            self.assertEqual(worktree_config.backend_port_base, 8100)
+            self.assertEqual(worktree_config.runtime_scope_id, main_config.runtime_scope_id)
+            self.assertEqual(worktree_config.runtime_scope_dir, main_config.runtime_scope_dir)
+            self.assertEqual(local_state.config_file_path, (repo / ".envctl").resolve())
+            self.assertTrue(local_state.config_file_exists)
+
+    def test_load_config_from_unmanaged_linked_worktree_keeps_worktree_metadata_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_root)})
+
+            self.assertEqual(config.base_dir, worktree.resolve())
+
+    def test_relative_explicit_config_file_resolves_against_canonical_metadata_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (repo / "custom.envctl").write_text("BACKEND_PORT_BASE=8123\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(worktree),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_root),
+                    "ENVCTL_CONFIG_FILE": "custom.envctl",
+                }
+            )
+
+            self.assertEqual(config.base_dir, repo.resolve())
+            self.assertEqual(config.backend_port_base, 8123)
+
     def test_env_overrides_envctl_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
