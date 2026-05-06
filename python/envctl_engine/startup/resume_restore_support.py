@@ -231,6 +231,7 @@ def restore_missing(
         original_services: dict[str, ServiceRecord] = {
             name: state.services[name] for name in project_service_names if name in state.services
         }
+        missing_project_service_names = [name for name in project_service_names if name in set(missing_services)]
         original_requirements = state.requirements.get(project)
         context_root = getattr(context, "root", None)
         requirements_reused, requirements_reuse_reason = _requirements_reuse_decision(
@@ -248,31 +249,23 @@ def restore_missing(
             reused=requirements_reused,
             reason=requirements_reuse_reason,
         )
-        if use_project_spinner_group:
-            project_spinner_group.update_project(project, f"{prefix} Stopping stale services...")
-        elif use_single_spinner:
-            active_spinner.update(f"{prefix} Stopping stale services for {project}...")
-        stop_started = time.monotonic()
-        terminated_count = 0
-        aggressive_terminate = _resume_terminate_aggressive(orchestrator, rt)
-        for service in original_services.values():
-            terminated = rt._terminate_service_record(  # type: ignore[attr-defined]
-                service,
-                aggressive=aggressive_terminate,
-                verify_ownership=True,
-            )
-            if terminated:
-                terminated_count += 1
-                port = rt._service_port(service)  # type: ignore[attr-defined]
-                if port is not None:
-                    port_allocator.release(port)  # type: ignore[attr-defined]
-        mark_step(
-            "stop_stale_services",
-            duration_ms=_round_ms(time.monotonic() - stop_started),
-            stale_service_count=len(project_service_names),
-            terminated_count=terminated_count,
-            aggressive=aggressive_terminate,
+        configured_service_types = _configured_restore_service_types(rt, mode=state.mode, context=context)
+        original_service_types = _service_types_for_names(
+            project=project,
+            service_names=project_service_names,
+            services=original_services,
         )
+        absent_service_types = configured_service_types.difference(original_service_types)
+        selected_service_names = missing_project_service_names if requirements_reused else project_service_names
+        selected_service_types = _service_types_for_names(
+            project=project,
+            service_names=selected_service_names,
+            services=original_services,
+        )
+        if requirements_reused:
+            selected_service_types.update(absent_service_types)
+        elif configured_service_types:
+            selected_service_types = set(configured_service_types)
 
         existing_requirements = original_requirements
         if existing_requirements is not None and not requirements_reused:
@@ -291,20 +284,6 @@ def restore_missing(
             )
 
         try:
-            if use_project_spinner_group:
-                project_spinner_group.update_project(project, f"{prefix} Reserving service ports...")
-            elif use_single_spinner:
-                active_spinner.update(f"{prefix} Reserving service ports for {project}...")
-            reserve_started = time.monotonic()
-            if requirements_reused:
-                _reserve_application_service_ports(orchestrator, rt, context, port_allocator)
-            else:
-                rt._reserve_project_ports(context)  # type: ignore[attr-defined]
-            mark_step(
-                "reserve_ports",
-                duration_ms=_round_ms(time.monotonic() - reserve_started),
-            )
-
             if requirements_reused and requirements_for_services is not None:
                 requirements = requirements_for_services
                 mark_step("start_requirements", duration_ms=0.0, status="reused")
@@ -374,6 +353,60 @@ def restore_missing(
                     }
 
             if use_project_spinner_group:
+                project_spinner_group.update_project(project, f"{prefix} Stopping stale services...")
+            elif use_single_spinner:
+                active_spinner.update(f"{prefix} Stopping stale services for {project}...")
+            stop_started = time.monotonic()
+            terminated_count = 0
+            aggressive_terminate = _resume_terminate_aggressive(orchestrator, rt)
+            for service_name in selected_service_names:
+                service = original_services.get(service_name)
+                if service is None:
+                    continue
+                terminated = rt._terminate_service_record(  # type: ignore[attr-defined]
+                    service,
+                    aggressive=aggressive_terminate,
+                    verify_ownership=True,
+                )
+                if terminated:
+                    terminated_count += 1
+                    port = rt._service_port(service)  # type: ignore[attr-defined]
+                    if port is not None:
+                        port_allocator.release(port)  # type: ignore[attr-defined]
+            mark_step(
+                "stop_stale_services",
+                duration_ms=_round_ms(time.monotonic() - stop_started),
+                stale_service_count=len(selected_service_names),
+                terminated_count=terminated_count,
+                aggressive=aggressive_terminate,
+            )
+
+            if use_project_spinner_group:
+                project_spinner_group.update_project(project, f"{prefix} Reserving service ports...")
+            elif use_single_spinner:
+                active_spinner.update(f"{prefix} Reserving service ports for {project}...")
+            reserve_started = time.monotonic()
+            if selected_service_types:
+                _reserve_application_service_ports(
+                    orchestrator,
+                    rt,
+                    context,
+                    port_allocator,
+                    selected_service_types=selected_service_types,
+                )
+            elif not requirements_reused:
+                rt._reserve_project_ports(context)  # type: ignore[attr-defined]
+            mark_step(
+                "reserve_ports",
+                duration_ms=_round_ms(time.monotonic() - reserve_started),
+                selected_service_types=sorted(selected_service_types),
+            )
+
+            project_route_for_startup = _route_for_partial_service_restore(
+                project_route_for_startup,
+                selected_service_types=selected_service_types,
+            )
+            if use_project_spinner_group:
                 project_spinner_group.update_project(project, f"{prefix} Starting app services...")
             elif use_single_spinner:
                 active_spinner.update(f"{prefix} Starting app services for {project}...")
@@ -409,7 +442,7 @@ def restore_missing(
                 "total_ms": project_total,
                 "project_services": project_services,
                 "requirements": requirements,
-                "remove_service_names": project_service_names,
+                "remove_service_names": selected_service_names,
             }
         except RuntimeError as exc:
             mark_step("exception", status="error", error=str(exc))
@@ -647,6 +680,86 @@ def _requirements_reuse_decision(
     return True, "service_stale_only"
 
 
+def _configured_restore_service_types(rt: Any, *, mode: str, context: object) -> set[str]:
+    ports = getattr(context, "ports", {})
+    port_service_types = (
+        {str(name).strip().lower() for name in ports if str(name).strip()}
+        if isinstance(ports, dict)
+        else set()
+    )
+    configured: set[str] = set()
+    service_enabled_for_mode = getattr(rt, "_service_enabled_for_mode", None)
+    for service_name in ("backend", "frontend"):
+        enabled = service_name in port_service_types
+        if callable(service_enabled_for_mode):
+            try:
+                enabled = bool(service_enabled_for_mode(mode, service_name))
+            except TypeError:
+                enabled = service_name in port_service_types
+        if enabled:
+            configured.add(service_name)
+
+    config = getattr(rt, "config", None)
+    for service in getattr(config, "additional_services", ()) or ():
+        name = str(getattr(service, "name", "") or "").strip().lower()
+        if not name:
+            continue
+        enabled_for_project = getattr(service, "enabled_for_project_root", None)
+        if callable(enabled_for_project):
+            if bool(enabled_for_project(mode, getattr(context, "root", None))):
+                configured.add(name)
+            continue
+        enabled_for_mode = getattr(service, "enabled_for_mode", None)
+        if callable(enabled_for_mode) and bool(enabled_for_mode(mode)):
+            configured.add(name)
+            continue
+        if name in port_service_types:
+            configured.add(name)
+    if not configured:
+        configured.update(port_service_types)
+    return configured
+
+
+def _service_types_for_names(
+    *,
+    project: str,
+    service_names: list[str],
+    services: Mapping[str, ServiceRecord],
+) -> set[str]:
+    service_types: set[str] = set()
+    project_prefix = project.strip().lower()
+    for service_name in service_names:
+        record = services.get(service_name)
+        raw_type = str(getattr(record, "type", "") or "").strip().lower() if record is not None else ""
+        if raw_type:
+            service_types.add(raw_type)
+            continue
+        normalized_name = str(service_name).strip()
+        suffix = normalized_name
+        if project_prefix and normalized_name.lower().startswith(project_prefix):
+            suffix = normalized_name[len(project) :].strip()
+        if suffix:
+            service_types.add("-".join(suffix.lower().split()))
+    return {value for value in service_types if value}
+
+
+def _route_for_partial_service_restore(route: Route, *, selected_service_types: set[str]) -> Route:
+    if not selected_service_types:
+        return route
+    return Route(
+        command=route.command,
+        mode=route.mode,
+        raw_args=route.raw_args,
+        passthrough_args=route.passthrough_args,
+        projects=route.projects,
+        flags={
+            **route.flags,
+            "_restart_request": True,
+            "restart_service_types": sorted(selected_service_types),
+        },
+    )
+
+
 def _resume_terminate_aggressive(orchestrator, rt: Any) -> bool:
     raw = rt.env.get("ENVCTL_RESUME_AGGRESSIVE_TERMINATE") or rt.config.raw.get("ENVCTL_RESUME_AGGRESSIVE_TERMINATE")  # type: ignore[attr-defined]
     return parse_bool(raw, True)
@@ -657,12 +770,15 @@ def _reserve_application_service_ports(
     rt: Any,
     context: object,
     port_allocator: _PortAllocatorProtocol,
+    *,
+    selected_service_types: set[str] | None = None,
 ) -> None:
     context_name = str(getattr(context, "name", ""))
     ports = getattr(context, "ports", {})
     if not isinstance(ports, dict):
         return
-    for service_name in ("backend", "frontend"):
+    service_names = sorted(selected_service_types or set(ports))
+    for service_name in service_names:
         plan = ports.get(service_name)
         if plan is None:
             continue

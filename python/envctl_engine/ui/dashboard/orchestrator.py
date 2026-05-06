@@ -28,7 +28,7 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
-from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.shared.services import project_name_from_service_name, service_display_name, service_slug_from_record
 from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
@@ -576,7 +576,7 @@ class DashboardOrchestrator:
 
             for service_name, service_type in services:
                 label_prefix = "  ↳ " if many_projects else ""
-                readable = "Backend" if service_type == "backend" else "Frontend"
+                readable = service_display_name(service_type)
                 detail = service_name if many_projects else self._stop_service_detail(service_name, service_type)
                 label = f"{label_prefix}{readable}"
                 if detail:
@@ -721,8 +721,8 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _stop_service_type(service_name: str, service: object) -> str:
-        service_type = str(getattr(service, "type", "") or "").strip().lower()
-        if service_type in {"backend", "frontend"}:
+        service_type = service_slug_from_record(service)
+        if service_type:
             return service_type
         lowered_name = str(service_name).strip().lower()
         if lowered_name.endswith(" backend"):
@@ -734,7 +734,7 @@ class DashboardOrchestrator:
     @staticmethod
     def _stop_service_detail(service_name: str, service_type: str) -> str:
         trimmed = str(service_name).strip()
-        suffix = f" {service_type.title()}"
+        suffix = f" {service_display_name(service_type)}"
         if trimmed.endswith(suffix):
             return trimmed[: -len(suffix)].strip()
         return trimmed
@@ -1507,7 +1507,7 @@ class DashboardOrchestrator:
 
             for service_name, service_type, stopped in services:
                 label_prefix = "  ↳ " if many_projects else ""
-                readable = "Backend" if service_type == "backend" else "Frontend"
+                readable = service_display_name(service_type)
                 detail = service_name if many_projects else self._stop_service_detail(service_name, service_type)
                 label = f"{label_prefix}{readable}"
                 if detail:
@@ -1638,7 +1638,7 @@ class DashboardOrchestrator:
                 for service_name, _service_type, _stopped in services_by_project.get(project_name, [])
             }
             for service_type in service_types:
-                service_name = f"{project_name} {service_type.title()}"
+                service_name = f"{project_name} {service_display_name(service_type)}"
                 if service_name in active_names or service_name in existing:
                     continue
                 services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
@@ -1701,11 +1701,12 @@ class DashboardOrchestrator:
         seen: set[str] = set()
         for name in service_names:
             normalized = str(name).strip().lower()
-            service_type = ""
             if normalized.endswith(" backend"):
                 service_type = "backend"
             elif normalized.endswith(" frontend"):
                 service_type = "frontend"
+            else:
+                service_type = str(name).strip().lower().removeprefix("service:")
             if service_type and service_type not in seen:
                 seen.add(service_type)
                 types.append(service_type)
@@ -1990,12 +1991,8 @@ class DashboardOrchestrator:
                 project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested and project_name.casefold() not in requested:
                 continue
-            normalized = str(service_name).strip().lower()
-            service_type = ""
-            if normalized.endswith(" backend") or normalized == "backend":
-                service_type = "backend"
-            elif normalized.endswith(" frontend") or normalized == "frontend":
-                service_type = "frontend"
+            service = state.services.get(service_name)
+            service_type = service_slug_from_record(service) if service is not None else ""
             if service_type and service_type not in seen:
                 seen.add(service_type)
                 ordered.append(service_type)
@@ -2034,12 +2031,8 @@ class DashboardOrchestrator:
                 project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested_projects and project_name.casefold() not in requested_projects:
                 continue
-            normalized = str(service_name).strip().lower()
-            service_type = ""
-            if normalized.endswith(" backend") or normalized == "backend":
-                service_type = "backend"
-            elif normalized.endswith(" frontend") or normalized == "frontend":
-                service_type = "frontend"
+            service = state.services.get(service_name)
+            service_type = service_slug_from_record(service) if service is not None else ""
             if service_type and service_type.casefold() in requested_types:
                 selected.append(service_name)
                 seen_names.add(str(service_name))
@@ -2050,7 +2043,7 @@ class DashboardOrchestrator:
             for service_type in sorted(service_types):
                 if service_type.casefold() not in requested_types:
                     continue
-                service_name = f"{project_name} {service_type.title()}"
+                service_name = f"{project_name} {service_display_name(service_type)}"
                 if service_name in seen_names:
                     continue
                 selected.append(service_name)

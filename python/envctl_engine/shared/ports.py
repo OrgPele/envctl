@@ -24,6 +24,8 @@ class PortPlanner:
         db_base: int = 5432,
         redis_base: int = 6379,
         n8n_base: int = 5678,
+        supabase_api_base: int = 54321,
+        additional_service_bases: dict[str, int] | None = None,
         lock_dir: str | None = None,
         session_id: str | None = None,
         stale_lock_seconds: int = 3600,
@@ -42,6 +44,12 @@ class PortPlanner:
         self.db_base = db_base
         self.redis_base = redis_base
         self.n8n_base = n8n_base
+        self.supabase_api_base = supabase_api_base
+        self.additional_service_bases = {
+            str(name).strip().lower(): int(port)
+            for name, port in (additional_service_bases or {}).items()
+            if str(name).strip() and int(port) > 0
+        }
         self.lock_dir = Path(lock_dir or "/tmp/envctl-python-locks")
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
@@ -115,6 +123,10 @@ class PortPlanner:
         n8n_requested = requested.get(
             "n8n", self._preferred_dependency_port(project, "n8n", self.n8n_base, index=index)
         )
+        supabase_api_requested = requested.get(
+            "supabase_api",
+            self._preferred_dependency_port(project, "supabase_api", self.supabase_api_base, index=index),
+        )
         plans.update(
             {
                 "db": PortPlan(
@@ -141,8 +153,29 @@ class PortPlanner:
                     source=sources.get("n8n", "planner"),
                     retries=retries.get("n8n", 0),
                 ),
+                "supabase_api": PortPlan(
+                    project=project,
+                    requested=supabase_api_requested,
+                    assigned=supabase_api_requested,
+                    final=supabase_api_requested,
+                    source=sources.get("supabase_api", "planner"),
+                    retries=retries.get("supabase_api", 0),
+                ),
             }
         )
+        for service_name, base_port in self.additional_service_bases.items():
+            requested_port = requested.get(
+                service_name,
+                self._preferred_port(project, service_name, base_port, index=index),
+            )
+            plans[service_name] = PortPlan(
+                project=project,
+                requested=requested_port,
+                assigned=requested_port,
+                final=requested_port,
+                source=sources.get(service_name, "planner"),
+                retries=retries.get(service_name, 0),
+            )
         return plans
 
     def reserve_next(self, start_port: int, owner: str) -> int:

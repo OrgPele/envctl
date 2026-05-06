@@ -158,6 +158,9 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             name="Main",
             ports={
                 "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
                 "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
                 "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
             },
@@ -167,7 +170,12 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             db={"enabled": True, "success": True, "final": 5432},
             redis={"enabled": True, "success": True, "final": 6380},
             n8n={"enabled": True, "success": True, "final": 5678},
-            supabase={"enabled": True, "success": True, "final": 5432},
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
             health="healthy",
             failures=[],
         )
@@ -192,7 +200,9 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertIn("postgresql+asyncpg://alice:supabase-db-password@db.local:5432/postgres", env["DATABASE_URL"])
         self.assertEqual(env["REDIS_URL"], "redis://localhost:6380/0")
         self.assertEqual(env["N8N_URL"], "http://localhost:5678")
-        self.assertEqual(env["SUPABASE_URL"], "http://localhost:5432")
+        self.assertEqual(env["SUPABASE_URL"], "http://localhost:54321")
+        self.assertEqual(env["SUPABASE_DB_PORT"], "5432")
+        self.assertEqual(env["SUPABASE_PUBLIC_PORT"], "54321")
         self.assertEqual(env["LOG_PROFILE_OVERRIDE"], "debug")
         self.assertEqual(env["BACKEND_LOG_LEVEL_OVERRIDE"], "warn")
         self.assertEqual(env["FRONTEND_TEST_RUNNER"], "bun")
@@ -337,7 +347,12 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             db={"enabled": False, "success": False, "final": 0},
             redis={"enabled": False, "success": False, "final": 0},
             n8n={"enabled": False, "success": False, "final": 0},
-            supabase={"enabled": True, "success": True, "final": 5432},
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
             health="healthy",
             failures=[],
         )
@@ -357,10 +372,140 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             service_name="backend",
         )
 
-        self.assertEqual(frontend_env["SUPABASE_URL"], "http://localhost:5432")
-        self.assertEqual(frontend_env["VITE_SUPABASE_URL"], "http://localhost:5432")
-        self.assertEqual(backend_env["SUPABASE_URL"], "http://localhost:5432")
+        self.assertEqual(frontend_env["SUPABASE_URL"], "http://localhost:54321")
+        self.assertEqual(frontend_env["VITE_SUPABASE_URL"], "http://localhost:54321")
+        self.assertEqual(backend_env["SUPABASE_URL"], "http://localhost:54321")
         self.assertNotIn("VITE_SUPABASE_URL", backend_env)
+
+    def test_project_service_env_projects_supabase_auth_url_separate_from_db_port(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                frontend_dependency_env_section_present=True,
+                frontend_dependency_env_template_errors=(),
+                frontend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="VITE_SUPABASE_URL",
+                        template="${ENVCTL_SOURCE_SUPABASE_URL}",
+                        line_number=1,
+                    ),
+                ),
+                backend_dependency_env_section_present=True,
+                backend_dependency_env_template_errors=(),
+                backend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="SUPABASE_JWKS_URL",
+                        template="${ENVCTL_SOURCE_SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+                        line_number=2,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
+            health="healthy",
+            failures=[],
+        )
+
+        internal_env = project_service_env_internal(runtime, context, requirements=requirements, route=None)
+        frontend_env = project_service_env(
+            runtime, context, requirements=requirements, route=None, service_name="frontend"
+        )
+        backend_env = project_service_env(runtime, context, requirements=requirements, route=None, service_name="backend")
+
+        self.assertEqual(internal_env["DB_PORT"], "5432")
+        self.assertEqual(internal_env["SUPABASE_DB_PORT"], "5432")
+        self.assertEqual(internal_env["SUPABASE_PUBLIC_PORT"], "54321")
+        self.assertEqual(internal_env["SUPABASE_URL"], "http://localhost:54321")
+        self.assertEqual(frontend_env["VITE_SUPABASE_URL"], "http://localhost:54321")
+        self.assertEqual(
+            backend_env["SUPABASE_JWKS_URL"],
+            "http://localhost:54321/auth/v1/.well-known/jwks.json",
+        )
+
+    def test_project_service_env_applies_generic_service_templates_and_service_source_placeholders(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                service_dependency_env_section_present={"voice-runtime": True},
+                service_dependency_env_template_errors={"voice-runtime": ()},
+                service_dependency_env_templates={
+                    "voice-runtime": (
+                        SimpleNamespace(
+                            name="VOICE_RUNTIME_PUBLIC_URL",
+                            template="${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                            line_number=1,
+                        ),
+                    )
+                },
+                mode_service_dependency_env_section_present={("main", "voice-runtime"): True},
+                mode_service_dependency_env_template_errors={("main", "voice-runtime"): ()},
+                mode_service_dependency_env_templates={
+                    ("main", "voice-runtime"): (
+                        SimpleNamespace(
+                            name="PELE_API_BASE_URL",
+                            template="${ENVCTL_SOURCE_BACKEND_URL}",
+                            line_number=2,
+                        ),
+                    )
+                },
+                app_service_by_name=lambda name: SimpleNamespace(
+                    env_suffix="VOICE_RUNTIME",
+                    public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                    health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+                )
+                if name == "voice-runtime"
+                else None,
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "backend": PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="assigned"),
+                "voice-runtime": PortPlan(
+                    project="Main", requested=8010, assigned=8010, final=8010, source="assigned"
+                ),
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(project="Main")
+        route = parse_route(["start", "--main"], env={})
+
+        voice_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=route,
+            service_name="voice-runtime",
+        )
+        backend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=route,
+            service_name="backend",
+        )
+
+        self.assertEqual(voice_env["VOICE_RUNTIME_PUBLIC_URL"], "http://localhost:8010")
+        self.assertEqual(voice_env["PELE_API_BASE_URL"], "http://localhost:8000")
+        self.assertNotIn("VOICE_RUNTIME_PUBLIC_URL", backend_env)
 
     def test_project_service_env_skips_missing_source_lines_and_keeps_following_valid_aliases(self) -> None:
         runtime = SimpleNamespace(

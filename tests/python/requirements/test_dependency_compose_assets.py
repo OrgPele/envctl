@@ -28,14 +28,19 @@ class DependencyComposeAssetsTests(unittest.TestCase):
                 dependency_name="supabase",
                 project_name="feature/a-1",
                 compose_project_name="envctl-supabase-feature-a-1",
-                env_values=supabase_managed_env(db_port=5432, env={}),
+                env_values=supabase_managed_env(db_port=5432, public_port=54321, env={}),
             )
 
             self.assertTrue(materialized.compose_file.is_file())
             self.assertTrue(materialized.env_file.is_file())
             self.assertTrue((materialized.stack_root / "kong.yml").is_file())
             self.assertTrue((materialized.stack_root / "init" / "01-create-n8n-db.sql").is_file())
-            self.assertIn("SUPABASE_DB_PORT=5432", materialized.env_file.read_text(encoding="utf-8"))
+            env_text = materialized.env_file.read_text(encoding="utf-8")
+            compose_text = materialized.compose_file.read_text(encoding="utf-8")
+            self.assertIn("SUPABASE_DB_PORT=5432", env_text)
+            self.assertIn("SUPABASE_PUBLIC_PORT=54321", env_text)
+            self.assertIn("SUPABASE_PUBLIC_URL=http://localhost:54321", env_text)
+            self.assertIn('"${SUPABASE_PUBLIC_PORT:-54321}:8000"', compose_text)
 
 
 if __name__ == "__main__":

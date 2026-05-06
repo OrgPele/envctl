@@ -5,8 +5,8 @@ import json
 import os
 import re
 import signal
+import sys
 import subprocess
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +50,7 @@ def start_supabase_stack(
     project_root: Path,
     project_name: str,
     db_port: int,
+    public_port: int | None = None,
     runtime_root: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ContainerStartResult:
@@ -57,10 +58,14 @@ def start_supabase_stack(
         project_root=project_root,
         project_name=project_name,
     )
+    resolved_public_port = int(
+        public_port or (env or {}).get("SUPABASE_PUBLIC_PORT") or (env or {}).get("SUPABASE_API_PORT") or 54321
+    )
     compose_root, compose_path = _resolve_supabase_compose_workspace(
         project_root=project_root,
         project_name=project_name,
         db_port=db_port,
+        public_port=resolved_public_port,
         runtime_root=runtime_root,
         env=env,
     )
@@ -228,39 +233,44 @@ def start_supabase_stack(
         service for service in (auth_service, gateway_service) if isinstance(service, str) and service
     ]
     if secondary_services:
-        if _supabase_two_phase_enabled(env):
-            _start_secondary_services_background(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                secondary_services=secondary_services,
-            )
-        else:
-            up_secondary = _compose_run(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                args=["up", "-d", *secondary_services],
-            )
-            if up_secondary is not None:
-                if not all(
-                    _compose_timeout_recovered(
-                        process_runner=process_runner,
-                        compose_root=compose_root,
-                        compose_project_name=compose_project_name,
-                        compose_path=compose_path,
-                        env=env,
-                        service_name=service_name,
-                        probe_port=None,
-                        error=up_secondary,
-                    )
-                    for service_name in secondary_services
-                ):
-                    return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
+        up_secondary = _compose_run(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            args=["up", "-d", *secondary_services],
+        )
+        if up_secondary is not None:
+            if not all(
+                _compose_timeout_recovered(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    service_name=service_name,
+                    probe_port=None,
+                    error=up_secondary,
+                )
+                for service_name in secondary_services
+            ):
+                return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
+
+    health_url = _supabase_auth_health_url(env, resolved_public_port)
+    auth_ready, auth_error = _probe_supabase_auth_health(
+        process_runner=process_runner,
+        public_port=resolved_public_port,
+        health_url=health_url,
+        env=env,
+    )
+    if not auth_ready:
+        detail = auth_error or f"Supabase Auth/Kong is not reachable at {health_url}"
+        return ContainerStartResult(
+            success=False,
+            container_name=compose_project_name,
+            error=f"Supabase DB is healthy but Supabase Auth/Kong is not reachable at {health_url}: {detail}",
+        )
 
     return ContainerStartResult(success=True, container_name=compose_project_name)
 
@@ -967,7 +977,7 @@ def _compose_run(
         probe_port = None
         if len(service_names) == 1 and service_names[0] in {"supabase-db", "db"}:
             probe_port = _compose_db_port(compose_root=compose_root)
-        return _compose_up_handoff(
+        up_error = _compose_up_handoff(
             process_runner=process_runner,
             compose_root=compose_root,
             compose_project_name=compose_project_name,
@@ -978,6 +988,36 @@ def _compose_run(
             service_names=service_names,
             probe_port=probe_port,
         )
+        if up_error is not None and _is_docker_address_pool_exhaustion(up_error):
+            cleaned_count, cleanup_error = _remove_empty_envctl_supabase_networks(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                env=env,
+            )
+            if cleaned_count > 0:
+                retry_error = _compose_up_handoff(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    args=args,
+                    timeout_seconds=timeout_seconds,
+                    service_names=service_names,
+                    probe_port=probe_port,
+                )
+                if retry_error is None:
+                    return None
+                if cleanup_error:
+                    return (
+                        f"{retry_error}; after removing {cleaned_count} empty envctl Supabase network(s): "
+                        f"{cleanup_error}"
+                    )
+                return retry_error
+            if cleanup_error:
+                return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
+            return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
+        return up_error
     result, error = run_docker(
         process_runner,
         ["compose", "-p", compose_project_name, "-f", str(compose_path), *args],
@@ -1074,6 +1114,72 @@ def _compose_up_handoff(
             )
 
         sleeper(0.25)
+
+
+def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
+    return "all predefined address pools have been fully subnetted" in str(error or "").lower()
+
+
+def _remove_empty_envctl_supabase_networks(
+    *,
+    process_runner,
+    compose_root: Path,
+    env: Mapping[str, str] | None,
+) -> tuple[int, str | None]:
+    result, run_error = run_docker(
+        process_runner,
+        ["network", "ls", "--format", "{{.Name}}"],
+        cwd=compose_root,
+        env=env,
+        timeout=20.0,
+    )
+    if result is None:
+        return 0, run_error or "docker network ls failed"
+    if getattr(result, "returncode", 1) != 0:
+        return 0, run_result_error(result, "docker network ls failed")
+
+    names = [line.strip() for line in str(getattr(result, "stdout", "") or "").splitlines() if line.strip()]
+    cleanup_errors: list[str] = []
+    removed_count = 0
+    for network_name in names:
+        if not network_name.startswith("envctl-supabase-"):
+            continue
+        inspect_result, inspect_error = run_docker(
+            process_runner,
+            ["network", "inspect", "-f", "{{len .Containers}}", network_name],
+            cwd=compose_root,
+            env=env,
+            timeout=20.0,
+        )
+        if inspect_result is None:
+            cleanup_errors.append(inspect_error or f"failed inspecting Docker network {network_name}")
+            continue
+        if getattr(inspect_result, "returncode", 1) != 0:
+            cleanup_errors.append(run_result_error(inspect_result, f"failed inspecting Docker network {network_name}"))
+            continue
+        try:
+            container_count = int(str(getattr(inspect_result, "stdout", "") or "").strip() or "0")
+        except ValueError:
+            cleanup_errors.append(f"failed inspecting Docker network {network_name}: invalid container count")
+            continue
+        if container_count != 0:
+            continue
+        rm_result, rm_error = run_docker(
+            process_runner,
+            ["network", "rm", network_name],
+            cwd=compose_root,
+            env=env,
+            timeout=20.0,
+        )
+        if rm_result is None:
+            cleanup_errors.append(rm_error or f"failed removing empty Docker network {network_name}")
+            continue
+        if getattr(rm_result, "returncode", 1) != 0:
+            cleanup_errors.append(run_result_error(rm_result, f"failed removing empty Docker network {network_name}"))
+            continue
+        removed_count += 1
+
+    return removed_count, "; ".join(cleanup_errors) if cleanup_errors else None
 
 
 def _compose_services_started(
@@ -1268,6 +1374,7 @@ def _resolve_supabase_compose_workspace(
     project_root: Path,
     project_name: str,
     db_port: int,
+    public_port: int | None = None,
     runtime_root: Path | None,
     env: Mapping[str, str] | None,
 ) -> tuple[Path, Path]:
@@ -1283,7 +1390,7 @@ def _resolve_supabase_compose_workspace(
             project_root=project_root,
             project_name=project_name,
         ),
-        env_values=supabase_managed_env(db_port=db_port, env=env),
+        env_values=supabase_managed_env(db_port=db_port, public_port=public_port, env=env),
     )
     return materialized.stack_root, materialized.compose_file
 
@@ -1339,6 +1446,54 @@ def _extract_mount_source(line: str) -> str | None:
     return match.group(1).strip()
 
 
+def _supabase_auth_health_url(env: Mapping[str, str] | None, public_port: int) -> str:
+    public_url = str((env or {}).get("SUPABASE_PUBLIC_URL") or f"http://localhost:{public_port}").rstrip("/")
+    return f"{public_url}/auth/v1/health"
+
+
+def _probe_supabase_auth_health(
+    *,
+    process_runner,
+    public_port: int,
+    health_url: str,
+    env: Mapping[str, str] | None,
+) -> tuple[bool, str | None]:
+    timeout_seconds = _auth_probe_timeout_seconds(env)
+    if public_port > 0 and not bool(process_runner.wait_for_port(public_port, timeout=timeout_seconds)):
+        return False, f"listener probe failed on port {public_port}"
+    probe_code = (
+        "import sys, urllib.request; "
+        "url=sys.argv[1]; "
+        "timeout=float(sys.argv[2]); "
+        "req=urllib.request.Request(url, headers={'Accept':'application/json'}); "
+        "resp=urllib.request.urlopen(req, timeout=timeout); "
+        "raise SystemExit(0 if 200 <= resp.status < 500 else 1)"
+    )
+    deadline = time.monotonic() + timeout_seconds
+    sleeper = getattr(process_runner, "sleep", time.sleep)
+    last_error = "HTTP health probe failed"
+    while True:
+        remaining = max(0.1, deadline - time.monotonic())
+        result = process_runner.run(
+            [sys.executable, "-c", probe_code, health_url, str(min(timeout_seconds, remaining))],
+            env=env,
+            timeout=min(timeout_seconds, remaining) + 1.0,
+        )
+        if getattr(result, "returncode", 1) == 0:
+            return True, None
+        last_error = str(
+            getattr(result, "stderr", "") or getattr(result, "stdout", "") or "HTTP health probe failed"
+        ).strip()
+        if time.monotonic() >= deadline:
+            return False, last_error
+        sleeper(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
+def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
+    parsed = env_float(env, "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS", 5.0, minimum=0.5)
+    return parsed if parsed > 0 else 5.0
+
+
 def _db_probe_attempts(env: Mapping[str, str] | None) -> int:
     return env_int(env, "ENVCTL_SUPABASE_DB_PROBE_ATTEMPTS", 2, minimum=1)
 
@@ -1368,36 +1523,6 @@ def _db_recreate_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool
 
 def _native_db_start_enabled(env: Mapping[str, str] | None) -> bool:
     return env_bool(env, "ENVCTL_SUPABASE_DB_START_NATIVE", False)
-
-
-def _supabase_two_phase_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_TWO_PHASE_STARTUP", True)
-
-
-def _start_secondary_services_background(
-    *,
-    process_runner,
-    compose_root: Path,
-    compose_project_name: str,
-    compose_path: Path,
-    env: Mapping[str, str] | None,
-    secondary_services: list[str],
-) -> None:
-    def _worker() -> None:
-        _compose_run(
-            process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
-            args=["up", "-d", *secondary_services],
-        )
-
-    threading.Thread(
-        target=_worker,
-        name=f"envctl-supabase-secondary-{compose_project_name}",
-        daemon=True,
-    ).start()
 
 
 def build_supabase_project_name(*, project_root: Path, project_name: str) -> str:

@@ -140,4 +140,8 @@ def service_types_from_service_names(service_names: Sequence[str]) -> set[str]:
             types.add("backend")
         elif normalized.endswith(" frontend") or normalized == "frontend":
             types.add("frontend")
+        elif normalized.startswith("service:"):
+            slug = normalized.removeprefix("service:").strip()
+            if slug:
+                types.add(slug)
     return types

@@ -21,6 +21,7 @@ from envctl_engine.dashboard_metadata import (
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.shared.services import service_display_name
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.status_symbols import (
@@ -206,6 +207,22 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 dim=dim,
                 reset=reset,
             )
+        _print_dashboard_additional_service_rows(
+            self,
+            project=project,
+            project_item=item,
+            state=state,
+            stopped_for_project=stopped_for_project,
+            configured_missing_for_project=configured_missing_for_project,
+            runs_disabled_dashboard=runs_disabled_dashboard,
+            configured_service_types=configured_service_types,
+            ok_color=green,
+            warn_color=yellow,
+            bad_color=red,
+            label_color=cyan,
+            dim=dim,
+            reset=reset,
+        )
         _print_dashboard_ai_session_row(
             self,
             state=state,
@@ -261,13 +278,18 @@ def _print_dashboard_service_row(
     label_color: str,
     dim: str,
     reset: str,
+    public_url: str | None = None,
+    health_url: str | None = None,
+    listener_expected: bool | None = None,
+    service_slug: str | None = None,
 ) -> None:
+    slug_suffix = _dashboard_service_slug_suffix(service_slug, dim=dim, reset=reset)
     if configured_not_running:
-        label_text = f"{label_color}{label}{reset}"
+        label_text = f"{label_color}{label}{reset}{slug_suffix}"
         print(f"    {dim}{STATUS_NEUTRAL}{reset} {label_text}: {dim}not running{reset} {dim}[Configured]{reset}")
         return
     if stopped_not_running:
-        label_text = f"{label_color}{label}{reset}"
+        label_text = f"{label_color}{label}{reset}{slug_suffix}"
         print(f"    {dim}{STATUS_NEUTRAL}{reset} {label_text}: {dim}not running{reset} {dim}[Stopped]{reset}")
         return
     status = str(getattr(service, "status", "unknown") or "unknown")
@@ -282,15 +304,26 @@ def _print_dashboard_service_row(
     listener_suffix = ""
     listener_pids = getattr(service, "listener_pids", None)
     if isinstance(listener_pids, list):
-        rendered_listener_pids = [str(value) for value in listener_pids if isinstance(value, int) and value > 0]
+        rendered_listener_pids = [
+            str(value)
+            for value in listener_pids
+            if isinstance(value, int) and value > 0 and not (isinstance(pid, int) and value == pid)
+        ]
         if rendered_listener_pids:
             listener_suffix = f" [Listener PID: {','.join(rendered_listener_pids)}]"
-    url_text = url or "n/a"
-    if not url and status.lower() == "unreachable":
+    if listener_expected is None:
+        listener_expected = bool(getattr(service, "listener_expected", True))
+    url_text = url or ("n/a" if listener_expected else "non-listener")
+    if not url and listener_expected and status.lower() == "unreachable":
         fallback_port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
         if isinstance(fallback_port, int) and fallback_port > 0 and isinstance(pid, int) and pid > 0:
             url_text = _dashboard_visual_url(self, fallback_port)
-    label_text = f"{label_color}{label}{reset}"
+    if service_slug is None:
+        raw_slug = str(getattr(service, "service_slug", "") or "").strip().lower()
+        raw_type = str(getattr(service, "type", "") or "").strip().lower()
+        service_slug = raw_slug or raw_type or None
+    slug_suffix = _dashboard_service_slug_suffix(service_slug, dim=dim, reset=reset)
+    label_text = f"{label_color}{label}{reset}{slug_suffix}"
     print(
         f"    {color}{icon}{reset} {label_text}: {url_text}{pid_suffix}{listener_suffix} {dim}[{status_label}]{reset}"
     )
@@ -298,12 +331,96 @@ def _print_dashboard_service_row(
     if isinstance(log_path, str) and log_path.strip():
         rendered_path = render_path_for_terminal(log_path, env=getattr(self, "env", {}), stream=sys.stdout)
         print(f"      {dim}log:{reset} {rendered_path}")
+    if public_url is None:
+        public_url = str(getattr(service, "public_url", "") or "").strip() or None
+    if health_url is None:
+        health_url = str(getattr(service, "health_url", "") or "").strip() or None
+    if public_url and public_url != url:
+        print(f"      {dim}public:{reset} {public_url}")
+    if health_url:
+        print(f"      {dim}health:{reset} {health_url}")
 
     requested = getattr(service, "requested_port", None)
     actual = getattr(service, "actual_port", None)
     if isinstance(requested, int) and requested > 0 and isinstance(actual, int) and actual > 0 and requested != actual:
         print(f"      {dim}port: requested {requested} -> actual {actual}{reset}")
 
+
+
+
+def _dashboard_service_slug_suffix(service_slug: str | None, *, dim: str, reset: str) -> str:
+    if not service_slug or service_slug in {"backend", "frontend"}:
+        return ""
+    return f" {dim}({service_slug}){reset}"
+
+def _print_dashboard_additional_service_rows(
+    self: Any,
+    *,
+    project: str,
+    project_item: Mapping[str, object],
+    state: RunState,
+    stopped_for_project: Mapping[str, str],
+    configured_missing_for_project: set[str],
+    runs_disabled_dashboard: bool,
+    configured_service_types: set[str],
+    ok_color: str,
+    warn_color: str,
+    bad_color: str,
+    label_color: str,
+    dim: str,
+    reset: str,
+) -> None:
+    projected_services = project_item.get("services")
+    projected = projected_services if isinstance(projected_services, Mapping) else {}
+    slugs: list[str] = []
+    for slug in projected:
+        normalized = str(slug).strip().lower()
+        if normalized and normalized not in {"backend", "frontend"} and normalized not in slugs:
+            slugs.append(normalized)
+    for slug in sorted(configured_missing_for_project | set(stopped_for_project)):
+        if slug not in {"backend", "frontend"} and slug not in slugs:
+            slugs.append(slug)
+    if runs_disabled_dashboard:
+        for slug in sorted(configured_service_types):
+            if slug not in {"backend", "frontend"} and slug not in slugs:
+                slugs.append(slug)
+    for slug in slugs:
+        entry_raw = projected.get(slug)
+        entry = entry_raw if isinstance(entry_raw, Mapping) else {}
+        service_name = str(entry.get("name", "") or "").strip() or stopped_for_project.get(slug, "")
+        service = state.services.get(service_name) if service_name else None
+        if service is None:
+            expected_name = f"{project} {service_display_name(slug)}"
+            service = state.services.get(expected_name)
+        stopped = service is None and slug in stopped_for_project
+        configured = service is None and not stopped and (
+            slug in configured_missing_for_project or (runs_disabled_dashboard and slug in configured_service_types)
+        )
+        if service is None and not stopped and not configured:
+            continue
+        label = service_display_name(slug)
+        url = str(entry.get("url", "") or "").strip() or None
+        public_url = str(entry.get("public_url", "") or "").strip() or None
+        health_url = str(entry.get("health_url", "") or "").strip() or None
+        listener_expected_raw = entry.get("listener_expected")
+        listener_expected = bool(listener_expected_raw) if isinstance(listener_expected_raw, bool) else None
+        self._print_dashboard_service_row(
+            label=label,
+            service=service,
+            url=url,
+            stopped_not_running=stopped,
+            configured_not_running=configured,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+            label_color=label_color,
+            dim=dim,
+            reset=reset,
+            public_url=public_url,
+            health_url=health_url,
+            listener_expected=listener_expected,
+            service_slug=slug,
+        )
 
 def _print_dashboard_dependency_rows(
     self: Any,
@@ -676,7 +793,7 @@ def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[st
         project = str(item.get("project", "") or "").strip()
         service_type = str(item.get("type", "") or "").strip().lower()
         name = str(item.get("name", "") or "").strip()
-        if not project or service_type not in {"backend", "frontend"}:
+        if not project or not service_type:
             continue
         stopped.setdefault(project, {})[service_type] = name
     return stopped

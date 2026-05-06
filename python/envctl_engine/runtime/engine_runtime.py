@@ -411,6 +411,12 @@ class PythonEngineRuntime:
             db_base=config.db_port_base,
             redis_base=config.redis_port_base,
             n8n_base=config.n8n_port_base,
+            supabase_api_base=config.port_defaults.dependency_port("supabase", "api"),
+            additional_service_bases={
+                service.name: int(service.port_base)
+                for service in getattr(config, "additional_services", ())
+                if getattr(service, "port_base", None)
+            },
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,
@@ -1472,8 +1478,12 @@ class PythonEngineRuntime:
     def _supabase_reinit_required_message() -> str:
         return runtime_supabase_reinit_required_message()
 
-    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None:
-        return runtime_run_supabase_reinit(self, project_root=project_root, project_name=project_name, db_port=db_port)
+    def _run_supabase_reinit(
+        self, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+    ) -> str | None:
+        return runtime_run_supabase_reinit(
+            self, project_root=project_root, project_name=project_name, db_port=db_port, public_port=public_port
+        )
 
     @staticmethod
     def _command_result_error_text(*, result: object) -> str:
@@ -1607,8 +1617,9 @@ class PythonEngineRuntime:
         *,
         port: int | None = None,
         replacements: Mapping[str, str] | None = None,
+        cwd: str | Path | None = None,
     ) -> list[str]:
-        return runtime_split_command(self, raw, port=port, replacements=replacements)
+        return runtime_split_command(self, raw, port=port, replacements=replacements, cwd=cwd)
 
     def _command_env(self, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         return runtime_command_env(self, port=port, extra=extra)

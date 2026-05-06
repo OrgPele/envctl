@@ -10,6 +10,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import (
+    AppServiceConfig,
     CONFIG_BACKEND_DEPENDENCY_ENV_END,
     CONFIG_BACKEND_DEPENDENCY_ENV_START,
     CONFIG_DEPENDENCY_ENV_END,
@@ -21,6 +22,7 @@ from envctl_engine.config import (
     PortDefaults,
     StartupProfile,
     _parse_envctl_text,
+    discover_local_config_state,
     ensure_dependency_env_section,
     parse_dependency_env_section,
 )
@@ -28,6 +30,7 @@ from envctl_engine.config.persistence import (
     ManagedConfigValues,
     ensure_global_ignore_status,
     ensure_local_config_ignored,
+    managed_values_from_local_state,
     managed_values_from_payload,
     managed_values_from_mapping,
     managed_values_to_mapping,
@@ -809,6 +812,82 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertFalse(status.updated)
             self.assertIsNone(status.target_path)
             self.assertIsNotNone(status.warning)
+
+    def test_managed_values_render_and_reload_additional_app_services(self) -> None:
+        from envctl_engine.config.persistence import managed_values_from_mapping, managed_values_to_mapping
+
+        values = managed_values_from_mapping({})
+        values.additional_services = (
+            AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=False,
+                dir_name="voice-runtime",
+                start_cmd="python -m voice_runtime --port {port}",
+                test_cmd="python -m pytest voice-runtime/tests",
+                port_base=8010,
+                expect_listener=True,
+                health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+                public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                depends_on=("backend",),
+                critical=False,
+                enable_if_path="voice-runtime/app/main.py",
+            ),
+        )
+
+        rendered = managed_values_to_mapping(values)
+        reloaded = managed_values_from_mapping(rendered)
+
+        self.assertEqual(rendered["ENVCTL_ADDITIONAL_SERVICES"], "voice-runtime")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DIR"], "voice-runtime")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD"], "python -m voice_runtime --port {port}")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_MAIN_ENABLE"], "true")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_TREES_ENABLE"], "false")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER"], "true")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE"], "8010")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON"], "backend")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL"], "false")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH"], "voice-runtime/app/main.py")
+        self.assertEqual(len(reloaded.additional_services), 1)
+        service = reloaded.additional_services[0]
+        self.assertEqual(service.name, "voice-runtime")
+        self.assertEqual(service.enabled_main, True)
+        self.assertEqual(service.enabled_trees, False)
+        self.assertEqual(service.depends_on, ("backend",))
+        self.assertFalse(service.critical)
+        self.assertEqual(service.enable_if_path, "voice-runtime/app/main.py")
+
+    def test_save_local_config_preserves_additional_service_keys_and_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            config_path = repo / ".envctl"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}",
+                        "",
+                        "# >>> envctl service voice-runtime launch env >>>",
+                        "VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                        "# <<< envctl service voice-runtime launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            local_state = discover_local_config_state(repo)
+            values = managed_values_from_local_state(local_state)
+
+            save_local_config(local_state=local_state, values=values)
+
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn("ENVCTL_ADDITIONAL_SERVICES=voice-runtime", saved)
+            self.assertIn("ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}", saved)
+            self.assertIn("# >>> envctl service voice-runtime launch env >>>", saved)
+            self.assertIn("VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}", saved)
 
 
 if __name__ == "__main__":

@@ -285,12 +285,36 @@ def normalize_project_root(root: object) -> str | None:
     return str(Path(raw).expanduser().resolve(strict=False))
 
 
-def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contexts: list[object]) -> dict[str, object]:
-    startup_enabled = _startup_enabled(runtime, runtime_mode)
+
+def _service_enabled_for_context(runtime: Any, runtime_mode: str, service: object, context: object) -> bool:
+    enabled_for_project = getattr(service, "enabled_for_project_root", None)
+    if callable(enabled_for_project):
+        return bool(enabled_for_project(runtime_mode, getattr(context, "root", None)))
+    enabled_for_mode = getattr(service, "enabled_for_mode", None)
+    if callable(enabled_for_mode):
+        return bool(enabled_for_mode(runtime_mode))
+    return False
+
+
+def _startup_service_payload(runtime: Any, runtime_mode: str, project_contexts: list[object]) -> dict[str, bool]:
     services = {
         "backend": _service_enabled(runtime, runtime_mode, "backend"),
         "frontend": _service_enabled(runtime, runtime_mode, "frontend"),
     }
+    config = getattr(runtime, "config", None)
+    for service in getattr(config, "additional_services", ()):
+        name = str(getattr(service, "name", "") or "").strip()
+        if not name:
+            continue
+        services[name] = any(
+            _service_enabled_for_context(runtime, runtime_mode, service, context) for context in project_contexts
+        )
+    return services
+
+
+def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contexts: list[object]) -> dict[str, object]:
+    startup_enabled = _startup_enabled(runtime, runtime_mode)
+    services = _startup_service_payload(runtime, runtime_mode, project_contexts)
     dependencies = [
         dependency_id
         for dependency_id in sorted(dependency_ids())

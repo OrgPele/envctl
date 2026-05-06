@@ -966,6 +966,30 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.cli_command, "codex --dangerously-bypass-approvals-and-sandbox")
         self.assertTrue(launch_config.enabled)
 
+    def test_resolve_plan_agent_launch_config_allows_disabling_codex_yolo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_CODEX_YOLO": "false",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--codex"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "tmux")
+        self.assertEqual(launch_config.cli, "codex")
+        self.assertEqual(launch_config.cli_command, "codex")
+        self.assertTrue(launch_config.enabled)
+
     def test_launch_sequence_uses_tmux_commands_for_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1370,6 +1394,66 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 cast(dict[str, str], popen_calls[0]["env"])["OMX_TEAM_WORKER_LAUNCH_ARGS"],
                 "--dangerously-bypass-approvals-and-sandbox",
             )
+
+    def test_omx_spawn_keeps_pseudo_terminal_input_alive_until_attach_target_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="",
+            )
+            popen_instances: list[object] = []
+            popen_calls: list[dict[str, object]] = []
+
+            class _Pipe:
+                def __init__(self) -> None:
+                    self.closed = False
+
+                def close(self) -> None:
+                    self.closed = True
+
+            class _RunningPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    self.stdin = _Pipe()
+                    self.stdout = _Pipe()
+                    self.stderr = _Pipe()
+                    popen_instances.append(self)
+
+                def poll(self):
+                    return None
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _RunningPopen):
+                error = launch_support._spawn_omx_session_for_worktree(
+                    rt,
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(popen_calls[0]["stdin"], subprocess.PIPE)
+            self.assertEqual(cast(dict[str, str], popen_calls[0]["env"])["OMX_LAUNCH_POLICY"], "detached-tmux")
+            process = popen_instances[0]
+            self.assertFalse(process.stdin.closed)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
+            self.assertIn(process, rt._omx_spawn_processes)
 
     def test_omx_spawn_preserves_codex_config_discovery_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

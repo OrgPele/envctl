@@ -17,6 +17,7 @@ from envctl_engine.runtime.launcher_support import (
     ORIGINAL_WRAPPER_ARGV0_ENVVAR,
     find_shadowed_installed_envctl,
     is_explicit_wrapper_path,
+    resolve_repo_root,
     select_envctl_reexec_target,
 )
 from envctl_engine.runtime.runtime_dependency_contract import runtime_dependency_manifest_parity
@@ -605,6 +606,72 @@ class CliPackagingTests(unittest.TestCase):
         self.assertIn("Missing required envctl runtime Python packages", result.stderr)
         self.assertIn("pipx reinstall envctl", result.stderr)
         self.assertNotIn("python/requirements.txt", result.stderr)
+
+
+    def test_resolve_repo_root_from_linked_worktree_uses_readable_main_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=None, cwd=worktree)
+
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_keeps_explicit_worktree_repo_arg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(worktree), cwd=repo)
+
+        self.assertEqual(resolved, worktree.resolve())
+
+    def test_regular_install_from_worktree_uses_main_envctl_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "start"],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertNotIn("Missing repo-local .envctl", result.stderr)
 
     def test_regular_install_repo_arg_overrides_inherited_run_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

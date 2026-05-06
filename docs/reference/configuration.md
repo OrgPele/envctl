@@ -35,7 +35,7 @@ Useful commands:
 
 ## Service Launch Env Templates In `.envctl`
 
-`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
+`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes and configured additional app services that `envctl` starts.
 
 ```dotenv
 # >>> envctl backend launch env >>>
@@ -47,12 +47,22 @@ REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 # >>> envctl frontend launch env >>>
 VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
+
+# >>> envctl service voice-runtime launch env >>>
+VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
+
+# >>> envctl main service voice-runtime launch env >>>
+PELE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}
+# <<< envctl main service voice-runtime launch env <<<
 ```
 
 These sections are separate from the managed startup block:
 
 - the backend section applies only to backend launches
 - the frontend section applies only to frontend launches
+- `service <slug>` sections apply only to the matching additional app service
+- `main service <slug>` and `trees service <slug>` sections apply only for that startup mode
 - old shared sections are still understood for compatibility, but new `.envctl` files only seed backend/frontend sections
 - `envctl config` seeds these sections when missing, but does not edit or normalize them afterward
 - for a given service, only vars defined in its applicable sections are emitted
@@ -76,6 +86,9 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_REDIS_URL`
 - `ENVCTL_SOURCE_N8N_URL`
 - `ENVCTL_SOURCE_SUPABASE_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT`
+- `ENVCTL_SOURCE_SUPABASE_API_PORT`
 - `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`
 - `ENVCTL_SOURCE_ASYNC_DATABASE_URL`
 - `ENVCTL_SOURCE_DB_HOST`
@@ -87,8 +100,78 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_N8N_PORT`
 - `ENVCTL_SOURCE_SUPABASE_DB_PASSWORD`
 - `ENVCTL_SOURCE_SUPABASE_DB_PORT`
+- `ENVCTL_SOURCE_BACKEND_HOST`
+- `ENVCTL_SOURCE_BACKEND_PORT`
+- `ENVCTL_SOURCE_BACKEND_URL`
+- `ENVCTL_SOURCE_FRONTEND_HOST`
+- `ENVCTL_SOURCE_FRONTEND_PORT`
+- `ENVCTL_SOURCE_FRONTEND_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HOST`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PORT`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
+## Managed Supabase Ports
+
+Managed Supabase exposes two distinct local resources:
+
+- `DB_PORT` / `ENVCTL_SOURCE_SUPABASE_DB_PORT` is the PostgreSQL host port used for database URLs such as `DATABASE_URL` and `SQLALCHEMY_DATABASE_URL`.
+- `SUPABASE_PUBLIC_PORT` / `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT` is the public Supabase API gateway port. `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL` point here, not at Postgres. Browser auth clients should use this URL for `/auth/v1/*` calls.
+
+The managed Supabase compose stack publishes Kong on `SUPABASE_PUBLIC_PORT` and readiness checks `/auth/v1/health`. If Postgres is healthy but Kong/Auth is unreachable, startup reports that split explicitly instead of marking Supabase healthy from the database listener alone.
+
+## Additional App Services
+
+Additional app services are long-running application processes owned by the repo, not managed infrastructure dependencies. They are enabled through `.envctl` and participate in normal startup, state, runtime-map, logs, health, dashboard, and `envctl test --service <slug>` flows.
+
+Example HTTP sidecar plus non-listener worker:
+
+```dotenv
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+
+ENVCTL_SERVICE_WORKER_ENABLE=true
+ENVCTL_SERVICE_WORKER_DIR=backend
+ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+```
+
+Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the uppercase slug with hyphens changed to underscores. For `voice-runtime`, the suffix is `VOICE_RUNTIME`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_ADDITIONAL_SERVICES` | unset | Comma-separated ordered service slugs, such as `voice-runtime,worker`. |
+| `ENVCTL_SERVICE_<SUFFIX>_ENABLE` | `true` | Both-mode enable default for a declared service. |
+| `ENVCTL_SERVICE_<SUFFIX>_MAIN_ENABLE` | `ENABLE` | Main-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_TREES_ENABLE` | `ENABLE` | Trees-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_DIR` | `.` | Repo-relative service working directory. Startup fails if a configured non-root directory is missing or escapes the project root. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_CMD` | unset | Required for enabled services. Supports `{port}`, `{project_root}`, `{service_dir}`, and `{service_name}` placeholders. |
+| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. Runs from the configured service directory. If this is unset, `envctl test --service <slug>` fails clearly instead of falling back to generic backend/frontend tests. |
+| `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE` | unset | Required when `EXPECT_LISTENER=true`; gets normal per-project port spacing. |
+| `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers and schedulers that do not bind a port. |
+| `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
+| `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. Dependency ids such as `redis`, `postgres`, `supabase`, or `n8n` validate the relationship and influence service ordering/metadata, but they do not by themselves enable disabled infrastructure; keep the matching `MAIN_*_ENABLE` / `TREES_*_ENABLE` dependency setting enabled when the service requires that infrastructure at runtime. |
+| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | `true` keeps fail-fast startup. `false` records a degraded failed service with cwd/log/port/failure metadata and allows healthy independent services to continue. |
+
+Reserved additional-service slugs include `backend`, `frontend`, managed dependency ids, `all`, `services`, and `dependencies`.
+
+Startup plans application services in dependency layers. Built-in backend/frontend behavior is unchanged when no additional service dependencies are configured. Inside a layer, `START_ORDER` and slug order are deterministic tie-breakers; a service that depends on another app service starts only after that dependency's layer completes. Listener services use strict listener truth, while `EXPECT_LISTENER=false` workers persist `port: null`, `url: null`, and `listener_expected: false` but still keep static health/public URLs if configured.
+
+Runtime state, `show-state --json`, runtime maps, dashboard rows, and `health --json` expose canonical `project`, `service_slug`, `public_url`, `health_url`, `critical`, `degraded`, and `failure_detail` fields so external tooling does not need to parse display names. Dashboard rows render additional listener services with final rebound URLs, public/health URLs, log paths, and port rebind notes; non-listener workers render as non-listener rows instead of unreachable URLs. Service targeting accepts `<slug>`, `service:<slug>`, exact display names, and full service names for logs, errors, tests, stop, restart, and other actions where service filters are supported.
 
 ## Migrate Env Resolution
 
@@ -167,7 +250,7 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The current config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
+The current config wizard writes, edits, and preserves the canonical managed keys, including declared additional app services. Launch env template sections remain user-owned and are preserved as-is.
 
 ## Current Wizard Coverage
 
@@ -180,6 +263,7 @@ The current setup/editor wizard covers:
 - entrypoints and backend/frontend test command suggestions
 - optional frontend test directory suggestions
 - canonical ports
+- advanced additional app service definitions: slug, directory, start command, port base, listener expectation, main/trees enablement, optional test command, public URL, health URL, dependencies, start order, and critical/non-critical behavior
 
 The current flow is:
 
@@ -187,12 +271,13 @@ The current flow is:
 2. `Default Mode`
 3. `Components`
 4. optional `Long-Running Service`
-5. `Directories`
-6. `Entrypoints / Commands`
-7. `Ports`
-8. `Review / Save`
+5. advanced `Additional App Services` fields when services are configured or the advanced wizard is requested
+6. `Directories`
+7. `Entrypoints / Commands`
+8. `Ports`
+9. `Review / Save`
 
-There is no simple/advanced split in the current UI.
+There is no separate visible simple/advanced chooser in the current UI; callers can request the advanced wizard path to show additional-service fields even before a service exists.
 
 The `Entrypoints / Commands` step shows only the command fields needed for the enabled backend/frontend components. For test commands, the wizard displays detected suggestions with source labels (for example backend pytest from `backend/tests` or a frontend package test script from `frontend/package.json`). Test command fields are optional: leaving one blank means `envctl test` may still try runtime defaults later. The wizard does not execute test commands during setup.
 
@@ -230,7 +315,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `true` | Toggle the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and wait for final PR confirmation. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
-| `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
+| `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
+| `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
 
 Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.

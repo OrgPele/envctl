@@ -14,7 +14,10 @@ from envctl_engine.planning.plan_agent_launch_support import plan_agent_launch_p
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
-from envctl_engine.runtime.launcher_support import resolve_envctl_version
+from envctl_engine.runtime.launcher_support import (
+    repo_root_with_readable_main_config_from_worktree,
+    resolve_envctl_version,
+)
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.runtime.runtime_dependency_contract import (
     missing_runtime_dependency_modules,
@@ -120,6 +123,7 @@ def run(
                 if rendered:
                     print(rendered, end="")
                 return 0
+            env_map.setdefault("ENVCTL_INVOCATION_CWD", str(Path.cwd().resolve()))
             base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
             if repo_arg is not None and _is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
@@ -300,6 +304,9 @@ def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Pa
     cwd = Path.cwd().resolve()
     repo_root = _find_repo_root(cwd)
     if repo_root is not None:
+        main_config_root = repo_root_with_readable_main_config_from_worktree(repo_root)
+        if main_config_root is not None:
+            return main_config_root
         return repo_root
     return cwd
 

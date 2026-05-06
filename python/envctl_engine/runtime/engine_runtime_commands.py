@@ -121,6 +121,7 @@ def split_command(
     *,
     port: int | None = None,
     replacements: Mapping[str, str] | None = None,
+    cwd: str | Path | None = None,
 ) -> list[str]:
     value = raw
     if replacements:
@@ -132,9 +133,20 @@ def split_command(
     if not parsed:
         raise RuntimeError("Resolved command is empty")
     executable = parsed[0]
-    if not runtime._command_exists(executable):
+    if not _command_exists_for_cwd(runtime, executable, cwd=cwd):
         raise RuntimeError(f"Resolved command executable not found: {executable}")
     return parsed
+
+
+def _command_exists_for_cwd(runtime: Any, executable: str, *, cwd: str | Path | None) -> bool:
+    if runtime._command_exists(executable):
+        return True
+    if cwd is None or ("/" not in executable and "\\" not in executable):
+        return False
+    candidate = Path(executable).expanduser()
+    if candidate.is_absolute():
+        return candidate.exists()
+    return (Path(cwd) / candidate).exists()
 
 
 def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:

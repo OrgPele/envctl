@@ -10,8 +10,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
+from envctl_engine.actions.action_test_support import TestTargetContext
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RunState
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
 
 
@@ -65,6 +66,28 @@ class ActionCommandTargetTests(unittest.TestCase):
 
         self.assertEqual([project.name for project in projects], ["alpha", "beta"])
         self.assertEqual(orchestrator.runtime.selectors_from_passthrough(["ignored"]), set())
+
+
+    def test_resolve_targets_main_action_from_worktree_uses_current_worktree(self) -> None:
+        runtime = _RuntimeStub()
+        worktree = Path("/tmp/repo/trees/feature-a/1")
+        runtime.env["ENVCTL_INVOCATION_CWD"] = str(worktree)
+        runtime.config = SimpleNamespace(base_dir=Path("/tmp/repo"), raw={}, trees_dir_name="trees")
+        runtime._discover_projects = lambda mode: [SimpleNamespace(name="Main", root=Path("/tmp/repo"))] if mode == "main" else []
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main", raw_args=["--main", "test"])
+
+        with (
+            patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+            patch(
+                "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                return_value=[("feature-a-1", worktree)],
+            ),
+        ):
+            targets, error = orchestrator.resolve_targets(route, trees_only=False)
+
+        self.assertIsNone(error)
+        self.assertEqual([(target.name, target.root) for target in targets], [("feature-a-1", worktree)])
 
     def test_resolve_targets_uses_interactive_selection(self) -> None:
         runtime = _RuntimeStub()
@@ -155,6 +178,96 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(len(targets), 2)
         flush_pending.assert_not_called()
+
+    def test_projects_for_services_matches_additional_service_slug_from_state(self) -> None:
+        runtime = _RuntimeStub()
+        runtime._latest_state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/repo/voice-runtime",
+                    requested_port=8010,
+                    actual_port=8010,
+                    status="running",
+                )
+            },
+        )
+        runtime._project_name_from_service = lambda service_name: "Main" if service_name == "Main Voice Runtime" else ""
+        orchestrator = ActionCommandOrchestrator(runtime)
+
+        projects = orchestrator.projects_for_services(["voice-runtime"])
+
+        self.assertEqual(projects, ["Main"])
+
+    def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={},
+            frontend_test_path="",
+            app_service_by_name=lambda name: SimpleNamespace(
+                name="voice-runtime",
+                test_cmd="python -m pytest voice-runtime/tests",
+                dir_name="voice-runtime",
+            )
+            if name == "voice-runtime"
+            else None,
+        )
+        runtime.split_command = lambda raw, *, replacements: raw.split()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main", flags={"services": ["voice-runtime"]})
+        target = SimpleNamespace(name="Main", root=Path("/tmp/repo"))
+
+        specs = orchestrator._build_test_execution_specs(
+            route=route,
+            targets=[target],
+            target_contexts=[TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
+            include_backend=False,
+            include_frontend=False,
+            run_all=False,
+            untested=False,
+        )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.command, ["python", "-m", "pytest", "voice-runtime/tests"])
+        self.assertEqual(specs[0].spec.cwd, Path("/tmp/repo/voice-runtime"))
+        self.assertEqual(specs[0].spec.source, "configured_service:voice-runtime")
+
+
+    def test_build_test_execution_specs_fails_for_additional_service_without_test_command(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={"ENVCTL_BACKEND_TEST_CMD": "python -m pytest backend/tests"},
+            frontend_test_path="",
+            app_service_by_name=lambda name: SimpleNamespace(
+                name="voice-runtime",
+                test_cmd="",
+                dir_name="voice-runtime",
+            )
+            if name == "voice-runtime"
+            else None,
+        )
+        runtime.split_command = lambda raw, *, replacements: raw.split()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main", flags={"services": ["voice-runtime"]})
+        target = SimpleNamespace(name="Main", root=Path("/tmp/repo"))
+
+        with self.assertRaisesRegex(RuntimeError, "ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD"):
+            orchestrator._build_test_execution_specs(
+                route=route,
+                targets=[target],
+                target_contexts=[
+                    TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
+                ],
+                include_backend=False,
+                include_frontend=False,
+                run_all=False,
+                untested=False,
+            )
 
     def test_pr_success_handler_clears_dashboard_cache_and_emits_created_url_status(self) -> None:
         runtime = _RuntimeStub()

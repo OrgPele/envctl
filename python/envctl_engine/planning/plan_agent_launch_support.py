@@ -372,10 +372,15 @@ def resolve_plan_agent_launch_config(
             )
         )
     ).strip().lower() or "codex"
+    codex_yolo_enabled = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_CODEX_YOLO")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
+        True,
+    )
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or _default_plan_agent_cli_command(cli)
+        or _default_plan_agent_cli_command(cli, codex_yolo_enabled=codex_yolo_enabled)
     ).strip() or cli
     preset = str(
         env_map.get("ENVCTL_PLAN_AGENT_PRESET")
@@ -470,10 +475,12 @@ def resolve_plan_agent_launch_config(
     )
 
 
-def _default_plan_agent_cli_command(cli: str) -> str:
+def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True) -> str:
     normalized = str(cli).strip().lower()
     if normalized == "codex":
-        return f"codex {_CODEX_BYPASS_FLAGS}"
+        if codex_yolo_enabled:
+            return f"codex {_CODEX_BYPASS_FLAGS}"
+        return "codex"
     return normalized or "codex"
 
 
@@ -4038,6 +4045,7 @@ def _spawn_omx_session_for_worktree(
         command.append("--madmax")
     popen_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
     env = _omx_launch_env(runtime)
+    env["OMX_LAUNCH_POLICY"] = "detached-tmux"
     if launch_config.omx_workflow == "team":
         env["OMX_TEAM_WORKER_LAUNCH_ARGS"] = _CODEX_BYPASS_FLAGS
     try:
@@ -4045,7 +4053,7 @@ def _spawn_omx_session_for_worktree(
             popen_command,
             cwd=str(Path(worktree.root).resolve()),
             env=env,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -4069,7 +4077,20 @@ def _spawn_omx_session_for_worktree(
     process_stderr = getattr(process, "stderr", None)
     if process_stderr is not None:
         process_stderr.close()
+    _retain_omx_spawn_process(runtime, process)
     return None
+
+
+def _retain_omx_spawn_process(runtime: Any, process: subprocess.Popen[str]) -> None:
+    retained = getattr(runtime, "_omx_spawn_processes", None)
+    if not isinstance(retained, list):
+        retained = []
+        try:
+            setattr(runtime, "_omx_spawn_processes", retained)
+        except Exception:
+            return
+    retained[:] = [item for item in retained if getattr(item, "poll", lambda: 0)() is None]
+    retained.append(process)
 
 
 def _find_existing_omx_attach_target(

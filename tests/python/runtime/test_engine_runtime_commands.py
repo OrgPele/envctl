@@ -62,6 +62,18 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             split_command(runtime, "python3 app.py")
 
+    def test_split_command_accepts_relative_executable_from_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script = root / "scripts" / "start-service.sh"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+            runtime = SimpleNamespace(_command_exists=lambda executable: False)
+
+            parsed = split_command(runtime, "scripts/start-service.sh {port}", port=8123, cwd=root)
+
+        self.assertEqual(parsed, ["scripts/start-service.sh", "8123"])
+
     def test_default_python_executable_falls_back_to_python3(self) -> None:
         runtime = SimpleNamespace(env={}, _command_exists=lambda executable: False)
 

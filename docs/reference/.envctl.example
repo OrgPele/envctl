@@ -35,6 +35,32 @@ FRONTEND_DIR=frontend
 BACKEND_PORT_BASE=8000
 FRONTEND_PORT_BASE=9000
 
+# Optional additional application services. These are repo-owned long-running
+# processes such as workers, schedulers, sidecars, or gateways. They render in
+# dashboard rows and can be targeted as `voice-runtime`, `service:voice-runtime`,
+# `Voice Runtime`, or `Main Voice Runtime` for stop/restart/log/test commands.
+# ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+# ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+# ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+# ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+# ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+# ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+# ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=backend
+# ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+# ENVCTL_SERVICE_WORKER_ENABLE=true
+# ENVCTL_SERVICE_WORKER_DIR=backend
+# ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+# ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+# ENVCTL_SERVICE_WORKER_DEPENDS_ON=backend
+# ENVCTL_SERVICE_WORKER_CRITICAL=false
+# ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+# The interactive config wizard can edit these keys and preserves service launch-env sections;
+# configured services expose canonical project/service_slug/public_url/health_url
+# fields through show-state --json, health --json, runtime maps, and dashboard rows.
+
 # Spacing between project slots in trees mode.
 PORT_SPACING=20
 
@@ -45,6 +71,8 @@ PORT_SPACING=20
 DB_PORT=5432
 REDIS_PORT=6379
 N8N_PORT_BASE=5678
+# Public Supabase API/Kong port. ENVCTL_SOURCE_SUPABASE_URL uses this port; DB URLs use DB_PORT.
+SUPABASE_PUBLIC_PORT=54321
 
 # ==========================================
 # Main mode startup profile
@@ -120,9 +148,14 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 # VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
 
+# Additional service launch env sections use the configured service slug.
+# >>> envctl service voice-runtime launch env >>>
+# VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
+
 # Notes:
 # - `.envctl` is the canonical repo-local config file.
-# - The interactive `envctl config` wizard writes the canonical managed keys above.
+# - The interactive `envctl config` wizard edits and preserves canonical managed keys, including additional app services.
 # - All launch env template sections are user-owned and preserved as-is.
 # - If a mode has `*_STARTUP_ENABLE=false`, `start`, `resume`, and `restart`
 #   for that mode are blocked until you re-enable startup.

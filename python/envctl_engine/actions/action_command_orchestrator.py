@@ -45,6 +45,7 @@ from envctl_engine.actions.action_test_runner import run_test_action as run_test
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
@@ -359,6 +360,10 @@ class ActionCommandOrchestrator:
             if current is not None:
                 return [current], None
             return [], "self-destruct-worktree must be run from inside a discovered worktree."
+        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
+            current = self._resolve_current_worktree_target(require_configured_main_root=True)
+            if current is not None:
+                return [current], None
         if trees_only:
             candidates = rt.discover_projects(mode="trees")
         else:
@@ -458,12 +463,30 @@ class ActionCommandOrchestrator:
         print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
         return 0
 
-    def _resolve_current_worktree_target(self) -> object | None:
-        cwd = Path.cwd().resolve()
-        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
-        repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
-        if repo_root is None:
+    def _resolve_current_worktree_target(self, *, require_configured_main_root: bool = False) -> object | None:
+        invocation_cwd = str(self.runtime.env.get("ENVCTL_INVOCATION_CWD") or "").strip()
+        cwd = Path(invocation_cwd).expanduser().resolve() if invocation_cwd else Path.cwd().resolve()
+        configured_root = getattr(self.runtime.raw_runtime.config, "base_dir", None)
+        configured_root_path = (
+            Path(str(configured_root)).expanduser().resolve()
+            if configured_root is not None
+            else None
+        )
+        if require_configured_main_root and configured_root_path == cwd:
             return None
+        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
+        if require_configured_main_root:
+            if configured_root_path is None:
+                return None
+            repo_root = self._repo_root_from_worktree_layout(cwd, trees_dir_name)
+            if repo_root is None:
+                repo_root = main_repo_root_for_linked_worktree(cwd)
+            if repo_root is None or repo_root.resolve() != configured_root_path:
+                return None
+        else:
+            repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
+            if repo_root is None:
+                return None
         candidates = [
             SimpleNamespace(name=name, root=root)
             for name, root in discover_tree_projects(repo_root, trees_dir_name)
@@ -599,7 +622,11 @@ if result.returncode != 0:
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
-        normalized_targets = [str(target).strip().lower() for target in service_targets if str(target).strip()]
+        normalized_targets = [
+            str(target).strip().lower().removeprefix("service:")
+            for target in service_targets
+            if str(target).strip()
+        ]
         if not normalized_targets:
             return []
 
@@ -608,8 +635,9 @@ if result.returncode != 0:
         for target in normalized_targets:
             matched = False
             if state is not None:
-                for service_name in state.services:
-                    if service_name.lower() == target:
+                for service_name, service in state.services.items():
+                    service_type = str(getattr(service, "type", "") or "").strip().lower()
+                    if service_name.lower() == target or service_type == target:
                         project = rt.project_name_from_service(service_name)
                         if project:
                             resolved.append(project)
@@ -828,6 +856,13 @@ if result.returncode != 0:
             ).strip()
             or None
         )
+        service_specs = self._additional_service_test_execution_specs(
+            route=route,
+            targets=targets,
+            target_contexts=target_contexts,
+        )
+        if service_specs:
+            return service_specs
         return build_test_execution_specs(
             shared_raw_command=shared_raw,
             backend_raw_command=backend_raw,
@@ -850,6 +885,60 @@ if result.returncode != 0:
             replacements_for_target=lambda target: self.action_replacements(targets, target=target),
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
+
+    def _additional_service_test_execution_specs(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        target_contexts: list[TestTargetContext],
+    ) -> list["_TestExecutionSpec"]:
+        from envctl_engine.actions.action_test_support import TestCommandSpec, TestExecutionSpec
+
+        service_types = self._service_types_from_route_services(route) - {"backend", "frontend"}
+        if not service_types:
+            return []
+        rt = self.runtime
+        specs: list[TestExecutionSpec] = []
+        for service_name in sorted(service_types):
+            service = rt.config.app_service_by_name(service_name) if hasattr(rt.config, "app_service_by_name") else None
+            if service is None:
+                raise RuntimeError(f"Unknown additional service {service_name!r} for envctl test --service")
+            raw_command = str(getattr(service, "test_cmd", "") or "").strip()
+            if not raw_command:
+                env_suffix = str(getattr(service, "env_suffix", "") or service_name.upper().replace("-", "_"))
+                raise RuntimeError(
+                    f"No test command configured for additional service {service_name!r}. "
+                    f"Set ENVCTL_SERVICE_{env_suffix}_TEST_CMD to use envctl test --service {service_name}."
+                )
+            dir_name = str(getattr(service, "dir_name", "") or "").strip()
+            for target in target_contexts:
+                replacements = dict(self.action_replacements(targets, target=target.target_obj))
+                command = rt.split_command(raw_command, replacements=replacements)
+                cwd = target.project_root / dir_name if dir_name and dir_name != "." else target.project_root
+                specs.append(
+                    TestExecutionSpec(
+                        index=0,
+                        spec=TestCommandSpec(command=command, cwd=cwd, source=f"configured_service:{service_name}"),
+                        args=[],
+                        resolved_source=f"configured_service:{service_name}",
+                        project_name=target.project_name,
+                        project_root=target.project_root,
+                        target_obj=target.target_obj,
+                    )
+                )
+        return [
+            TestExecutionSpec(
+                index=index,
+                spec=spec.spec,
+                args=spec.args,
+                resolved_source=spec.resolved_source,
+                project_name=spec.project_name,
+                project_root=spec.project_root,
+                target_obj=spec.target_obj,
+            )
+            for index, spec in enumerate(specs, start=1)
+        ]
 
     def _build_failed_test_execution_specs(
         self,
