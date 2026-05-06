@@ -1053,6 +1053,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
         self.assertIn("Automatic envctl follow-up", resolved)
+        self.assertIn("recommended_codex_cycles=<n>", resolved)
         self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", resolved)
         self.assertIn("exactly one integer from `0` through `8`", resolved)
         self.assertIn("Auto launch Codex after planning", resolved)

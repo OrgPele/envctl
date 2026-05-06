@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.0"]
+requires = ["setuptools>=77.0.0", "packaging>=24.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-envctl = "envctl_engine.runtime.cli:main"
+envctl = "envctl_engine.runtime.launcher_cli:main"
 
 [project.urls]
 Documentation = "https://github.com/kfiramar/envctl"
