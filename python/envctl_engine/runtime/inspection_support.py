@@ -215,6 +215,25 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         "trees_frontend_dependency_env_templates": _template_entries(
             local_state.trees_frontend_dependency_env_templates
         ),
+        "additional_services": [_additional_service_payload(service) for service in runtime.config.additional_services],
+        "service_dependency_env_section_present": dict(local_state.service_dependency_env_section_present),
+        "service_dependency_env_templates": {
+            service_name: _template_entries(entries)
+            for service_name, entries in local_state.service_dependency_env_templates.items()
+        },
+        "service_dependency_env_template_errors": dict(local_state.service_dependency_env_template_errors),
+        "mode_service_dependency_env_section_present": {
+            f"{mode}:{service_name}": present
+            for (mode, service_name), present in local_state.mode_service_dependency_env_section_present.items()
+        },
+        "mode_service_dependency_env_templates": {
+            f"{mode}:{service_name}": _template_entries(entries)
+            for (mode, service_name), entries in local_state.mode_service_dependency_env_templates.items()
+        },
+        "mode_service_dependency_env_template_errors": {
+            f"{mode}:{service_name}": errors
+            for (mode, service_name), errors in local_state.mode_service_dependency_env_template_errors.items()
+        },
         "plan_agent": {
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,
@@ -266,6 +285,26 @@ def _template_entries(entries: tuple[object, ...]) -> list[dict[str, object]]:
         }
         for entry in entries
     ]
+
+
+def _additional_service_payload(service: object) -> dict[str, object]:
+    return {
+        "name": getattr(service, "name", ""),
+        "env_suffix": getattr(service, "env_suffix", ""),
+        "enabled_main": bool(getattr(service, "enabled_main", False)),
+        "enabled_trees": bool(getattr(service, "enabled_trees", False)),
+        "dir_name": getattr(service, "dir_name", ""),
+        "start_cmd": getattr(service, "start_cmd", ""),
+        "test_cmd": getattr(service, "test_cmd", ""),
+        "port_base": getattr(service, "port_base", None),
+        "listener_expected": bool(getattr(service, "listener_expected", True)),
+        "health_url_template": getattr(service, "health_url_template", ""),
+        "public_url_template": getattr(service, "public_url_template", ""),
+        "startup_group": getattr(service, "startup_group", ""),
+        "depends_on": list(getattr(service, "depends_on", ())),
+        "start_order": int(getattr(service, "start_order", 100) or 100),
+        "critical": bool(getattr(service, "critical", True)),
+    }
 
 
 def _apply_runtime_effective_config_values(values: Any, config: Any) -> None:

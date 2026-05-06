@@ -16,6 +16,7 @@ from envctl_engine.dashboard_metadata import (
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
     dashboard_configured_missing_services_by_project,
     dashboard_project_configured_services_from_metadata,
+    display_service_type,
     normalize_dashboard_service_types,
 )
 from envctl_engine.state.models import RequirementsResult, RunState
@@ -203,6 +204,60 @@ def _print_dashboard_snapshot(self: Any, state: RunState) -> None:
                 warn_color=yellow,
                 bad_color=red,
                 label_color=magenta,
+                dim=dim,
+                reset=reset,
+            )
+        services_map = item.get("services")
+        if isinstance(services_map, Mapping):
+            for service_type in sorted(str(key) for key in services_map if str(key) not in {"backend", "frontend"}):
+                service_entry = services_map.get(service_type)
+                service_name = ""
+                service_url = None
+                if isinstance(service_entry, Mapping):
+                    service_name = str(service_entry.get("name", "") or "").strip()
+                    service_url = service_entry.get("public_url") or service_entry.get("url")
+                service = state.services.get(service_name) if service_name else None
+                self._print_dashboard_service_row(
+                    label=display_service_type(service_type),
+                    service=service,
+                    url=str(service_url) if service_url else None,
+                    stopped_not_running=False,
+                    configured_not_running=False,
+                    ok_color=green,
+                    warn_color=yellow,
+                    bad_color=red,
+                    label_color=blue,
+                    dim=dim,
+                    reset=reset,
+                )
+        generic_configured = {
+            service_type
+            for service_type in configured_service_types
+            if service_type not in {"backend", "frontend"}
+        }
+        generic_stopped = {
+            service_type
+            for service_type in configured_missing_for_project
+            if service_type not in {"backend", "frontend"}
+        }
+        for service_type in sorted(generic_configured | generic_stopped):
+            service_name = f"{project} {display_service_type(service_type)}"
+            if service_name in state.services:
+                continue
+            self._print_dashboard_service_row(
+                label=display_service_type(service_type),
+                service=None,
+                url=None,
+                stopped_not_running=service_type in generic_stopped,
+                configured_not_running=bool(
+                    runs_disabled_dashboard
+                    and service_type in generic_configured
+                    and service_type not in generic_stopped
+                ),
+                ok_color=green,
+                warn_color=yellow,
+                bad_color=red,
+                label_color=blue,
                 dim=dim,
                 reset=reset,
             )
@@ -676,7 +731,7 @@ def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[st
         project = str(item.get("project", "") or "").strip()
         service_type = str(item.get("type", "") or "").strip().lower()
         name = str(item.get("name", "") or "").strip()
-        if not project or service_type not in {"backend", "frontend"}:
+        if not project or not normalize_dashboard_service_types([service_type]):
             continue
         stopped.setdefault(project, {})[service_type] = name
     return stopped
@@ -692,13 +747,13 @@ def _dashboard_visible_stopped_service_count(
     count = 0
     for project, services in stopped_services.items():
         for service_type, stopped_name in services.items():
-            service_name = stopped_name or f"{project} {service_type.title()}"
+            service_name = stopped_name or f"{project} {display_service_type(service_type)}"
             if service_name not in state.services and service_name not in seen:
                 seen.add(service_name)
                 count += 1
     for project, service_types in (configured_missing_services or {}).items():
         for service_type in service_types:
-            service_name = f"{project} {service_type.title()}"
+            service_name = f"{project} {display_service_type(service_type)}"
             if service_name not in state.services and service_name not in seen:
                 seen.add(service_name)
                 count += 1

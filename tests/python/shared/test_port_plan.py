@@ -41,6 +41,22 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(plans["redis"].final, 6379)
         self.assertEqual(plans["n8n"].final, 5678)
 
+    def test_additional_service_ports_use_configured_base_and_project_spacing(self) -> None:
+        planner = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            spacing=20,
+            scope_key="repo-a",
+            additional_service_bases={"voice-runtime": 8010},
+        )
+
+        main = planner.plan_project_stack("Main", index=0)
+        tree = planner.plan_project_stack("tree-alpha", index=0)
+
+        self.assertEqual(main["voice-runtime"].final, 8010)
+        self.assertIn("voice-runtime", tree)
+        self.assertEqual(tree["voice-runtime"].final - 8010, tree["backend"].final - 8000)
+
     def test_main_project_identity_is_normalized(self) -> None:
         planner = PortPlanner(backend_base=8000, frontend_base=9000, spacing=20, scope_key="repo-a")
 

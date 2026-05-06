@@ -7,9 +7,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 from envctl_engine.config import PortDefaults, StartupProfile, discover_local_config_state
-from envctl_engine.config.persistence import ManagedConfigValues, config_review_text
+from envctl_engine.config.persistence import (
+    ManagedConfigValues,
+    config_review_text,
+    managed_values_from_mapping,
+    managed_values_to_mapping,
+    render_managed_block,
+)
 from envctl_engine.ui.textual.screens.config_wizard import (
     _directory_validation_message,
+    _additional_service_input_id,
     _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
@@ -76,6 +83,76 @@ class ConfigWizardTextualTests(unittest.TestCase):
                     "review",
                 ],
             )
+
+
+    def test_advanced_flow_includes_additional_app_services_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            local_state = discover_local_config_state(repo)
+            app = run_config_wizard_textual(
+                local_state=local_state,
+                build_only=True,
+                default_wizard_type="advanced",
+            )
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+            self.assertIn("additional_services", getattr(app, "_steps"))  # noqa: SLF001
+            self.assertLess(  # noqa: SLF001
+                getattr(app, "_steps").index("ports"),
+                getattr(app, "_steps").index("additional_services"),
+            )
+
+    def test_additional_app_service_values_roundtrip_through_managed_config(self) -> None:
+        values = managed_values_from_mapping(
+            {
+                "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/start-voice.sh {port}",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER": "true",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD": "scripts/test-voice.sh",
+            }
+        )
+
+        self.assertEqual(values.additional_services[0].name, "voice-runtime")
+        rendered = managed_values_to_mapping(values)
+        self.assertEqual(rendered["ENVCTL_ADDITIONAL_SERVICES"], "voice-runtime")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD"], "scripts/start-voice.sh {port}")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE"], "8010")
+        self.assertIn("ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/test-voice.sh", render_managed_block(values))
+
+    def test_additional_app_service_wizard_inputs_add_one_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "voice-runtime").mkdir()
+            local_state = discover_local_config_state(repo)
+            app = run_config_wizard_textual(
+                local_state=local_state,
+                build_only=True,
+                default_wizard_type="advanced",
+            )
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+
+            async def run_test() -> None:
+                async with app.run_test():
+                    app.step_index = getattr(app, "_steps").index("additional_services")  # noqa: SLF001
+                    app._refresh_all()  # noqa: SLF001
+                    app.query_one(f"#{_additional_service_input_id("slug")}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id("dir_name")}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id("start_cmd")}").value = "scripts/start-voice.sh {port}"
+                    app.query_one(f"#{_additional_service_input_id("port_base")}").value = "8010"
+                    app.query_one(f"#{_additional_service_input_id("listener_expected")}").value = "true"
+                    app.query_one(f"#{_additional_service_input_id("test_cmd")}").value = "scripts/test-voice.sh"
+                    self.assertTrue(app._apply_additional_service_inputs())  # noqa: SLF001
+
+            import asyncio
+
+            asyncio.run(run_test())
+            self.assertEqual(app.values.additional_services[0].name, "voice-runtime")  # noqa: SLF001
+            self.assertEqual(app.values.additional_services[0].port_base, 8010)  # noqa: SLF001
 
     def test_dynamic_fields_follow_configured_components_across_modes(self) -> None:
         values = ManagedConfigValues(

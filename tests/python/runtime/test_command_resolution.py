@@ -62,6 +62,29 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.source, "configured")
             self.assertEqual(result.command, ["venv/bin/python", "app.py"])
 
+    def test_configured_additional_service_command_uses_service_prefix_and_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service_root = root / "voice-runtime"
+            service_root.mkdir(parents=True, exist_ok=True)
+            (service_root / "scripts").mkdir(parents=True, exist_ok=True)
+            (service_root / "scripts" / "start.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="voice-runtime",
+                project_root=root,
+                port=8010,
+                env={},
+                config_raw={
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/start.sh {port} {service_name}",
+                },
+                command_exists=lambda exe: False,
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(result.command, ["scripts/start.sh", "8010", "voice-runtime"])
+
     def test_configured_backend_generic_python_uses_prepared_venv_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

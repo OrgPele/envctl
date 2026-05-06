@@ -21,6 +21,8 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
+from envctl_engine.config import AppServiceConfig  # noqa: E402
+from envctl_engine.runtime.service_manager import ServiceManager  # noqa: E402
 
 
 class _SpinnerStub:
@@ -301,6 +303,195 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertIn("Main Frontend", records)
             self.assertEqual(attach_modes, [False])
             self.assertEqual(sorted(overlap_hits), ["backend", "frontend"])
+
+    def test_start_project_services_launches_configured_additional_app_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            (project_root / "backend").mkdir()
+            (project_root / "voice-runtime").mkdir()
+            run_dir = project_root / ".runtime" / "run-1"
+            launched: list[tuple[list[str], str, str, dict[str, str]]] = []
+
+            service = AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="voice-runtime",
+                start_cmd="scripts/start-voice.sh {port}",
+                port_base=8010,
+                listener_expected=True,
+            )
+
+            def start_background(command, *, cwd, env, stdout_path, stderr_path):  # noqa: ANN001
+                _ = stderr_path
+                launched.append((list(command), str(cwd), str(stdout_path), dict(env)))
+                return SimpleNamespace(pid=50000 + len(launched))
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(service,),
+                    app_service_by_name=lambda name: service if name == "voice-runtime" else None,
+                ),
+                services=ServiceManager(),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _project_service_env_internal=lambda context, requirements, route=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service_name: service_name in {"backend", "voice-runtime"},
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_command_source=lambda **kwargs: "configured",
+                _service_start_command_resolved=lambda service_name, project_root, port: (
+                    ["run", service_name, str(port)],
+                    "configured",
+                ),
+                _command_env=lambda port, extra=None: {"PORT": str(port), **dict(extra or {})},
+                _conflict_remaining={},
+                _emit=lambda event, **payload: None,
+                _detect_service_actual_port=lambda pid, requested_port, service_name: requested_port,
+                _listener_truth_enforced=lambda: False,
+                _service_listener_failure_detail=lambda log_path, pid: "",
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _process_runtime=lambda rt: SimpleNamespace(start_background=start_background),
+                _restart_service_types_for_project=lambda **kwargs: kwargs["default_service_types"],
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=9000),
+                    "voice-runtime": SimpleNamespace(final=8010),
+                },
+            )
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=RequirementsResult(project="Main", health="healthy", failures=[]),
+                run_id="run-1",
+                route=parse_route(["--main", "--entire-system"], env={}),
+            )
+
+            self.assertIn("Main Backend", records)
+            self.assertIn("Main Voice Runtime", records)
+            self.assertEqual(records["Main Voice Runtime"].type, "voice-runtime")
+            self.assertEqual(records["Main Voice Runtime"].actual_port, 8010)
+            self.assertEqual(launched[1][0], ["run", "voice-runtime", "8010"])
+            self.assertEqual(launched[1][1], str(project_root / "voice-runtime"))
+            self.assertTrue(launched[1][2].endswith("Main_voice-runtime.txt"))
+            self.assertEqual(launched[1][3]["ENVCTL_SERVICE_NAME"], "voice-runtime")
+
+    def test_start_project_services_preserves_configured_additional_service_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            (project_root / "backend").mkdir()
+            (project_root / "voice-runtime").mkdir()
+            (project_root / "worker").mkdir()
+            run_dir = project_root / ".runtime" / "run-1"
+            launch_order: list[str] = []
+
+            worker = AppServiceConfig(
+                name="worker",
+                env_suffix="WORKER",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="worker",
+                start_cmd="scripts/start-worker.sh",
+                listener_expected=False,
+                start_order=30,
+            )
+            voice = AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="voice-runtime",
+                start_cmd="scripts/start-voice.sh {port}",
+                port_base=8010,
+                listener_expected=True,
+                depends_on=("worker",),
+                start_order=40,
+            )
+            services = (worker, voice)
+
+            def start_background(command, *, cwd, env, stdout_path, stderr_path):  # noqa: ANN001
+                _ = command, cwd, env, stdout_path, stderr_path
+                launch_order.append(str(env.get("ENVCTL_SERVICE_NAME") or command[1]))
+                return SimpleNamespace(pid=50000 + len(launch_order))
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=services,
+                    app_service_by_name=lambda name: {service.name: service for service in services}.get(name),
+                ),
+                services=ServiceManager(),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _project_service_env_internal=lambda context, requirements, route=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service_name: service_name in {"backend", "worker", "voice-runtime"},
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_command_source=lambda **kwargs: "configured",
+                _service_start_command_resolved=lambda service_name, project_root, port: (
+                    ["run", service_name, str(port)],
+                    "configured",
+                ),
+                _command_env=lambda port, extra=None: {"PORT": str(port), **dict(extra or {})},
+                _conflict_remaining={},
+                _emit=lambda event, **payload: None,
+                _detect_service_actual_port=lambda pid, requested_port, service_name: requested_port,
+                _listener_truth_enforced=lambda: False,
+                _service_listener_failure_detail=lambda log_path, pid: "",
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _process_runtime=lambda rt: SimpleNamespace(start_background=start_background),
+                _restart_service_types_for_project=lambda **kwargs: kwargs["default_service_types"],
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=9000),
+                    "voice-runtime": SimpleNamespace(final=8010),
+                },
+            )
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=RequirementsResult(project="Main", health="healthy", failures=[]),
+                run_id="run-1",
+                route=parse_route(["--main", "--entire-system"], env={}),
+            )
+
+            self.assertIn("Main Worker", records)
+            self.assertIn("Main Voice Runtime", records)
+            self.assertEqual(launch_order, ["backend", "worker", "voice-runtime"])
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ def resolve_service_start_command(
     command_exists: CommandExists | None = None,
 ) -> CommandResolutionResult:
     exists = command_exists or _default_command_exists
-    env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
+    env_key = _service_start_command_key(service_name)
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
         _validate_configured_service_layout(
@@ -114,6 +114,11 @@ def resolve_service_start_command(
             command=_split_and_validate(
                 raw,
                 port=port,
+                replacements={
+                    "project_root": str(project_root),
+                    "service_dir": str(service_root),
+                    "service_name": service_name,
+                },
                 command_exists=exists,
                 search_roots=[service_root, project_root],
                 python_runner_prefix=python_runner_prefix,
@@ -430,7 +435,12 @@ def _override_value(key: str, *, env: Mapping[str, str], config_raw: Mapping[str
 
 
 def _configured_service_root(*, service_name: str, project_root: Path, config_raw: Mapping[str, str]) -> Path:
-    dir_key = "BACKEND_DIR" if service_name == "backend" else "FRONTEND_DIR"
+    if service_name == "backend":
+        dir_key = "BACKEND_DIR"
+    elif service_name == "frontend":
+        dir_key = "FRONTEND_DIR"
+    else:
+        dir_key = f"ENVCTL_SERVICE_{_service_env_suffix(service_name)}_DIR"
     raw_dir = str(config_raw.get(dir_key, "") or "").strip()
     if raw_dir:
         candidate = (project_root / raw_dir).resolve()
@@ -482,11 +492,15 @@ def _split_and_validate(
     raw: str,
     *,
     port: int,
+    replacements: Mapping[str, str] | None = None,
     command_exists: CommandExists,
     search_roots: list[Path] | None = None,
     python_runner_prefix: tuple[str, ...] = (),
 ) -> list[str]:
-    parsed = shlex.split(raw.replace("{port}", str(port)))
+    rendered = raw.replace("{port}", str(port))
+    for key, value in (replacements or {}).items():
+        rendered = rendered.replace(f"{{{key}}}", value)
+    parsed = shlex.split(rendered)
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
     parsed = _normalize_configured_python_command(parsed, runner_prefix=python_runner_prefix)
@@ -497,6 +511,17 @@ def _split_and_validate(
             f"Resolved command executable not found: {executable}",
         )
     return parsed
+
+
+def _service_start_command_key(service_name: str) -> str:
+    normalized = str(service_name).strip().lower()
+    if normalized in {"backend", "frontend"}:
+        return f"ENVCTL_{normalized.upper()}_START_CMD"
+    return f"ENVCTL_SERVICE_{_service_env_suffix(normalized)}_START_CMD"
+
+
+def _service_env_suffix(service_name: str) -> str:
+    return str(service_name).strip().upper().replace("-", "_")
 
 
 def _default_command_exists(executable: str) -> bool:

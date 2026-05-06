@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 
 APP_SERVICE_TYPES = ("backend", "frontend")
 APP_SERVICE_TYPE_SET = frozenset(APP_SERVICE_TYPES)
+_SERVICE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY = "dashboard_project_configured_services"
 DASHBOARD_CONFIGURED_SERVICE_TYPES_KEY = "dashboard_configured_service_types"
 DASHBOARD_STOPPED_SERVICES_KEY = "dashboard_stopped_services"
@@ -15,7 +17,7 @@ def normalize_dashboard_service_types(raw: object) -> list[str]:
     normalized = {
         str(service_type).strip().lower()
         for service_type in raw
-        if str(service_type).strip().lower() in APP_SERVICE_TYPE_SET
+        if _SERVICE_SLUG_RE.fullmatch(str(service_type).strip().lower())
     }
     return sorted(normalized)
 
@@ -59,8 +61,12 @@ def dashboard_configured_missing_services_by_project(
     for project, service_types in configured_services.items():
         stopped_for_project = stopped_services.get(project, {})
         for service_type in service_types:
-            service_name = f"{project} {service_type.title()}"
+            service_name = f"{project} {display_service_type(service_type)}"
             if service_name in active_service_names or service_type in stopped_for_project:
                 continue
             missing.setdefault(project, set()).add(service_type)
     return missing
+
+
+def display_service_type(service_type: str) -> str:
+    return " ".join(part.capitalize() for part in str(service_type).strip().split("-") if part)

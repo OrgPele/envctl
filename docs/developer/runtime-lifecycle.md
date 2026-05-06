@@ -231,6 +231,16 @@ Supporting policy belongs in:
 - `requirements_startup_domain.py`
 - `service_bootstrap_domain.py`
 
+### Application Service Descriptors
+
+Backend and frontend are built-in application services. Repositories may also declare additional long-running app services with `ENVCTL_ADDITIONAL_SERVICES` and per-service `ENVCTL_SERVICE_<SUFFIX>_*` keys. Startup keeps backend/frontend preparation specialized, then converts every selected built-in or additional app service into a `ServiceAttachDescriptor` before launching.
+
+The descriptor boundary is the handoff between config/startup policy and process attachment. It carries the canonical service slug, display name, working directory, log path, requested port, listener expectation, start callback, detected/public/health URLs, and ordering metadata. `ServiceManager.start_services_with_attach(...)` consumes those descriptors and still delegates each process to `start_service_with_retry(...)`, so additional services reuse the same retry, listener, and partial-failure cleanup contract as backend/frontend.
+
+Port planning is additive: backend/frontend and dependency ports keep their legacy fields, while each additional listener service receives a deterministic project-slot port from its configured `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE`. Non-listener workers use `listener_expected=false` and persist pid/log truth without requiring an HTTP port.
+
+Runtime artifacts remain backward compatible. Legacy `backend_*` and `frontend_*` runtime-map fields are preserved, and the generic `projects[project].services` map plus `service_to_url` / `service_to_health_url` expose every app service for dashboards, logs, health output, and external test tooling.
+
 ## Resume Lifecycle
 
 Resume is coordinated by `startup/resume_orchestrator.py`.

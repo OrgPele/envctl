@@ -14,28 +14,28 @@ from envctl_engine.dashboard_metadata import (
 class DashboardMetadataTests(unittest.TestCase):
     def test_normalize_dashboard_service_types_filters_normalizes_deduplicates_and_sorts(self) -> None:
         self.assertEqual(
-            normalize_dashboard_service_types([" Frontend ", "backend", "BACKEND", "worker", ""]),
-            ["backend", "frontend"],
+            normalize_dashboard_service_types([" Frontend ", "backend", "BACKEND", "worker", "voice-runtime", ""]),
+            ["backend", "frontend", "voice-runtime", "worker"],
         )
 
     def test_normalize_dashboard_service_types_returns_empty_for_malformed_or_unsupported_inputs(self) -> None:
         self.assertEqual(normalize_dashboard_service_types("backend"), [])
-        self.assertEqual(normalize_dashboard_service_types(["worker", "api", ""]), [])
+        self.assertEqual(normalize_dashboard_service_types(["Bad Service", "api_thing", ""]), [])
         self.assertEqual(normalize_dashboard_service_types(None), [])
 
     def test_dashboard_project_configured_services_from_metadata_ignores_malformed_entries(self) -> None:
         metadata: dict[str, object] = {
             DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY: {
-                " Main ": [" Backend ", "frontend", "worker"],
+                " Main ": [" Backend ", "frontend", "worker", "voice-runtime"],
                 " ": ["backend"],
-                "Empty": ["worker"],
+                "Empty": ["Bad Service"],
                 "Malformed": "backend",
             }
         }
 
         self.assertEqual(
             dashboard_project_configured_services_from_metadata(metadata),
-            {"Main": {"backend", "frontend"}},
+            {"Main": {"backend", "frontend", "voice-runtime", "worker"}},
         )
 
     def test_dashboard_project_configured_services_from_metadata_returns_empty_for_missing_or_malformed_contract(self) -> None:
@@ -49,26 +49,26 @@ class DashboardMetadataTests(unittest.TestCase):
         self.assertEqual(
             serialize_dashboard_project_configured_services(
                 {
-                    "zeta": ["frontend", "backend", "frontend"],
+                    "zeta": ["frontend", "backend", "frontend", "voice-runtime"],
                     " Alpha ": [" Frontend "],
                     " ": ["backend"],
-                    "empty": ["worker"],
+                    "empty": ["Bad Service"],
                 }
             ),
-            {"Alpha": ["frontend"], "zeta": ["backend", "frontend"]},
+            {"Alpha": ["frontend"], "zeta": ["backend", "frontend", "voice-runtime"]},
         )
 
     def test_dashboard_configured_missing_services_by_project_excludes_active_and_stopped_services(self) -> None:
         self.assertEqual(
             dashboard_configured_missing_services_by_project(
                 configured_services={
-                    "Main": {"backend", "frontend"},
-                    "Feature": {"backend", "frontend"},
+                    "Main": {"backend", "frontend", "voice-runtime"},
+                    "Feature": {"backend", "frontend", "voice-runtime"},
                 },
                 stopped_services={"Main": {"backend": "Main Backend"}},
-                active_service_names={"Main Frontend", "Feature Backend"},
+                active_service_names={"Main Frontend", "Feature Backend", "Feature Voice Runtime"},
             ),
-            {"Feature": {"frontend"}},
+            {"Feature": {"frontend"}, "Main": {"voice-runtime"}},
         )
 
 

@@ -424,6 +424,11 @@ class PythonEngineRuntime:
                 or config.raw.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS"),
                 config.db_port_base == 5432 and config.redis_port_base == 6379,
             ),
+            additional_service_bases={
+                service.name: int(service.port_base)
+                for service in getattr(config, "additional_services", ())
+                if getattr(service, "port_base", None)
+            },
         )
         self.requirements = RequirementsOrchestrator()
         self.services = ServiceManager()

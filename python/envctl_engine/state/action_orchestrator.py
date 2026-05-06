@@ -38,6 +38,26 @@ _LOG_ISSUE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+def _normalize_service_filter(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized.startswith("service:"):
+        normalized = normalized.split(":", 1)[1].strip()
+    return normalized
+
+
+def _project_name_for_service_record(service: ServiceRecord) -> str:
+    name = str(getattr(service, "name", "") or "").strip()
+    service_type = str(getattr(service, "type", "") or "").strip()
+    if service_type:
+        suffix = " " + " ".join(part.capitalize() for part in service_type.split("-") if part)
+        if name.endswith(suffix):
+            return name[: -len(suffix)].strip()
+    for suffix in (" Backend", " Frontend"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)].strip()
+    return ""
 _LOG_ISSUE_SCAN_MAX_BYTES = 512 * 1024
 _DEFAULT_LOG_ISSUE_LIMIT = 20
 
@@ -705,11 +725,15 @@ class StateActionOrchestrator:
                 if not target:
                     continue
                 for name in state.services:
-                    if name.lower() == target:
+                    service = state.services[name]
+                    service_type = str(getattr(service, "type", "") or "").strip().lower()
+                    if name.lower() == target or service_type == _normalize_service_filter(target):
                         selected.add(name)
         if project_filters:
-            for name in state.services:
-                project = self.runtime.project_name_from_service(name).lower()
+            for name, service in state.services.items():
+                project = (
+                    self.runtime.project_name_from_service(name) or _project_name_for_service_record(service)
+                ).lower()
                 if project and project in project_filters:
                     selected.add(name)
 
@@ -729,7 +753,10 @@ class StateActionOrchestrator:
         if not selected_services:
             return RunState(run_id=state.run_id, mode=state.mode)
         services = {name: svc for name, svc in state.services.items() if name in selected_services}
-        project_names = {self.runtime.project_name_from_service(name) for name in services}
+        project_names = {
+            self.runtime.project_name_from_service(name) or _project_name_for_service_record(service)
+            for name, service in services.items()
+        }
         requirements = {project: req for project, req in state.requirements.items() if project in project_names}
         return RunState(
             run_id=state.run_id,

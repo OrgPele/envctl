@@ -39,6 +39,10 @@ def service_types_from_route_services(route: Route) -> set[str]:
             selected.add("backend")
         elif normalized.endswith(" frontend") or normalized == "frontend":
             selected.add("frontend")
+        elif normalized.startswith("service:"):
+            selected.add(normalized.split(":", 1)[1].strip())
+        else:
+            selected.add(normalized)
     return selected
 
 

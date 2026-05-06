@@ -12,6 +12,7 @@ from envctl_engine.dashboard_metadata import (
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
     dashboard_configured_missing_services_by_project,
     dashboard_project_configured_services_from_metadata,
+    display_service_type,
     normalize_dashboard_service_types,
 )
 from envctl_engine.actions.actions_test import default_test_commands
@@ -1638,7 +1639,7 @@ class DashboardOrchestrator:
                 for service_name, _service_type, _stopped in services_by_project.get(project_name, [])
             }
             for service_type in service_types:
-                service_name = f"{project_name} {service_type.title()}"
+                service_name = f"{project_name} {display_service_type(service_type)}"
                 if service_name in active_names or service_name in existing:
                     continue
                 services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
@@ -1670,9 +1671,9 @@ class DashboardOrchestrator:
             project = str(item.get("project", "") or "").strip()
             service_type = str(item.get("type", "") or "").strip().lower()
             name = str(item.get("name", "") or "").strip()
-            if not project or service_type not in {"backend", "frontend"}:
+            if not project or not normalize_dashboard_service_types([service_type]):
                 continue
-            stopped.setdefault(project, {})[service_type] = name or f"{project} {service_type.title()}"
+            stopped.setdefault(project, {})[service_type] = name or f"{project} {display_service_type(service_type)}"
         return stopped
 
     @staticmethod
@@ -2044,13 +2045,13 @@ class DashboardOrchestrator:
                 selected.append(service_name)
                 seen_names.add(str(service_name))
         configured_missing_services = DashboardOrchestrator._dashboard_configured_missing_services_by_project(state)
-        for project_name, service_types in configured_missing_services.items():
+        for project_name, configured_types in configured_missing_services.items():
             if requested_projects and project_name.casefold() not in requested_projects:
                 continue
-            for service_type in sorted(service_types):
+            for service_type in sorted(configured_types):
                 if service_type.casefold() not in requested_types:
                     continue
-                service_name = f"{project_name} {service_type.title()}"
+                service_name = f"{project_name} {display_service_type(service_type)}"
                 if service_name in seen_names:
                     continue
                 selected.append(service_name)

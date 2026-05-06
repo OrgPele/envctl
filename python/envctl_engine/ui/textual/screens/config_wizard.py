@@ -17,6 +17,7 @@ from ....actions.actions_test import (
 from ....config import LocalConfigState, StartupProfile
 from ....config.persistence import (
     ConfigSaveResult,
+    ManagedAdditionalService,
     ManagedConfigValues,
     config_review_text,
     managed_values_from_local_state,
@@ -89,6 +90,15 @@ _PORT_FIELDS: tuple[tuple[str, str], ...] = (
     ("port_spacing", "Port spacing"),
 )
 
+_ADDITIONAL_SERVICE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("slug", "Service slug"),
+    ("dir_name", "Service directory"),
+    ("start_cmd", "Start command"),
+    ("port_base", "Base port"),
+    ("listener_expected", "Wait for listener"),
+    ("test_cmd", "Test command"),
+)
+
 _STEP_TITLES = {
     "welcome": "Welcome / Source",
     "default_mode": "Default Mode",
@@ -97,6 +107,7 @@ _STEP_TITLES = {
     "directories": "Directories",
     "commands": "Entrypoints / Commands",
     "ports": "Ports",
+    "additional_services": "Additional App Services",
     "review": "Review / Save",
 }
 
@@ -119,6 +130,9 @@ _STEP_HELP_TEXT = {
         "Set only the entrypoints and test commands needed by the components currently configured in main or trees."
     ),
     "ports": "Set only the ports needed by the components currently configured in main or trees.",
+    "additional_services": (
+        "Add one advanced application service beyond backend/frontend. Leave the slug blank to skip this step."
+    ),
     "review": "Review the generated managed .envctl block before saving it to the repository.",
 }
 
@@ -129,6 +143,10 @@ CONFIG_ROW_STYLES_CSS = selectable_list_row_css("config-row")
 
 def _port_input_id(field_name: str) -> str:
     return f"port-{_TEXTUAL_ID_INVALID_CHARS.sub('-', field_name).strip('-')}"
+
+
+def _additional_service_input_id(field_name: str) -> str:
+    return f"additional-service-{_TEXTUAL_ID_INVALID_CHARS.sub('-', field_name).strip('-')}"
 
 
 def _directory_input_id(field_name: str) -> str:
@@ -155,6 +173,9 @@ def _directory_field_name_from_input_id(input_id: str | None) -> str | None:
     for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
         if normalized == _directory_input_id(field_name):
             return field_name
+    for field_name, _label in _ADDITIONAL_SERVICE_FIELDS:
+        if normalized == _additional_service_input_id(field_name):
+            return f"additional_service_{field_name}"
     return None
 
 
@@ -186,6 +207,12 @@ def _entrypoint_validation_message(label: str, raw: str) -> str | None:
 
 def _field_placeholder(field_name: str) -> str:
     return {
+        "additional_service_slug": "optional; e.g. voice-runtime",
+        "additional_service_dir_name": "repo-relative; e.g. voice-runtime",
+        "additional_service_start_cmd": "e.g. scripts/envctl/start-voice-runtime.sh {port}",
+        "additional_service_port_base": "required when listener waiting is true; e.g. 8010",
+        "additional_service_listener_expected": "true or false",
+        "additional_service_test_cmd": "optional; e.g. scripts/envctl/test-voice-runtime.sh",
         "backend_start_cmd": "e.g. python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
         "frontend_start_cmd": "e.g. npm run dev -- --port {port} --host 127.0.0.1",
         "backend_test_cmd": "e.g. python -m pytest backend/tests",
@@ -194,7 +221,12 @@ def _field_placeholder(field_name: str) -> str:
     }.get(field_name, "")
 
 
-def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool) -> list[str]:
+def _wizard_steps(
+    values: ManagedConfigValues,
+    *,
+    include_service_startup: bool,
+    include_additional_services: bool = False,
+) -> list[str]:
     steps = ["welcome", "default_mode", "components"]
     if include_service_startup:
         steps.append("service_startup")
@@ -204,6 +236,8 @@ def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool)
         steps.append("commands")
     if _visible_port_fields(values):
         steps.append("ports")
+    if include_additional_services:
+        steps.append("additional_services")
     steps.append("review")
     return steps
 
@@ -242,6 +276,19 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         frontend_test_path=values.frontend_test_path,
         public_host=values.public_host,
         ui_visual_host=values.ui_visual_host,
+        additional_services=tuple(
+            ManagedAdditionalService(
+                name=service.name,
+                dir_name=service.dir_name,
+                start_cmd=service.start_cmd,
+                test_cmd=service.test_cmd,
+                port_base=service.port_base,
+                listener_expected=service.listener_expected,
+                enabled_main=service.enabled_main,
+                enabled_trees=service.enabled_trees,
+            )
+            for service in values.additional_services
+        ),
     )
 
 
@@ -599,6 +646,17 @@ def run_config_wizard_textual(
                             )
                             yield Static("", id=_directory_hint_id(field_name), classes="directory-hint")
                             yield Static("", id=_directory_error_id(field_name), classes="directory-error")
+                        for field_name, label in _ADDITIONAL_SERVICE_FIELDS:
+                            normalized_field = f"additional_service_{field_name}"
+                            yield Label(label, id=_field_label_id("directory", normalized_field))
+                            yield Input(
+                                value=str(self._field_value(normalized_field)),
+                                id=_additional_service_input_id(field_name),
+                                placeholder=_field_placeholder(normalized_field),
+                                classes="directory-field",
+                            )
+                            yield Static("", id=_directory_hint_id(normalized_field), classes="directory-hint")
+                            yield Static("", id=_directory_error_id(normalized_field), classes="directory-error")
                     with VerticalScroll(id="config-ports"):
                         for field_name, label in _PORT_FIELDS:
                             yield Label(label, id=_field_label_id("port", field_name))
@@ -716,6 +774,9 @@ def run_config_wizard_textual(
         def _profile_for_mode(self, mode: str) -> StartupProfile:
             return self.values.trees_profile if mode == "trees" else self.values.main_profile
 
+        def _should_show_additional_services_step(self) -> bool:
+            return default_wizard_type == "advanced" or bool(self.values.additional_services)
+
         def _should_show_service_startup_step(self) -> bool:
             profiles = (self.values.main_profile, self.values.trees_profile)
             backend_enabled = any(profile.backend_enable for profile in profiles)
@@ -729,6 +790,7 @@ def run_config_wizard_textual(
             self._steps = _wizard_steps(
                 self.values,
                 include_service_startup=self._should_show_service_startup_step(),
+                include_additional_services=self._should_show_additional_services_step(),
             )
             if not self._steps:
                 self.step_index = 0
@@ -775,8 +837,15 @@ def run_config_wizard_textual(
             review_scroll = self.query_one("#config-review-scroll", VerticalScroll)
             review = self.query_one("#config-review", Static)
             welcome.display = step == "welcome"
-            list_view.display = step not in {"welcome", "directories", "commands", "ports", "review"}
-            directories.display = step in {"directories", "commands"}
+            list_view.display = step not in {
+                "welcome",
+                "directories",
+                "commands",
+                "ports",
+                "additional_services",
+                "review",
+            }
+            directories.display = step in {"directories", "commands", "additional_services"}
             ports.display = step == "ports"
             review_scroll.display = step == "review"
             empty.display = False
@@ -832,6 +901,9 @@ def run_config_wizard_textual(
                         "No ports need configuration for the components currently configured in main or trees."
                     )
                     empty.display = True
+                return
+            if step == "additional_services":
+                self._sync_additional_service_inputs()
                 return
             if step == "review":
                 review.update(
@@ -950,9 +1022,18 @@ def run_config_wizard_textual(
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
-            for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
+            additional_fields = tuple(
+                (f"additional_service_{name}", label) for name, label in _ADDITIONAL_SERVICE_FIELDS
+            )
+            all_fields = (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS, *additional_fields)
+            for field_name, _label in all_fields:
                 label = self.query_one(f"#{_field_label_id('directory', field_name)}", Label)
-                directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
+                input_id = (
+                    _additional_service_input_id(field_name.removeprefix("additional_service_"))
+                    if field_name.startswith("additional_service_")
+                    else _directory_input_id(field_name)
+                )
+                directory_input = self.query_one(f"#{input_id}", Input)
                 hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
                 error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
                 label.display = field_name in visible_names
@@ -1050,6 +1131,12 @@ def run_config_wizard_textual(
                     status.update("No entrypoints or test commands are needed for the configured components.")
                 self.refresh_bindings()
                 return
+            if step == "additional_services":
+                fields = tuple((f"additional_service_{name}", label) for name, label in _ADDITIONAL_SERVICE_FIELDS)
+                service_error = self._first_directory_error(visible_fields=fields)
+                status.update(service_error or "Leave slug blank to skip, or enter service details and continue.")
+                self.refresh_bindings()
+                return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
                 if visible_fields:
@@ -1068,14 +1155,22 @@ def run_config_wizard_textual(
                 if step == "components":
                     list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
                 focus_selectable_list(self, list_view, list_view.index)
-            elif step in {"directories", "commands"}:
+            elif step in {"directories", "commands", "additional_services"}:
                 visible_fields = (
                     _visible_directory_fields(self.values)
                     if step == "directories"
+                    else tuple((f"additional_service_{name}", label) for name, label in _ADDITIONAL_SERVICE_FIELDS)
+                    if step == "additional_services"
                     else _visible_command_fields(self.values)
                 )
                 if visible_fields:
-                    self.query_one(f"#{_directory_input_id(visible_fields[0][0])}", Input).focus()
+                    first_field = visible_fields[0][0]
+                    input_id = (
+                        _additional_service_input_id(first_field.removeprefix("additional_service_"))
+                        if first_field.startswith("additional_service_")
+                        else _directory_input_id(first_field)
+                    )
+                    self.query_one(f"#{input_id}", Input).focus()
                 else:
                     self.query_one("#btn-next", Button).focus()
             elif step == "ports":
@@ -1090,6 +1185,18 @@ def run_config_wizard_textual(
                 self.query_one("#btn-next", Button).focus()
 
         def _field_value(self, field_name: str) -> int | str:
+            if field_name.startswith("additional_service_"):
+                service = self.values.additional_services[0] if self.values.additional_services else None
+                subfield = field_name.removeprefix("additional_service_")
+                if service is None:
+                    return "true" if subfield == "listener_expected" else ""
+                if subfield == "slug":
+                    return service.name
+                if subfield == "port_base":
+                    return "" if service.port_base is None else service.port_base
+                if subfield == "listener_expected":
+                    return "true" if service.listener_expected else "false"
+                return getattr(service, subfield, "")
             if field_name == "backend_dir_name":
                 return self.values.backend_dir_name
             if field_name == "frontend_dir_name":
@@ -1178,6 +1285,11 @@ def run_config_wizard_textual(
             for candidate, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
                 if candidate == field_name:
                     return label
+            if field_name.startswith("additional_service_"):
+                subfield = field_name.removeprefix("additional_service_")
+                for candidate, label in _ADDITIONAL_SERVICE_FIELDS:
+                    if candidate == subfield:
+                        return label
             return "Directory"
 
         def _config_key_for_field(self, field_name: str) -> str | None:
@@ -1223,6 +1335,8 @@ def run_config_wizard_textual(
                 return self._test_command_hint(field_name, value=value)
             if field_name == "frontend_test_path":
                 return self._frontend_test_path_hint(value=value)
+            if field_name.startswith("additional_service_"):
+                return "Optional advanced service field. Leave slug blank to skip adding a service."
             if field_name in {"backend_start_cmd", "frontend_start_cmd"} and not value.strip():
                 return "No entrypoint detected; enter the command envctl should run for this service."
             return ""
@@ -1288,6 +1402,8 @@ def run_config_wizard_textual(
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
             label = self._directory_label(field_name)
             value = str(self._field_value(field_name)) if raw is None else str(raw)
+            if field_name.startswith("additional_service_"):
+                return self._additional_service_field_error(field_name, value=value)
             if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
                 return _entrypoint_validation_message(label, value)
             if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
@@ -1299,7 +1415,12 @@ def run_config_wizard_textual(
             return _directory_validation_message(local_state.base_dir, label, value)
 
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
-            directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
+            input_id = (
+                _additional_service_input_id(field_name.removeprefix("additional_service_"))
+                if field_name.startswith("additional_service_")
+                else _directory_input_id(field_name)
+            )
+            directory_input = self.query_one(f"#{input_id}", Input)
             error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
             message = self._directory_validation_error(
                 field_name, raw=raw if raw is not None else directory_input.value
@@ -1566,13 +1687,24 @@ def run_config_wizard_textual(
             step = self._current_step()
             if step in {"directories", "commands"} and not self._apply_directory_inputs():
                 return
+            if step == "additional_services" and not self._apply_additional_service_inputs():
+                return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"components", "service_startup", "directories", "commands", "ports", "review"}:
+            validation_steps = {
+                "components",
+                "service_startup",
+                "directories",
+                "commands",
+                "ports",
+                "additional_services",
+                "review",
+            }
+            if step in validation_steps:
                 validation = validate_managed_values(
                     self.values,
-                    require_directories=step in {"directories", "commands", "ports", "review"},
-                    require_entrypoints=step in {"commands", "ports", "review"},
+                    require_directories=step in {"directories", "commands", "ports", "additional_services", "review"},
+                    require_entrypoints=step in {"commands", "ports", "additional_services", "review"},
                 )
                 if not validation.valid:
                     self._refresh_status(validation.errors[0])
@@ -1613,6 +1745,89 @@ def run_config_wizard_textual(
                     directory_input.focus()
                     return False
                 setattr(self.values, field_name, raw)
+            return True
+
+        def _sync_additional_service_inputs(self) -> None:
+            fields = tuple((f"additional_service_{name}", label) for name, label in _ADDITIONAL_SERVICE_FIELDS)
+            self._sync_directory_inputs(fields)
+
+        def _additional_service_field_error(self, field_name: str, *, value: str) -> str | None:
+            slug_widget = self.query_one(f"#{_additional_service_input_id('slug')}", Input)
+            slug = str(slug_widget.value or "").strip().lower()
+            subfield = field_name.removeprefix("additional_service_")
+            if not slug and not value.strip():
+                return None
+            if subfield == "slug":
+                if not re.fullmatch(r"[a-z][a-z0-9-]*", value.strip()):
+                    return "Service slug must be lowercase kebab-case."
+                reserved_names = {
+                    "backend",
+                    "frontend",
+                    "postgres",
+                    "redis",
+                    "supabase",
+                    "n8n",
+                    "all",
+                    "services",
+                    "dependencies",
+                }
+                if value.strip() in reserved_names:
+                    return "Service slug is reserved."
+            if subfield == "dir_name" and value.strip():
+                return _directory_validation_message(local_state.base_dir, "Service directory", value)
+            if subfield == "start_cmd" and slug:
+                return _entrypoint_validation_message("Start command", value)
+            if subfield == "port_base":
+                listener_raw = str(
+                    self.query_one(f"#{_additional_service_input_id('listener_expected')}", Input).value or "true"
+                ).strip().lower()
+                listener_expected = listener_raw not in {"0", "false", "no", "off"}
+                if listener_expected and not value.strip():
+                    return "Base port is required when listener waiting is true."
+                if value.strip() and (not value.strip().isdigit() or int(value.strip()) < 1):
+                    return "Base port must be a positive integer."
+            if subfield == "listener_expected" and value.strip().lower() not in {
+                "1",
+                "0",
+                "true",
+                "false",
+                "yes",
+                "no",
+                "on",
+                "off",
+            }:
+                return "Wait for listener must be true or false."
+            return None
+
+        def _apply_additional_service_inputs(self) -> bool:
+            values_by_field: dict[str, str] = {}
+            for field_name, _label in _ADDITIONAL_SERVICE_FIELDS:
+                input_widget = self.query_one(f"#{_additional_service_input_id(field_name)}", Input)
+                raw = str(input_widget.value or "").strip()
+                normalized_name = f"additional_service_{field_name}"
+                error = self._additional_service_field_error(normalized_name, value=raw)
+                self._refresh_directory_validation(normalized_name, raw=raw)
+                if error is not None:
+                    self._refresh_status(error)
+                    input_widget.focus()
+                    return False
+                values_by_field[field_name] = raw
+            slug = values_by_field["slug"].lower()
+            remaining = self.values.additional_services[1:] if self.values.additional_services else ()
+            if not slug:
+                self.values.additional_services = remaining
+                return True
+            listener_expected = values_by_field["listener_expected"].lower() not in {"0", "false", "no", "off"}
+            port_base = int(values_by_field["port_base"]) if values_by_field["port_base"] else None
+            service = ManagedAdditionalService(
+                name=slug,
+                dir_name=values_by_field["dir_name"],
+                start_cmd=values_by_field["start_cmd"],
+                test_cmd=values_by_field["test_cmd"],
+                port_base=port_base,
+                listener_expected=listener_expected,
+            )
+            self.values.additional_services = (service, *remaining)
             return True
 
         def _apply_port_inputs(self) -> bool:

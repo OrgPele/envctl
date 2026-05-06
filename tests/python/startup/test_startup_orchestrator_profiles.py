@@ -12,6 +12,7 @@ from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.startup.finalization import build_success_run_state
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RequirementsResult
+from envctl_engine.config import AppServiceConfig
 
 
 class StartupOrchestratorProfileTests(unittest.TestCase):
@@ -37,9 +38,10 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         *,
         enabled_service_types: set[str],
         context_names: list[str],
+        additional_services: tuple[AppServiceConfig, ...] = (),
     ):
         runtime = SimpleNamespace(
-            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            config=SimpleNamespace(runtime_scope_id="scope-1", additional_services=additional_services),
             _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
             _service_enabled_for_mode=lambda mode, service_name: service_name in enabled_service_types,
         )
@@ -76,6 +78,27 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         self.assertEqual(
             state.metadata.get("dashboard_project_configured_services"),
             {"Main": ["backend", "frontend"]},
+        )
+
+    def test_build_run_state_includes_project_scoped_additional_services(self) -> None:
+        voice = AppServiceConfig(
+            name="voice-runtime",
+            env_suffix="VOICE_RUNTIME",
+            enabled_main=True,
+            enabled_trees=True,
+            dir_name="voice-runtime",
+            start_cmd="scripts/start-voice.sh {port}",
+            port_base=8010,
+        )
+        state = self._build_run_state_with_configured_services(
+            enabled_service_types={"backend", "voice-runtime"},
+            context_names=["Main"],
+            additional_services=(voice,),
+        )
+
+        self.assertEqual(
+            state.metadata.get("dashboard_project_configured_services"),
+            {"Main": ["backend", "voice-runtime"]},
         )
 
     def test_build_run_state_omits_project_scoped_configured_services_when_no_services_enabled(self) -> None:

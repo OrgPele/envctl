@@ -273,7 +273,76 @@ def _dependency_projector_env(
             env.update(
                 definition.env_projector(runtime=runtime, context=context, requirements=requirements, route=route)
             )
+    env.update(_service_projector_env(runtime, context))
     return env
+
+
+def _service_projector_env(runtime: Any, context: Any) -> dict[str, str]:
+    env: dict[str, str] = {}
+    host = "localhost"
+    config = getattr(runtime, "config", None)
+    public_host = getattr(config, "public_host", None)
+    if isinstance(public_host, str) and public_host.strip():
+        host = public_host.strip()
+    for service_name, plan in getattr(context, "ports", {}).items():
+        normalized = str(service_name).strip().lower()
+        port = getattr(plan, "final", None) or getattr(plan, "assigned", None) or getattr(plan, "requested", None)
+        if not isinstance(port, int) or port <= 0:
+            continue
+        url = f"http://{host}:{port}"
+        if normalized in {"backend", "frontend"}:
+            suffix = normalized.upper()
+            env[f"{suffix}_PORT"] = str(port)
+            env[f"{suffix}_HOST"] = host
+            env[f"{suffix}_URL"] = url
+        service_suffix = normalized.upper().replace("-", "_")
+        env[f"SERVICE_{service_suffix}_PORT"] = str(port)
+        env[f"SERVICE_{service_suffix}_HOST"] = host
+        env[f"SERVICE_{service_suffix}_URL"] = url
+        env[f"SERVICE_{service_suffix}_PUBLIC_URL"] = _configured_service_public_url(config, normalized, host, port)
+        health_url = _configured_service_health_url(config, normalized, host, port)
+        if health_url:
+            env[f"SERVICE_{service_suffix}_HEALTH_URL"] = health_url
+    return env
+
+
+def _configured_service_public_url(config: Any, service_name: str, host: str, port: int) -> str:
+    service = _config_app_service_by_name(config, service_name)
+    template = str(getattr(service, "public_url_template", "") or "") if service is not None else ""
+    if template:
+        return _render_service_url_template(template, service_name=service_name, host=host, port=port)
+    return f"http://{host}:{port}"
+
+
+def _configured_service_health_url(config: Any, service_name: str, host: str, port: int) -> str:
+    service = _config_app_service_by_name(config, service_name)
+    template = str(getattr(service, "health_url_template", "") or "") if service is not None else ""
+    if not template:
+        return ""
+    return _render_service_url_template(template, service_name=service_name, host=host, port=port)
+
+
+def _render_service_url_template(template: str, *, service_name: str, host: str, port: int) -> str:
+    suffix = service_name.upper().replace("-", "_")
+    rendered = template
+    replacements = {
+        f"${{ENVCTL_SOURCE_SERVICE_{suffix}_HOST}}": host,
+        f"${{ENVCTL_SOURCE_SERVICE_{suffix}_PORT}}": str(port),
+        f"${{ENVCTL_SOURCE_SERVICE_{suffix}_URL}}": f"http://{host}:{port}",
+    }
+    for marker, value in replacements.items():
+        rendered = rendered.replace(marker, value)
+    return rendered
+
+
+def _config_app_service_by_name(config: Any, service_name: str) -> object | None:
+    helper = getattr(config, "app_service_by_name", None)
+    if callable(helper):
+        return helper(service_name)
+    for service in getattr(config, "additional_services", ()):
+        if str(getattr(service, "name", "")).strip().lower() == service_name:
+            return service
+    return None
 
 
 def _apply_route_log_overrides(env: dict[str, str], route: Route | None) -> None:
@@ -413,6 +482,17 @@ def _dependency_template_sections_for_service(
                 tuple(getattr(config, "frontend_dependency_env_template_errors", ())),
             )
         )
+    service_present = getattr(config, "service_dependency_env_section_present", {})
+    if isinstance(service_present, dict) and bool(service_present.get(normalized_service)):
+        templates = getattr(config, "service_dependency_env_templates", {})
+        errors = getattr(config, "service_dependency_env_template_errors", {})
+        sections.append(
+            (
+                f"service {normalized_service} launch env",
+                tuple(templates.get(normalized_service, ())) if isinstance(templates, dict) else (),
+                tuple(errors.get(normalized_service, ())) if isinstance(errors, dict) else (),
+            )
+        )
     normalized_mode = "trees" if str(mode).strip().lower() == "trees" else "main"
     mode_service_prefix = f"{normalized_mode}_{normalized_service}"
     if normalized_service in {"backend", "frontend"} and bool(
@@ -423,6 +503,18 @@ def _dependency_template_sections_for_service(
                 f"{normalized_mode} {normalized_service} launch env",
                 tuple(getattr(config, f"{mode_service_prefix}_dependency_env_templates", ())),
                 tuple(getattr(config, f"{mode_service_prefix}_dependency_env_template_errors", ())),
+            )
+        )
+    mode_present = getattr(config, "mode_service_dependency_env_section_present", {})
+    mode_key = (normalized_mode, normalized_service)
+    if isinstance(mode_present, dict) and bool(mode_present.get(mode_key)):
+        templates = getattr(config, "mode_service_dependency_env_templates", {})
+        errors = getattr(config, "mode_service_dependency_env_template_errors", {})
+        sections.append(
+            (
+                f"{normalized_mode} service {normalized_service} launch env",
+                tuple(templates.get(mode_key, ())) if isinstance(templates, dict) else (),
+                tuple(errors.get(mode_key, ())) if isinstance(errors, dict) else (),
             )
         )
     return sections
@@ -437,6 +529,8 @@ def _any_dependency_template_section_present(config: Any) -> bool:
         or getattr(config, "main_frontend_dependency_env_section_present", False)
         or getattr(config, "trees_backend_dependency_env_section_present", False)
         or getattr(config, "trees_frontend_dependency_env_section_present", False)
+        or bool(getattr(config, "service_dependency_env_section_present", {}))
+        or bool(getattr(config, "mode_service_dependency_env_section_present", {}))
     )
 
 

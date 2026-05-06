@@ -10,6 +10,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
+from envctl_engine.actions.action_test_support import TestTargetContext
+from envctl_engine.config import AppServiceConfig
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.target_selector import TargetSelection
@@ -50,6 +52,12 @@ class _RuntimeStub:
 
     def _emit(self, event: str, **payload: object) -> None:
         self._emitted.append((event, dict(payload)))
+
+    def split_command(self, raw: str, *, replacements: dict[str, str]):  # noqa: ANN001
+        rendered = raw
+        for key, value in replacements.items():
+            rendered = rendered.replace("{" + key + "}", value)
+        return rendered.split()
 
     def _save_resume_state(self, *, state, emit, runtime_map_builder):  # noqa: ANN001, ARG002
         self._latest_state = state
@@ -155,6 +163,49 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(len(targets), 2)
         flush_pending.assert_not_called()
+
+    def test_build_test_execution_specs_uses_additional_service_test_command_for_service_target(self) -> None:
+        runtime = _RuntimeStub()
+        service = AppServiceConfig(
+            name="voice-runtime",
+            env_suffix="VOICE_RUNTIME",
+            enabled_main=True,
+            enabled_trees=True,
+            dir_name="voice-runtime",
+            start_cmd="scripts/start-voice.sh {port}",
+            test_cmd="scripts/test-voice.sh {service_name}",
+            port_base=8010,
+        )
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={
+                "ENVCTL_BACKEND_TEST_CMD": "pytest backend/tests",
+                "ENVCTL_FRONTEND_TEST_CMD": "pnpm test",
+            },
+            frontend_test_path="",
+            additional_services=(service,),
+        )
+        orchestrator = ActionCommandOrchestrator(runtime)
+        target = SimpleNamespace(name="Main", root=Path("/tmp/repo"))
+        route = Route(command="test", mode="main", flags={"services": ["voice-runtime"]})
+
+        include_backend, include_frontend = orchestrator._test_service_selection(route, None, None)  # noqa: SLF001
+        specs = orchestrator._build_test_execution_specs(  # noqa: SLF001
+            route=route,
+            targets=[target],
+            target_contexts=[TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            run_all=False,
+            untested=False,
+        )
+
+        self.assertFalse(include_backend)
+        self.assertFalse(include_frontend)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.command, ["scripts/test-voice.sh", "voice-runtime"])
+        self.assertEqual(specs[0].spec.cwd, Path("/tmp/repo/voice-runtime"))
+        self.assertEqual(specs[0].spec.source, "configured_service:voice-runtime")
 
     def test_pr_success_handler_clears_dashboard_cache_and_emits_created_url_status(self) -> None:
         runtime = _RuntimeStub()

@@ -56,15 +56,48 @@ class FrontendProjectionTests(unittest.TestCase):
 
         runtime = build_runtime_map(state)
 
-        self.assertEqual(
-            runtime["projects"]["Tree Alpha"],
-            {
-                "backend_port": 8111,
-                "frontend_port": 9122,
-            },
-        )
+        self.assertEqual(runtime["projects"]["Tree Alpha"]["backend_port"], 8111)
+        self.assertEqual(runtime["projects"]["Tree Alpha"]["frontend_port"], 9122)
         self.assertEqual(runtime["service_to_actual_port"]["Tree Alpha Frontend"], 9122)
         self.assertEqual(runtime["port_to_service"][9122], "Tree Alpha Frontend")
+
+    def test_runtime_map_includes_generic_project_services(self) -> None:
+        state = self._state()
+        state.services["Tree Alpha Voice Runtime"] = ServiceRecord(
+            name="Tree Alpha Voice Runtime",
+            type="voice-runtime",
+            cwd="/tmp/tree-alpha/voice-runtime",
+            requested_port=8010,
+            actual_port=8015,
+            status="running",
+            listener_expected=True,
+            public_url="https://voice.example.test",
+            health_url="https://voice.example.test/readyz",
+        )
+        state.services["Tree Alpha Worker"] = ServiceRecord(
+            name="Tree Alpha Worker",
+            type="worker",
+            cwd="/tmp/tree-alpha/backend",
+            requested_port=None,
+            actual_port=None,
+            status="running",
+            listener_expected=False,
+        )
+
+        runtime = build_runtime_map(state)
+        project = runtime["projects"]["Tree Alpha"]
+
+        self.assertEqual(project["backend_port"], 8111)
+        self.assertEqual(project["frontend_port"], 9122)
+        self.assertEqual(project["services"]["voice-runtime"]["port"], 8015)
+        self.assertEqual(project["services"]["voice-runtime"]["url"], "http://localhost:8015")
+        self.assertEqual(project["services"]["voice-runtime"]["public_url"], "https://voice.example.test")
+        self.assertEqual(project["services"]["voice-runtime"]["health_url"], "https://voice.example.test/readyz")
+        self.assertEqual(runtime["service_to_url"]["Tree Alpha Voice Runtime"], "https://voice.example.test")
+        self.assertEqual(runtime["service_to_health_url"]["Tree Alpha Voice Runtime"], "https://voice.example.test/readyz")
+        self.assertEqual(project["services"]["worker"]["port"], None)
+        self.assertFalse(project["services"]["worker"]["listener_expected"])
+        self.assertEqual(runtime["service_to_actual_port"]["Tree Alpha Voice Runtime"], 8015)
 
     def test_multi_project_projection_uses_per_project_backend_port(self) -> None:
         state = RunState(

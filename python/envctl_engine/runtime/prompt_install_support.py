@@ -413,16 +413,17 @@ def resolve_codex_direct_prompt_body(
     if not codex_preset_uses_direct_submission(normalized_preset):
         raise LookupError(f"Preset is not configured for direct Codex submission: {normalized_preset}")
     home = _user_home_from_env(env)
+    use_user_files = env is None or "HOME" in env or "XDG_CONFIG_HOME" in env
     skill_path = _codex_skill_markdown_path(preset=normalized_preset, home=home)
     target_path = _target_path(cli_name="codex", preset=normalized_preset, home=home, env=env)
     legacy_path = _legacy_codex_prompt_path(preset=normalized_preset, home=home)
-    if skill_path.is_file():
+    if use_user_files and skill_path.is_file():
         body = _extract_codex_skill_prompt_body(skill_path.read_text(encoding="utf-8"), preset=normalized_preset)
         return _render_direct_prompt_arguments(body, arguments=arguments)
-    if target_path.is_file():
+    if use_user_files and target_path.is_file():
         raw = target_path.read_text(encoding="utf-8")
         template = _parse_template(name=normalized_preset, raw=raw)
-    elif legacy_path.is_file():
+    elif use_user_files and legacy_path.is_file():
         raw = legacy_path.read_text(encoding="utf-8")
         template = _parse_template(name=normalized_preset, raw=raw)
     else:

@@ -35,6 +35,7 @@ class PortPlanner:
         preferred_port_strategy: str = "project_slot",
         scope_key: str | None = None,
         dynamic_main_dependency_ports: bool = False,
+        additional_service_bases: dict[str, int] | None = None,
     ) -> None:
         self.backend_base = backend_base
         self.frontend_base = frontend_base
@@ -58,6 +59,11 @@ class PortPlanner:
         self.preferred_port_strategy = strategy
         self.scope_key = str(scope_key or "global").strip() or "global"
         self.dynamic_main_dependency_ports = bool(dynamic_main_dependency_ports)
+        self.additional_service_bases = {
+            str(name).strip().lower(): int(port)
+            for name, port in (additional_service_bases or {}).items()
+            if str(name).strip() and int(port) > 0
+        }
         self.max_port: Final[int] = 65000
 
     def plan_project(
@@ -143,6 +149,19 @@ class PortPlanner:
                 ),
             }
         )
+        for service_name, base_port in self.additional_service_bases.items():
+            requested_port = requested.get(
+                service_name,
+                self._preferred_port(project, service_name, base_port, index=index),
+            )
+            plans[service_name] = PortPlan(
+                project=project,
+                requested=requested_port,
+                assigned=requested_port,
+                final=requested_port,
+                source=sources.get(service_name, "planner"),
+                retries=retries.get(service_name, 0),
+            )
         return plans
 
     def reserve_next(self, start_port: int, owner: str) -> int:

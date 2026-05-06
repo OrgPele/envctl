@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import os
 from pathlib import Path
 import tempfile
@@ -36,6 +37,22 @@ from envctl_engine.shared.parsing import parse_int
 
 
 @dataclass(slots=True)
+class ManagedAdditionalService:
+    name: str
+    dir_name: str = ""
+    start_cmd: str = ""
+    test_cmd: str = ""
+    port_base: int | None = None
+    listener_expected: bool = True
+    enabled_main: bool = True
+    enabled_trees: bool = True
+
+    @property
+    def env_suffix(self) -> str:
+        return _additional_service_env_suffix(self.name)
+
+
+@dataclass(slots=True)
 class ManagedConfigValues:
     default_mode: str
     main_profile: StartupProfile
@@ -53,6 +70,7 @@ class ManagedConfigValues:
     frontend_test_path: str = ""
     public_host: str = "localhost"
     ui_visual_host: str = "localhost"
+    additional_services: tuple[ManagedAdditionalService, ...] = ()
 
 
 @dataclass(slots=True)
@@ -136,6 +154,7 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
         frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
         public_host=_resolved_public_host(values),
         ui_visual_host=_resolved_ui_visual_host(values),
+        additional_services=_resolved_additional_services(values),
         main_profile=main_profile,
         trees_profile=trees_profile,
         port_defaults=port_defaults,
@@ -177,6 +196,24 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         rendered[definition.enable_keys_for_mode("trees")[0]] = _bool_text(
             values.trees_profile.dependency_enabled(definition.id)
         )
+    if values.additional_services:
+        rendered["ENVCTL_ADDITIONAL_SERVICES"] = ",".join(service.name for service in values.additional_services)
+        for service in values.additional_services:
+            prefix = f"ENVCTL_SERVICE_{service.env_suffix}_"
+            if service.enabled_main == service.enabled_trees:
+                rendered[prefix + "ENABLE"] = _bool_text(service.enabled_main)
+            else:
+                rendered[prefix + "MAIN_ENABLE"] = _bool_text(service.enabled_main)
+                rendered[prefix + "TREES_ENABLE"] = _bool_text(service.enabled_trees)
+            if service.dir_name:
+                rendered[prefix + "DIR"] = service.dir_name
+            if service.start_cmd:
+                rendered[prefix + "START_CMD"] = service.start_cmd
+            if service.port_base is not None:
+                rendered[prefix + "PORT_BASE"] = str(service.port_base)
+            rendered[prefix + "EXPECT_LISTENER"] = _bool_text(service.listener_expected)
+            if service.test_cmd:
+                rendered[prefix + "TEST_CMD"] = service.test_cmd
     return rendered
 
 
@@ -211,6 +248,19 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
         "network": {
             "public_host": values.public_host,
         },
+        "additional_services": [
+            {
+                "name": service.name,
+                "dir": service.dir_name,
+                "start_cmd": service.start_cmd,
+                "test_cmd": service.test_cmd,
+                "port_base": service.port_base,
+                "listener_expected": service.listener_expected,
+                "enabled_main": service.enabled_main,
+                "enabled_trees": service.enabled_trees,
+            }
+            for service in values.additional_services
+        ],
         "profiles": {
             "main": {
                 "startup_enabled": values.main_profile.startup_enable,
@@ -304,6 +354,37 @@ def managed_values_from_payload(
     if isinstance(network, dict) and network.get("public_host") is not None:
         mapping["ENVCTL_PUBLIC_HOST"] = str(network["public_host"])
 
+    additional_services = payload.get("additional_services")
+    if isinstance(additional_services, list):
+        names: list[str] = []
+        pending: dict[str, dict[str, object]] = {}
+        for item in additional_services:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip().lower()
+            if not name:
+                continue
+            names.append(name)
+            pending[name] = item
+        if names:
+            mapping["ENVCTL_ADDITIONAL_SERVICES"] = ",".join(names)
+            for name, item in pending.items():
+                prefix = f"ENVCTL_SERVICE_{_additional_service_env_suffix(name)}_"
+                if item.get("dir") is not None:
+                    mapping[prefix + "DIR"] = str(item["dir"])
+                if item.get("start_cmd") is not None:
+                    mapping[prefix + "START_CMD"] = str(item["start_cmd"])
+                if item.get("test_cmd") is not None:
+                    mapping[prefix + "TEST_CMD"] = str(item["test_cmd"])
+                if item.get("port_base") is not None:
+                    mapping[prefix + "PORT_BASE"] = str(item["port_base"])
+                if item.get("listener_expected") is not None:
+                    mapping[prefix + "EXPECT_LISTENER"] = _bool_text(bool(item["listener_expected"]))
+                if item.get("enabled_main") is not None:
+                    mapping[prefix + "MAIN_ENABLE"] = _bool_text(bool(item["enabled_main"]))
+                if item.get("enabled_trees") is not None:
+                    mapping[prefix + "TREES_ENABLE"] = _bool_text(bool(item["enabled_trees"]))
+
     profiles = payload.get("profiles")
     if isinstance(profiles, dict):
         for mode in ("main", "trees"):
@@ -332,6 +413,77 @@ def managed_values_from_payload(
     return managed_values_from_mapping(mapping)
 
 
+
+_ADDITIONAL_SERVICE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_ADDITIONAL_SERVICE_RESERVED_NAMES = {
+    "backend",
+    "frontend",
+    "postgres",
+    "redis",
+    "supabase",
+    "n8n",
+    "all",
+    "services",
+    "dependencies",
+}
+
+
+def _additional_service_env_suffix(name: str) -> str:
+    return str(name).strip().upper().replace("-", "_")
+
+
+def _resolved_additional_services(values: dict[str, str]) -> tuple[ManagedAdditionalService, ...]:
+    raw_names = str(values.get("ENVCTL_ADDITIONAL_SERVICES") or "").strip()
+    if not raw_names:
+        return ()
+    services: list[ManagedAdditionalService] = []
+    for raw_name in (item.strip() for item in raw_names.split(",")):
+        if not raw_name:
+            continue
+        name = raw_name.lower()
+        suffix = _additional_service_env_suffix(name)
+        prefix = f"ENVCTL_SERVICE_{suffix}_"
+        enabled_default = _parse_bool_value(values.get(prefix + "ENABLE"), True)
+        port_raw = str(values.get(prefix + "PORT_BASE") or "").strip()
+        services.append(
+            ManagedAdditionalService(
+                name=name,
+                enabled_main=_parse_bool_value(values.get(prefix + "MAIN_ENABLE"), enabled_default),
+                enabled_trees=_parse_bool_value(values.get(prefix + "TREES_ENABLE"), enabled_default),
+                dir_name=str(values.get(prefix + "DIR") or "").strip(),
+                start_cmd=str(values.get(prefix + "START_CMD") or "").strip(),
+                test_cmd=str(values.get(prefix + "TEST_CMD") or "").strip(),
+                port_base=parse_int(port_raw, 0) if port_raw else None,
+                listener_expected=_parse_bool_value(values.get(prefix + "EXPECT_LISTENER"), True),
+            )
+        )
+    return tuple(services)
+
+
+def _validate_additional_services(services: tuple[ManagedAdditionalService, ...], *, errors: list[str]) -> None:
+    names: set[str] = set()
+    suffixes: set[str] = set()
+    for service in services:
+        name = str(service.name or "").strip().lower()
+        if not _ADDITIONAL_SERVICE_SLUG_RE.fullmatch(name):
+            errors.append(f"Additional service slug must be lowercase kebab-case: {service.name}")
+            continue
+        if name in _ADDITIONAL_SERVICE_RESERVED_NAMES:
+            errors.append(f"Additional service name is reserved: {name}")
+        if name in names:
+            errors.append(f"Additional service name is duplicated: {name}")
+        names.add(name)
+        suffix = service.env_suffix
+        if suffix in suffixes:
+            errors.append(f"Additional service env suffix is duplicated: {suffix}")
+        suffixes.add(suffix)
+        if (service.enabled_main or service.enabled_trees) and not str(service.start_cmd).strip():
+            errors.append(f"Additional service {name} start command must not be empty.")
+        if service.listener_expected and (service.enabled_main or service.enabled_trees) and not service.port_base:
+            errors.append(f"Additional service {name} port base is required when listener waiting is enabled.")
+        if service.port_base is not None and int(service.port_base) < 1:
+            errors.append(f"Additional service {name} port base must be a positive integer.")
+
 def validate_managed_values(
     values: ManagedConfigValues,
     *,
@@ -351,6 +503,7 @@ def validate_managed_values(
         errors.append("Frontend entrypoint must not be empty.")
     _validate_profile(values.main_profile, mode="main", errors=errors)
     _validate_profile(values.trees_profile, mode="trees", errors=errors)
+    _validate_additional_services(values.additional_services, errors=errors)
     ports = values.port_defaults
     for label, raw in (
         ("Backend port base", ports.backend_port_base),
@@ -428,6 +581,24 @@ def _managed_block_sections(
     ):
         append_once(directory_keys, "ENVCTL_FRONTEND_TEST_PATH")
     sections.append(directory_keys)
+
+    additional_keys: list[str] = []
+    for service in values.additional_services:
+        prefix = f"ENVCTL_SERVICE_{service.env_suffix}_"
+        for key in (
+            "ENVCTL_ADDITIONAL_SERVICES",
+            prefix + "ENABLE",
+            prefix + "MAIN_ENABLE",
+            prefix + "TREES_ENABLE",
+            prefix + "DIR",
+            prefix + "START_CMD",
+            prefix + "PORT_BASE",
+            prefix + "EXPECT_LISTENER",
+            prefix + "TEST_CMD",
+        ):
+            if key in rendered:
+                append_once(additional_keys, key)
+    sections.append(additional_keys)
 
     port_keys: list[str] = []
     if _backend_uses_port_any(values) and rendered["BACKEND_PORT_BASE"] != defaults["BACKEND_PORT_BASE"]:
@@ -582,6 +753,7 @@ def save_local_config_with_ignore_policy(
             )
             or ""
         ),
+        additional_services=values.additional_services,
     )
     validation = validate_managed_values(canonical_values, require_directories=False, require_entrypoints=False)
     if not validation.valid:

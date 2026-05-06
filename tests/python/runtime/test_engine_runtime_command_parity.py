@@ -1183,6 +1183,41 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["postgres"])
         self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["redis"])
 
+    def test_show_config_json_reports_additional_services_and_generic_launch_env_sections(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / ".envctl").write_text(
+            "\n".join(
+                [
+                    "ENVCTL_ADDITIONAL_SERVICES=voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/start-voice.sh {port}",
+                    "# >>> envctl service voice-runtime launch env >>>",
+                    "VOICE_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                    "# <<< envctl service voice-runtime launch env <<<",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+
+        self.assertEqual(payload["additional_services"][0]["name"], "voice-runtime")
+        self.assertEqual(payload["additional_services"][0]["port_base"], 8010)
+        self.assertTrue(payload["service_dependency_env_section_present"]["voice-runtime"])
+        self.assertEqual(payload["service_dependency_env_templates"]["voice-runtime"][0]["name"], "VOICE_URL")
+
     def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

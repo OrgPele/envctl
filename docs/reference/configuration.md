@@ -35,7 +35,7 @@ Useful commands:
 
 ## Service Launch Env Templates In `.envctl`
 
-`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
+`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend, frontend, and configured additional app-service processes that `envctl` starts.
 
 ```dotenv
 # >>> envctl backend launch env >>>
@@ -47,12 +47,19 @@ REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 # >>> envctl frontend launch env >>>
 VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
+
+# >>> envctl service voice-runtime launch env >>>
+BACKEND_URL=${ENVCTL_SOURCE_BACKEND_URL}
+VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
 ```
 
 These sections are separate from the managed startup block:
 
 - the backend section applies only to backend launches
 - the frontend section applies only to frontend launches
+- `service <slug>` sections apply only to that additional app service
+- optional mode-specific sections use `main service <slug>` or `trees service <slug>` markers
 - old shared sections are still understood for compatibility, but new `.envctl` files only seed backend/frontend sections
 - `envctl config` seeds these sections when missing, but does not edit or normalize them afterward
 - for a given service, only vars defined in its applicable sections are emitted
@@ -87,6 +94,56 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_N8N_PORT`
 - `ENVCTL_SOURCE_SUPABASE_DB_PASSWORD`
 - `ENVCTL_SOURCE_SUPABASE_DB_PORT`
+- `ENVCTL_SOURCE_BACKEND_PORT`
+- `ENVCTL_SOURCE_BACKEND_URL`
+- `ENVCTL_SOURCE_FRONTEND_PORT`
+- `ENVCTL_SOURCE_FRONTEND_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PORT`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HOST`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
+
+## Additional App Services
+
+Additional app services are long-running repo application processes that participate in envctl startup, state, logs, health output, runtime maps, and targeted tests. They are additive to the built-in backend/frontend services and do not replace dependency adapters such as Postgres, Redis, Supabase, or n8n.
+
+```dotenv
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+
+ENVCTL_SERVICE_WORKER_ENABLE=true
+ENVCTL_SERVICE_WORKER_DIR=backend
+ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+ENVCTL_SERVICE_WORKER_TEST_CMD=pytest tests/unit/test_worker.py -q
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_ADDITIONAL_SERVICES` | unset | Comma-separated service slugs, for example `voice-runtime,worker`. |
+| `ENVCTL_SERVICE_<SUFFIX>_ENABLE` | `true` | Enable the service in both Main and Trees modes. |
+| `ENVCTL_SERVICE_<SUFFIX>_MAIN_ENABLE` | inherits `ENABLE` | Main-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_TREES_ENABLE` | inherits `ENABLE` | Trees-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_DIR` | repo root | Repo-relative service working directory. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_CMD` | required when enabled | Command used to start the service. Supports `{port}`, `{project_root}`, `{service_dir}`, and `{service_name}`. |
+| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. |
+| `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE` | unset | Base port for listener services. Trees mode applies normal project-slot spacing. |
+| `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers/schedulers that do not bind a port. |
+| `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Stored/projected health URL template; envctl does not require HTTP for non-listener workers. |
+| `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | `http://<host>:<port>` | Public URL template exposed through service source placeholders. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated built-in service/dependency or additional-service names. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering key for configured additional services. |
+| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | Reserved for degraded-mode policy; critical services currently fail startup on launch failure. |
+
+`<SUFFIX>` is the uppercase service slug with hyphens converted to underscores, for example `voice-runtime` becomes `VOICE_RUNTIME`.
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
 
@@ -180,6 +237,7 @@ The current setup/editor wizard covers:
 - entrypoints and backend/frontend test command suggestions
 - optional frontend test directory suggestions
 - canonical ports
+- an advanced additional-app-service step for adding one service slug, directory, start command, base port, listener expectation, and optional test command
 
 The current flow is:
 
@@ -190,9 +248,10 @@ The current flow is:
 5. `Directories`
 6. `Entrypoints / Commands`
 7. `Ports`
-8. `Review / Save`
+8. `Additional App Services` in advanced mode or when existing additional services are present
+9. `Review / Save`
 
-There is no simple/advanced split in the current UI.
+The default simple flow keeps the additional-service step hidden unless a repo already has additional services. Advanced mode exposes it after backend/frontend/dependency setup.
 
 The `Entrypoints / Commands` step shows only the command fields needed for the enabled backend/frontend components. For test commands, the wizard displays detected suggestions with source labels (for example backend pytest from `backend/tests` or a frontend package test script from `frontend/package.json`). Test command fields are optional: leaving one blank means `envctl test` may still try runtime defaults later. The wizard does not execute test commands during setup.
 

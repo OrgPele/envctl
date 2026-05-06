@@ -160,6 +160,102 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.backend_dir_name, "api")
             self.assertEqual(config.frontend_dir_name, "web")
 
+    def test_load_config_parses_additional_app_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_TREES_ENABLE=false",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/start-voice.sh {port}",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/test-voice.sh",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=backend,redis",
+                        "ENVCTL_SERVICE_WORKER_ENABLE=true",
+                        "ENVCTL_SERVICE_WORKER_DIR=backend",
+                        "ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker",
+                        "ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false",
+                        "ENVCTL_SERVICE_WORKER_TEST_CMD=pytest tests/test_worker.py -q",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.app_service_names(), ("voice-runtime", "worker"))
+            voice = config.app_service_by_name("voice-runtime")
+            assert voice is not None
+            self.assertEqual(voice.env_suffix, "VOICE_RUNTIME")
+            self.assertEqual(voice.dir_name, "voice-runtime")
+            self.assertEqual(voice.port_base, 8010)
+            self.assertTrue(voice.listener_expected)
+            self.assertEqual(voice.depends_on, ("backend", "redis"))
+            self.assertEqual(voice.test_cmd, "scripts/test-voice.sh")
+            self.assertTrue(config.service_enabled_for_mode("main", "voice-runtime"))
+            self.assertFalse(config.service_enabled_for_mode("trees", "voice-runtime"))
+            worker = config.app_service_by_name("worker")
+            assert worker is not None
+            self.assertFalse(worker.listener_expected)
+            self.assertIsNone(worker.port_base)
+            self.assertTrue(config.service_enabled_for_mode("main", "worker"))
+            self.assertEqual(config.all_app_service_names_for_mode("main"), ("backend", "frontend", "voice-runtime", "worker"))
+
+    def test_load_config_rejects_invalid_additional_service_definitions(self) -> None:
+        cases = {
+            "reserved service name": "ENVCTL_ADDITIONAL_SERVICES=backend\n",
+            "invalid service slug": "ENVCTL_ADDITIONAL_SERVICES=Voice_Runtime\n",
+            "missing START_CMD": "ENVCTL_ADDITIONAL_SERVICES=worker\nENVCTL_SERVICE_WORKER_ENABLE=true\n",
+            "PORT_BASE is required": "ENVCTL_ADDITIONAL_SERVICES=worker\nENVCTL_SERVICE_WORKER_ENABLE=true\nENVCTL_SERVICE_WORKER_START_CMD=python worker.py\nENVCTL_SERVICE_WORKER_EXPECT_LISTENER=true\n",
+        }
+        for expected, text in cases.items():
+            with self.subTest(expected=expected):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    repo = Path(tmpdir)
+                    (repo / ".envctl").write_text(text, encoding="utf-8")
+
+                    with self.assertRaisesRegex(ValueError, expected):
+                        load_config({"RUN_REPO_ROOT": str(repo)})
+
+    def test_discover_local_config_state_parses_generic_service_launch_env_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime",
+                        "# >>> envctl service voice-runtime launch env >>>",
+                        "VOICE_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                        "# <<< envctl service voice-runtime launch env <<<",
+                        "# >>> envctl main service voice-runtime launch env >>>",
+                        "MAIN_ONLY=${ENVCTL_SOURCE_BACKEND_URL}",
+                        "# <<< envctl main service voice-runtime launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            local_state = discover_local_config_state(repo)
+
+            self.assertEqual(local_state.parsed_values["ENVCTL_ADDITIONAL_SERVICES"], "voice-runtime")
+            self.assertEqual(
+                [entry.name for entry in local_state.service_dependency_env_templates["voice-runtime"]],
+                ["VOICE_URL"],
+            )
+            self.assertTrue(local_state.service_dependency_env_section_present["voice-runtime"])
+            self.assertEqual(
+                [entry.name for entry in local_state.mode_service_dependency_env_templates[("main", "voice-runtime")]],
+                ["MAIN_ONLY"],
+            )
+
     def test_load_config_autodetects_backend_and_frontend_dirs_when_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

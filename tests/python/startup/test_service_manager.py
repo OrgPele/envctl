@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import time
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.service_manager import ServiceManager
+
+
+@dataclass(frozen=True)
+class _Descriptor:
+    service_type: str
+    cwd: str
+    requested_port: int
+    start: object
+    detect_actual: object
+    listener_expected: bool = True
 
 
 class ServiceManagerTests(unittest.TestCase):
@@ -178,6 +189,46 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertFalse(service.listener_expected)
         self.assertIsNone(service.requested_port)
         self.assertIsNone(service.actual_port)
+
+    def test_start_services_with_attach_starts_n_services_and_cleans_partial_failure(self) -> None:
+        manager = ServiceManager()
+        terminated: list[int] = []
+        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+
+        descriptors = [
+            _Descriptor(
+                service_type="backend",
+                cwd="/tmp/tree-alpha/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 41001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            _Descriptor(
+                service_type="voice-runtime",
+                cwd="/tmp/tree-alpha/voice-runtime",
+                requested_port=8010,
+                start=lambda _port: (True, None, 41002),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            _Descriptor(
+                service_type="worker",
+                cwd="/tmp/tree-alpha/backend",
+                requested_port=0,
+                start=lambda _port: (False, "boom", None),
+                detect_actual=lambda _pid, _requested: None,
+                listener_expected=False,
+            ),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "Failed to start Tree Alpha worker"):
+            manager.start_services_with_attach(
+                project="Tree Alpha",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                max_retries=0,
+            )
+
+        self.assertEqual(terminated, [41001, 41002])
 
 
 if __name__ == "__main__":

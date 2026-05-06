@@ -362,6 +362,53 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(backend_env["SUPABASE_URL"], "http://localhost:5432")
         self.assertNotIn("VITE_SUPABASE_URL", backend_env)
 
+    def test_project_service_env_applies_generic_additional_service_templates_and_source_placeholders(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                service_dependency_env_section_present={"voice-runtime": True},
+                service_dependency_env_template_errors={"voice-runtime": ()},
+                service_dependency_env_templates={
+                    "voice-runtime": (
+                        SimpleNamespace(
+                            name="BACKEND_URL",
+                            template="${ENVCTL_SOURCE_BACKEND_URL}",
+                            line_number=1,
+                        ),
+                        SimpleNamespace(
+                            name="VOICE_PUBLIC_URL",
+                            template="${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                            line_number=2,
+                        ),
+                    )
+                },
+                mode_service_dependency_env_section_present={("main", "voice-runtime"): True},
+                mode_service_dependency_env_template_errors={("main", "voice-runtime"): ()},
+                mode_service_dependency_env_templates={
+                    ("main", "voice-runtime"): (
+                        SimpleNamespace(name="MODE_BACKEND_URL", template="${BACKEND_URL}/api", line_number=10),
+                    )
+                },
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "backend": PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="assigned"),
+                "frontend": PortPlan(project="Main", requested=9000, assigned=9000, final=9000, source="assigned"),
+                "voice-runtime": PortPlan(project="Main", requested=8010, assigned=8010, final=8010, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(project="Main", health="healthy", failures=[])
+        route = parse_route(["--main"], env={})
+
+        env = project_service_env(runtime, context, requirements=requirements, route=route, service_name="voice-runtime")
+
+        self.assertEqual(env["BACKEND_URL"], "http://localhost:8000")
+        self.assertEqual(env["VOICE_PUBLIC_URL"], "http://localhost:8010")
+        self.assertEqual(env["MODE_BACKEND_URL"], "http://localhost:8000/api")
+        self.assertNotIn("ENVCTL_SOURCE_BACKEND_URL", env)
+
     def test_project_service_env_skips_missing_source_lines_and_keeps_following_valid_aliases(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: None,

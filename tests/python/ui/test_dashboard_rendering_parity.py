@@ -204,6 +204,35 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("workspace backend:", output)
             self.assertNotIn("Frontend:", output)
 
+
+    def test_dashboard_shows_generic_configured_service_rows_when_no_services_are_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / "voice-runtime").mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={},
+                metadata={
+                    "project_roots": {"feature-a-1": str(repo)},
+                    "dashboard_configured_service_types": ["voice-runtime", "worker"],
+                    "dashboard_runs_disabled": True,
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("services: 2 configured | 0 running | 2 not running | 0 issues", output)
+            self.assertIn("Voice Runtime: not running [Configured]", output)
+            self.assertIn("Worker: not running [Configured]", output)
+
     def test_dashboard_shows_stopped_service_rows_after_partial_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

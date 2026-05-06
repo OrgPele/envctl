@@ -900,4 +900,7 @@ def is_backend_only_selection(
         elif service_types == {"frontend"}:
             include_backend = False
             include_frontend = True
+        elif service_types and not service_types.intersection({"backend", "frontend"}):
+            include_backend = False
+            include_frontend = False
     return include_backend, include_frontend

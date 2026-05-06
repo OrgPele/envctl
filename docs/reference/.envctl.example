@@ -38,6 +38,23 @@ FRONTEND_PORT_BASE=9000
 # Spacing between project slots in trees mode.
 PORT_SPACING=20
 
+# Optional additional app services. These are envctl-managed application
+# processes, not infrastructure dependencies. Names must be lowercase slugs.
+# ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+# ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+# ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+# ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+# ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+# ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+# ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+# ENVCTL_SERVICE_WORKER_ENABLE=true
+# ENVCTL_SERVICE_WORKER_DIR=backend
+# ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+# ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+# ENVCTL_SERVICE_WORKER_TEST_CMD=pytest tests/unit/test_worker.py -q
+
 # ==========================================
 # Dependency base ports
 # ==========================================
@@ -119,6 +136,11 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 # >>> envctl frontend launch env >>>
 # VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
+
+# >>> envctl service voice-runtime launch env >>>
+# PELE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}
+# VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
 
 # Notes:
 # - `.envctl` is the canonical repo-local config file.

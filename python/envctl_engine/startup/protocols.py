@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from envctl_engine.config import EngineConfig
 from envctl_engine.requirements.orchestrator import RequirementOutcome
@@ -26,6 +26,7 @@ class StartupRuntime(Protocol):
     events: list[dict[str, object]]
     process_runner: ProcessRuntime
     port_planner: PortAllocator
+    services: Any
     runtime_root: Path
     _conflict_remaining: dict[str, int]
 

@@ -16,6 +16,7 @@ from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
+from envctl_engine.actions.actions_test import TestCommandSpec
 from envctl_engine.actions.action_command_support import (
     build_action_env,
     build_action_extra_env,
@@ -828,7 +829,7 @@ if result.returncode != 0:
             ).strip()
             or None
         )
-        return build_test_execution_specs(
+        specs = build_test_execution_specs(
             shared_raw_command=shared_raw,
             backend_raw_command=backend_raw,
             frontend_raw_command=frontend_raw,
@@ -850,6 +851,73 @@ if result.returncode != 0:
             replacements_for_target=lambda target: self.action_replacements(targets, target=target),
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
+        specs.extend(
+            self._build_additional_service_test_execution_specs(
+                route=route,
+                targets=targets,
+                target_contexts=target_contexts,
+            )
+        )
+        return [
+            _TestExecutionSpec(
+                index=index,
+                spec=spec.spec,
+                args=spec.args,
+                resolved_source=spec.resolved_source,
+                project_name=spec.project_name,
+                project_root=spec.project_root,
+                target_obj=spec.target_obj,
+            )
+            for index, spec in enumerate(specs, start=1)
+        ]
+
+    def _build_additional_service_test_execution_specs(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        target_contexts: list[TestTargetContext],
+    ) -> list[_TestExecutionSpec]:
+        selected = self._service_types_from_route_services(route).difference({"backend", "frontend"})
+        if not selected:
+            return []
+        rt = self.runtime
+        services = {
+            str(getattr(service, "name", "") or "").strip().lower(): service
+            for service in getattr(rt.config, "additional_services", ())
+            if str(getattr(service, "name", "") or "").strip()
+        }
+        specs: list[_TestExecutionSpec] = []
+        for service_name in sorted(selected):
+            service = services.get(service_name)
+            raw_command = str(getattr(service, "test_cmd", "") or "").strip() if service is not None else ""
+            if not raw_command:
+                continue
+            service_dir = str(getattr(service, "dir_name", "") or "").strip()
+            for target in target_contexts:
+                replacements = dict(self.action_replacements(targets, target=target.target_obj))
+                replacements["service_name"] = service_name
+                replacements["service_dir"] = (
+                    str((target.project_root / service_dir).resolve()) if service_dir else str(target.project_root)
+                )
+                command = rt.split_command(raw_command, replacements=replacements)
+                cwd = (target.project_root / service_dir).resolve() if service_dir else target.project_root
+                specs.append(
+                    _TestExecutionSpec(
+                        index=0,
+                        spec=TestCommandSpec(
+                            command=command,
+                            cwd=cwd,
+                            source=f"configured_service:{service_name}",
+                        ),
+                        args=[],
+                        resolved_source=f"configured_service:{service_name}",
+                        project_name=target.project_name,
+                        project_root=target.project_root,
+                        target_obj=target.target_obj,
+                    )
+                )
+        return specs
 
     def _build_failed_test_execution_specs(
         self,

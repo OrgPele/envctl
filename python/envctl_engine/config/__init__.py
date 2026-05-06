@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, cast
 
@@ -40,6 +41,21 @@ LEGACY_CONFIG_FRONTEND_DEPENDENCY_ENV_START = "# >>> envctl frontend dependency 
 LEGACY_CONFIG_FRONTEND_DEPENDENCY_ENV_END = "# <<< envctl frontend dependency env <<<"
 CONFIG_PRIMARY_FILENAME = ".envctl"
 LEGACY_CONFIG_FILENAMES = (".envctl.sh", ".supportopia-config")
+_SERVICE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_GENERIC_SERVICE_SECTION_RE = re.compile(
+    r"# >>> envctl (?:(main|trees) )?service ([a-z][a-z0-9-]*) launch env >>>"
+)
+_RESERVED_APP_SERVICE_NAMES = {
+    "backend",
+    "frontend",
+    "postgres",
+    "redis",
+    "supabase",
+    "n8n",
+    "all",
+    "services",
+    "dependencies",
+}
 
 
 def _bool_text(value: bool) -> str:
@@ -282,6 +298,28 @@ class PortDefaults:
 
 
 @dataclass(slots=True)
+class AppServiceConfig:
+    name: str
+    env_suffix: str
+    enabled_main: bool
+    enabled_trees: bool
+    dir_name: str
+    start_cmd: str
+    test_cmd: str = ""
+    port_base: int | None = None
+    listener_expected: bool = True
+    health_url_template: str = ""
+    public_url_template: str = ""
+    startup_group: str = "app"
+    depends_on: tuple[str, ...] = ()
+    start_order: int = 100
+    critical: bool = True
+
+    def enabled_for_mode(self, mode: str) -> bool:
+        return self.enabled_trees if str(mode).strip().lower() == "trees" else self.enabled_main
+
+
+@dataclass(slots=True)
 class LocalConfigState:
     base_dir: Path
     config_file_path: Path
@@ -313,6 +351,14 @@ class LocalConfigState:
     trees_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
     trees_frontend_dependency_env_section_present: bool = False
     trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    service_dependency_env_templates: dict[str, tuple["DependencyEnvTemplateEntry", ...]] = field(default_factory=dict)
+    service_dependency_env_section_present: dict[str, bool] = field(default_factory=dict)
+    service_dependency_env_template_errors: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    mode_service_dependency_env_templates: dict[
+        tuple[str, str], tuple["DependencyEnvTemplateEntry", ...]
+    ] = field(default_factory=dict)
+    mode_service_dependency_env_section_present: dict[tuple[str, str], bool] = field(default_factory=dict)
+    mode_service_dependency_env_template_errors: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -390,6 +436,15 @@ class EngineConfig:
     trees_frontend_dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
     trees_frontend_dependency_env_section_present: bool = False
     trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    additional_services: tuple[AppServiceConfig, ...] = ()
+    service_dependency_env_templates: dict[str, tuple["DependencyEnvTemplateEntry", ...]] = field(default_factory=dict)
+    service_dependency_env_section_present: dict[str, bool] = field(default_factory=dict)
+    service_dependency_env_template_errors: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    mode_service_dependency_env_templates: dict[
+        tuple[str, str], tuple["DependencyEnvTemplateEntry", ...]
+    ] = field(default_factory=dict)
+    mode_service_dependency_env_section_present: dict[tuple[str, str], bool] = field(default_factory=dict)
+    mode_service_dependency_env_template_errors: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
 
     def profile_for_mode(self, mode: str) -> StartupProfile:
         return self.trees_profile if str(mode).strip().lower() == "trees" else self.main_profile
@@ -406,7 +461,25 @@ class EngineConfig:
             return profile.backend_enable
         if normalized == "frontend":
             return profile.frontend_enable
+        service = self.app_service_by_name(normalized)
+        if service is not None:
+            return service.enabled_for_mode(mode)
         return False
+
+    def app_service_names(self) -> tuple[str, ...]:
+        return tuple(service.name for service in self.additional_services)
+
+    def app_service_by_name(self, name: str) -> AppServiceConfig | None:
+        normalized = str(name).strip().lower()
+        for service in self.additional_services:
+            if service.name == normalized:
+                return service
+        return None
+
+    def all_app_service_names_for_mode(self, mode: str) -> tuple[str, ...]:
+        names = [name for name in ("backend", "frontend") if self.service_enabled_for_mode(mode, name)]
+        names.extend(service.name for service in self.additional_services if service.enabled_for_mode(mode))
+        return tuple(names)
 
     def requirement_enabled_for_mode(self, mode: str, requirement_name: str) -> bool:
         if not self.startup_enabled_for_mode(mode):
@@ -518,6 +591,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         explicit_values=explicit_values,
         local_state=local_state,
     )
+    additional_services = _parse_additional_services(resolved, explicit_values=explicit_values)
 
     redis_enabled_any = main_profile.redis_enable or trees_profile.redis_enable
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
@@ -622,6 +696,13 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         trees_frontend_dependency_env_templates=local_state.trees_frontend_dependency_env_templates,
         trees_frontend_dependency_env_section_present=local_state.trees_frontend_dependency_env_section_present,
         trees_frontend_dependency_env_template_errors=local_state.trees_frontend_dependency_env_template_errors,
+        additional_services=additional_services,
+        service_dependency_env_templates=local_state.service_dependency_env_templates,
+        service_dependency_env_section_present=local_state.service_dependency_env_section_present,
+        service_dependency_env_template_errors=local_state.service_dependency_env_template_errors,
+        mode_service_dependency_env_templates=local_state.mode_service_dependency_env_templates,
+        mode_service_dependency_env_section_present=local_state.mode_service_dependency_env_section_present,
+        mode_service_dependency_env_template_errors=local_state.mode_service_dependency_env_template_errors,
     )
 
 
@@ -726,6 +807,77 @@ def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapp
         resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))
 
 
+def _parse_additional_services(
+    resolved: Mapping[str, str], *, explicit_values: Mapping[str, str]
+) -> tuple[AppServiceConfig, ...]:
+    raw_names = str(resolved.get("ENVCTL_ADDITIONAL_SERVICES", "") or "").strip()
+    if not raw_names:
+        return ()
+    names = tuple(name.strip() for name in raw_names.split(",") if name.strip())
+    services: list[AppServiceConfig] = []
+    suffixes: set[str] = set()
+    known_dependencies = {definition.id for definition in _dependency_definitions()}
+    for raw_name in names:
+        name = raw_name.lower()
+        if raw_name != name or not _SERVICE_SLUG_RE.fullmatch(raw_name):
+            raise ValueError(f"invalid service slug {raw_name!r}: expected lowercase kebab-case")
+        if name in _RESERVED_APP_SERVICE_NAMES:
+            raise ValueError(f"reserved service name {name!r} cannot be an additional app service")
+        if any(service.name == name for service in services):
+            raise ValueError(f"duplicate service name {name!r}")
+        suffix = _service_env_suffix(name)
+        if suffix in suffixes:
+            raise ValueError(f"duplicate env suffix {suffix!r} for additional app services")
+        suffixes.add(suffix)
+        prefix = f"ENVCTL_SERVICE_{suffix}_"
+        enabled_default = parse_bool(resolved.get(prefix + "ENABLE"), True)
+        enabled_main = parse_bool(resolved.get(prefix + "MAIN_ENABLE"), enabled_default)
+        enabled_trees = parse_bool(resolved.get(prefix + "TREES_ENABLE"), enabled_default)
+        start_cmd = str(resolved.get(prefix + "START_CMD", "") or "").strip()
+        listener_expected = parse_bool(resolved.get(prefix + "EXPECT_LISTENER"), True)
+        port_raw = str(resolved.get(prefix + "PORT_BASE", "") or "").strip()
+        port_base = parse_int(port_raw, 0) if port_raw else 0
+        service_enabled = enabled_main or enabled_trees
+        if service_enabled and not start_cmd:
+            raise ValueError(f"missing START_CMD for additional service {name!r}")
+        if service_enabled and listener_expected and port_base <= 0:
+            raise ValueError(f"PORT_BASE is required for listener additional service {name!r}")
+        depends_on = tuple(
+            item.strip().lower()
+            for item in str(resolved.get(prefix + "DEPENDS_ON", "") or "").split(",")
+            if item.strip()
+        )
+        known_service_names = {"backend", "frontend", *(service.name for service in services), *names}
+        for dependency in depends_on:
+            if dependency not in known_service_names and dependency not in known_dependencies:
+                raise ValueError(f"unknown DEPENDS_ON target {dependency!r} for additional service {name!r}")
+        services.append(
+            AppServiceConfig(
+                name=name,
+                env_suffix=suffix,
+                enabled_main=enabled_main,
+                enabled_trees=enabled_trees,
+                dir_name=str(resolved.get(prefix + "DIR", "") or "").strip(),
+                start_cmd=start_cmd,
+                test_cmd=str(resolved.get(prefix + "TEST_CMD", "") or "").strip(),
+                port_base=port_base if port_base > 0 else None,
+                listener_expected=listener_expected,
+                health_url_template=str(resolved.get(prefix + "HEALTH_URL", "") or "").strip(),
+                public_url_template=str(resolved.get(prefix + "PUBLIC_URL", "") or "").strip(),
+                startup_group=str(resolved.get(prefix + "STARTUP_GROUP", "app") or "app").strip() or "app",
+                depends_on=depends_on,
+                start_order=parse_int(resolved.get(prefix + "START_ORDER"), 100),
+                critical=parse_bool(resolved.get(prefix + "CRITICAL"), True),
+            )
+        )
+    _ = explicit_values
+    return tuple(sorted(services, key=lambda service: (service.start_order, names.index(service.name))))
+
+
+def _service_env_suffix(service_name: str) -> str:
+    return str(service_name).strip().upper().replace("-", "_")
+
+
 def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:
     base_dir = Path(base_dir).resolve()
     resolved_explicit = _resolve_explicit_path(base_dir, explicit_path)
@@ -780,6 +932,12 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
     trees_frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
     trees_frontend_dependency_env_section_present = False
     trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
+    service_dependency_env_templates: dict[str, tuple[DependencyEnvTemplateEntry, ...]] = {}
+    service_dependency_env_section_present: dict[str, bool] = {}
+    service_dependency_env_template_errors: dict[str, tuple[str, ...]] = {}
+    mode_service_dependency_env_templates: dict[tuple[str, str], tuple[DependencyEnvTemplateEntry, ...]] = {}
+    mode_service_dependency_env_section_present: dict[tuple[str, str], bool] = {}
+    mode_service_dependency_env_template_errors: dict[tuple[str, str], tuple[str, ...]] = {}
     if active_source_path is not None and active_source_path.is_file():
         try:
             file_text = active_source_path.read_text(encoding="utf-8")
@@ -821,6 +979,14 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
             trees_frontend_dependency_env_section_present,
             trees_frontend_dependency_env_template_errors,
         ) = _extract_mode_service_dependency_env_section(file_text, mode="trees", service_name="frontend")
+        (
+            service_dependency_env_templates,
+            service_dependency_env_section_present,
+            service_dependency_env_template_errors,
+            mode_service_dependency_env_templates,
+            mode_service_dependency_env_section_present,
+            mode_service_dependency_env_template_errors,
+        ) = _extract_generic_service_dependency_env_sections(file_text)
 
     return LocalConfigState(
         base_dir=base_dir,
@@ -853,6 +1019,12 @@ def discover_local_config_state(base_dir: Path, explicit_path: str | None = None
         trees_frontend_dependency_env_templates=trees_frontend_dependency_env_templates,
         trees_frontend_dependency_env_section_present=trees_frontend_dependency_env_section_present,
         trees_frontend_dependency_env_template_errors=trees_frontend_dependency_env_template_errors,
+        service_dependency_env_templates=service_dependency_env_templates,
+        service_dependency_env_section_present=service_dependency_env_section_present,
+        service_dependency_env_template_errors=service_dependency_env_template_errors,
+        mode_service_dependency_env_templates=mode_service_dependency_env_templates,
+        mode_service_dependency_env_section_present=mode_service_dependency_env_section_present,
+        mode_service_dependency_env_template_errors=mode_service_dependency_env_template_errors,
     )
 
 
@@ -1242,6 +1414,65 @@ def _extract_mode_service_dependency_env_section(
     )
 
 
+def _extract_generic_service_dependency_env_sections(
+    text: str,
+) -> tuple[
+    dict[str, tuple[DependencyEnvTemplateEntry, ...]],
+    dict[str, bool],
+    dict[str, tuple[str, ...]],
+    dict[tuple[str, str], tuple[DependencyEnvTemplateEntry, ...]],
+    dict[tuple[str, str], bool],
+    dict[tuple[str, str], tuple[str, ...]],
+]:
+    service_templates: dict[str, tuple[DependencyEnvTemplateEntry, ...]] = {}
+    service_present: dict[str, bool] = {}
+    service_errors: dict[str, tuple[str, ...]] = {}
+    mode_templates: dict[tuple[str, str], tuple[DependencyEnvTemplateEntry, ...]] = {}
+    mode_present: dict[tuple[str, str], bool] = {}
+    mode_errors: dict[tuple[str, str], tuple[str, ...]] = {}
+    seen: set[tuple[str | None, str]] = set()
+    for match in _GENERIC_SERVICE_SECTION_RE.finditer(text):
+        mode = match.group(1)
+        service_name = match.group(2)
+        key = (mode, service_name)
+        if key in seen:
+            errors = (f"duplicate {' '.join(part for part in key if part)} service launch env section",)
+            if mode is None:
+                service_errors[service_name] = errors
+            else:
+                mode_errors[(mode, service_name)] = errors
+            continue
+        seen.add(key)
+        start_marker = _generic_service_dependency_env_start(mode=mode, service_name=service_name)
+        end_marker = _generic_service_dependency_env_end(mode=mode, service_name=service_name)
+        section_label = f"{mode} service {service_name} launch env" if mode else f"service {service_name} launch env"
+        entries, present, errors = _extract_template_section(
+            text,
+            marker_pairs=((start_marker, end_marker),),
+            section_label=section_label,
+        )
+        if mode is None:
+            service_templates[service_name] = entries
+            service_present[service_name] = present
+            service_errors[service_name] = errors
+        else:
+            mode_key = (mode, service_name)
+            mode_templates[mode_key] = entries
+            mode_present[mode_key] = present
+            mode_errors[mode_key] = errors
+    return service_templates, service_present, service_errors, mode_templates, mode_present, mode_errors
+
+
+def _generic_service_dependency_env_start(*, mode: str | None, service_name: str) -> str:
+    prefix = f"{mode} " if mode else ""
+    return f"# >>> envctl {prefix}service {service_name} launch env >>>"
+
+
+def _generic_service_dependency_env_end(*, mode: str | None, service_name: str) -> str:
+    prefix = f"{mode} " if mode else ""
+    return f"# <<< envctl {prefix}service {service_name} launch env <<<"
+
+
 def _extract_template_section(
     text: str,
     *,
@@ -1331,6 +1562,16 @@ def _mode_service_dependency_env_markers() -> tuple[str, ...]:
     )
 
 
+def _generic_service_dependency_env_markers(text: str) -> tuple[str, ...]:
+    markers: list[str] = []
+    for match in _GENERIC_SERVICE_SECTION_RE.finditer(text):
+        mode = match.group(1)
+        service_name = match.group(2)
+        markers.append(_generic_service_dependency_env_start(mode=mode, service_name=service_name))
+        markers.append(_generic_service_dependency_env_end(mode=mode, service_name=service_name))
+    return tuple(markers)
+
+
 def _dependency_env_marker_pairs() -> tuple[tuple[str, str], ...]:
     return (
         (CONFIG_DEPENDENCY_ENV_START, CONFIG_DEPENDENCY_ENV_END),
@@ -1383,6 +1624,21 @@ def _strip_template_sections(text: str) -> str:
                 break
             start, end = bounds
             stripped = stripped[:start] + stripped[end:]
+    while True:
+        match = _GENERIC_SERVICE_SECTION_RE.search(stripped)
+        if match is None:
+            break
+        mode = match.group(1)
+        service_name = match.group(2)
+        bounds = _template_section_bounds(
+            stripped,
+            _generic_service_dependency_env_start(mode=mode, service_name=service_name),
+            _generic_service_dependency_env_end(mode=mode, service_name=service_name),
+        )
+        if bounds is None:
+            break
+        start, end = bounds
+        stripped = stripped[:start] + stripped[end:]
     return stripped
 
 

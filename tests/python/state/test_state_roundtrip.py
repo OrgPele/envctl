@@ -28,6 +28,8 @@ class StateRoundtripTests(unittest.TestCase):
                         listener_pids=[12345, 12346],
                         status="running",
                         started_at=1234.5,
+                        public_url="https://backend.example.test",
+                        health_url="https://backend.example.test/healthz",
                     )
                 },
                 metadata={"source": "python"},
@@ -40,6 +42,8 @@ class StateRoundtripTests(unittest.TestCase):
             self.assertEqual(loaded.services["Tree Alpha Backend"].actual_port, 8001)
             self.assertEqual(loaded.services["Tree Alpha Backend"].listener_pids, [12345, 12346])
             self.assertEqual(loaded.services["Tree Alpha Backend"].started_at, 1234.5)
+            self.assertEqual(loaded.services["Tree Alpha Backend"].public_url, "https://backend.example.test")
+            self.assertEqual(loaded.services["Tree Alpha Backend"].health_url, "https://backend.example.test/healthz")
             self.assertEqual(loaded.metadata["source"], "python")
 
     def test_legacy_shell_state_is_loaded_without_source_execution(self) -> None:

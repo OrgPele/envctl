@@ -149,10 +149,15 @@ def _project_configured_services_metadata(
     runtime: StartupRuntime, session: StartupSession
 ) -> dict[str, list[str]]:
     configured: dict[str, list[str]] = {}
+    additional_types = [
+        str(getattr(service, "name", "") or "").strip().lower()
+        for service in getattr(runtime.config, "additional_services", ())
+        if str(getattr(service, "name", "") or "").strip()
+    ]
     for context in session.selected_contexts:
         service_types = [
             service_type
-            for service_type in APP_SERVICE_TYPES
+            for service_type in (*APP_SERVICE_TYPES, *additional_types)
             if runtime._service_enabled_for_mode(session.runtime_mode, service_type)
         ]
         if service_types:

@@ -5,7 +5,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable, Sequence
 
 from envctl_engine.state.models import ServiceRecord
 from envctl_engine.requirements.common import is_bind_conflict
@@ -33,6 +33,8 @@ class ServiceManager:
         reserve_next: Callable[[int], int],
         detect_actual: Callable[[int | None, int], int | None] | None = None,
         listener_expected: bool = True,
+        public_url: str | None = None,
+        health_url: str | None = None,
         max_retries: int = 3,
         on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
     ) -> ServiceRecord:
@@ -47,7 +49,7 @@ class ServiceManager:
                     if detect_actual is not None:
                         actual_port = detect_actual(pid, current_port)
                     return ServiceRecord(
-                        name=f"{project} {service_type.title()}",
+                        name=f"{project} {_display_service_type(service_type)}",
                         type=service_type,
                         cwd=cwd,
                         pid=pid,
@@ -56,6 +58,8 @@ class ServiceManager:
                         status="running",
                         started_at=time.time(),
                         listener_expected=listener_expected,
+                        public_url=public_url,
+                        health_url=health_url,
                     )
                 except RuntimeError as exc:
                     error = str(exc)
@@ -91,56 +95,110 @@ class ServiceManager:
         on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
         parallel_start: bool = False,
     ) -> dict[str, ServiceRecord]:
-        def start_backend_record() -> ServiceRecord:
-            return self.start_service_with_retry(
-                project=project,
+        descriptors = (
+            ServiceAttachDescriptor(
                 service_type="backend",
                 cwd=backend_cwd,
                 requested_port=backend_port,
                 start=start_backend,
-                reserve_next=reserve_next,
                 detect_actual=detect_backend_actual,
                 listener_expected=backend_listener_expected,
-                max_retries=max_retries,
-                on_retry=on_retry,
-            )
-
-        def start_frontend_record() -> ServiceRecord:
-            return self.start_service_with_retry(
-                project=project,
+            ),
+            ServiceAttachDescriptor(
                 service_type="frontend",
                 cwd=frontend_cwd,
                 requested_port=frontend_port,
                 start=start_frontend,
-                reserve_next=reserve_next,
                 detect_actual=detect_frontend_actual,
                 listener_expected=frontend_listener_expected,
+            ),
+        )
+        return self.start_services_with_attach(
+            project=project,
+            descriptors=descriptors,
+            reserve_next=reserve_next,
+            max_retries=max_retries,
+            on_retry=on_retry,
+            parallel_start=parallel_start,
+            max_workers=2,
+        )
+
+    def start_services_with_attach(
+        self,
+        *,
+        project: str,
+        descriptors: Sequence[ServiceAttachDescriptor],
+        reserve_next: Callable[[int], int],
+        max_retries: int = 3,
+        on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
+        parallel_start: bool = False,
+        max_workers: int | None = None,
+    ) -> dict[str, ServiceRecord]:
+        records: dict[str, ServiceRecord] = {}
+        partial_records: list[ServiceRecord] = []
+
+        def start_descriptor(descriptor: ServiceAttachDescriptor) -> ServiceRecord:
+            service_type = descriptor.service_type
+            start = descriptor.start
+            detect_actual = descriptor.detect_actual
+            public_url = str(getattr(descriptor, "public_url", "") or "").strip() or None
+            health_url = str(getattr(descriptor, "health_url", "") or "").strip() or None
+            return self.start_service_with_retry(
+                project=project,
+                service_type=service_type,
+                cwd=descriptor.cwd,
+                requested_port=descriptor.requested_port,
+                start=start,
+                reserve_next=reserve_next,
+                detect_actual=detect_actual,
+                listener_expected=descriptor.listener_expected,
+                public_url=public_url,
+                health_url=health_url,
                 max_retries=max_retries,
                 on_retry=on_retry,
             )
 
-        if parallel_start:
-            partial_records: list[ServiceRecord] = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                backend_future = executor.submit(start_backend_record)
-                frontend_future = executor.submit(start_frontend_record)
-                try:
-                    backend = backend_future.result()
-                    partial_records.append(backend)
-                    frontend = frontend_future.result()
-                    partial_records.append(frontend)
-                except Exception:
-                    for record in partial_records:
-                        _terminate_pid(record.pid, process_runner=self)
-                    raise
-        else:
-            backend = start_backend_record()
-            frontend = start_frontend_record()
+        try:
+            if parallel_start and len(descriptors) > 1:
+                workers = max_workers or len(descriptors)
+                workers = max(1, min(workers, len(descriptors)))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = [executor.submit(start_descriptor, descriptor) for descriptor in descriptors]
+                    concurrent.futures.wait(futures)
+                    first_error: BaseException | None = None
+                    for future in futures:
+                        try:
+                            record = future.result()
+                        except BaseException as exc:  # noqa: BLE001
+                            if first_error is None:
+                                first_error = exc
+                            continue
+                        partial_records.append(record)
+                        records[record.name] = record
+                    if first_error is not None:
+                        raise first_error
+            else:
+                for descriptor in descriptors:
+                    record = start_descriptor(descriptor)
+                    partial_records.append(record)
+                    records[record.name] = record
+        except Exception:
+            for record in partial_records:
+                _terminate_pid(record.pid, process_runner=self)
+            raise
+        return records
 
-        return {
-            backend.name: backend,
-            frontend.name: frontend,
-        }
+
+@dataclass(frozen=True, slots=True)
+class ServiceAttachDescriptor:
+    service_type: str
+    cwd: str
+    requested_port: int
+    start: Callable[[int], tuple[bool, str | None, int | None]]
+    detect_actual: Callable[[int | None, int], int | None] | None = None
+    listener_expected: bool = True
+    public_url: str | None = None
+    health_url: str | None = None
 
 
 def _is_retryable_error(error: str | None) -> bool:
@@ -168,3 +226,7 @@ def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> 
         os.kill(pid, signal.SIGTERM)
     except OSError:
         return
+
+
+def _display_service_type(service_type: str) -> str:
+    return " ".join(part.capitalize() for part in str(service_type).strip().split("-") if part)
