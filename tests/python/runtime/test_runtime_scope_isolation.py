@@ -13,6 +13,32 @@ from envctl_engine.state import dump_state
 
 
 class RuntimeScopeIsolationTests(unittest.TestCase):
+    def test_managed_linked_worktree_uses_main_repo_runtime_scope_and_lock_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            main_config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)})
+            worktree_config = load_config(
+                {"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}
+            )
+            main_runtime = PythonEngineRuntime(main_config, env={})
+            worktree_runtime = PythonEngineRuntime(worktree_config, env={"ENVCTL_INVOCATION_CWD": str(worktree)})
+
+            self.assertEqual(worktree_config.base_dir, repo.resolve())
+            self.assertEqual(worktree_config.runtime_scope_id, main_config.runtime_scope_id)
+            self.assertEqual(worktree_config.runtime_scope_dir, main_config.runtime_scope_dir)
+            self.assertEqual(worktree_runtime.runtime_root, main_runtime.runtime_root)
+            self.assertEqual(worktree_runtime.port_planner.lock_dir, main_runtime.port_planner.lock_dir)
+
     def test_runtime_scope_ids_are_repo_specific(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

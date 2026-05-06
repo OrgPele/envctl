@@ -20,6 +20,7 @@ Notes:
 - bare `envctl` keeps the installed-command preference when a repo wrapper shadows another `envctl` later on `PATH`
 - `ENVCTL_USE_REPO_WRAPPER=1` remains the override when you need to force repo-wrapper behavior for an ambiguous PATH-based launch
 - `--version` is launcher-owned and works without repo resolution, `.envctl`, or runtime startup
+- when `envctl` is launched from a linked worktree whose owning main repo has a readable `.envctl`, envctl uses the owning repo as the control-plane root for `.envctl`, runtime state, port locks, and latest-run artifacts; this also applies to `--repo <linked-worktree>`
 
 ## Launcher Verification
 
@@ -79,6 +80,8 @@ envctl show-state --json
 envctl explain-startup --json
 envctl preflight --json
 ```
+
+For linked worktrees of an envctl-managed project, `show-config --json` reports the owning main repo as `base_dir` and the owning repo's `.envctl` as `config_file`. Standalone repos and linked worktrees whose main repo has no readable `.envctl` keep their own repo root so bootstrap flows remain separate.
 
 Compatibility note:
 

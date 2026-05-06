@@ -202,6 +202,8 @@ New worktrees created by `envctl` now persist their origin branch in:
 <worktree>/.envctl-state/worktree-provenance.json
 ```
 
+When you run `envctl` from a linked worktree of an envctl-managed project, envctl uses the owning main repo for control-plane metadata: `.envctl`, runtime scope, state files, port locks, and latest-run artifacts. The worktree-local provenance file remains in the worktree and is still used by planning and review flows; it is not the project-level runtime metadata store.
+
 When the source repo already has common local dependency/runtime artifacts, envctl-created worktrees also try to link a small compatibility set into the new worktree:
 
 - `backend/venv`

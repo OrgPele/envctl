@@ -16,6 +16,7 @@ from envctl_engine.actions.actions_test import (
 from envctl_engine.config.profile_defaults import default_profile_settings, managed_dependency_default_enabled
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
+from envctl_engine.shared.repo_roots import canonical_envctl_project_root
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
 CONFIG_MANAGED_BLOCK_END = "# <<< envctl managed startup config <<<"
@@ -544,7 +545,7 @@ def _dependency_definitions():
 
 def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     env = env or {}
-    base_dir = Path(env.get("RUN_REPO_ROOT") or Path.cwd()).resolve()
+    base_dir = canonical_envctl_project_root(Path(env.get("RUN_REPO_ROOT") or Path.cwd()))
     local_state = discover_local_config_state(base_dir, env.get("ENVCTL_CONFIG_FILE"))
 
     resolved: dict[str, str] = dict(DEFAULTS)

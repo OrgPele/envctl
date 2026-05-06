@@ -90,6 +90,41 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", text)
             self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", text)
 
+    def test_config_set_from_managed_linked_worktree_saves_main_repo_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            runtime = self._runtime(worktree, runtime_root)
+
+            with redirect_stdout(io.StringIO()):
+                code = runtime.dispatch(
+                    parse_route(
+                        [
+                            "config",
+                            "--set",
+                            "ENVCTL_DEFAULT_MODE=trees",
+                            "--set",
+                            "BACKEND_DIR=api",
+                        ],
+                        env={},
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(runtime.config.base_dir, repo.resolve())
+            main_text = (repo / ".envctl").read_text(encoding="utf-8")
+            self.assertIn("ENVCTL_DEFAULT_MODE=trees", main_text)
+            self.assertIn("BACKEND_DIR=api", main_text)
+            self.assertFalse((worktree / ".envctl").exists())
+
     def test_config_command_emits_progress_events_for_interactive_spinner_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

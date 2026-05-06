@@ -9,6 +9,13 @@ from pathlib import Path
 import tomllib
 
 from envctl_engine.runtime.help_text import render_help_text as render_runtime_help_text
+from envctl_engine.shared.repo_roots import (
+    canonical_envctl_project_root,
+    find_repo_root,
+    is_repo_root,
+    main_repo_root_for_linked_worktree,
+    repo_root_with_readable_main_config_from_worktree,
+)
 
 
 class LauncherError(RuntimeError):
@@ -241,70 +248,8 @@ def select_envctl_reexec_target(
     return find_shadowed_installed_envctl(current_binary, env=env_map)
 
 
-def is_repo_root(path: Path) -> bool:
-    return (path / ".git").is_dir() or (path / ".git").is_file()
-
-
 def find_repo_root_from_cwd(cwd: Path) -> Path | None:
-    current = cwd.resolve()
-    while True:
-        if is_repo_root(current):
-            return current
-        if current.parent == current:
-            return None
-        current = current.parent
-
-
-def main_repo_root_for_linked_worktree(worktree_root: Path) -> Path | None:
-    git_file = worktree_root.resolve() / ".git"
-    if not git_file.is_file():
-        return None
-    try:
-        first_line = git_file.read_text(encoding="utf-8").splitlines()[0].strip()
-    except (IndexError, OSError, UnicodeDecodeError):
-        return None
-    if not first_line.lower().startswith("gitdir:"):
-        return None
-    raw_git_dir = first_line.split(":", 1)[1].strip()
-    if not raw_git_dir:
-        return None
-    git_dir = Path(raw_git_dir).expanduser()
-    if not git_dir.is_absolute():
-        git_dir = git_file.parent / git_dir
-    git_dir = git_dir.resolve()
-    if git_dir.parent.name == "worktrees" and git_dir.parent.parent.name == ".git":
-        return git_dir.parent.parent.parent.resolve()
-    common_dir_file = git_dir / "commondir"
-    if not common_dir_file.is_file():
-        return None
-    try:
-        common_dir_raw = common_dir_file.read_text(encoding="utf-8").splitlines()[0].strip()
-    except (IndexError, OSError, UnicodeDecodeError):
-        return None
-    if not common_dir_raw:
-        return None
-    common_dir = Path(common_dir_raw).expanduser()
-    if not common_dir.is_absolute():
-        common_dir = git_dir / common_dir
-    common_dir = common_dir.resolve()
-    if common_dir.name == ".git":
-        return common_dir.parent.resolve()
-    return None
-
-
-def repo_root_with_readable_main_config_from_worktree(worktree_root: Path) -> Path | None:
-    main_repo_root = main_repo_root_for_linked_worktree(worktree_root)
-    if main_repo_root is None:
-        return None
-    config_file = main_repo_root / ".envctl"
-    if not config_file.is_file():
-        return None
-    try:
-        with config_file.open("r", encoding="utf-8"):
-            pass
-    except OSError:
-        return None
-    return main_repo_root
+    return find_repo_root(cwd)
 
 
 def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
@@ -313,16 +258,14 @@ def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
         if not candidate.is_absolute():
             candidate = cwd / candidate
         candidate = candidate.resolve()
-        if not is_repo_root(candidate):
+        detected = find_repo_root(candidate)
+        if detected is None:
             raise LauncherError(f"Invalid --repo path: {repo_arg}")
-        return candidate
+        return canonical_envctl_project_root(detected)
     detected = find_repo_root_from_cwd(cwd)
     if detected is None:
         raise LauncherError("Could not resolve repository root. Use --repo <path>.")
-    main_config_root = repo_root_with_readable_main_config_from_worktree(detected)
-    if main_config_root is not None:
-        return main_config_root
-    return detected
+    return canonical_envctl_project_root(detected)
 
 
 def launcher_doctor_payload(
