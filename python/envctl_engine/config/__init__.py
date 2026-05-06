@@ -103,6 +103,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_PRESET": "implement_task",
         "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
         "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "true",
+        "ENVCTL_PLAN_AGENT_CODEX_YOLO": "true",
         "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE": "true",
         "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE": "true",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
@@ -415,6 +416,7 @@ class EngineConfig:
     plan_agent_preset: str
     plan_agent_codex_cycles: int
     plan_agent_codex_goal_enable: bool
+    plan_agent_codex_yolo: bool
     plan_agent_browser_e2e_enable: bool
     plan_agent_pr_review_comments_enable: bool
     plan_agent_shell: str
@@ -680,6 +682,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_agent_codex_cycles=max(parse_int(resolved.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES"), 0), 0),
         plan_agent_codex_goal_enable=parse_bool(
             resolved.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"),
+            True,
+        ),
+        plan_agent_codex_yolo=parse_bool(
+            resolved.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
             True,
         ),
         plan_agent_browser_e2e_enable=parse_bool(

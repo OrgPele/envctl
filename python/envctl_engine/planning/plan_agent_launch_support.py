@@ -372,10 +372,15 @@ def resolve_plan_agent_launch_config(
             )
         )
     ).strip().lower() or "codex"
+    codex_yolo_enabled = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_CODEX_YOLO")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
+        True,
+    )
     cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or _default_plan_agent_cli_command(cli)
+        or _default_plan_agent_cli_command(cli, codex_yolo_enabled=codex_yolo_enabled)
     ).strip() or cli
     preset = str(
         env_map.get("ENVCTL_PLAN_AGENT_PRESET")
@@ -470,10 +475,12 @@ def resolve_plan_agent_launch_config(
     )
 
 
-def _default_plan_agent_cli_command(cli: str) -> str:
+def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True) -> str:
     normalized = str(cli).strip().lower()
     if normalized == "codex":
-        return f"codex {_CODEX_BYPASS_FLAGS}"
+        if codex_yolo_enabled:
+            return f"codex {_CODEX_BYPASS_FLAGS}"
+        return "codex"
     return normalized or "codex"
 
 
