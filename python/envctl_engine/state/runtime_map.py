@@ -55,25 +55,36 @@ def build_runtime_map_without_projection(state: RunState, *, host: str = "localh
     port_to_service: dict[int, str] = {}
     service_to_actual_port: dict[str, int] = {}
     service_to_url: dict[str, str] = {}
+    service_to_public_url: dict[str, str] = {}
+    service_to_health_url: dict[str, str] = {}
     for service in state.services.values():
-        project = _project_name_from_service_record(service)
+        project = str(getattr(service, "project", "") or "").strip() or _project_name_from_service_record(service)
         project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None, "services": {}})
         port = service.actual_port if service.actual_port is not None else service.requested_port
         service_ready = _service_projection_ready(service)
         url = f"http://{host}:{port}" if port is not None and service_ready else None
+        public_url = str(getattr(service, "public_url", "") or "").strip() or url
+        health_url = str(getattr(service, "health_url", "") or "").strip() or None
+        service_slug = str(getattr(service, "service_slug", "") or "").strip() or service.type
         services_entry = project_entry.setdefault("services", {})
         if isinstance(services_entry, dict):
-            services_entry[service.type] = {
+            services_entry[service_slug] = {
                 "name": service.name,
                 "type": service.type,
+                "service_slug": service_slug,
                 "port": port,
                 "url": url,
+                "public_url": public_url,
+                "health_url": health_url,
                 "status": service.status,
                 "cwd": service.cwd,
                 "listener_expected": service.listener_expected,
                 "requested_port": service.requested_port,
                 "actual_port": service.actual_port,
                 "log_path": service.log_path,
+                "failure_detail": getattr(service, "failure_detail", None),
+                "critical": getattr(service, "critical", True),
+                "degraded": getattr(service, "degraded", False),
             }
         if service.type == "backend":
             project_entry["backend_port"] = port
@@ -84,6 +95,10 @@ def build_runtime_map_without_projection(state: RunState, *, host: str = "localh
             service_to_actual_port[service.name] = port
             if url is not None:
                 service_to_url[service.name] = url
+            if public_url:
+                service_to_public_url[service.name] = public_url
+            if health_url:
+                service_to_health_url[service.name] = health_url
     return {
         "schema_version": "1.0",
         "backend_mode": "python",
@@ -93,6 +108,8 @@ def build_runtime_map_without_projection(state: RunState, *, host: str = "localh
         "port_to_service": port_to_service,
         "service_to_actual_port": service_to_actual_port,
         "service_to_url": service_to_url,
+        "service_to_public_url": service_to_public_url,
+        "service_to_health_url": service_to_health_url,
     }
 
 

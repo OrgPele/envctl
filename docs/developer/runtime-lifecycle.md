@@ -120,7 +120,15 @@ Major collaborators include:
 Application service startup flows through descriptor construction in `startup/service_execution.py` before calling
 `ServiceManager.start_services_with_attach(...)`. Backend and frontend still keep their specialized prep/env-file logic,
 while additional services are built from declarative `.envctl` `ENVCTL_ADDITIONAL_SERVICES` entries and share the same
-retry, listener detection, log, state, and runtime-map machinery.
+retry, listener detection, log, state, and runtime-map machinery. App descriptors are executed in dependency layers:
+`ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` may reference backend, frontend, other additional services, or managed dependency ids.
+Unknown references and cycles fail before processes launch; `START_ORDER` remains the deterministic tie-breaker within a
+ready layer.
+
+Additional services also carry canonical state fields (`project`, `service_slug`, `public_url`, `health_url`, `critical`,
+`degraded`, and `failure_detail`). Critical services fail fast. Non-critical additional services produce degraded service
+records with cwd/log/port metadata and allow independent healthy layers to continue, making the failure visible through
+state, runtime maps, dashboard, and `health --json`.
 
 Guideline:
 

@@ -226,6 +226,66 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertIsNone(service.requested_port)
         self.assertIsNone(service.actual_port)
 
+
+    def test_start_services_with_attach_returns_degraded_record_for_noncritical_failure(self) -> None:
+        manager = ServiceManager()
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="voice-runtime",
+                cwd="/tmp/repo/voice-runtime",
+                requested_port=8010,
+                start=lambda _port: (False, "boot failed", None),
+                listener_expected=True,
+                critical=False,
+                log_path="/tmp/run/voice.log",
+                public_url="https://voice.example.test",
+                health_url="https://voice.example.test/readyz",
+                max_retries=0,
+            ),
+        )
+
+        records = manager.start_services_with_attach(
+            project="Main",
+            descriptors=descriptors,
+            reserve_next=lambda port: port,
+        )
+
+        record = records["Main Voice Runtime"]
+        self.assertEqual(record.status, "degraded")
+        self.assertFalse(record.critical)
+        self.assertTrue(record.degraded)
+        self.assertEqual(record.failure_detail, "Failed to start Main voice-runtime on port 8010: boot failed")
+        self.assertEqual(record.log_path, "/tmp/run/voice.log")
+        self.assertEqual(record.public_url, "https://voice.example.test")
+        self.assertEqual(record.health_url, "https://voice.example.test/readyz")
+
+    def test_start_services_with_attach_records_descriptor_metadata_on_success(self) -> None:
+        manager = ServiceManager()
+        records = manager.start_services_with_attach(
+            project="Main",
+            descriptors=(
+                ServiceStartDescriptor(
+                    service_type="voice-runtime",
+                    cwd="/tmp/repo/voice-runtime",
+                    requested_port=8010,
+                    start=lambda _port: (True, None, 44001),
+                    detect_actual=lambda _pid, requested: requested + 2,
+                    log_path="/tmp/run/voice.log",
+                    public_url="https://voice.example.test",
+                    health_url="https://voice.example.test/readyz",
+                ),
+            ),
+            reserve_next=lambda port: port,
+        )
+
+        record = records["Main Voice Runtime"]
+        self.assertEqual(record.actual_port, 8012)
+        self.assertEqual(record.service_slug, "voice-runtime")
+        self.assertEqual(record.project, "Main")
+        self.assertEqual(record.log_path, "/tmp/run/voice.log")
+        self.assertEqual(record.public_url, "https://voice.example.test")
+        self.assertEqual(record.health_url, "https://voice.example.test/readyz")
+
     def test_start_services_with_attach_starts_arbitrary_services_and_non_listeners(self) -> None:
         manager = ServiceManager()
         order: list[str] = []

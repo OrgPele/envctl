@@ -36,6 +36,44 @@ class LaunchedServiceRuntime:
     log_path: str
 
 
+def ordered_service_layers(
+    selected_service_types: list[str] | tuple[str, ...],
+    additional_services: tuple[object, ...],
+) -> list[tuple[str, ...]]:
+    selected = [str(service).strip().lower() for service in selected_service_types if str(service).strip()]
+    selected_set = set(selected)
+    service_by_name = {str(getattr(service, "name", "")).strip().lower(): service for service in additional_services}
+    order_index = {"backend": 0, "frontend": 1}
+    for service in additional_services:
+        name = str(getattr(service, "name", "")).strip().lower()
+        order_index[name] = int(getattr(service, "start_order", 100) or 100) + 10
+    dependencies: dict[str, set[str]] = {name: set() for name in selected}
+    for name in selected:
+        service = service_by_name.get(name)
+        if service is None:
+            continue
+        for dependency in tuple(getattr(service, "depends_on", ()) or ()):
+            normalized = str(dependency).strip().lower()
+            if normalized in selected_set:
+                dependencies[name].add(normalized)
+
+    layers: list[tuple[str, ...]] = []
+    remaining = set(selected)
+    resolved: set[str] = set()
+    while remaining:
+        ready = sorted(
+            (name for name in remaining if dependencies.get(name, set()) <= resolved),
+            key=lambda name: (order_index.get(name, 1000), name),
+        )
+        if not ready:
+            cycle_nodes = sorted(remaining)
+            raise RuntimeError("additional service dependency cycle: " + " -> ".join(cycle_nodes))
+        layers.append(tuple(ready))
+        resolved.update(ready)
+        remaining.difference_update(ready)
+    return layers
+
+
 def _resolve_command_env_builder(rt: object):
     builder = getattr(rt, "_command_env", None)
     if callable(builder):
@@ -671,6 +709,7 @@ def start_project_services(
                 start=start_backend,
                 detect_actual=detect_backend_actual,
                 listener_expected=backend_listener_expected,
+                log_path=backend_log_path,
             )
         )
     if "frontend" in selected_service_types:
@@ -682,6 +721,7 @@ def start_project_services(
                 start=start_frontend,
                 detect_actual=detect_frontend_actual,
                 listener_expected=True,
+                log_path=frontend_log_path,
             )
         )
     for service in sorted(additional_services, key=lambda item: (item.start_order, item.name)):
@@ -696,17 +736,28 @@ def start_project_services(
                     service_name, pid, requested
                 ),
                 listener_expected=service.expect_listener,
+                critical=service.critical,
+                log_path=launch.log_path,
+                public_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_PUBLIC_URL"),
+                health_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_HEALTH_URL"),
             )
         )
     generic_attach = getattr(rt.services, "start_services_with_attach", None)
     if callable(generic_attach):
-        records = generic_attach(
-            project=context.name,
-            descriptors=tuple(descriptors),
-            reserve_next=reserve_next,
-            on_retry=on_service_retry,
-            parallel_start=attach_parallel,
-        )
+        descriptor_by_type = {descriptor.service_type: descriptor for descriptor in descriptors}
+        records = {}
+        for layer in ordered_service_layers(
+            [descriptor.service_type for descriptor in descriptors],
+            tuple(additional_services),
+        ):
+            layer_records = generic_attach(
+                project=context.name,
+                descriptors=tuple(descriptor_by_type[name] for name in layer),
+                reserve_next=reserve_next,
+                on_retry=on_service_retry,
+                parallel_start=attach_parallel and len(layer) > 1,
+            )
+            records.update(layer_records)
     elif selected_service_types <= {"backend", "frontend"}:
         records = rt.services.start_project_with_attach(
             project=context.name,
@@ -792,6 +843,9 @@ def start_project_services(
         plan = context.ports.get(service.name)
         if plan is not None and record.actual_port:
             plan.final = record.actual_port
+        final_env = project_env_for_service(service.name)
+        record.public_url = final_env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_PUBLIC_URL") or record.public_url
+        record.health_url = final_env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_HEALTH_URL") or record.health_url
         launched_runtimes.append(
             LaunchedServiceRuntime(
                 service_name=service.name,

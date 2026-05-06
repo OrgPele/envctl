@@ -15,12 +15,12 @@ class DashboardMetadataTests(unittest.TestCase):
     def test_normalize_dashboard_service_types_filters_normalizes_deduplicates_and_sorts(self) -> None:
         self.assertEqual(
             normalize_dashboard_service_types([" Frontend ", "backend", "BACKEND", "worker", ""]),
-            ["backend", "frontend"],
+            ["backend", "frontend", "worker"],
         )
 
     def test_normalize_dashboard_service_types_returns_empty_for_malformed_or_unsupported_inputs(self) -> None:
         self.assertEqual(normalize_dashboard_service_types("backend"), [])
-        self.assertEqual(normalize_dashboard_service_types(["worker", "api", ""]), [])
+        self.assertEqual(normalize_dashboard_service_types(["worker", "api", ""]), ["api", "worker"])
         self.assertEqual(normalize_dashboard_service_types(None), [])
 
     def test_dashboard_project_configured_services_from_metadata_ignores_malformed_entries(self) -> None:
@@ -35,7 +35,7 @@ class DashboardMetadataTests(unittest.TestCase):
 
         self.assertEqual(
             dashboard_project_configured_services_from_metadata(metadata),
-            {"Main": {"backend", "frontend"}},
+            {"Main": {"backend", "frontend", "worker"}, "Empty": {"worker"}},
         )
 
     def test_dashboard_project_configured_services_from_metadata_returns_empty_for_missing_or_malformed_contract(self) -> None:
@@ -55,20 +55,20 @@ class DashboardMetadataTests(unittest.TestCase):
                     "empty": ["worker"],
                 }
             ),
-            {"Alpha": ["frontend"], "zeta": ["backend", "frontend"]},
+            {"Alpha": ["frontend"], "empty": ["worker"], "zeta": ["backend", "frontend"]},
         )
 
     def test_dashboard_configured_missing_services_by_project_excludes_active_and_stopped_services(self) -> None:
         self.assertEqual(
             dashboard_configured_missing_services_by_project(
                 configured_services={
-                    "Main": {"backend", "frontend"},
-                    "Feature": {"backend", "frontend"},
+                    "Main": {"backend", "frontend", "voice-runtime"},
+                    "Feature": {"backend", "frontend", "webhook-relay"},
                 },
                 stopped_services={"Main": {"backend": "Main Backend"}},
-                active_service_names={"Main Frontend", "Feature Backend"},
+                active_service_names={"Main Frontend", "Main Voice Runtime", "Feature Backend"},
             ),
-            {"Feature": {"frontend"}},
+            {"Feature": {"frontend", "webhook-relay"}},
         )
 
 

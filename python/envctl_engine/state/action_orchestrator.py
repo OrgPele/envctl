@@ -23,6 +23,7 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
+from envctl_engine.shared.services import service_matches_selector
 from envctl_engine.ui.status_symbols import health_status_badge, health_status_severity
 
 
@@ -701,11 +702,11 @@ class StateActionOrchestrator:
 
         if isinstance(services_flag, list):
             for raw in services_flag:
-                target = str(raw).strip().lower()
+                target = str(raw).strip()
                 if not target:
                     continue
-                for name in state.services:
-                    if name.lower() == target:
+                for name, service in state.services.items():
+                    if service_matches_selector(service, target):
                         selected.add(name)
         if project_filters:
             for name in state.services:
@@ -774,11 +775,28 @@ class StateActionOrchestrator:
 
     def _health_service_rows(self, state: RunState) -> list[dict[str, object]]:
         def _service_row(service: ServiceRecord) -> dict[str, object]:
+            project = str(getattr(service, "project", "") or "").strip()
+            if not project:
+                project = self.runtime.project_name_from_service(service.name) or "unknown"
+            port = service.actual_port if service.actual_port is not None else service.requested_port
             return {
-                "project": self.runtime.project_name_from_service(service.name) or "unknown",
+                "project": project,
                 "name": service.name,
+                "type": service.type,
+                "service_slug": str(getattr(service, "service_slug", "") or "").strip() or service.type,
                 "status": str(service.status or "unknown").strip().lower() or "unknown",
-                "port": service.actual_port if service.actual_port is not None else service.requested_port,
+                "port": port,
+                "requested_port": service.requested_port,
+                "actual_port": service.actual_port,
+                "pid": service.pid,
+                "listener_expected": service.listener_expected,
+                "cwd": service.cwd,
+                "log_path": service.log_path,
+                "public_url": getattr(service, "public_url", None),
+                "health_url": getattr(service, "health_url", None),
+                "failure_detail": getattr(service, "failure_detail", None),
+                "critical": getattr(service, "critical", True),
+                "degraded": getattr(service, "degraded", False),
             }
 
         rows = self._parallel_service_map(

@@ -118,6 +118,34 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             {"alpha backend", "alpha frontend"},
         )
 
+    def test_logs_service_filter_accepts_additional_service_slug_and_display_forms(self) -> None:
+        state = RunState(
+            run_id="run-generic-service",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main"),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice-runtime",
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+        )
+        for selector in ("voice-runtime", "service:voice-runtime", "Voice Runtime", "Main Voice Runtime"):
+            with self.subTest(selector=selector):
+                runtime = _RuntimeStub(state)
+                orchestrator = StateActionOrchestrator(runtime)
+                route = Route(command="logs", mode="main", flags={"services": [selector]})
+
+                code = orchestrator.execute(route)
+
+                self.assertEqual(code, 0)
+                self.assertIsNotNone(runtime.seen_logs_state)
+                assert runtime.seen_logs_state is not None
+                self.assertEqual(set(runtime.seen_logs_state.services), {"Main Voice Runtime"})
+
     def test_health_prints_enabled_dependency_statuses(self) -> None:
         state = RunState(
             run_id="run-1",

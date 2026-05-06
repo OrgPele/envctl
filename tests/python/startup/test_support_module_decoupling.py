@@ -19,6 +19,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     start_project_services,
 )
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
+from envctl_engine.config import AppServiceConfig  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
 
@@ -301,6 +302,115 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertIn("Main Frontend", records)
             self.assertEqual(attach_modes, [False])
             self.assertEqual(sorted(overlap_hits), ["backend", "frontend"])
+
+    def test_start_project_services_reprojects_additional_service_urls_after_rebound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            (project_root / "voice-runtime").mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-urls"
+            service = AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="voice-runtime",
+                start_cmd="python -m voice --port {port}",
+                port_base=8010,
+                public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+            )
+
+            def project_service_env(context, requirements, route=None, service_name=None):  # noqa: ANN001
+                _ = requirements, route
+                env = {"ENVCTL_PROJECT_NAME": context.name}
+                if service_name == "voice-runtime":
+                    port = context.ports["voice-runtime"].final
+                    env.update(
+                        {
+                            "ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST": "localhost",
+                            "ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT": str(port),
+                            "ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_URL": f"http://localhost:{port}",
+                            "ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL": f"http://localhost:{port}",
+                            "ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HEALTH_URL": f"http://localhost:{port}/readyz",
+                        }
+                    )
+                return env
+
+            def start_services_with_attach(**kwargs: object) -> dict[str, ServiceRecord]:
+                records: dict[str, ServiceRecord] = {}
+                for descriptor in kwargs["descriptors"]:
+                    descriptor.start(descriptor.requested_port)
+                    actual = descriptor.detect_actual(1234, descriptor.requested_port)
+                    records["Main Voice Runtime"] = ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(project_root / "voice-runtime"),
+                        requested_port=descriptor.requested_port,
+                        actual_port=actual,
+                        status="running",
+                        public_url=descriptor.public_url,
+                        health_url=descriptor.health_url,
+                        project="Main",
+                        service_slug="voice-runtime",
+                    )
+                return records
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(service,),
+                    all_app_service_names_for_mode=lambda mode: ("voice-runtime",),
+                    app_service_by_name=lambda name: service if name == "voice-runtime" else None,
+                ),
+                services=SimpleNamespace(start_services_with_attach=start_services_with_attach),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=project_service_env,
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
+                _service_command_source=lambda **kwargs: "configured",
+                _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
+                _detect_service_actual_port=lambda **kwargs: 8019,
+                _listener_truth_enforced=lambda: True,
+                _service_listener_failure_detail=lambda **kwargs: "",
+                _conflict_remaining={},
+                _emit=lambda event, **payload: None,
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _process_runtime=lambda rt: SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
+                _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                    "voice-runtime": SimpleNamespace(final=8010),
+                },
+            )
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=RequirementsResult(project="Main"),
+                run_id="run-urls",
+                route=parse_route(["start", "--main"], env={"ENVCTL_DEFAULT_MODE": "main"}),
+            )
+
+        record = records["Main Voice Runtime"]
+        self.assertEqual(context.ports["voice-runtime"].final, 8019)
+        self.assertEqual(record.public_url, "http://localhost:8019")
+        self.assertEqual(record.health_url, "http://localhost:8019/readyz")
 
 
 if __name__ == "__main__":

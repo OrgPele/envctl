@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -628,6 +629,42 @@ class RuntimeHealthTruthTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("n8n: n/a [Unreachable]", out.getvalue())
+
+    def test_health_json_includes_additional_service_metadata(self) -> None:
+        service = ServiceRecord(
+            name="Main Voice Runtime",
+            type="voice-runtime",
+            cwd="/tmp/repo/voice-runtime",
+            pid=12345,
+            requested_port=8010,
+            actual_port=8012,
+            status="running",
+            log_path="/tmp/voice.log",
+            listener_expected=True,
+            public_url="https://voice.example.test",
+            health_url="https://voice.example.test/readyz",
+            project="Main",
+            service_slug="voice-runtime",
+        )
+        engine = self._make_runtime_with_services(
+            services={service.name: service},
+            process_runner=_FakeTruthRunner(pid_running=True, listener_up=True),
+        )
+
+        out = StringIO()
+        with redirect_stdout(out):
+            code = engine.dispatch(parse_route(["health", "--main", "--json"], env={}))
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        row = payload["services"][0]
+        self.assertEqual(row["project"], "Main")
+        self.assertEqual(row["type"], "voice-runtime")
+        self.assertEqual(row["service_slug"], "voice-runtime")
+        self.assertEqual(row["actual_port"], 8012)
+        self.assertEqual(row["public_url"], "https://voice.example.test")
+        self.assertEqual(row["health_url"], "https://voice.example.test/readyz")
+        self.assertEqual(row["log_path"], "/tmp/voice.log")
 
 
 if __name__ == "__main__":

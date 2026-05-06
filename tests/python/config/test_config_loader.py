@@ -455,6 +455,63 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertIn("invalid service slug 'bad_name'", "\n".join(config.additional_service_errors))
             self.assertIn("listener service 'listener' requires ENVCTL_SERVICE_LISTENER_PORT_BASE", "\n".join(config.additional_service_errors))
 
+    def test_load_config_reports_unknown_and_cyclic_additional_service_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime,relay,worker",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=backend,missing-service",
+                        "ENVCTL_SERVICE_RELAY_PORT_BASE=8020",
+                        "ENVCTL_SERVICE_RELAY_START_CMD=python relay.py {port}",
+                        "ENVCTL_SERVICE_RELAY_DEPENDS_ON=worker",
+                        "ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false",
+                        "ENVCTL_SERVICE_WORKER_START_CMD=python worker.py",
+                        "ENVCTL_SERVICE_WORKER_DEPENDS_ON=relay",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            errors = "\n".join(config.additional_service_errors)
+            self.assertIn("service 'voice-runtime' depends on unknown service or dependency 'missing-service'", errors)
+            self.assertIn("additional service dependency cycle", errors)
+            self.assertEqual(config.additional_services, ())
+
+    def test_load_config_allows_known_dependency_references_and_noncritical_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=backend,redis,worker",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL=false",
+                        "ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false",
+                        "ENVCTL_SERVICE_WORKER_START_CMD=python worker.py",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.additional_service_errors, ())
+            voice = config.app_service_by_name("voice-runtime")
+            self.assertIsNotNone(voice)
+            assert voice is not None
+            self.assertEqual(voice.depends_on, ("backend", "redis", "worker"))
+            self.assertFalse(voice.critical)
+
 
 if __name__ == "__main__":
     unittest.main()

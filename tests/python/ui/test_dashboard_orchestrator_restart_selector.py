@@ -1041,6 +1041,32 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
             {"Main": [("Main Backend", "backend", True), ("Main Frontend", "frontend", False)]},
         )
 
+    def test_restart_selector_offers_configured_missing_additional_service(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend", "voice-runtime"])
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_restart_selector(**kwargs: object) -> list[str]:
+            selector_calls.append(kwargs)
+            return ["__RESTART__:service:Main Voice Runtime"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("Voice Runtime — Main (stopped)", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Voice Runtime"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["voice-runtime"])
+
     def test_service_names_for_projects_and_types_filters_configured_missing_services(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)

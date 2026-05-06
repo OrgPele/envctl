@@ -773,9 +773,49 @@ def _parse_additional_services(resolved: Mapping[str, str]) -> tuple[tuple[AppSe
                 critical=parse_bool(resolved.get(f"{prefix}CRITICAL"), True),
             )
         )
+    dependency_errors = _validate_additional_service_dependencies(services)
+    errors.extend(dependency_errors)
     if errors:
         return (), tuple(errors)
     return tuple(services), ()
+
+
+def _validate_additional_service_dependencies(services: list[AppServiceConfig]) -> list[str]:
+    from envctl_engine.requirements.core import dependency_ids
+
+    errors: list[str] = []
+    service_names = {service.name for service in services}
+    allowed = {"backend", "frontend", *dependency_ids(), *service_names}
+    graph: dict[str, set[str]] = {service.name: set() for service in services}
+    for service in services:
+        for dependency in service.depends_on:
+            if dependency not in allowed:
+                errors.append(
+                    f"service {service.name!r} depends on unknown service or dependency {dependency!r}"
+                )
+                continue
+            if dependency in service_names:
+                graph[service.name].add(dependency)
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            cycle = [*visiting[visiting.index(name) :], name]
+            errors.append("additional service dependency cycle: " + " -> ".join(cycle))
+            return
+        visiting.append(name)
+        for dependency in sorted(graph.get(name, set())):
+            visit(dependency)
+        visiting.pop()
+        visited.add(name)
+
+    for service in services:
+        visit(service.name)
+    return errors
 
 
 def _service_env_suffix(service_name: str) -> str:

@@ -152,10 +152,14 @@ Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the upperc
 | `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
 | `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
 | `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
-| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated dependency metadata for future ordering policy. |
-| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | Reserved for degraded-start policy; current startup still treats failures as hard failures. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. |
+| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | `true` keeps fail-fast startup. `false` records a degraded failed service with cwd/log/port/failure metadata and allows healthy independent services to continue. |
 
 Reserved additional-service slugs include `backend`, `frontend`, managed dependency ids, `all`, `services`, and `dependencies`.
+
+Startup plans application services in dependency layers. Built-in backend/frontend behavior is unchanged when no additional service dependencies are configured. Inside a layer, `START_ORDER` and slug order are deterministic tie-breakers; a service that depends on another app service starts only after that dependency's layer completes. Listener services use strict listener truth, while `EXPECT_LISTENER=false` workers persist `port: null`, `url: null`, and `listener_expected: false` but still keep static health/public URLs if configured.
+
+Runtime state, `show-state --json`, runtime maps, dashboard rows, and `health --json` expose canonical `project`, `service_slug`, `public_url`, `health_url`, `critical`, `degraded`, and `failure_detail` fields so external tooling does not need to parse display names. Service targeting accepts `<slug>`, `service:<slug>`, exact display names, and full service names for logs/actions where service filters are supported.
 
 ## Migrate Env Resolution
 
@@ -234,7 +238,7 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The current config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
+The current config wizard writes and preserves the canonical managed keys, including declared additional app services. Launch env template sections remain user-owned and are preserved as-is.
 
 ## Current Wizard Coverage
 
@@ -247,6 +251,7 @@ The current setup/editor wizard covers:
 - entrypoints and backend/frontend test command suggestions
 - optional frontend test directory suggestions
 - canonical ports
+- advanced additional app service definitions: slug, directory, start command, port base, listener expectation, main/trees enablement, and optional test command
 
 The current flow is:
 
@@ -257,7 +262,8 @@ The current flow is:
 5. `Directories`
 6. `Entrypoints / Commands`
 7. `Ports`
-8. `Review / Save`
+8. advanced additional app service review fields when configured
+9. `Review / Save`
 
 There is no simple/advanced split in the current UI.
 

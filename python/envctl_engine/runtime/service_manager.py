@@ -30,6 +30,10 @@ class ServiceStartDescriptor:
     detect_actual: Callable[[int | None, int], int | None] | None = None
     listener_expected: bool = True
     max_retries: int = 3
+    critical: bool = True
+    log_path: str | None = None
+    public_url: str | None = None
+    health_url: str | None = None
 
 
 class ServiceManager:
@@ -141,18 +145,42 @@ class ServiceManager:
         max_workers: int | None = None,
     ) -> dict[str, ServiceRecord]:
         def start_record(descriptor: ServiceStartDescriptor) -> ServiceRecord:
-            return self.start_service_with_retry(
-                project=project,
-                service_type=descriptor.service_type,
-                cwd=descriptor.cwd,
-                requested_port=descriptor.requested_port,
-                start=descriptor.start,
-                reserve_next=reserve_next,
-                detect_actual=descriptor.detect_actual,
-                listener_expected=descriptor.listener_expected,
-                max_retries=descriptor.max_retries,
-                on_retry=on_retry,
-            )
+            try:
+                record = self.start_service_with_retry(
+                    project=project,
+                    service_type=descriptor.service_type,
+                    cwd=descriptor.cwd,
+                    requested_port=descriptor.requested_port,
+                    start=descriptor.start,
+                    reserve_next=reserve_next,
+                    detect_actual=descriptor.detect_actual,
+                    listener_expected=descriptor.listener_expected,
+                    max_retries=descriptor.max_retries,
+                    on_retry=on_retry,
+                )
+            except Exception as exc:
+                if descriptor.critical:
+                    raise
+                record = ServiceRecord(
+                    name=f"{project} {_service_display_name(descriptor.service_type)}",
+                    type=descriptor.service_type,
+                    cwd=descriptor.cwd,
+                    requested_port=descriptor.requested_port if descriptor.listener_expected else None,
+                    actual_port=None,
+                    status="degraded",
+                    listener_expected=descriptor.listener_expected,
+                    failure_detail=str(exc),
+                    critical=False,
+                    degraded=True,
+                )
+            record.project = project
+            record.service_slug = descriptor.service_type
+            record.log_path = descriptor.log_path or record.log_path
+            record.public_url = descriptor.public_url or record.public_url
+            record.health_url = descriptor.health_url or record.health_url
+            record.critical = bool(descriptor.critical)
+            record.degraded = bool(getattr(record, "degraded", False))
+            return record
 
         partial_records: list[ServiceRecord] = []
         try:

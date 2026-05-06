@@ -44,11 +44,16 @@ FRONTEND_PORT_BASE=9000
 # ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
 # ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
 # ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+# ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+# ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=backend
+# ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL=true
 # ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
 # ENVCTL_SERVICE_WORKER_ENABLE=true
 # ENVCTL_SERVICE_WORKER_DIR=backend
 # ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
 # ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+# ENVCTL_SERVICE_WORKER_DEPENDS_ON=backend
+# ENVCTL_SERVICE_WORKER_CRITICAL=false
 # ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
 
 # Spacing between project slots in trees mode.
@@ -143,7 +148,7 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 
 # Notes:
 # - `.envctl` is the canonical repo-local config file.
-# - The interactive `envctl config` wizard writes the canonical managed keys above.
+# - The interactive `envctl config` wizard writes and preserves canonical managed keys, including additional app services.
 # - All launch env template sections are user-owned and preserved as-is.
 # - If a mode has `*_STARTUP_ENABLE=false`, `start`, `resume`, and `restart`
 #   for that mode are blocked until you re-enable startup.
