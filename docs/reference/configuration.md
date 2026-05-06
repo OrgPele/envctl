@@ -35,7 +35,7 @@ Useful commands:
 
 ## Service Launch Env Templates In `.envctl`
 
-`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
+`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes and configured additional app services that `envctl` starts.
 
 ```dotenv
 # >>> envctl backend launch env >>>
@@ -47,12 +47,22 @@ REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 # >>> envctl frontend launch env >>>
 VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
+
+# >>> envctl service voice-runtime launch env >>>
+VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
+
+# >>> envctl main service voice-runtime launch env >>>
+PELE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}
+# <<< envctl main service voice-runtime launch env <<<
 ```
 
 These sections are separate from the managed startup block:
 
 - the backend section applies only to backend launches
 - the frontend section applies only to frontend launches
+- `service <slug>` sections apply only to the matching additional app service
+- `main service <slug>` and `trees service <slug>` sections apply only for that startup mode
 - old shared sections are still understood for compatibility, but new `.envctl` files only seed backend/frontend sections
 - `envctl config` seeds these sections when missing, but does not edit or normalize them afterward
 - for a given service, only vars defined in its applicable sections are emitted
@@ -87,8 +97,65 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_N8N_PORT`
 - `ENVCTL_SOURCE_SUPABASE_DB_PASSWORD`
 - `ENVCTL_SOURCE_SUPABASE_DB_PORT`
+- `ENVCTL_SOURCE_BACKEND_HOST`
+- `ENVCTL_SOURCE_BACKEND_PORT`
+- `ENVCTL_SOURCE_BACKEND_URL`
+- `ENVCTL_SOURCE_FRONTEND_HOST`
+- `ENVCTL_SOURCE_FRONTEND_PORT`
+- `ENVCTL_SOURCE_FRONTEND_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HOST`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PORT`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
+## Additional App Services
+
+Additional app services are long-running application processes owned by the repo, not managed infrastructure dependencies. They are enabled through `.envctl` and participate in normal startup, state, runtime-map, logs, health, dashboard, and `envctl test --service <slug>` flows.
+
+Example HTTP sidecar plus non-listener worker:
+
+```dotenv
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+
+ENVCTL_SERVICE_WORKER_ENABLE=true
+ENVCTL_SERVICE_WORKER_DIR=backend
+ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+```
+
+Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the uppercase slug with hyphens changed to underscores. For `voice-runtime`, the suffix is `VOICE_RUNTIME`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_ADDITIONAL_SERVICES` | unset | Comma-separated ordered service slugs, such as `voice-runtime,worker`. |
+| `ENVCTL_SERVICE_<SUFFIX>_ENABLE` | `true` | Both-mode enable default for a declared service. |
+| `ENVCTL_SERVICE_<SUFFIX>_MAIN_ENABLE` | `ENABLE` | Main-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_TREES_ENABLE` | `ENABLE` | Trees-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_DIR` | `.` | Repo-relative service working directory. Startup fails if a configured non-root directory is missing or escapes the project root. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_CMD` | unset | Required for enabled services. Supports `{port}`, `{project_root}`, `{service_dir}`, and `{service_name}` placeholders. |
+| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. Runs from the configured service directory. |
+| `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE` | unset | Required when `EXPECT_LISTENER=true`; gets normal per-project port spacing. |
+| `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers and schedulers that do not bind a port. |
+| `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
+| `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated dependency metadata for future ordering policy. |
+| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | Reserved for degraded-start policy; current startup still treats failures as hard failures. |
+
+Reserved additional-service slugs include `backend`, `frontend`, managed dependency ids, `all`, `services`, and `dependencies`.
 
 ## Migrate Env Resolution
 

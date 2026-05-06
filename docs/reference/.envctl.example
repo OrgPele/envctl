@@ -35,6 +35,22 @@ FRONTEND_DIR=frontend
 BACKEND_PORT_BASE=8000
 FRONTEND_PORT_BASE=9000
 
+# Optional additional application services. These are repo-owned long-running
+# processes such as workers, schedulers, sidecars, or gateways.
+# ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+# ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+# ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+# ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+# ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+# ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+# ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+# ENVCTL_SERVICE_WORKER_ENABLE=true
+# ENVCTL_SERVICE_WORKER_DIR=backend
+# ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+# ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+# ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+
 # Spacing between project slots in trees mode.
 PORT_SPACING=20
 
@@ -119,6 +135,11 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 # >>> envctl frontend launch env >>>
 # VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
 # <<< envctl frontend launch env <<<
+
+# Additional service launch env sections use the configured service slug.
+# >>> envctl service voice-runtime launch env >>>
+# VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
 
 # Notes:
 # - `.envctl` is the canonical repo-local config file.

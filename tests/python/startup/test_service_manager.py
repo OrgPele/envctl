@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.runtime.service_manager import ServiceManager
+from envctl_engine.runtime.service_manager import ServiceManager, ServiceStartDescriptor
 
 
 class ServiceManagerTests(unittest.TestCase):
@@ -178,6 +178,81 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertFalse(service.listener_expected)
         self.assertIsNone(service.requested_port)
         self.assertIsNone(service.actual_port)
+
+    def test_start_services_with_attach_starts_arbitrary_services_and_non_listeners(self) -> None:
+        manager = ServiceManager()
+        order: list[str] = []
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/tmp/repo/backend",
+                requested_port=8000,
+                start=lambda port: order.append(f"backend:{port}") or (True, None, 31001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="voice-runtime",
+                cwd="/tmp/repo/voice-runtime",
+                requested_port=8010,
+                start=lambda port: order.append(f"voice-runtime:{port}") or (True, None, 31002),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="worker",
+                cwd="/tmp/repo/backend",
+                requested_port=0,
+                start=lambda port: order.append(f"worker:{port}") or (True, None, 31003),
+                detect_actual=lambda _pid, _requested: None,
+                listener_expected=False,
+            ),
+        )
+
+        records = manager.start_services_with_attach(
+            project="Main",
+            descriptors=descriptors,
+            reserve_next=lambda port: port,
+            parallel_start=False,
+        )
+
+        self.assertEqual(order, ["backend:8000", "voice-runtime:8010", "worker:0"])
+        self.assertEqual(records["Main Backend"].actual_port, 8000)
+        self.assertEqual(records["Main Voice Runtime"].actual_port, 8010)
+        self.assertFalse(records["Main Worker"].listener_expected)
+        self.assertIsNone(records["Main Worker"].requested_port)
+        self.assertIsNone(records["Main Worker"].actual_port)
+
+    def test_start_services_with_attach_cleans_partial_records_on_failure(self) -> None:
+        manager = ServiceManager()
+        terminated: list[int] = []
+        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/tmp/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 41001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="voice-runtime",
+                cwd="/tmp/repo/voice-runtime",
+                requested_port=8010,
+                start=lambda _port: (False, "bind: address already in use", None),
+                detect_actual=lambda _pid, requested: requested,
+                max_retries=0,
+            ),
+        )
+
+        with self.assertRaisesRegex(Exception, "Failed to start Main voice-runtime"):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+            )
+
+        self.assertEqual(terminated, [41001])
 
 
 if __name__ == "__main__":

@@ -24,4 +24,7 @@ def project_name_from_service_name(service_name: str) -> str:
     for suffix in (" Backend", " Frontend"):
         if service_name.endswith(suffix):
             return service_name[: -len(suffix)]
+    parts = str(service_name).rsplit(" ", 1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0]
     return service_name

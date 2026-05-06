@@ -215,6 +215,39 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
         "trees_frontend_dependency_env_templates": _template_entries(
             local_state.trees_frontend_dependency_env_templates
         ),
+        "additional_services": [
+            {
+                "name": service.name,
+                "env_suffix": service.env_suffix,
+                "enabled_main": service.enabled_main,
+                "enabled_trees": service.enabled_trees,
+                "dir": service.dir_name,
+                "start_cmd": service.start_cmd,
+                "test_cmd": service.test_cmd,
+                "port_base": service.port_base,
+                "expect_listener": service.expect_listener,
+                "health_url": service.health_url_template,
+                "public_url": service.public_url_template,
+                "depends_on": list(service.depends_on),
+                "start_order": service.start_order,
+                "critical": service.critical,
+            }
+            for service in getattr(runtime.config, "additional_services", ())
+        ],
+        "additional_service_errors": list(getattr(runtime.config, "additional_service_errors", ())),
+        "service_dependency_env_section_present": dict(local_state.service_dependency_env_section_present or {}),
+        "service_dependency_env_templates": {
+            name: _template_entries(entries)
+            for name, entries in (local_state.service_dependency_env_templates or {}).items()
+        },
+        "mode_service_dependency_env_section_present": {
+            f"{mode}:{service}": present
+            for (mode, service), present in (local_state.mode_service_dependency_env_section_present or {}).items()
+        },
+        "mode_service_dependency_env_templates": {
+            f"{mode}:{service}": _template_entries(entries)
+            for (mode, service), entries in (local_state.mode_service_dependency_env_templates or {}).items()
+        },
         "plan_agent": {
             "enabled": runtime.config.plan_agent_terminals_enable,
             "cli": runtime.config.plan_agent_cli,
@@ -245,6 +278,8 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     print(f"backend_port_base: {effective['ports']['backend']}")
     print(f"frontend_port_base: {effective['ports']['frontend']}")
     print(f"port_spacing: {effective['ports']['spacing']}")
+    if payload["additional_services"]:
+        print("additional_services: " + ", ".join(service["name"] for service in payload["additional_services"]))
     preferred_strategy = (
         runtime.env.get("ENVCTL_PORT_PREFERRED_STRATEGY")
         or runtime.config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY")

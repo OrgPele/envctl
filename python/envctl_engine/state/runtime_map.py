@@ -8,29 +8,10 @@ from envctl_engine.state.models import RunState
 
 
 def build_runtime_map(state: RunState, *, host: str = "localhost") -> dict[str, object]:
-    projects: dict[str, dict[str, object]] = {}
-    port_to_service: dict[int, str] = {}
-    service_to_actual_port: dict[str, int] = {}
-    for service in state.services.values():
-        project = project_name_from_service_name(service.name)
-        project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None})
-        port = service.actual_port if service.actual_port is not None else service.requested_port
-        if service.type == "backend":
-            project_entry["backend_port"] = port
-        elif service.type == "frontend":
-            project_entry["frontend_port"] = port
-        if port is not None:
-            port_to_service[port] = service.name
-            service_to_actual_port[service.name] = port
+    runtime_map = build_runtime_map_without_projection(state, host=host)
     projection = build_runtime_projection(state, host=host)
     return {
-        "schema_version": "1.0",
-        "backend_mode": "python",
-        "run_id": state.run_id,
-        "mode": state.mode,
-        "projects": projects,
-        "port_to_service": port_to_service,
-        "service_to_actual_port": service_to_actual_port,
+        **runtime_map,
         "projection": projection,
     }
 
@@ -40,7 +21,7 @@ def write_runtime_map(path: str, state: RunState) -> None:
 
 
 def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dict[str, dict[str, object]]:
-    runtime_map = build_runtime_map_without_projection(state)
+    runtime_map = build_runtime_map_without_projection(state, host=host)
     projection: dict[str, dict[str, object]] = {}
     projects = runtime_map["projects"]
     service_records = state.services
@@ -64,18 +45,36 @@ def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dic
             "frontend_status": getattr(frontend_service, "status", "unknown")
             if frontend_service is not None
             else "unknown",
+            "services": ports.get("services", {}),
         }
     return projection
 
 
-def build_runtime_map_without_projection(state: RunState) -> dict[str, object]:
+def build_runtime_map_without_projection(state: RunState, *, host: str = "localhost") -> dict[str, object]:
     projects: dict[str, dict[str, object]] = {}
     port_to_service: dict[int, str] = {}
     service_to_actual_port: dict[str, int] = {}
+    service_to_url: dict[str, str] = {}
     for service in state.services.values():
-        project = project_name_from_service_name(service.name)
-        project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None})
+        project = _project_name_from_service_record(service)
+        project_entry = projects.setdefault(project, {"backend_port": None, "frontend_port": None, "services": {}})
         port = service.actual_port if service.actual_port is not None else service.requested_port
+        service_ready = _service_projection_ready(service)
+        url = f"http://{host}:{port}" if port is not None and service_ready else None
+        services_entry = project_entry.setdefault("services", {})
+        if isinstance(services_entry, dict):
+            services_entry[service.type] = {
+                "name": service.name,
+                "type": service.type,
+                "port": port,
+                "url": url,
+                "status": service.status,
+                "cwd": service.cwd,
+                "listener_expected": service.listener_expected,
+                "requested_port": service.requested_port,
+                "actual_port": service.actual_port,
+                "log_path": service.log_path,
+            }
         if service.type == "backend":
             project_entry["backend_port"] = port
         elif service.type == "frontend":
@@ -83,6 +82,8 @@ def build_runtime_map_without_projection(state: RunState) -> dict[str, object]:
         if port is not None:
             port_to_service[port] = service.name
             service_to_actual_port[service.name] = port
+            if url is not None:
+                service_to_url[service.name] = url
     return {
         "schema_version": "1.0",
         "backend_mode": "python",
@@ -91,6 +92,7 @@ def build_runtime_map_without_projection(state: RunState) -> dict[str, object]:
         "projects": projects,
         "port_to_service": port_to_service,
         "service_to_actual_port": service_to_actual_port,
+        "service_to_url": service_to_url,
     }
 
 
@@ -99,3 +101,12 @@ def _service_projection_ready(service: object | None) -> bool:
         return False
     status = str(getattr(service, "status", "unknown")).strip().lower()
     return status in {"running", "healthy", "starting"}
+
+
+def _project_name_from_service_record(service: object) -> str:
+    name = str(getattr(service, "name", "") or "").strip()
+    service_type = str(getattr(service, "type", "") or "").strip().lower()
+    display_suffix = " ".join(part.capitalize() for part in service_type.replace("_", "-").split("-") if part)
+    if display_suffix and name.endswith(f" {display_suffix}"):
+        return name[: -(len(display_suffix) + 1)]
+    return project_name_from_service_name(name)

@@ -411,6 +411,11 @@ class PythonEngineRuntime:
             db_base=config.db_port_base,
             redis_base=config.redis_port_base,
             n8n_base=config.n8n_port_base,
+            additional_service_bases={
+                service.name: int(service.port_base)
+                for service in getattr(config, "additional_services", ())
+                if getattr(service, "port_base", None)
+            },
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,

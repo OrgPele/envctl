@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
@@ -23,6 +24,7 @@ class PreparedServiceLaunch:
     requested_port: int
     env: dict[str, str]
     command_source: str | None
+    listener_expected: bool = True
 
 
 @dataclass(slots=True)
@@ -49,7 +51,7 @@ def _resolve_command_env_builder(rt: object):
 def service_attach_parallel_enabled(
     orchestrator: StartupOrchestratorLike, *, route: Route | None, selected_service_types: set[str]
 ) -> bool:
-    if selected_service_types != {"backend", "frontend"}:
+    if not selected_service_types:
         return False
     if route is not None:
         route_value = route.flags.get("service_parallel")
@@ -67,7 +69,7 @@ def service_prep_parallel_enabled(
     selected_service_types: set[str],
     attach_parallel: bool,
 ) -> bool:
-    if selected_service_types != {"backend", "frontend"}:
+    if selected_service_types - {"backend", "frontend"}:
         return False
     if route is not None:
         route_value = route.flags.get("service_prep_parallel")
@@ -173,11 +175,15 @@ def start_project_services(
     backend_url = browser_backend_url(host=resolve_public_host(env=rt.env, config=rt.config), port=backend_plan.final)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
     frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
-    configured_service_types = {
-        service_name
-        for service_name in ("backend", "frontend")
-        if rt._service_enabled_for_mode(effective_mode, service_name)
-    }
+    all_service_names_for_mode = getattr(rt.config, "all_app_service_names_for_mode", None)
+    if callable(all_service_names_for_mode):
+        configured_service_types = {service_name for service_name in all_service_names_for_mode(effective_mode)}
+    else:
+        configured_service_types = {
+            service_name
+            for service_name in ("backend", "frontend")
+            if rt._service_enabled_for_mode(effective_mode, service_name)
+        }
     backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
     selected_service_types = orchestrator._restart_service_types_for_project(
         route=route,
@@ -305,6 +311,34 @@ def start_project_services(
             env=command_env_builder(port=launch_port, extra=frontend_env_extra),
             command_source=frontend_command_source,
         )
+    additional_services = [
+        service for service in getattr(rt.config, "additional_services", ()) if service.name in selected_service_types
+    ]
+    for service in sorted(additional_services, key=lambda item: (item.start_order, item.name)):
+        plan = context.ports.get(service.name)
+        if plan is None and service.expect_listener:
+            raise RuntimeError(f"No port plan available for additional service {service.name!r}")
+        requested_port = int(getattr(plan, "final", 0) or 0) if plan is not None else 0
+        service_cwd = (context.root / service.dir_name).resolve()
+        if not service_cwd.is_relative_to(context.root.resolve()):
+            raise RuntimeError(f"Configured service {service.name!r} directory escapes project root: {service.dir_name}")
+        if str(service.dir_name).strip() and not service_cwd.is_dir():
+            raise RuntimeError(f"Configured service {service.name!r} directory does not exist: {service_cwd}")
+        service_env_base = project_env_for_service(service.name)
+        service_env_extra = dict(service_env_base)
+        service_env_extra["ENVCTL_SERVICE_NAME"] = service.name
+        service_env_extra["ENVCTL_SERVICE_TYPE"] = service.name
+        service_env_extra["ENVCTL_PROJECT_NAME"] = context.name
+        launch_port = requested_port if service.expect_listener else 0
+        prepared_launches[service.name] = PreparedServiceLaunch(
+            service_name=service.name,
+            cwd=service_cwd,
+            log_path=str(run_logs_dir / f"{safe_project_name}_{service.name.replace('-', '_')}.txt"),
+            requested_port=launch_port,
+            env=command_env_builder(port=launch_port, extra=service_env_extra),
+            command_source="configured",
+            listener_expected=service.expect_listener,
+        )
 
     def reserve_next(port: int) -> int:
         return port_allocator.reserve_next(port, owner=f"{context.name}:services")
@@ -410,6 +444,42 @@ def start_project_services(
         )
         rt._emit("service.start", project=context.name, service="frontend", port=port, retry=False)
         return True, None, getattr(process, "pid", os.getpid() + 1)
+
+    def start_additional_service(service_name: str, port: int) -> tuple[bool, str | None, int | None]:
+        remaining = rt._conflict_remaining.get(service_name, 0)
+        if remaining > 0:
+            rt._conflict_remaining[service_name] = remaining - 1
+            rt._emit("service.start", project=context.name, service=service_name, port=port, retry=True)
+            return False, "bind: address already in use", None
+        launch = prepared_launches[service_name]
+        service = rt.config.app_service_by_name(service_name)
+        if service is None:
+            return False, f"unknown additional service {service_name}", None
+        command_resolve_started = time.monotonic()
+        command = rt._split_command(
+            service.start_cmd,
+            port=port,
+            replacements={
+                "project_root": str(context.root),
+                "service_dir": str(launch.cwd),
+                "service_name": service_name,
+            },
+        )
+        rt._emit(
+            "service.attach.phase",
+            project=context.name,
+            service=service_name,
+            phase="command_resolution",
+            duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
+        )
+        process = start_process(
+            command,
+            cwd=str(launch.cwd),
+            env=command_env_builder(port=port, extra=launch.env),
+            log_path=launch.log_path,
+        )
+        rt._emit("service.start", project=context.name, service=service_name, port=port, retry=False)
+        return True, None, getattr(process, "pid", os.getpid())
 
     backend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_BACKEND_ACTUAL_PORT"), 0)
     frontend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_FRONTEND_ACTUAL_PORT"), 0)
@@ -525,6 +595,36 @@ def start_project_services(
         )
         return actual
 
+    def detect_additional_actual(service_name: str, pid: int | None, requested: int) -> int | None:
+        launch = prepared_launches[service_name]
+        if not launch.listener_expected:
+            rt._emit(
+                "service.bind.skipped",
+                project=context.name,
+                service=service_name,
+                reason="listener_not_expected",
+            )
+            return None
+        rt._emit("service.bind.requested", project=context.name, service=service_name, requested_port=requested)
+        detected = rt._detect_service_actual_port(pid=pid, requested_port=requested, service_name=service_name)
+        if detected is not None:
+            if detected != requested:
+                rt._emit("port.rebound", project=context.name, service=service_name, port=detected)
+            rt._emit("service.bind.actual", project=context.name, service=service_name, actual_port=detected)
+            return detected
+        if rt._listener_truth_enforced():
+            detail = rt._service_listener_failure_detail(log_path=launch.log_path, pid=pid)
+            error_suffix = f" ({detail})" if detail else ""
+            raise RuntimeError(f"{service_name} listener not detected for {context.name} on port {requested}{error_suffix}")
+        rt._emit(
+            "service.failure",
+            project=context.name,
+            service=service_name,
+            failure_class="listener_unverified",
+            requested_port=requested,
+        )
+        return requested
+
     def on_service_retry(
         service_type: str,
         failed_port: int,
@@ -557,7 +657,53 @@ def start_project_services(
         )
 
     attach_started = time.monotonic()
-    if selected_service_types == {"backend", "frontend"}:
+    descriptors: list[ServiceStartDescriptor] = []
+    if "backend" in selected_service_types:
+        descriptors.append(
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd=str(backend_cwd),
+                requested_port=backend_plan.final,
+                start=start_backend,
+                detect_actual=detect_backend_actual,
+                listener_expected=backend_listener_expected,
+            )
+        )
+    if "frontend" in selected_service_types:
+        descriptors.append(
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd=str(frontend_cwd),
+                requested_port=frontend_plan.final,
+                start=start_frontend,
+                detect_actual=detect_frontend_actual,
+                listener_expected=True,
+            )
+        )
+    for service in sorted(additional_services, key=lambda item: (item.start_order, item.name)):
+        launch = prepared_launches[service.name]
+        descriptors.append(
+            ServiceStartDescriptor(
+                service_type=service.name,
+                cwd=str(launch.cwd),
+                requested_port=launch.requested_port,
+                start=lambda port, service_name=service.name: start_additional_service(service_name, port),
+                detect_actual=lambda pid, requested, service_name=service.name: detect_additional_actual(
+                    service_name, pid, requested
+                ),
+                listener_expected=service.expect_listener,
+            )
+        )
+    generic_attach = getattr(rt.services, "start_services_with_attach", None)
+    if callable(generic_attach):
+        records = generic_attach(
+            project=context.name,
+            descriptors=tuple(descriptors),
+            reserve_next=reserve_next,
+            on_retry=on_service_retry,
+            parallel_start=attach_parallel,
+        )
+    elif selected_service_types <= {"backend", "frontend"}:
         records = rt.services.start_project_with_attach(
             project=context.name,
             backend_port=backend_plan.final,
@@ -575,33 +721,7 @@ def start_project_services(
             parallel_start=attach_parallel,
         )
     else:
-        records: dict[str, ServiceRecord] = {}
-        if "backend" in selected_service_types:
-            backend = rt.services.start_service_with_retry(
-                project=context.name,
-                service_type="backend",
-                cwd=str(backend_cwd),
-                requested_port=backend_plan.final,
-                start=start_backend,
-                reserve_next=reserve_next,
-                detect_actual=detect_backend_actual,
-                listener_expected=backend_listener_expected,
-                on_retry=on_service_retry,
-            )
-            records[backend.name] = backend
-        if "frontend" in selected_service_types:
-            frontend = rt.services.start_service_with_retry(
-                project=context.name,
-                service_type="frontend",
-                cwd=str(frontend_cwd),
-                requested_port=frontend_plan.final,
-                start=start_frontend,
-                reserve_next=reserve_next,
-                detect_actual=detect_frontend_actual,
-                listener_expected=True,
-                on_retry=on_service_retry,
-            )
-            records[frontend.name] = frontend
+        raise RuntimeError("Service manager does not support additional app services")
 
     attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
     total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
@@ -656,6 +776,25 @@ def start_project_services(
                 actual_port=frontend_record.actual_port or frontend_plan.final,
                 pid=frontend_record.pid,
                 log_path=frontend_log_path,
+            )
+        )
+    for service in additional_services:
+        display_name = " ".join(part.capitalize() for part in service.name.split("-") if part)
+        record = records.get(f"{context.name} {display_name}")
+        if record is None:
+            continue
+        launch = prepared_launches[service.name]
+        record.log_path = launch.log_path
+        plan = context.ports.get(service.name)
+        if plan is not None and record.actual_port:
+            plan.final = record.actual_port
+        launched_runtimes.append(
+            LaunchedServiceRuntime(
+                service_name=service.name,
+                requested_port=record.requested_port or launch.requested_port,
+                actual_port=record.actual_port or launch.requested_port,
+                pid=record.pid,
+                log_path=launch.log_path,
             )
         )
 

@@ -599,7 +599,11 @@ if result.returncode != 0:
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
-        normalized_targets = [str(target).strip().lower() for target in service_targets if str(target).strip()]
+        normalized_targets = [
+            str(target).strip().lower().removeprefix("service:")
+            for target in service_targets
+            if str(target).strip()
+        ]
         if not normalized_targets:
             return []
 
@@ -608,8 +612,9 @@ if result.returncode != 0:
         for target in normalized_targets:
             matched = False
             if state is not None:
-                for service_name in state.services:
-                    if service_name.lower() == target:
+                for service_name, service in state.services.items():
+                    service_type = str(getattr(service, "type", "") or "").strip().lower()
+                    if service_name.lower() == target or service_type == target:
                         project = rt.project_name_from_service(service_name)
                         if project:
                             resolved.append(project)
@@ -828,6 +833,13 @@ if result.returncode != 0:
             ).strip()
             or None
         )
+        service_specs = self._additional_service_test_execution_specs(
+            route=route,
+            targets=targets,
+            target_contexts=target_contexts,
+        )
+        if service_specs:
+            return service_specs
         return build_test_execution_specs(
             shared_raw_command=shared_raw,
             backend_raw_command=backend_raw,
@@ -850,6 +862,54 @@ if result.returncode != 0:
             replacements_for_target=lambda target: self.action_replacements(targets, target=target),
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
+
+    def _additional_service_test_execution_specs(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        target_contexts: list[TestTargetContext],
+    ) -> list["_TestExecutionSpec"]:
+        from envctl_engine.actions.action_test_support import TestCommandSpec, TestExecutionSpec
+
+        service_types = self._service_types_from_route_services(route) - {"backend", "frontend"}
+        if not service_types:
+            return []
+        rt = self.runtime
+        specs: list[TestExecutionSpec] = []
+        for service_name in sorted(service_types):
+            service = rt.config.app_service_by_name(service_name) if hasattr(rt.config, "app_service_by_name") else None
+            raw_command = str(getattr(service, "test_cmd", "") or "").strip() if service is not None else ""
+            if not raw_command:
+                continue
+            dir_name = str(getattr(service, "dir_name", "") or "").strip()
+            for target in target_contexts:
+                replacements = dict(self.action_replacements(targets, target=target.target_obj))
+                command = rt.split_command(raw_command, replacements=replacements)
+                cwd = target.project_root / dir_name if dir_name and dir_name != "." else target.project_root
+                specs.append(
+                    TestExecutionSpec(
+                        index=0,
+                        spec=TestCommandSpec(command=command, cwd=cwd, source=f"configured_service:{service_name}"),
+                        args=[],
+                        resolved_source=f"configured_service:{service_name}",
+                        project_name=target.project_name,
+                        project_root=target.project_root,
+                        target_obj=target.target_obj,
+                    )
+                )
+        return [
+            TestExecutionSpec(
+                index=index,
+                spec=spec.spec,
+                args=spec.args,
+                resolved_source=spec.resolved_source,
+                project_name=spec.project_name,
+                project_root=spec.project_root,
+                target_obj=spec.target_obj,
+            )
+            for index, spec in enumerate(specs, start=1)
+        ]
 
     def _build_failed_test_execution_specs(
         self,

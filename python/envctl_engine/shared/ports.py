@@ -24,6 +24,7 @@ class PortPlanner:
         db_base: int = 5432,
         redis_base: int = 6379,
         n8n_base: int = 5678,
+        additional_service_bases: dict[str, int] | None = None,
         lock_dir: str | None = None,
         session_id: str | None = None,
         stale_lock_seconds: int = 3600,
@@ -42,6 +43,11 @@ class PortPlanner:
         self.db_base = db_base
         self.redis_base = redis_base
         self.n8n_base = n8n_base
+        self.additional_service_bases = {
+            str(name).strip().lower(): int(port)
+            for name, port in (additional_service_bases or {}).items()
+            if str(name).strip() and int(port) > 0
+        }
         self.lock_dir = Path(lock_dir or "/tmp/envctl-python-locks")
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
@@ -143,6 +149,19 @@ class PortPlanner:
                 ),
             }
         )
+        for service_name, base_port in self.additional_service_bases.items():
+            requested_port = requested.get(
+                service_name,
+                self._preferred_port(project, service_name, base_port, index=index),
+            )
+            plans[service_name] = PortPlan(
+                project=project,
+                requested=requested_port,
+                assigned=requested_port,
+                final=requested_port,
+                source=sources.get(service_name, "planner"),
+                retries=retries.get(service_name, 0),
+            )
         return plans
 
     def reserve_next(self, start_port: int, owner: str) -> int:

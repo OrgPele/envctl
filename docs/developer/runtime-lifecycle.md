@@ -117,6 +117,11 @@ Major collaborators include:
 - startup/resume/dashboard/action/state orchestrators
 - doctor/debug support
 
+Application service startup flows through descriptor construction in `startup/service_execution.py` before calling
+`ServiceManager.start_services_with_attach(...)`. Backend and frontend still keep their specialized prep/env-file logic,
+while additional services are built from declarative `.envctl` `ENVCTL_ADDITIONAL_SERVICES` entries and share the same
+retry, listener detection, log, state, and runtime-map machinery.
+
 Guideline:
 
 - add policy to domain modules

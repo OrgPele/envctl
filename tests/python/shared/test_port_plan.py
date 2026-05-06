@@ -193,6 +193,22 @@ class PortPlanTests(unittest.TestCase):
         self.assertEqual(planner.preferred_port_strategy, "project_slot")
         self.assertEqual(redis_slot, backend_slot)
 
+    def test_plan_project_stack_includes_additional_service_ports(self) -> None:
+        planner = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            spacing=20,
+            additional_service_bases={"voice-runtime": 8010},
+            scope_key="repo-a",
+        )
+
+        main = planner.plan_project_stack("Main", index=0)
+        alpha = planner.plan_project_stack("tree-alpha", index=1)
+
+        self.assertEqual(main["voice-runtime"].final, 8010)
+        self.assertIn("voice-runtime", alpha)
+        self.assertEqual(alpha["voice-runtime"].final - 8010, alpha["backend"].final - 8000)
+
 
 if __name__ == "__main__":
     unittest.main()
