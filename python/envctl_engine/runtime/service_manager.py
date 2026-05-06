@@ -159,9 +159,24 @@ class ServiceManager:
             if parallel_start and len(descriptors) > 1:
                 worker_count = max_workers or len(descriptors)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(descriptors), worker_count)) as executor:
-                    future_map = {executor.submit(start_record, descriptor): descriptor for descriptor in descriptors}
+                    future_map = {
+                        executor.submit(start_record, descriptor): index
+                        for index, descriptor in enumerate(descriptors)
+                    }
+                    records_by_index: dict[int, ServiceRecord] = {}
+                    failures_by_index: dict[int, Exception] = {}
                     for future in concurrent.futures.as_completed(future_map):
-                        partial_records.append(future.result())
+                        index = future_map[future]
+                        try:
+                            records_by_index[index] = future.result()
+                        except Exception as exc:  # noqa: BLE001
+                            failures_by_index[index] = exc
+
+                    partial_records.extend(
+                        records_by_index[index] for index in sorted(records_by_index)
+                    )
+                    if failures_by_index:
+                        raise failures_by_index[min(failures_by_index)]
             else:
                 for descriptor in descriptors:
                     partial_records.append(start_record(descriptor))

@@ -101,6 +101,53 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertEqual(state["Tree Alpha Backend"].pid, 32001)
         self.assertEqual(state["Tree Alpha Frontend"].pid, 32002)
 
+    def test_parallel_attach_reports_first_descriptor_failure_deterministically(self) -> None:
+        manager = ServiceManager()
+        release_frontend = False
+
+        def start_backend(_port: int) -> tuple[bool, str | None, int | None]:
+            return True, None, 33001
+
+        def start_frontend(_port: int) -> tuple[bool, str | None, int | None]:
+            while not release_frontend:
+                time.sleep(0.001)
+            return True, None, 33002
+
+        def fail_backend(_pid: int | None, _requested: int) -> int:
+            nonlocal release_frontend
+            release_frontend = True
+            time.sleep(0.05)
+            raise RuntimeError("backend listener not detected")
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/tmp/tree-alpha/backend",
+                requested_port=8000,
+                start=start_backend,
+                detect_actual=fail_backend,
+                max_retries=0,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/tmp/tree-alpha/frontend",
+                requested_port=9000,
+                start=start_frontend,
+                detect_actual=lambda _pid, _requested: (_ for _ in ()).throw(
+                    RuntimeError("frontend listener not detected")
+                ),
+                max_retries=0,
+            ),
+        )
+
+        with self.assertRaisesRegex(Exception, "backend listener not detected"):
+            manager.start_services_with_attach(
+                project="Tree Alpha",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                parallel_start=True,
+            )
+
     def test_listener_detection_failure_retries_with_next_port(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []
