@@ -81,7 +81,7 @@ envctl explain-startup --json
 envctl preflight --json
 ```
 
-For linked worktrees of an envctl-managed project, `show-config --json` reports the owning main repo as `base_dir` and the owning repo's `.envctl` as `config_file`. Standalone repos and linked worktrees whose main repo has no readable `.envctl` keep their own repo root so bootstrap flows remain separate.
+For linked worktrees of an envctl-managed project, `show-config --json` reports the owning main repo as `base_dir`, the owning repo's `.envctl` as `config_file`, and the invoked checkout as `execution_root`. Standalone repos and linked worktrees whose main repo has no readable `.envctl` keep their own repo root so bootstrap flows remain separate.
 
 Compatibility note:
 

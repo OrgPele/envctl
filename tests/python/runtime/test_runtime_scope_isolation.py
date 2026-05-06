@@ -39,6 +39,29 @@ class RuntimeScopeIsolationTests(unittest.TestCase):
             self.assertEqual(worktree_runtime.runtime_root, main_runtime.runtime_root)
             self.assertEqual(worktree_runtime.port_planner.lock_dir, main_runtime.port_planner.lock_dir)
 
+    def test_managed_linked_worktree_keeps_main_mode_execution_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (worktree / "api").mkdir(parents=True, exist_ok=True)
+            (worktree / "api" / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_dir)})
+            runtime = PythonEngineRuntime(config, env={"ENVCTL_INVOCATION_CWD": str(worktree)})
+
+            self.assertEqual(config.base_dir, repo.resolve())
+            self.assertEqual(config.execution_root, worktree.resolve())
+            self.assertEqual(config.backend_dir_name, "api")
+            self.assertEqual(runtime._discover_projects(mode="main")[0].root, worktree.resolve())
+
     def test_runtime_scope_ids_are_repo_specific(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

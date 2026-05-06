@@ -78,6 +78,40 @@ class CommandExitCodeTests(unittest.TestCase):
             )
         self.assertEqual(code, 0)
 
+    def test_managed_linked_worktree_dispatch_keeps_execution_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = root / "runtime"
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (worktree / "api").mkdir(parents=True, exist_ok=True)
+            (worktree / "api" / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(_route, config):  # noqa: ANN001
+                seen["base_dir"] = config.base_dir
+                seen["execution_root"] = config.execution_root
+                seen["backend_dir_name"] = config.backend_dir_name
+                return 0
+
+            code = cli.run(
+                ["--show-config"],
+                env={"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime)},
+                dispatcher=dispatcher,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen.get("base_dir"), repo.resolve())
+        self.assertEqual(seen.get("execution_root"), worktree.resolve())
+        self.assertEqual(seen.get("backend_dir_name"), "api")
+
     def test_cli_route_uses_default_mode_from_repo_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

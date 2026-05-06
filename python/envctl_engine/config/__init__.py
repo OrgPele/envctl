@@ -383,6 +383,7 @@ class LocalConfigState:
 @dataclass(slots=True)
 class EngineConfig:
     base_dir: Path
+    execution_root: Path
     backend_dir_name: str
     frontend_dir_name: str
     backend_start_cmd: str
@@ -545,7 +546,12 @@ def _dependency_definitions():
 
 def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     env = env or {}
-    base_dir = canonical_envctl_project_root(Path(env.get("RUN_REPO_ROOT") or Path.cwd()))
+    requested_root = Path(env.get("RUN_REPO_ROOT") or Path.cwd())
+    execution_root = Path(env.get("ENVCTL_EXECUTION_ROOT") or requested_root).expanduser()
+    if execution_root.is_file():
+        execution_root = execution_root.parent
+    execution_root = execution_root.resolve()
+    base_dir = canonical_envctl_project_root(requested_root)
     local_state = discover_local_config_state(base_dir, env.get("ENVCTL_CONFIG_FILE"))
 
     resolved: dict[str, str] = dict(DEFAULTS)
@@ -640,19 +646,20 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
 
     return EngineConfig(
         base_dir=base_dir,
+        execution_root=execution_root,
         backend_dir_name=_resolved_backend_dir_name(
-            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+            base_dir=execution_root, resolved=resolved, explicit_values=explicit_values
         ),
         frontend_dir_name=_resolved_frontend_dir_name(
-            base_dir=base_dir, resolved=resolved, explicit_values=explicit_values
+            base_dir=execution_root, resolved=resolved, explicit_values=explicit_values
         ),
         runtime_dir=runtime_dir,
-        backend_start_cmd=_resolved_backend_start_cmd(base_dir=base_dir, resolved=resolved),
-        frontend_start_cmd=_resolved_frontend_start_cmd(base_dir=base_dir, resolved=resolved),
-        backend_test_cmd=_resolved_backend_test_cmd(base_dir=base_dir, resolved=resolved),
-        frontend_test_cmd=_resolved_frontend_test_cmd(base_dir=base_dir, resolved=resolved),
-        action_test_cmd=_resolved_action_test_cmd(base_dir=base_dir, resolved=resolved),
-        frontend_test_path=_resolved_frontend_test_path(base_dir=base_dir, resolved=resolved),
+        backend_start_cmd=_resolved_backend_start_cmd(base_dir=execution_root, resolved=resolved),
+        frontend_start_cmd=_resolved_frontend_start_cmd(base_dir=execution_root, resolved=resolved),
+        backend_test_cmd=_resolved_backend_test_cmd(base_dir=execution_root, resolved=resolved),
+        frontend_test_cmd=_resolved_frontend_test_cmd(base_dir=execution_root, resolved=resolved),
+        action_test_cmd=_resolved_action_test_cmd(base_dir=execution_root, resolved=resolved),
+        frontend_test_path=_resolved_frontend_test_path(base_dir=execution_root, resolved=resolved),
         runtime_scope_id=runtime_scope_id,
         runtime_scope_dir=runtime_scope_dir,
         planning_dir=planning_dir,

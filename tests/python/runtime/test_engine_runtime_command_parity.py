@@ -1146,6 +1146,8 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["base_dir"], str(repo.resolve()))
+        self.assertEqual(payload["execution_root"], str(repo.resolve()))
         self.assertEqual(payload["effective"]["default_mode"], "trees")
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)

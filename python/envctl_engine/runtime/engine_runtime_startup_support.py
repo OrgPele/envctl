@@ -164,7 +164,8 @@ def set_plan_port_from_component(plan: PortPlan, component: Mapping[str, object]
 def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[..., object]) -> list[object]:
     if mode == "main":
         ports = runtime.port_planner.plan_project_stack("Main", index=0)
-        return [context_factory(name="Main", root=runtime.config.base_dir, ports=ports)]
+        root = getattr(runtime.config, "execution_root", runtime.config.base_dir)
+        return [context_factory(name="Main", root=root, ports=ports)]
 
     contexts: list[object] = []
     projects = discover_tree_projects(runtime.config.base_dir, runtime.config.trees_dir_name)

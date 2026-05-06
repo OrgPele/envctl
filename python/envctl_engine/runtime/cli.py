@@ -122,6 +122,8 @@ def run(
                     print(rendered, end="")
                 return 0
             env_map.setdefault("ENVCTL_INVOCATION_CWD", str(Path.cwd().resolve()))
+            execution_root = _resolve_execution_root(env_map, repo_arg=repo_arg)
+            env_map.setdefault("ENVCTL_EXECUTION_ROOT", str(execution_root))
             base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
             if repo_arg is not None and is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
@@ -303,6 +305,29 @@ def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Pa
     repo_root = find_repo_root(cwd)
     if repo_root is not None:
         return canonical_envctl_project_root(repo_root)
+    return cwd
+
+
+def _resolve_execution_root(env_map: Mapping[str, str], *, repo_arg: str | None) -> Path:
+    if repo_arg is not None:
+        cwd = Path.cwd().resolve()
+        candidate = Path(repo_arg).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        candidate = candidate.resolve()
+        repo_root = find_repo_root(candidate)
+        if repo_root is None:
+            raise RouteError(f"Invalid --repo path: {repo_arg}")
+        return repo_root
+    if env_map.get("RUN_REPO_ROOT"):
+        repo_root = find_repo_root(Path(str(env_map["RUN_REPO_ROOT"])).expanduser())
+        if repo_root is not None:
+            return repo_root
+        return Path(str(env_map["RUN_REPO_ROOT"])).expanduser().resolve()
+    cwd = Path.cwd().resolve()
+    repo_root = find_repo_root(cwd)
+    if repo_root is not None:
+        return repo_root
     return cwd
 
 
