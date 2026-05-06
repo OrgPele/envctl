@@ -17,6 +17,19 @@ from envctl_engine.requirements.supabase import (
 )
 
 
+class _CompletedComposeProcess:
+    pid = 424242
+
+    @staticmethod
+    def poll():
+        return 0
+
+    @staticmethod
+    def communicate(timeout=None):  # noqa: ANN001
+        _ = timeout
+        return "", ""
+
+
 def _write_supabase_files(
     repo: Path, *, static_network_name: bool = False, bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n"
 ) -> None:
@@ -327,7 +340,12 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, "supabase-db\nsupabase-auth\nsupabase-kong\n", "")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
+            def fake_compose_up_process(cmd, **_kwargs):  # noqa: ANN001
+                commands.append([str(part) for part in cmd])
+                return _CompletedComposeProcess()
+
             runtime.process_runner.run = fake_run  # type: ignore[method-assign]
+            runtime.process_runner.compose_up_process = fake_compose_up_process  # type: ignore[attr-defined]
             runtime.process_runner.wait_for_port = lambda _port, timeout=30.0, host="127.0.0.1": True  # type: ignore[method-assign]
             runtime._command_exists = lambda command: command == "docker"  # type: ignore[method-assign]
 

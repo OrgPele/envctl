@@ -285,6 +285,11 @@ def assert_project_services_post_start_truth(
     if not runtime._listener_truth_enforced():
         return
     for service in services.values():
+        if not bool(getattr(service, "critical", True)) and bool(getattr(service, "degraded", False)):
+            if hasattr(service, "status"):
+                setattr(service, "status", "degraded")
+            continue
+
         status = service_truth_status(runtime, service)
         if hasattr(service, "status"):
             setattr(service, "status", status)
@@ -300,6 +305,28 @@ def assert_project_services_post_start_truth(
             pid=pid if isinstance(pid, int) else None,
         )
         port = runtime._service_port(service)
+        port_label = str(port) if isinstance(port, int) and port > 0 else "n/a"
+        suffix = f" ({detail})" if detail else ""
+        failure_detail = f"{service_name} became {status} after startup for {context.name} on port {port_label}{suffix}"
+        if not bool(getattr(service, "critical", True)):
+            if hasattr(service, "status"):
+                setattr(service, "status", "degraded")
+            if hasattr(service, "degraded"):
+                setattr(service, "degraded", True)
+            if hasattr(service, "failure_detail"):
+                setattr(service, "failure_detail", failure_detail)
+            runtime._emit(
+                "service.failure",
+                project=context.name,
+                service=service_name,
+                failure_class="post_start_truth_check",
+                status=status,
+                port=port,
+                detail=detail,
+                critical=False,
+                degraded=True,
+            )
+            continue
         runtime._emit(
             "service.failure",
             project=context.name,
@@ -309,8 +336,4 @@ def assert_project_services_post_start_truth(
             port=port,
             detail=detail,
         )
-        port_label = str(port) if isinstance(port, int) and port > 0 else "n/a"
-        suffix = f" ({detail})" if detail else ""
-        raise RuntimeError(
-            f"{service_name} became {status} after startup for {context.name} on port {port_label}{suffix}"
-        )
+        raise RuntimeError(failure_detail)

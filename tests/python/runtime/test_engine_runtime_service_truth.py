@@ -224,6 +224,92 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         self.assertEqual(status, "running")
         self.assertEqual(events[0][0], "service.truth.check")
 
+    def test_assert_project_services_post_start_truth_preserves_noncritical_degraded_service(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class _Probe:
+            backend = None
+
+            @staticmethod
+            def service_truth_status(**_kwargs):  # noqa: ANN003
+                return "stale"
+
+        runtime = SimpleNamespace(
+            process_runner=_RunnerStub(),
+            process_probe=_Probe(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 0.5,
+            _service_within_startup_grace=lambda _service: False,
+            _service_truth_discovery=lambda _service, _port: None,
+            _clear_service_listener_pids=lambda _service: None,
+            _refresh_service_listener_pids=lambda _service, port: None,
+            _service_truth_fallback_enabled=lambda: False,
+            _rebind_stale_service_pid=lambda _service, previous_pid: False,
+            _service_port=lambda service: 8014,
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+        service = SimpleNamespace(
+            type="voice-runtime",
+            pid=None,
+            log_path="/tmp/voice.log",
+            status="degraded",
+            critical=False,
+            degraded=True,
+            failure_detail="boot failed",
+        )
+        context = SimpleNamespace(name="feature-a-1")
+
+        assert_project_services_post_start_truth(runtime, context=context, services={"svc": service})
+
+        self.assertEqual(service.status, "degraded")
+        self.assertTrue(service.degraded)
+        self.assertEqual(events, [])
+
+    def test_assert_project_services_post_start_truth_degrades_noncritical_stale_service(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class _Probe:
+            backend = None
+
+            @staticmethod
+            def service_truth_status(**_kwargs):  # noqa: ANN003
+                return "stale"
+
+        runtime = SimpleNamespace(
+            process_runner=_RunnerStub(),
+            process_probe=_Probe(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 0.5,
+            _service_within_startup_grace=lambda _service: False,
+            _service_truth_discovery=lambda _service, _port: None,
+            _clear_service_listener_pids=lambda _service: None,
+            _refresh_service_listener_pids=lambda _service, port: None,
+            _service_truth_fallback_enabled=lambda: False,
+            _rebind_stale_service_pid=lambda _service, previous_pid: False,
+            _service_port=lambda service: 8014,
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+        service = SimpleNamespace(
+            type="voice-runtime",
+            pid=123,
+            log_path="/tmp/voice.log",
+            status="running",
+            critical=False,
+            degraded=False,
+            failure_detail=None,
+        )
+        context = SimpleNamespace(name="feature-a-1")
+
+        assert_project_services_post_start_truth(runtime, context=context, services={"svc": service})
+
+        self.assertEqual(service.status, "degraded")
+        self.assertTrue(service.degraded)
+        self.assertIn("became stale after startup", service.failure_detail)
+        failure_events = [payload for event, payload in events if event == "service.failure"]
+        self.assertTrue(failure_events)
+        self.assertFalse(failure_events[-1]["critical"])
+        self.assertTrue(failure_events[-1]["degraded"])
+
     def test_assert_project_services_post_start_truth_raises_with_detail(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         runner = _RunnerStub()
