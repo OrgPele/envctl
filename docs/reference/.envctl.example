@@ -57,7 +57,7 @@ FRONTEND_PORT_BASE=9000
 # ENVCTL_SERVICE_WORKER_DEPENDS_ON=backend
 # ENVCTL_SERVICE_WORKER_CRITICAL=false
 # ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
-# The interactive config wizard preserves these keys and service launch-env sections;
+# The interactive config wizard can edit these keys and preserves service launch-env sections;
 # configured services expose canonical project/service_slug/public_url/health_url
 # fields through show-state --json, health --json, runtime maps, and dashboard rows.
 
@@ -153,7 +153,7 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 
 # Notes:
 # - `.envctl` is the canonical repo-local config file.
-# - The interactive `envctl config` wizard writes and preserves canonical managed keys, including additional app services.
+# - The interactive `envctl config` wizard edits and preserves canonical managed keys, including additional app services.
 # - All launch env template sections are user-owned and preserved as-is.
 # - If a mode has `*_STARTUP_ENABLE=false`, `start`, `resume`, and `restart`
 #   for that mode are blocked until you re-enable startup.

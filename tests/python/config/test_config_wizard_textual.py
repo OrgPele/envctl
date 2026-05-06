@@ -7,8 +7,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 from envctl_engine.config import AppServiceConfig, PortDefaults, StartupProfile, discover_local_config_state
-from envctl_engine.config.persistence import ManagedConfigValues, config_review_text
+from envctl_engine.config.persistence import ManagedConfigValues, config_review_text, managed_values_to_mapping
 from envctl_engine.ui.textual.screens.config_wizard import (
+    _additional_service_input_id,
     _directory_validation_message,
     _visible_command_fields,
     _visible_directory_fields,
@@ -110,6 +111,155 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 getattr(app, "_steps").index("components"),
                 getattr(app, "_steps").index("additional_services"),
             )
+
+
+    def test_additional_app_service_wizard_inputs_add_full_service_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "voice-runtime").mkdir()
+            local_state = discover_local_config_state(repo)
+            app = run_config_wizard_textual(
+                local_state=local_state,
+                build_only=True,
+                default_wizard_type="advanced",
+            )
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+
+            async def run_test() -> None:
+                async with app.run_test():
+                    app.step_index = getattr(app, "_steps").index("additional_services")  # noqa: SLF001
+                    app._refresh_all()  # noqa: SLF001
+                    app.query_one(f"#{_additional_service_input_id('slug')}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id('dir_name')}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id('start_cmd')}").value = "scripts/start-voice.sh {port}"
+                    app.query_one(f"#{_additional_service_input_id('port_base')}").value = "8010"
+                    app.query_one(f"#{_additional_service_input_id('listener_expected')}").value = "true"
+                    app.query_one(f"#{_additional_service_input_id('enabled_main')}").value = "true"
+                    app.query_one(f"#{_additional_service_input_id('enabled_trees')}").value = "false"
+                    app.query_one(f"#{_additional_service_input_id('test_cmd')}").value = "scripts/test-voice.sh"
+                    app.query_one(f"#{_additional_service_input_id('public_url')}").value = "https://voice.example.test"
+                    app.query_one(f"#{_additional_service_input_id('health_url')}").value = "https://voice.example.test/readyz"
+                    app.query_one(f"#{_additional_service_input_id('depends_on')}").value = "backend,redis"
+                    app.query_one(f"#{_additional_service_input_id('start_order')}").value = "45"
+                    app.query_one(f"#{_additional_service_input_id('critical')}").value = "false"
+                    self.assertTrue(app._apply_additional_service_inputs())  # noqa: SLF001
+
+            import asyncio
+
+            asyncio.run(run_test())
+            service = app.values.additional_services[0]  # noqa: SLF001
+            self.assertEqual(service.name, "voice-runtime")
+            self.assertEqual(service.dir_name, "voice-runtime")
+            self.assertEqual(service.start_cmd, "scripts/start-voice.sh {port}")
+            self.assertEqual(service.port_base, 8010)
+            self.assertTrue(service.expect_listener)
+            self.assertTrue(service.enabled_main)
+            self.assertFalse(service.enabled_trees)
+            self.assertEqual(service.test_cmd, "scripts/test-voice.sh")
+            self.assertEqual(service.public_url_template, "https://voice.example.test")
+            self.assertEqual(service.health_url_template, "https://voice.example.test/readyz")
+            self.assertEqual(service.depends_on, ("backend", "redis"))
+            self.assertEqual(service.start_order, 45)
+            self.assertFalse(service.critical)
+            rendered = managed_values_to_mapping(app.values)  # noqa: SLF001
+            self.assertEqual(rendered["ENVCTL_ADDITIONAL_SERVICES"], "voice-runtime")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_MAIN_ENABLE"], "true")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_TREES_ENABLE"], "false")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL"], "https://voice.example.test")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL"], "https://voice.example.test/readyz")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON"], "backend,redis")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_START_ORDER"], "45")
+            self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL"], "false")
+
+    def test_additional_app_service_wizard_inputs_edit_existing_service_and_preserve_others(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "voice-runtime").mkdir()
+            (repo / "worker").mkdir()
+            local_state = discover_local_config_state(repo)
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                additional_services=(
+                    AppServiceConfig(
+                        name="voice-runtime",
+                        env_suffix="VOICE_RUNTIME",
+                        enabled_main=True,
+                        enabled_trees=True,
+                        dir_name="voice-runtime",
+                        start_cmd="old-start {port}",
+                        port_base=8010,
+                    ),
+                    AppServiceConfig(
+                        name="worker",
+                        env_suffix="WORKER",
+                        enabled_main=False,
+                        enabled_trees=True,
+                        dir_name="worker",
+                        start_cmd="python worker.py",
+                        expect_listener=False,
+                        critical=False,
+                    ),
+                ),
+            )
+            app = run_config_wizard_textual(local_state=local_state, initial_values=values, build_only=True)
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+
+            async def run_test() -> None:
+                async with app.run_test():
+                    app.step_index = getattr(app, "_steps").index("additional_services")  # noqa: SLF001
+                    app._refresh_all()  # noqa: SLF001
+                    app.query_one(f"#{_additional_service_input_id('start_cmd')}").value = "new-start {port}"
+                    app.query_one(f"#{_additional_service_input_id('enabled_trees')}").value = "false"
+                    self.assertTrue(app._apply_additional_service_inputs())  # noqa: SLF001
+
+            import asyncio
+
+            asyncio.run(run_test())
+            self.assertEqual([service.name for service in app.values.additional_services], ["voice-runtime", "worker"])  # noqa: SLF001
+            voice = app.values.additional_services[0]  # noqa: SLF001
+            worker = app.values.additional_services[1]  # noqa: SLF001
+            self.assertEqual(voice.start_cmd, "new-start {port}")
+            self.assertFalse(voice.enabled_trees)
+            self.assertEqual(worker.name, "worker")
+            self.assertFalse(worker.expect_listener)
+            self.assertFalse(worker.critical)
+
+    def test_additional_app_service_wizard_validation_rejects_invalid_integer_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "voice-runtime").mkdir()
+            local_state = discover_local_config_state(repo)
+            app = run_config_wizard_textual(
+                local_state=local_state,
+                build_only=True,
+                default_wizard_type="advanced",
+            )
+            if app is None:
+                self.skipTest("Textual is not available in this environment")
+            app = cast(Any, app)
+
+            async def run_test() -> None:
+                async with app.run_test():
+                    app.step_index = getattr(app, "_steps").index("additional_services")  # noqa: SLF001
+                    app._refresh_all()  # noqa: SLF001
+                    app.query_one(f"#{_additional_service_input_id('slug')}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id('dir_name')}").value = "voice-runtime"
+                    app.query_one(f"#{_additional_service_input_id('start_cmd')}").value = "scripts/start-voice.sh {port}"
+                    app.query_one(f"#{_additional_service_input_id('port_base')}").value = "eight"
+                    app.query_one(f"#{_additional_service_input_id('start_order')}").value = "late"
+                    self.assertFalse(app._apply_additional_service_inputs())  # noqa: SLF001
+                    self.assertIn("Base port must be a positive integer", app._last_status_message)  # noqa: SLF001
+
+            import asyncio
+
+            asyncio.run(run_test())
 
     def test_managed_value_validation_blocks_additional_service_dependency_errors(self) -> None:
         from envctl_engine.config.persistence import validate_managed_values

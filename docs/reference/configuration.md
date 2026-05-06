@@ -238,7 +238,7 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The current config wizard writes and preserves the canonical managed keys, including declared additional app services. Launch env template sections remain user-owned and are preserved as-is.
+The current config wizard writes, edits, and preserves the canonical managed keys, including declared additional app services. Launch env template sections remain user-owned and are preserved as-is.
 
 ## Current Wizard Coverage
 
@@ -259,13 +259,13 @@ The current flow is:
 2. `Default Mode`
 3. `Components`
 4. optional `Long-Running Service`
-5. `Directories`
-6. `Entrypoints / Commands`
-7. `Ports`
-8. advanced additional app service review fields when configured, including dependency and criticality validation before save
+5. advanced `Additional App Services` fields when services are configured or the advanced wizard is requested
+6. `Directories`
+7. `Entrypoints / Commands`
+8. `Ports`
 9. `Review / Save`
 
-There is no simple/advanced split in the current UI.
+There is no separate visible simple/advanced chooser in the current UI; callers can request the advanced wizard path to show additional-service fields even before a service exists.
 
 The `Entrypoints / Commands` step shows only the command fields needed for the enabled backend/frontend components. For test commands, the wizard displays detected suggestions with source labels (for example backend pytest from `backend/tests` or a frontend package test script from `frontend/package.json`). Test command fields are optional: leaving one blank means `envctl test` may still try runtime defaults later. The wizard does not execute test commands during setup.
 

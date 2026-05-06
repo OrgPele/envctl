@@ -133,6 +133,8 @@ additional service rows, so listener sidecars show final rebound URLs plus publi
 show explicit non-listener status. Stopped dashboard metadata stores arbitrary service slugs, not just backend/frontend.
 Direct stop/restart selection normalizes `<slug>`, `service:<slug>`, display names, and full service names through the
 shared service selector helper; restart target discovery uses canonical `project`/`service_slug` state fields when present.
+The Textual config wizard exposes the same managed additional-service fields before review/save, so dependency references,
+cycles, mode enablement, listener settings, URLs, start order, and criticality are validated before writing `.envctl`.
 
 Guideline:
 

@@ -123,7 +123,7 @@ def create_selector_app(
                 mouse_enabled=mouse_enabled,
             )
             if initial_navigation:
-                self.call_after_refresh(self._apply_initial_navigation)
+                self._apply_initial_navigation()
 
         def _list(self) -> ListView:
             return self.query_one("#selector-list", ListView)
@@ -289,17 +289,43 @@ def create_selector_app(
             if not initial_navigation:
                 return
             self.action_focus_list(reason="initial_navigation")
-
-            async def _run_initial_navigation() -> None:
-                for action in initial_navigation:
-                    if action == "down":
-                        await self.action_nav_down()
-                    elif action == "up":
-                        await self.action_nav_up()
-                    elif action == "submit":
-                        await self.action_submit(cause="initial_navigation_submit")
-
-            asyncio.create_task(_run_initial_navigation())
+            submit_requested = False
+            selection_changed = False
+            for action in initial_navigation:
+                list_index_before = self._controller.ensure_list_index(self._list().index)
+                if action == "down":
+                    target_index = self._controller.cursor_down(list_index_before)
+                    apply_selectable_list_index(self._list(), target_index)
+                    self._nav_event_counter += 1
+                    self._last_nav_key = "down"
+                elif action == "up":
+                    target_index = self._controller.cursor_up(list_index_before)
+                    apply_selectable_list_index(self._list(), target_index)
+                    self._nav_event_counter += 1
+                    self._last_nav_key = "up"
+                elif action == "submit":
+                    submit_requested = True
+                    continue
+                else:
+                    continue
+                model_index = self._focused_model_index()
+                if model_index is not None:
+                    self._last_user_model_index = model_index
+                if not multi and model_index is not None and 0 <= model_index < len(self._rows):
+                    for idx, row in enumerate(self._rows):
+                        selected = idx == model_index
+                        if row.selected != selected:
+                            row.selected = selected
+                            selection_changed = True
+                self._last_nav_change_ns = time.monotonic_ns()
+                self._idle_snapshot_bucket = -1
+            self._sync_status()
+            if selection_changed:
+                self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
+            if submit_requested:
+                self.call_after_refresh(
+                    lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
+                )
 
         def _focused_row(self) -> _RowRef | None:
             return self._controller.focused_row(self._list().index)
