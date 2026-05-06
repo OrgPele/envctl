@@ -69,7 +69,9 @@ class _RequirementsRuntime(Protocol):
     def _supabase_fingerprint_path(self, project_name: str) -> Path: ...
     def _supabase_auto_reinit_enabled(self) -> bool: ...
     def _supabase_reinit_required_message(self) -> str: ...
-    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None: ...
+    def _run_supabase_reinit(
+        self, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+    ) -> str | None: ...
     def _requirement_command_resolved(
         self, *, service_name: str, port: int, project_root: Path
     ) -> tuple[list[str], str]: ...
@@ -275,7 +277,10 @@ def _start_requirement_component(
                     self._emit("supabase.reinit.required", project=context.name, fingerprint_path=str(fingerprint_path))
                     return False, self._supabase_reinit_required_message()
                 reinit_error = self._run_supabase_reinit(
-                    project_root=context.root, project_name=context.name, db_port=port
+                    project_root=context.root,
+                    project_name=context.name,
+                    db_port=port,
+                    public_port=_context_port(context, "supabase_api"),
                 )
                 if reinit_error is not None:
                     return False, reinit_error

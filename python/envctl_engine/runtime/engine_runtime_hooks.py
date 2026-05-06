@@ -177,7 +177,9 @@ def supabase_reinit_required_message() -> str:
     )
 
 
-def run_supabase_reinit(runtime: Any, *, project_root: Path, project_name: str, db_port: int) -> str | None:
+def run_supabase_reinit(
+    runtime: Any, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+) -> str | None:
     try:
         materialized = materialize_dependency_compose(
             runtime_root=runtime.runtime_root,
@@ -189,6 +191,7 @@ def run_supabase_reinit(runtime: Any, *, project_root: Path, project_name: str, 
             ),
             env_values=supabase_managed_env(
                 db_port=db_port,
+                public_port=public_port,
                 env=runtime._command_env(port=0),
             ),
         )

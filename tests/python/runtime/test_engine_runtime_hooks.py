@@ -150,17 +150,32 @@ class EngineRuntimeHooksTests(unittest.TestCase):
             commands.append([str(part) for part in cmd])
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        runtime = SimpleNamespace(
-            runtime_root=Path("/tmp/runtime-root"),
-            process_runner=SimpleNamespace(run=_run),
-            _command_env=lambda *, port: {"PORT": str(port)},
-            _wait_for_requirement_listener=lambda _port: True,
-        )
         with tempfile.TemporaryDirectory() as tmpdir:
-            project_root = Path(tmpdir)
-            error = run_supabase_reinit(runtime, project_root=project_root, project_name="feature/a-1", db_port=5432)
+            root = Path(tmpdir)
+            runtime = SimpleNamespace(
+                runtime_root=root / "runtime-root",
+                process_runner=SimpleNamespace(run=_run),
+                _command_env=lambda *, port: {"PORT": str(port)},
+                _wait_for_requirement_listener=lambda _port: True,
+            )
+            project_root = root / "repo"
+            project_root.mkdir()
+            error = run_supabase_reinit(
+                runtime,
+                project_root=project_root,
+                project_name="feature/a-1",
+                db_port=5432,
+                public_port=54472,
+            )
+            env_text = (runtime.runtime_root / "dependency_compose" / "supabase" / "feature-a-1" / ".env").read_text(
+                encoding="utf-8"
+            )
 
         self.assertIsNone(error)
+        self.assertIn("SUPABASE_DB_PORT=5432", env_text)
+        self.assertIn("SUPABASE_PUBLIC_PORT=54472", env_text)
+        self.assertIn("SUPABASE_API_PORT=54472", env_text)
+        self.assertIn("SUPABASE_PUBLIC_URL=http://localhost:54472", env_text)
         project_name = build_supabase_project_name(project_root=project_root, project_name="feature/a-1")
         self.assertTrue(commands)
         self.assertTrue(any(cmd[:4] == ["docker", "compose", "-p", project_name] for cmd in commands))

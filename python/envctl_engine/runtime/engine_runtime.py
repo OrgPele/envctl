@@ -1478,8 +1478,12 @@ class PythonEngineRuntime:
     def _supabase_reinit_required_message() -> str:
         return runtime_supabase_reinit_required_message()
 
-    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None:
-        return runtime_run_supabase_reinit(self, project_root=project_root, project_name=project_name, db_port=db_port)
+    def _run_supabase_reinit(
+        self, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+    ) -> str | None:
+        return runtime_run_supabase_reinit(
+            self, project_root=project_root, project_name=project_name, db_port=db_port, public_port=public_port
+        )
 
     @staticmethod
     def _command_result_error_text(*, result: object) -> str:
