@@ -12,9 +12,9 @@ from envctl_engine.runtime.help_text import render_help_text as render_runtime_h
 from envctl_engine.shared.repo_roots import (
     canonical_envctl_project_root,
     find_repo_root,
-    is_repo_root,
-    main_repo_root_for_linked_worktree,
-    repo_root_with_readable_main_config_from_worktree,
+    is_repo_root as shared_is_repo_root,
+    main_repo_root_for_linked_worktree as shared_main_repo_root_for_linked_worktree,
+    repo_root_with_readable_main_config_from_worktree as shared_repo_root_with_readable_main_config_from_worktree,
 )
 
 
@@ -248,8 +248,20 @@ def select_envctl_reexec_target(
     return find_shadowed_installed_envctl(current_binary, env=env_map)
 
 
+def is_repo_root(path: Path) -> bool:
+    return shared_is_repo_root(path)
+
+
 def find_repo_root_from_cwd(cwd: Path) -> Path | None:
     return find_repo_root(cwd)
+
+
+def main_repo_root_for_linked_worktree(worktree_root: Path) -> Path | None:
+    return shared_main_repo_root_for_linked_worktree(worktree_root)
+
+
+def repo_root_with_readable_main_config_from_worktree(worktree_root: Path) -> Path | None:
+    return shared_repo_root_with_readable_main_config_from_worktree(worktree_root)
 
 
 def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
