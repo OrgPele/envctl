@@ -12,7 +12,11 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container
-from envctl_engine.requirements.supabase import _probe_supabase_auth_health, build_supabase_project_name, start_supabase_stack
+from envctl_engine.requirements.supabase import (
+    _probe_supabase_auth_health,
+    build_supabase_project_name,
+    start_supabase_stack,
+)
 from envctl_engine.requirements.core.registry import dependency_definition
 from envctl_engine.requirements.common import build_container_name
 
@@ -54,6 +58,10 @@ class _FakeRunner:
         self.restart_returncode: dict[str, int] = {}
         self.restart_stderr: dict[str, str] = {}
         self.compose_services_stdout: str = "supabase-db\nsupabase-auth\nsupabase-kong\n"
+        self.network_names: list[str] = []
+        self.network_container_counts: dict[str, int] = {}
+        self.network_rm_returncode: dict[str, int] = {}
+        self.network_rm_stderr: dict[str, str] = {}
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
         _ = cwd, env, timeout, process_started_callback
@@ -109,6 +117,25 @@ class _FakeRunner:
                 return subprocess.CompletedProcess(command, 1, "", error)
             stdout = self.port_mappings.get((container, port), "")
             return subprocess.CompletedProcess(command, 0, stdout, "")
+
+        if command[:3] == ["docker", "network", "ls"]:
+            return subprocess.CompletedProcess(
+                command, 0, "\n".join(self.network_names) + ("\n" if self.network_names else ""), ""
+            )
+
+        if command[:4] == ["docker", "network", "inspect", "-f"]:
+            network_name = command[-1]
+            count = self.network_container_counts.get(network_name, 0)
+            return subprocess.CompletedProcess(command, 0, f"{count}\n", "")
+
+        if command[:3] == ["docker", "network", "rm"]:
+            network_name = command[-1]
+            rc = self.network_rm_returncode.get(network_name, 0)
+            stderr = self.network_rm_stderr.get(network_name, "")
+            if rc == 0:
+                self.network_names = [name for name in self.network_names if name != network_name]
+                self.network_container_counts.pop(network_name, None)
+            return subprocess.CompletedProcess(command, rc, network_name + "\n" if rc == 0 else "", stderr)
 
         if command[:2] == ["docker", "start"]:
             container = command[2]
@@ -496,8 +523,12 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertEqual(result.effective_port, 6380)
             self.assertFalse(result.port_adopted)
             self.assertTrue(result.container_recreated)
-            self.assertTrue(any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands))
-            self.assertTrue(any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands))
+            self.assertTrue(
+                any(cmd[:2] == ["docker", "restart"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
+            self.assertTrue(
+                any(cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name for cmd in runner.commands)
+            )
             self.assertTrue(
                 any(
                     cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd
@@ -745,6 +776,56 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 )
             )
 
+    def test_supabase_stack_recovers_address_pool_exhaustion_by_removing_empty_envctl_supabase_networks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db"] = [
+                "Error response from daemon: all predefined address pools have been fully subnetted",
+                "",
+            ]
+            runner.network_names = [
+                "envctl-supabase-main-deadbeef_default",
+                "envctl-supabase-main-deadbeef_supabase-net",
+                "envctl-redis-main-deadbeef_default",
+                "bridge",
+                "envctl-supabase-active_supabase-net",
+            ]
+            runner.network_container_counts = {
+                "envctl-supabase-active_supabase-net": 1,
+            }
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_TWO_PHASE_STARTUP": "false"},
+            )
+
+            self.assertTrue(result.success)
+            db_ups = [
+                cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
+            ]
+            self.assertEqual(len(db_ups), 2)
+            removed_networks = [cmd[-1] for cmd in runner.commands if cmd[:3] == ["docker", "network", "rm"]]
+            self.assertEqual(
+                removed_networks,
+                [
+                    "envctl-supabase-main-deadbeef_default",
+                    "envctl-supabase-main-deadbeef_supabase-net",
+                ],
+            )
+            self.assertNotIn("envctl-redis-main-deadbeef_default", removed_networks)
+            self.assertNotIn("envctl-supabase-active_supabase-net", removed_networks)
+
     def test_supabase_stack_fails_when_auth_kong_health_unreachable_after_db_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -788,8 +869,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertTrue(
                 any(
-                    cmd[:2] == ["docker", "compose"]
-                    and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
+                    cmd[:2] == ["docker", "compose"] and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
                     for cmd in runner.commands
                 )
             )

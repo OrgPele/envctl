@@ -977,7 +977,7 @@ def _compose_run(
         probe_port = None
         if len(service_names) == 1 and service_names[0] in {"supabase-db", "db"}:
             probe_port = _compose_db_port(compose_root=compose_root)
-        return _compose_up_handoff(
+        up_error = _compose_up_handoff(
             process_runner=process_runner,
             compose_root=compose_root,
             compose_project_name=compose_project_name,
@@ -988,6 +988,36 @@ def _compose_run(
             service_names=service_names,
             probe_port=probe_port,
         )
+        if up_error is not None and _is_docker_address_pool_exhaustion(up_error):
+            cleaned_count, cleanup_error = _remove_empty_envctl_supabase_networks(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                env=env,
+            )
+            if cleaned_count > 0:
+                retry_error = _compose_up_handoff(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    args=args,
+                    timeout_seconds=timeout_seconds,
+                    service_names=service_names,
+                    probe_port=probe_port,
+                )
+                if retry_error is None:
+                    return None
+                if cleanup_error:
+                    return (
+                        f"{retry_error}; after removing {cleaned_count} empty envctl Supabase network(s): "
+                        f"{cleanup_error}"
+                    )
+                return retry_error
+            if cleanup_error:
+                return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
+            return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
+        return up_error
     result, error = run_docker(
         process_runner,
         ["compose", "-p", compose_project_name, "-f", str(compose_path), *args],
@@ -1084,6 +1114,72 @@ def _compose_up_handoff(
             )
 
         sleeper(0.25)
+
+
+def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
+    return "all predefined address pools have been fully subnetted" in str(error or "").lower()
+
+
+def _remove_empty_envctl_supabase_networks(
+    *,
+    process_runner,
+    compose_root: Path,
+    env: Mapping[str, str] | None,
+) -> tuple[int, str | None]:
+    result, run_error = run_docker(
+        process_runner,
+        ["network", "ls", "--format", "{{.Name}}"],
+        cwd=compose_root,
+        env=env,
+        timeout=20.0,
+    )
+    if result is None:
+        return 0, run_error or "docker network ls failed"
+    if getattr(result, "returncode", 1) != 0:
+        return 0, run_result_error(result, "docker network ls failed")
+
+    names = [line.strip() for line in str(getattr(result, "stdout", "") or "").splitlines() if line.strip()]
+    cleanup_errors: list[str] = []
+    removed_count = 0
+    for network_name in names:
+        if not network_name.startswith("envctl-supabase-"):
+            continue
+        inspect_result, inspect_error = run_docker(
+            process_runner,
+            ["network", "inspect", "-f", "{{len .Containers}}", network_name],
+            cwd=compose_root,
+            env=env,
+            timeout=20.0,
+        )
+        if inspect_result is None:
+            cleanup_errors.append(inspect_error or f"failed inspecting Docker network {network_name}")
+            continue
+        if getattr(inspect_result, "returncode", 1) != 0:
+            cleanup_errors.append(run_result_error(inspect_result, f"failed inspecting Docker network {network_name}"))
+            continue
+        try:
+            container_count = int(str(getattr(inspect_result, "stdout", "") or "").strip() or "0")
+        except ValueError:
+            cleanup_errors.append(f"failed inspecting Docker network {network_name}: invalid container count")
+            continue
+        if container_count != 0:
+            continue
+        rm_result, rm_error = run_docker(
+            process_runner,
+            ["network", "rm", network_name],
+            cwd=compose_root,
+            env=env,
+            timeout=20.0,
+        )
+        if rm_result is None:
+            cleanup_errors.append(rm_error or f"failed removing empty Docker network {network_name}")
+            continue
+        if getattr(rm_result, "returncode", 1) != 0:
+            cleanup_errors.append(run_result_error(rm_result, f"failed removing empty Docker network {network_name}"))
+            continue
+        removed_count += 1
+
+    return removed_count, "; ".join(cleanup_errors) if cleanup_errors else None
 
 
 def _compose_services_started(
