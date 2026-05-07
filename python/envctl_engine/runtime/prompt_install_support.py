@@ -785,8 +785,8 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
             short_description="Create a plan and auto-launch OMX Ultragoal implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
-                "implementation plan and automatically launch the OMX Ultragoal implementation workflow with full-stack "
-                "E2E scope by default."
+                "implementation plan and automatically launch the OMX Ultragoal implementation workflow with "
+                "full-stack E2E scope by default."
             ),
         ),
         "ship_release": CodexSkillMetadata(
