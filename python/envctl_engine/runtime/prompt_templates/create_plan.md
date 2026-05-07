@@ -115,7 +115,8 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
     - `--tmux --opencode`: envctl creates or reuses the tmux session/window itself, launches OpenCode, and prepends `/ulw-loop` to the first submitted prompt by default
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
-    - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph workflow
+    - `--omx --ultragoal`: same OMX-managed launch, but the first submitted prompt enters the Ultragoal workflow
+    - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph compatibility workflow
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--tmux-new-session`: create another tmux or OMX-managed session instead of attaching to an existing one
@@ -126,7 +127,8 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system`
   - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system`
   - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx --entire-system`
-  - if you show an OMX-managed Ralph launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph --entire-system`
+  - if you show an OMX-managed Ultragoal launch command, include `cd <repo> && envctl --plan <selector> --omx --ultragoal --entire-system`
+  - if you show an OMX-managed Ralph compatibility launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph --entire-system`
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team --entire-system`
   - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system --headless`
   - if you show a headless Codex tmux launch command, include `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless`

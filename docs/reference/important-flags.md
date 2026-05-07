@@ -65,7 +65,8 @@ pass `--interactive` only when you want prompts.
 | `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
 | `--tmux-new-session` | For AI-driven `--plan` launches, create a fresh tmux or OMX-managed session instead of attaching to an existing one. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly. |
-| `--ralph` | OMX workflow modifier for `--plan --omx`; starts the Ralph workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
+| `--ultragoal` | OMX workflow modifier for `--plan --omx`; starts the default/recommended Ultragoal workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
+| `--ralph` | OMX workflow modifier for `--plan --omx`; starts the Ralph compatibility workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 | `--team` | OMX workflow modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 
 Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. Non-plan commands and plan runs without a running AI session remain fatal.

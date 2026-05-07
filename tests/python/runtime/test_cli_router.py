@@ -101,8 +101,8 @@ class CliRouterTests(unittest.TestCase):
         self.assertTrue(route.flags.get("omx"))
         self.assertTrue(route.flags.get("codex"))
 
-    def test_omx_ralph_and_team_flags_are_parsed(self) -> None:
-        for token, flag_name in (("--ralph", "ralph"), ("--team", "team")):
+    def test_omx_workflow_flags_are_parsed(self) -> None:
+        for token, flag_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
             with self.subTest(token=token):
                 route = parse_route(["--plan", "feature-a", "--omx", token, "--codex"], env={})
                 self.assertEqual(route.command, "plan")
@@ -112,9 +112,13 @@ class CliRouterTests(unittest.TestCase):
 
     def test_omx_workflow_flags_require_omx_and_are_mutually_exclusive(self) -> None:
         for args in (
+            ["--plan", "feature-a", "--ultragoal"],
             ["--plan", "feature-a", "--ralph"],
             ["--plan", "feature-a", "--team"],
+            ["--plan", "feature-a", "--tmux", "--ultragoal"],
             ["--plan", "feature-a", "--tmux", "--team"],
+            ["--plan", "feature-a", "--omx", "--ultragoal", "--ralph"],
+            ["--plan", "feature-a", "--omx", "--ultragoal", "--team"],
             ["--plan", "feature-a", "--omx", "--ralph", "--team"],
         ):
             with self.subTest(args=args):

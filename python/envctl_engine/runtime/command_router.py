@@ -130,6 +130,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--no-auto-resume",
     "--tmux",
     "--omx",
+    "--ultragoal",
     "--ralph",
     "--team",
     "--goal",
@@ -1056,14 +1057,20 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
 
 
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
+    ultragoal = bool(state.flags.get("ultragoal"))
     ralph = bool(state.flags.get("ralph"))
     team = bool(state.flags.get("team"))
-    if not (ralph or team):
+    enabled_workflows = [
+        name
+        for name, enabled in (("--ultragoal", ultragoal), ("--ralph", ralph), ("--team", team))
+        if enabled
+    ]
+    if not enabled_workflows:
         return
-    if ralph and team:
-        raise RouteError("Use only one of --ralph or --team.")
+    if len(enabled_workflows) > 1:
+        raise RouteError("Use only one of --ultragoal, --ralph, or --team.")
     if not bool(state.flags.get("omx")):
-        raise RouteError("--ralph and --team are only supported with --omx.")
+        raise RouteError("--ultragoal, --ralph, and --team are only supported with --omx.")
 
 
 def _default_mode(env: Mapping[str, str]) -> str:
@@ -1139,6 +1146,7 @@ def _boolean_flag_name(token: str) -> str:
         "--no-auto-resume": "no_resume",
         "--tmux": "tmux",
         "--omx": "omx",
+        "--ultragoal": "ultragoal",
         "--ralph": "ralph",
         "--team": "team",
         "--goal": "goal",

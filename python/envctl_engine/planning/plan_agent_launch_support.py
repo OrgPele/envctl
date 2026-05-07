@@ -60,6 +60,7 @@ _PLAN_AGENT_TAB_TITLE_MAX_LEN = 36
 _LOW_SIGNAL_TAB_TITLE_WORDS = frozenset({"and", "origin"})
 _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT = "single_prompt"
 _PLAN_AGENT_WORKFLOW_CODEX_CYCLES = "codex_cycles"
+_OMX_WORKFLOW_KEYWORDS = frozenset({"ultragoal", "ralph", "team"})
 _PROMPT_TEMPLATE_PACKAGE = "envctl_engine.runtime.prompt_templates"
 _FINALIZATION_INSTRUCTION_TEMPLATE = "_plan_agent_finalization_instruction"
 _FIRST_CYCLE_COMPLETION_TEMPLATE = "_plan_agent_first_cycle_completion"
@@ -150,7 +151,7 @@ class PlanAgentLaunchConfig:
     ulw_suffix: bool
     browser_e2e_followup_enable: bool = True
     pr_review_comments_followup_enable: bool = True
-    omx_workflow: Literal["", "ralph", "team"] = ""
+    omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True
 
 
@@ -426,8 +427,10 @@ def resolve_plan_agent_launch_config(
         ulw_loop_prefix = True
         if transport == "tmux" and cli == "opencode":
             direct_prompt_enabled = True
-    omx_workflow: Literal["", "ralph", "team"] = ""
-    if bool(route_flags.get("ralph")):
+    omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
+    if bool(route_flags.get("ultragoal")):
+        omx_workflow = "ultragoal"
+    elif bool(route_flags.get("ralph")):
         omx_workflow = "ralph"
     elif bool(route_flags.get("team")):
         omx_workflow = "team"
@@ -1343,7 +1346,8 @@ def _new_session_command_for_route(
     elif launch_config.cli == "codex":
         command.append("--codex")
     route_flags = getattr(route, "flags", {}) or {}
-    for flag_name, token in (("ralph", "--ralph"), ("team", "--team"), ("ulw", "--ulw")):
+    workflow_tokens = (("ultragoal", "--ultragoal"), ("ralph", "--ralph"), ("team", "--team"), ("ulw", "--ulw"))
+    for flag_name, token in workflow_tokens:
         if bool(route_flags.get(flag_name)):
             command.append(token)
     command.append("--tmux-new-session")
@@ -1886,7 +1890,7 @@ def _wait_for_tmux_prompt_ready_after_goal(runtime: Any, *, session_name: str, w
 
 def _wrap_omx_initial_prompt_for_workflow(text: str, *, workflow: str) -> str:
     normalized_workflow = str(workflow or "").strip().lower()
-    if normalized_workflow not in {"ralph", "team"}:
+    if normalized_workflow not in _OMX_WORKFLOW_KEYWORDS:
         return text
     stripped = str(text).lstrip()
     prefix = f"${normalized_workflow}"
