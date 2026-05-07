@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import copy
+import hashlib
 from dataclasses import dataclass
 from collections.abc import Mapping
 from pathlib import Path
@@ -142,6 +143,7 @@ def _sync_supabase_auth_users_before_services(
             "supabase.auth_users.sync.user",
             project=context.name,
             slug=result.name,
+            email_hash=_supabase_auth_email_hash(result.email),
             status=result.status,
             supabase_user_id=result.id,
         )
@@ -165,6 +167,11 @@ def _supabase_project_env(**kwargs: object) -> dict[str, str]:
     from envctl_engine.requirements.dependencies.supabase import project_env
 
     return project_env(**kwargs)
+
+
+def _supabase_auth_email_hash(email: object) -> str:
+    normalized = str(email or "").strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _requirements_for_project_context(

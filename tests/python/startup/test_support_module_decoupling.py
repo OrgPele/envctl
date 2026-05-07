@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -108,6 +109,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
 
     def test_start_project_context_syncs_supabase_auth_users_before_services(self) -> None:
         order: list[str] = []
+        events: list[tuple[str, dict[str, object]]] = []
         auth_user = SimpleNamespace(name="e2e", email="e2e@example.test", enabled_for_mode=lambda _mode: True)
         requirements = RequirementsResult(
             project="Main",
@@ -134,7 +136,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             _requirements_ready=lambda value: value is requirements,
             _record_project_startup_warning=lambda project, warning: None,
             _consume_project_startup_warnings=lambda project: [],
-            _emit=lambda event, **payload: order.append(event) if event.startswith("supabase.auth_users") else None,
+            _emit=lambda event, **payload: (
+                order.append(event), events.append((event, payload))
+            ) if event.startswith("supabase.auth_users") else None,
             _assert_project_services_post_start_truth=lambda **kwargs: None,
             _terminate_started_services=lambda services: None,
         )
@@ -174,6 +178,10 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
 
         self.assertEqual(order[0], "reserve")
         self.assertLess(order.index("sync"), order.index("services"))
+        user_events = [payload for event, payload in events if event == "supabase.auth_users.sync.user"]
+        self.assertEqual(len(user_events), 1)
+        self.assertEqual(user_events[0]["email_hash"], hashlib.sha256(b"e2e@example.test").hexdigest())
+        self.assertNotIn("email", user_events[0])
         self.assertEqual(result.requirements.supabase["auth_users"]["e2e"]["id"], "auth-user-id")
 
     def test_tree_preselected_projects_uses_local_state_helpers(self) -> None:
