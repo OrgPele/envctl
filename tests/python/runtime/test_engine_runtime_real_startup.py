@@ -1031,7 +1031,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 )
             )
 
-    def test_main_backend_launch_env_templates_enable_dynamic_database_and_redis_requirements(self) -> None:
+    def test_main_backend_launch_env_templates_enable_dynamic_supabase_and_redis_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1090,17 +1090,17 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 for event in engine.events
                 if event.get("event") == "requirements.start" and event.get("project") == "Main"
             ]
-            self.assertCountEqual([event.get("service") for event in requirement_events], ["postgres", "redis"])
+            self.assertCountEqual([event.get("service") for event in requirement_events], ["redis", "supabase"])
             backend_start_env = fake_runner.start_background_envs[-1]
             self.assertIsNotNone(backend_start_env)
             assert backend_start_env is not None
             self.assertEqual(
                 backend_start_env.get("DATABASE_URL"),
-                "postgresql+asyncpg://postgres:postgres@localhost:5544/postgres",
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres",
             )
             self.assertEqual(backend_start_env.get("REDIS_URL"), "redis://localhost:6399/0")
             self.assertNotIn("N8N_URL", backend_start_env)
-            self.assertNotIn("SUPABASE_URL", backend_start_env)
+            self.assertEqual(backend_start_env.get("SUPABASE_URL"), "http://localhost:54321")
 
     def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

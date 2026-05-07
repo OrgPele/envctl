@@ -381,6 +381,57 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
             bootstrap.assert_not_called()
 
+    def test_supabase_user_list_json_skips_bootstrap_and_reports_missing_running_supabase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            stdout = StringIO()
+
+            with (
+                patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap,
+                patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
+                redirect_stdout(stdout),
+            ):
+                code = cli.run(
+                    ["supabase-user", "list", "--json"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                    },
+                )
+
+            self.assertEqual(code, 1)
+            bootstrap.assert_not_called()
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["command"], "list")
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("SUPABASE_URL", payload["error"])
+
+    def test_supabase_user_delete_requires_confirmation_without_headless_yes_or_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            stderr = StringIO()
+
+            with (
+                patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
+                redirect_stderr(stderr),
+            ):
+                code = cli.run(
+                    ["supabase-user", "delete", "e2e@example.test"],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "SUPABASE_URL": "http://localhost:54321",
+                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-secret",
+                    },
+                )
+
+            self.assertEqual(code, 1)
+            self.assertIn("requires --yes or --headless", stderr.getvalue())
+
     def test_install_prompts_overwrite_without_approval_returns_failure_and_skips_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

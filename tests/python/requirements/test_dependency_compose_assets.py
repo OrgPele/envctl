@@ -20,6 +20,15 @@ class DependencyComposeAssetsTests(unittest.TestCase):
             self.assertTrue(asset_dir.is_dir(), dependency_name)
             self.assertTrue((asset_dir / "docker-compose.yml").is_file(), dependency_name)
 
+    def test_supabase_managed_env_defaults_to_jwt_shaped_auth_keys(self) -> None:
+        env = supabase_managed_env(db_port=5432, public_port=54321, env={})
+
+        self.assertEqual(env["SUPABASE_ANON_KEY"].count("."), 2)
+        self.assertEqual(env["SUPABASE_SERVICE_ROLE_KEY"].count("."), 2)
+        self.assertNotEqual(env["SUPABASE_ANON_KEY"], env["SUPABASE_SERVICE_ROLE_KEY"])
+        self.assertNotEqual(env["SUPABASE_ANON_KEY"], "local-anon-key")
+        self.assertNotEqual(env["SUPABASE_SERVICE_ROLE_KEY"], "local-service-role-key")
+
     def test_materialize_dependency_compose_copies_assets_and_writes_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_root = Path(tmpdir)

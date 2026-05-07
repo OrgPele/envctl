@@ -41,7 +41,7 @@ Use this section when you need to know which `envctl` commands are safe before r
 | Command family | What it covers today | Boundary |
 | --- | --- | --- |
 | launcher-owned commands | `--help`, `--version`, launcher `doctor`, `install`, `uninstall` | handled by the launcher before the normal runtime path |
-| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`, `codex-tmux` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
+| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
 | operational runtime commands | `start`, `plan`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
 
 This boundary is grounded in the current launcher and Python runtime behavior, not a separate documentation-only model.
@@ -160,6 +160,29 @@ Behavior:
 - supports `--json` only together with `--dry-run`
 - is distinct from the optional post-`--plan` cmux-based plan-agent launch flow documented in the AI playbooks
 
+## `supabase-user`
+
+`supabase-user` is a supported utility command for managed Supabase Auth users. It uses `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the shell/config when provided, or a running envctl managed Supabase state when available.
+
+```bash
+envctl supabase-user sync --headless
+envctl supabase-user list --json
+envctl supabase-user create e2e@example.test --password local-password --metadata-json '{"company_name":"E2E Co"}'
+envctl supabase-user update e2e@example.test --password new-local-password
+envctl supabase-user delete e2e@example.test --headless
+```
+
+Aliases: `supabase-users`, `auth-user`, `--supabase-user`, `--supabase-users`, and `--auth-user`.
+
+Behavior:
+
+- `sync` provisions the `.envctl` users for the selected `--mode main|trees`
+- `list` and `show` never print passwords or service-role keys
+- `create` is idempotent by email and reports an existing user without changing it
+- `delete` requires `--yes`, `--headless`, or JSON automation
+- JSON output includes command status, ids, emails, and errors only after secret redaction
+- if no running managed Supabase state can be loaded, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` or start the stack first with `envctl --entire-system --headless`
+
 ## Main Runtime Commands
 
 High-value command families:
@@ -219,6 +242,7 @@ Current supported command surface:
 - `resume`
 - `review`
 - `show-config`
+- `supabase-user`
 - `show-state`
 - `start`
 - `stop`

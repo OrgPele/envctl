@@ -41,6 +41,39 @@ class CliRouterTests(unittest.TestCase):
         route = parse_route(["--resume"], env={})
         self.assertEqual(route.command, "resume")
 
+    def test_supabase_user_aliases_and_passthrough_args_are_parsed(self) -> None:
+        for token in ("supabase-user", "supabase-users", "auth-user", "--supabase-user"):
+            with self.subTest(token=token):
+                route = parse_route([token, "sync", "--json", "--dry-run", "--mode", "trees"], env={})
+                self.assertEqual(route.command, "supabase-user")
+                self.assertEqual(route.passthrough_args, ["sync"])
+                self.assertTrue(route.flags.get("json"))
+                self.assertTrue(route.flags.get("dry_run"))
+                self.assertEqual(route.mode, "trees")
+
+    def test_supabase_user_create_flags_are_parsed(self) -> None:
+        route = parse_route(
+            [
+                "supabase-user",
+                "create",
+                "e2e@example.test",
+                "--password",
+                "secret",
+                "--metadata-json",
+                '{"company":"E2E"}',
+                "--app-metadata-json={\"role\":\"tester\"}",
+                "--confirm",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "supabase-user")
+        self.assertEqual(route.passthrough_args, ["create", "e2e@example.test"])
+        self.assertEqual(route.flags.get("password"), "secret")
+        self.assertEqual(route.flags.get("metadata_json"), '{"company":"E2E"}')
+        self.assertEqual(route.flags.get("app_metadata_json"), '{"role":"tester"}')
+        self.assertTrue(route.flags.get("confirm"))
+
     def test_non_interactive_aliases_enable_batch_flag(self) -> None:
         for token in ("--headless", "--batch", "--non-interactive", "--no-interactive", "-b"):
             route = parse_route(["--dashboard", token], env={})

@@ -642,6 +642,28 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Ensure-worktree is Python-owned and intentionally reuses existing planning/worktree creation mechanics without starting runtime services.",
     ),
+    "supabase-user": FeatureDefinition(
+        area="cli",
+        feature="Command: manage Supabase Auth users for local E2E and explicit Admin API operations",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/runtime/command_router.py",
+            "python/envctl_engine/runtime/command_policy.py",
+            "python/envctl_engine/runtime/supabase_user_command_support.py",
+            "python/envctl_engine/runtime/utility_command_support.py",
+            "python/envctl_engine/requirements/supabase_auth_users.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_cli_router.py",
+            "tests/python/runtime/test_command_exit_codes.py",
+            "tests/python/runtime/test_supabase_user_command_support.py",
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/requirements/test_supabase_auth_users.py",
+        ),
+        parity_status="verified_python",
+        notes="Supabase Auth user management is Python-owned through the utility dispatcher and the dependency-free Auth Admin client.",
+    ),
     "session": FeatureDefinition(
         area="inspection",
         feature="Command: inspect, attach to, or terminate saved runtime sessions",

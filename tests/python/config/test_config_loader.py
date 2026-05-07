@@ -6,7 +6,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.config import discover_local_config_state, load_config
+from envctl_engine.config import (
+    discover_local_config_state,
+    load_config,
+    render_default_backend_dependency_env_section,
+    render_default_frontend_dependency_env_section,
+)
 
 
 class ConfigLoaderTests(unittest.TestCase):
@@ -148,6 +153,16 @@ class ConfigLoaderTests(unittest.TestCase):
 
         self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", example)
 
+    def test_default_launch_env_sections_document_supabase_auth_inputs(self) -> None:
+        backend = render_default_backend_dependency_env_section()
+        frontend = render_default_frontend_dependency_env_section()
+
+        self.assertIn("SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}", backend)
+        self.assertIn("SUPABASE_JWT_SECRET=${ENVCTL_SOURCE_SUPABASE_JWT_SECRET}", backend)
+        self.assertIn("SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}", backend)
+        self.assertIn("VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}", frontend)
+        self.assertNotIn("SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}", frontend)
+
     def test_envctl_sh_is_parsed_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
@@ -230,6 +245,74 @@ class ConfigLoaderTests(unittest.TestCase):
 
             self.assertEqual(config.port_defaults.dependency_port("supabase", "db"), 15432)
             self.assertEqual(config.port_defaults.dependency_port("supabase", "api"), 15421)
+
+    def test_load_config_parses_supabase_auth_users_from_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_SUPABASE_AUTH_USERS=e2e,admin-user",
+                        "ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test",
+                        "ENVCTL_SUPABASE_USER_E2E_PASSWORD=e2e-password",
+                        "ENVCTL_SUPABASE_USER_E2E_USER_METADATA_JSON={\"company_name\":\"E2E Co\"}",
+                        "ENVCTL_SUPABASE_USER_E2E_APP_METADATA_JSON={\"role\":\"tester\"}",
+                        "ENVCTL_SUPABASE_USER_ADMIN_USER_EMAIL=admin@example.test",
+                        "ENVCTL_SUPABASE_USER_ADMIN_USER_PASSWORD=admin-password",
+                        "ENVCTL_SUPABASE_USER_ADMIN_USER_AUTO_CONFIRM=false",
+                        "ENVCTL_SUPABASE_USER_ADMIN_USER_MAIN_ENABLE=false",
+                        "ENVCTL_SUPABASE_USER_ADMIN_USER_TREES_ENABLE=true",
+                        "ENVCTL_SUPABASE_AUTH_USERS_STRICT=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertFalse(config.supabase_auth_users_strict)
+            self.assertEqual(config.supabase_auth_user_errors, ())
+            self.assertEqual([user.name for user in config.supabase_auth_users], ["e2e", "admin-user"])
+            e2e = config.supabase_auth_users[0]
+            self.assertEqual(e2e.env_suffix, "E2E")
+            self.assertEqual(e2e.email, "e2e@example.test")
+            self.assertEqual(e2e.password, "e2e-password")
+            self.assertTrue(e2e.auto_confirm)
+            self.assertEqual(e2e.user_metadata, {"company_name": "E2E Co"})
+            self.assertEqual(e2e.app_metadata, {"role": "tester"})
+            self.assertTrue(e2e.enabled_for_mode("main"))
+            admin = config.supabase_auth_users[1]
+            self.assertEqual(admin.env_suffix, "ADMIN_USER")
+            self.assertFalse(admin.auto_confirm)
+            self.assertFalse(admin.enabled_for_mode("main"))
+            self.assertTrue(admin.enabled_for_mode("trees"))
+
+    def test_load_config_reports_invalid_supabase_auth_user_definitions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_SUPABASE_AUTH_USERS=bad_name,e2e,metadata,no-password",
+                        "ENVCTL_SUPABASE_USER_E2E_PASSWORD=missing-email-password",
+                        "ENVCTL_SUPABASE_USER_METADATA_EMAIL=metadata@example.test",
+                        "ENVCTL_SUPABASE_USER_METADATA_PASSWORD=metadata-password",
+                        "ENVCTL_SUPABASE_USER_METADATA_USER_METADATA_JSON=[\"not\",\"object\"]",
+                        "ENVCTL_SUPABASE_USER_NO_PASSWORD_EMAIL=no-password@example.test",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            errors = "\n".join(config.supabase_auth_user_errors)
+            self.assertIn("invalid Supabase Auth user slug 'bad_name'", errors)
+            self.assertIn("Supabase Auth user 'e2e' requires ENVCTL_SUPABASE_USER_E2E_EMAIL", errors)
+            self.assertIn("ENVCTL_SUPABASE_USER_METADATA_USER_METADATA_JSON must be a JSON object", errors)
+            self.assertIn("Supabase Auth user 'no-password' requires ENVCTL_SUPABASE_USER_NO_PASSWORD_PASSWORD", errors)
 
     def test_load_config_reads_backend_and_frontend_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -385,14 +468,14 @@ class ConfigLoaderTests(unittest.TestCase):
 
             config = load_config({"RUN_REPO_ROOT": str(repo)})
 
-            self.assertTrue(config.main_profile.postgres_enable)
+            self.assertFalse(config.main_profile.postgres_enable)
             self.assertTrue(config.main_profile.redis_enable)
             self.assertFalse(config.main_profile.n8n_enable)
-            self.assertFalse(config.main_profile.supabase_enable)
-            self.assertTrue(config.trees_profile.postgres_enable)
+            self.assertTrue(config.main_profile.supabase_enable)
+            self.assertFalse(config.trees_profile.postgres_enable)
             self.assertTrue(config.trees_profile.redis_enable)
             self.assertFalse(config.trees_profile.n8n_enable)
-            self.assertFalse(config.trees_profile.supabase_enable)
+            self.assertTrue(config.trees_profile.supabase_enable)
 
     def test_load_config_does_not_infer_dynamic_dependencies_when_toggles_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

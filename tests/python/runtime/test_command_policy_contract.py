@@ -83,6 +83,7 @@ class CommandPolicyContractTests(unittest.TestCase):
             "preflight": "direct_inspection",
             "install-prompts": "utility",
             "codex-tmux": "utility",
+            "supabase-user": "utility",
             "debug-pack": "debug",
             "stop": "lifecycle_cleanup",
             "resume": "resume",

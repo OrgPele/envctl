@@ -96,6 +96,37 @@ Good follow-up commands:
 - `envctl errors --all`
 - `envctl restart --project <tree-name>`
 
+## Supabase Auth E2E Users
+
+Use this when browser/API tests need to sign in through real Supabase Auth instead of creating rows directly in Postgres.
+
+```dotenv
+MAIN_SUPABASE_ENABLE=true
+ENVCTL_SUPABASE_AUTH_USERS=e2e
+ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test
+ENVCTL_SUPABASE_USER_E2E_PASSWORD=change-me-local-only
+
+# >>> envctl backend launch env >>>
+SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}
+SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}
+# <<< envctl backend launch env <<<
+
+# >>> envctl frontend launch env >>>
+VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}
+# <<< envctl frontend launch env <<<
+```
+
+Then start and test:
+
+```bash
+envctl --entire-system --headless
+envctl supabase-user list --json
+```
+
+After startup sync, launch-env templates can use `ENVCTL_SOURCE_SUPABASE_TEST_USER_EMAIL`, `ENVCTL_SOURCE_SUPABASE_TEST_USER_PASSWORD`, and `ENVCTL_SOURCE_SUPABASE_TEST_USER_ID` for E2E runner commands or backend-only test services. Do not map the service-role key into frontend launch env.
+
 ## Headless / Automation Flow
 
 Use this in scripts, CI, or agent-driven workflows.
