@@ -105,6 +105,19 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("session_name:", buffer.getvalue())
 
+    def test_utility_command_dispatch_routes_to_supabase_user_support(self) -> None:
+        runtime = SimpleNamespace(config=SimpleNamespace(supabase_auth_users=()))
+        route = SimpleNamespace(command="supabase-user", mode="main", flags={"json": True}, passthrough_args=["list"])
+
+        with __import__("unittest").mock.patch(
+            "envctl_engine.runtime.utility_command_support.run_supabase_user_command",
+            return_value=0,
+        ) as command:
+            code = dispatch_command(runtime, route)
+
+        self.assertEqual(code, 0)
+        command.assert_called_once_with(runtime, route)
+
 
 if __name__ == "__main__":
     unittest.main()

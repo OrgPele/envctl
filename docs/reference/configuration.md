@@ -42,10 +42,14 @@ Useful commands:
 DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
 APP_DATABASE_URL=${DATABASE_URL}?sslmode=disable
 REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
+SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}
+SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}
 # <<< envctl backend launch env <<<
 
 # >>> envctl frontend launch env >>>
 VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}  # frontend-safe Supabase anon key
 # <<< envctl frontend launch env <<<
 
 # >>> envctl service voice-runtime launch env >>>
@@ -89,6 +93,10 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL`
 - `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT`
 - `ENVCTL_SOURCE_SUPABASE_API_PORT`
+- `ENVCTL_SOURCE_SUPABASE_ANON_KEY`
+- `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`
+- `ENVCTL_SOURCE_SUPABASE_JWT_SECRET`
+- `ENVCTL_SOURCE_SUPABASE_JWKS_URL`
 - `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`
 - `ENVCTL_SOURCE_ASYNC_DATABASE_URL`
 - `ENVCTL_SOURCE_DB_HOST`
@@ -111,8 +119,16 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_ID`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_EMAIL`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_PASSWORD`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_ID`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_EMAIL`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_PASSWORD`
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
+Frontend launch-env sections may use `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_ANON_KEY`. They cannot reference `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`; envctl rejects that mapping before launching the frontend process.
 
 ## Managed Supabase Ports
 
@@ -122,6 +138,24 @@ Managed Supabase exposes two distinct local resources:
 - `SUPABASE_PUBLIC_PORT` / `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT` is the public Supabase API gateway port. `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL` point here, not at Postgres. Browser auth clients should use this URL for `/auth/v1/*` calls.
 
 The managed Supabase compose stack publishes Kong on `SUPABASE_PUBLIC_PORT` and readiness checks `/auth/v1/health`. If Postgres is healthy but Kong/Auth is unreachable, startup reports that split explicitly instead of marking Supabase healthy from the database listener alone.
+
+## Managed Supabase Auth Users
+
+Declare local/E2E Auth users in `.envctl` when managed Supabase is enabled:
+
+```dotenv
+MAIN_SUPABASE_ENABLE=true
+ENVCTL_SUPABASE_AUTH_USERS=e2e
+ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test
+ENVCTL_SUPABASE_USER_E2E_PASSWORD=change-me-local-only
+ENVCTL_SUPABASE_USER_E2E_USER_METADATA_JSON={"company_name":"E2E Co"}
+ENVCTL_SUPABASE_USER_E2E_APP_METADATA_JSON={"role":"tester"}
+ENVCTL_SUPABASE_AUTH_USERS_STRICT=true
+```
+
+User slugs must use lowercase letters, numbers, and hyphens. Env suffixes use uppercase with hyphens changed to underscores, so `admin-user` maps to `ENVCTL_SUPABASE_USER_ADMIN_USER_*` and `ENVCTL_SOURCE_SUPABASE_USER_ADMIN_USER_*`. Startup provisions enabled users through the Supabase Auth Admin API after managed Supabase is healthy and before app services launch.
+
+`ENVCTL_SUPABASE_AUTH_USERS_STRICT=false` allows startup to continue after provisioning failures, but malformed user config still fails early. Passwords are never included in JSON command output or the runtime artifact.
 
 ## Additional App Services
 
@@ -405,6 +439,13 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS` | `true` when DB/Redis ports use built-in defaults | Apply a per-session offset to Main-mode managed dependency ports while keeping app ports stable. Set to `false` to bind exactly to `DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE`. |
 | `MAIN_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Main mode. Compatibility alias: `SUPABASE_MAIN_ENABLE`. |
 | `TREES_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Trees mode. |
+| `SUPABASE_PUBLIC_PORT` | `54321` | Public Supabase API/Kong port used for `ENVCTL_SOURCE_SUPABASE_URL`. |
+| `ENVCTL_SUPABASE_AUTH_USERS` | unset | Comma-separated managed Supabase Auth user slugs for local/E2E provisioning. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_EMAIL` | unset | Required email for an enabled managed Auth user. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_PASSWORD` | unset | Required local/E2E password for an enabled managed Auth user. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_USER_METADATA_JSON` | unset | Optional JSON object passed as Supabase user metadata. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_APP_METADATA_JSON` | unset | Optional JSON object passed as Supabase app metadata. |
+| `ENVCTL_SUPABASE_AUTH_USERS_STRICT` | `true` | Fail startup when enabled Auth users cannot be provisioned. |
 
 ## Redis
 | Variable | Default | Purpose |

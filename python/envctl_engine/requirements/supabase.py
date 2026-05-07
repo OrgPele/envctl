@@ -10,6 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from collections.abc import Mapping
 
@@ -29,6 +30,9 @@ from .common import (
     run_with_retry,
 )
 from ..shared.dependency_compose_assets import (
+    DEFAULT_SUPABASE_JWT_SECRET,
+    default_supabase_anon_key,
+    default_supabase_service_role_key,
     dependency_compose_asset_dir,
     materialize_dependency_compose,
     supabase_managed_env,
@@ -473,22 +477,28 @@ def _start_supabase_db_native(
                     error=f"probe timeout waiting for readiness on port {db_port}; {remove_error}",
                 )
 
+    env_values = env or {}
+    jwt_secret = env_values.get("SUPABASE_JWT_SECRET") or DEFAULT_SUPABASE_JWT_SECRET
+    anon_key = env_values.get("SUPABASE_ANON_KEY") or default_supabase_anon_key(secret=jwt_secret)
+    service_role_key = env_values.get("SUPABASE_SERVICE_ROLE_KEY") or default_supabase_service_role_key(
+        secret=jwt_secret
+    )
     create_command = [
         "create",
         "--name",
         container_name,
         "-e",
-        f"POSTGRES_PASSWORD={(env or {}).get('SUPABASE_DB_PASSWORD', 'supabase-db-password')}",
+        f"POSTGRES_PASSWORD={env_values.get('SUPABASE_DB_PASSWORD', 'supabase-db-password')}",
         "-e",
         "POSTGRES_DB=postgres",
         "-e",
         "POSTGRES_USER=postgres",
         "-e",
-        f"JWT_SECRET={(env or {}).get('SUPABASE_JWT_SECRET', 'supabase-local-jwt-secret')}",
+        f"JWT_SECRET={jwt_secret}",
         "-e",
-        f"ANON_KEY={(env or {}).get('SUPABASE_ANON_KEY', 'local-anon-key')}",
+        f"ANON_KEY={anon_key}",
         "-e",
-        f"SERVICE_ROLE_KEY={(env or {}).get('SUPABASE_SERVICE_ROLE_KEY', 'local-service-role-key')}",
+        f"SERVICE_ROLE_KEY={service_role_key}",
         "-p",
         f"{db_port}:5432",
         "-v",
@@ -1050,10 +1060,13 @@ def _compose_up_handoff(
     command = ["docker", "compose", "-p", compose_project_name, "-f", str(compose_path), *args]
     process_factory = getattr(process_runner, "compose_up_process", None)
     if callable(process_factory):
-        process = process_factory(
-            command,
-            cwd=str(compose_root),
-            env=dict(env) if env is not None else None,
+        process = cast(
+            subprocess.Popen[str],
+            process_factory(
+                command,
+                cwd=str(compose_root),
+                env=dict(env) if env is not None else None,
+            ),
         )
     else:
         process = subprocess.Popen(

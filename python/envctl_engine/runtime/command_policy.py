@@ -36,9 +36,11 @@ DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
         "preflight",
     }
 )
-UTILITY_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts", "codex-tmux", "ensure-worktree"})
+UTILITY_COMMANDS: Final[frozenset[str]] = frozenset(
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user"}
+)
 DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"install-prompts", "codex-tmux", "ensure-worktree"}
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user"}
 )
 
 LIFECYCLE_CLEANUP_COMMANDS: Final[frozenset[str]] = frozenset({"stop", "stop-all", "blast-all"})

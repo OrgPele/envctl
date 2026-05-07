@@ -274,6 +274,7 @@ def _dependency_projector_env(
             env.update(
                 definition.env_projector(runtime=runtime, context=context, requirements=requirements, route=route)
             )
+    env.update(_supabase_auth_user_source_env(runtime, requirements=requirements))
     return env
 
 
@@ -373,6 +374,7 @@ def resolve_dependency_env_templates(
     *,
     canonical_dependency_env: dict[str, str],
     resolved_env_base: dict[str, str] | None = None,
+    frontend_context: bool = False,
 ) -> dict[str, str]:
     source_env = {
         f"ENVCTL_SOURCE_{key}": str(value)
@@ -394,6 +396,7 @@ def resolve_dependency_env_templates(
             line_number=line_number,
             source_env=source_env,
             resolved_env=resolved,
+            frontend_context=frontend_context,
         )
         if skip_line:
             continue
@@ -418,6 +421,7 @@ def _resolve_scoped_dependency_env(
         if _any_dependency_template_section_present(config):
             return {}
         return None
+    frontend_context = str(service_name or "").strip().lower() == "frontend"
     resolved: dict[str, str] = {}
     for section_label, entries, errors in sections:
         if errors:
@@ -428,6 +432,7 @@ def _resolve_scoped_dependency_env(
             entries,
             canonical_dependency_env=canonical_dependency_env,
             resolved_env_base=resolved,
+            frontend_context=frontend_context,
         )
     return resolved
 
@@ -541,6 +546,7 @@ def _collect_dependency_template_placeholders(
     line_number: int,
     source_env: dict[str, str],
     resolved_env: dict[str, str],
+    frontend_context: bool,
 ) -> tuple[list[str], bool]:
     sanitized = _TEMPLATE_VAR_RE.sub("", template)
     if "${" in sanitized:
@@ -560,8 +566,58 @@ def _collect_dependency_template_placeholders(
             raise RuntimeError(
                 f"launch env entry {name} on line {line_number} references unknown variable {placeholder}"
             )
+        if _frontend_service_role_source_forbidden(
+            name=name,
+            placeholder=placeholder,
+            frontend_context=frontend_context,
+        ):
+            raise RuntimeError(
+                f"launch env entry {name} on line {line_number} cannot project SUPABASE_SERVICE_ROLE_KEY to frontend"
+            )
         placeholders.append(placeholder)
     return placeholders, skip_line
+
+
+def _frontend_service_role_source_forbidden(*, name: str, placeholder: str, frontend_context: bool) -> bool:
+    if placeholder != "ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY":
+        return False
+    return frontend_context or name.startswith("VITE_")
+
+
+def _supabase_auth_user_source_env(runtime: Any, *, requirements: RequirementsResult) -> dict[str, str]:
+    component = requirements.component("supabase")
+    raw_users = component.get("auth_users")
+    if not isinstance(raw_users, dict):
+        return {}
+    configured = tuple(getattr(getattr(runtime, "config", None), "supabase_auth_users", ()) or ())
+    by_name = {str(getattr(user, "name", "") or "").strip(): user for user in configured}
+    env: dict[str, str] = {}
+    first_suffix: str | None = None
+    for slug, payload in raw_users.items():
+        name = str(slug).strip()
+        if not isinstance(payload, dict) or not name:
+            continue
+        user = by_name.get(name)
+        suffix = str(getattr(user, "env_suffix", "") or name.upper().replace("-", "_")).strip()
+        if not suffix:
+            continue
+        user_id = str(payload.get("id", "") or "").strip()
+        email = str(payload.get("email", "") or getattr(user, "email", "") or "").strip()
+        if user_id:
+            env[f"SUPABASE_USER_{suffix}_ID"] = user_id
+        if email:
+            env[f"SUPABASE_USER_{suffix}_EMAIL"] = email
+        password = str(getattr(user, "password", "") or "").strip()
+        if password and bool(getattr(user, "expose_password", True)):
+            env[f"SUPABASE_USER_{suffix}_PASSWORD"] = password
+        if first_suffix is None and (user_id or email):
+            first_suffix = suffix
+    if first_suffix:
+        for key in ("ID", "EMAIL", "PASSWORD"):
+            source_key = f"SUPABASE_USER_{first_suffix}_{key}"
+            if source_key in env:
+                env[f"SUPABASE_TEST_USER_{key}"] = env[source_key]
+    return env
 
 
 def _resolve_dependency_placeholder(

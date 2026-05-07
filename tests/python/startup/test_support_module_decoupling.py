@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -17,6 +18,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     _requirements_failure_message,
     start_requirements_for_project,
     start_project_services,
+    start_project_context,
 )
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
@@ -57,6 +59,122 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_start_project_context_rejects_invalid_supabase_auth_user_config_before_services(self) -> None:
+        order: list[str] = []
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
+            health="healthy",
+            failures=[],
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                supabase_auth_users=(),
+                supabase_auth_user_errors=("Supabase Auth user 'e2e' requires ENVCTL_SUPABASE_USER_E2E_EMAIL",),
+                supabase_auth_users_strict=True,
+            ),
+            _reserve_project_ports=lambda context: order.append("reserve"),
+            _requirements_ready=lambda value: value is requirements,
+            _record_project_startup_warning=lambda project, warning: None,
+            _consume_project_startup_warnings=lambda project: [],
+            _emit=lambda event, **payload: None,
+            _assert_project_services_post_start_truth=lambda **kwargs: None,
+            _terminate_started_services=lambda services: None,
+            runtime_root=Path("/tmp/runtime-root"),
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            _report_progress=lambda route, message, project=None: None,
+            start_project_services=lambda context, requirements, run_id, route: order.append("services") or {},
+            start_requirements_for_project=lambda context, mode, route: requirements,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid Supabase Auth user config"):
+            start_project_context(
+                orchestrator,
+                context=SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={}),
+                mode="main",
+                route=parse_route(["start"], env={}),
+                run_id="run-1",
+            )
+
+        self.assertNotIn("services", order)
+
+    def test_start_project_context_syncs_supabase_auth_users_before_services(self) -> None:
+        order: list[str] = []
+        auth_user = SimpleNamespace(name="e2e", email="e2e@example.test", enabled_for_mode=lambda _mode: True)
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
+            health="healthy",
+            failures=[],
+        )
+
+        def project_env(**kwargs):  # noqa: ANN003, ANN201
+            _ = kwargs
+            return {
+                "SUPABASE_URL": "http://localhost:54321",
+                "SUPABASE_SERVICE_ROLE_KEY": "service-role-secret",
+            }
+
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(supabase_auth_users=(auth_user,), supabase_auth_users_strict=True),
+            _reserve_project_ports=lambda context: order.append("reserve"),
+            _requirements_ready=lambda value: value is requirements,
+            _record_project_startup_warning=lambda project, warning: None,
+            _consume_project_startup_warnings=lambda project: [],
+            _emit=lambda event, **payload: order.append(event) if event.startswith("supabase.auth_users") else None,
+            _assert_project_services_post_start_truth=lambda **kwargs: None,
+            _terminate_started_services=lambda services: None,
+        )
+        context = SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})
+
+        def sync(**kwargs):  # noqa: ANN003, ANN201
+            order.append("sync")
+            return SimpleNamespace(
+                success=True,
+                results=(SimpleNamespace(name="e2e", status="created", id="auth-user-id", email="e2e@example.test"),),
+                artifact={"users": {"e2e": {"id": "auth-user-id", "email": "e2e@example.test", "status": "created"}}},
+            )
+
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            _report_progress=lambda route, message, project=None: None,
+            start_project_services=lambda context, requirements, run_id, route: order.append("services") or {},
+            start_requirements_for_project=lambda context, mode, route: requirements,
+        )
+        with (
+            mock.patch(
+                "envctl_engine.startup.startup_execution_support._supabase_project_env",
+                side_effect=project_env,
+            ),
+            mock.patch(
+                "envctl_engine.startup.startup_execution_support.sync_supabase_auth_users",
+                side_effect=sync,
+            ),
+        ):
+            result = start_project_context(
+                orchestrator,
+                context=context,
+                mode="main",
+                route=parse_route(["start"], env={}),
+                run_id="run-1",
+            )
+
+        self.assertEqual(order[0], "reserve")
+        self.assertLess(order.index("sync"), order.index("services"))
+        self.assertEqual(result.requirements.supabase["auth_users"]["e2e"]["id"], "auth-user-id")
 
     def test_tree_preselected_projects_uses_local_state_helpers(self) -> None:
         state = RunState(

@@ -8,6 +8,11 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
+from envctl_engine.shared.dependency_compose_assets import (  # noqa: E402
+    DEFAULT_SUPABASE_JWT_SECRET,
+    default_supabase_anon_key,
+    default_supabase_service_role_key,
+)
 from envctl_engine.runtime.engine_runtime_env import (  # noqa: E402
     _route_is_implicit_start,
     effective_main_requirement_flags,
@@ -203,6 +208,13 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["SUPABASE_URL"], "http://localhost:54321")
         self.assertEqual(env["SUPABASE_DB_PORT"], "5432")
         self.assertEqual(env["SUPABASE_PUBLIC_PORT"], "54321")
+        self.assertEqual(env["SUPABASE_ANON_KEY"], default_supabase_anon_key(secret=DEFAULT_SUPABASE_JWT_SECRET))
+        self.assertEqual(
+            env["SUPABASE_SERVICE_ROLE_KEY"],
+            default_supabase_service_role_key(secret=DEFAULT_SUPABASE_JWT_SECRET),
+        )
+        self.assertEqual(env["SUPABASE_JWT_SECRET"], DEFAULT_SUPABASE_JWT_SECRET)
+        self.assertEqual(env["SUPABASE_JWKS_URL"], "http://localhost:54321/auth/v1/.well-known/jwks.json")
         self.assertEqual(env["LOG_PROFILE_OVERRIDE"], "debug")
         self.assertEqual(env["BACKEND_LOG_LEVEL_OVERRIDE"], "warn")
         self.assertEqual(env["FRONTEND_TEST_RUNNER"], "bun")
@@ -437,6 +449,98 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             backend_env["SUPABASE_JWKS_URL"],
             "http://localhost:54321/auth/v1/.well-known/jwks.json",
         )
+
+    def test_frontend_launch_env_rejects_supabase_service_role_source_template(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                frontend_dependency_env_section_present=True,
+                frontend_dependency_env_template_errors=(),
+                frontend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="SUPABASE_SERVICE_ROLE_KEY",
+                        template="${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}",
+                        line_number=4,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+            },
+            health="healthy",
+            failures=[],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "SUPABASE_SERVICE_ROLE_KEY.*frontend"):
+            project_service_env(runtime, context, requirements=requirements, route=None, service_name="frontend")
+
+    def test_project_service_env_includes_synced_supabase_auth_user_sources(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            config=SimpleNamespace(
+                supabase_auth_users=(
+                    SimpleNamespace(
+                        name="e2e",
+                        env_suffix="E2E",
+                        email="e2e@example.test",
+                        password="e2e-password",
+                        expose_password=True,
+                    ),
+                ),
+                runtime_root=Path("/unused"),
+            ),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54321, "primary": 5432},
+                "auth_users": {
+                    "e2e": {
+                        "id": "auth-user-id",
+                        "email": "e2e@example.test",
+                        "status": "created",
+                    }
+                },
+            },
+            health="healthy",
+            failures=[],
+        )
+
+        env = project_service_env_internal(runtime, context, requirements=requirements, route=None)
+
+        self.assertEqual(env["SUPABASE_USER_E2E_ID"], "auth-user-id")
+        self.assertEqual(env["SUPABASE_USER_E2E_EMAIL"], "e2e@example.test")
+        self.assertEqual(env["SUPABASE_USER_E2E_PASSWORD"], "e2e-password")
+        self.assertEqual(env["SUPABASE_TEST_USER_ID"], "auth-user-id")
+        self.assertEqual(env["SUPABASE_TEST_USER_EMAIL"], "e2e@example.test")
+        self.assertEqual(env["SUPABASE_TEST_USER_PASSWORD"], "e2e-password")
 
     def test_project_service_env_applies_generic_service_templates_and_service_source_placeholders(self) -> None:
         runtime = SimpleNamespace(

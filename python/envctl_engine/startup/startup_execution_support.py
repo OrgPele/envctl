@@ -10,6 +10,10 @@ from typing import Any, cast
 from envctl_engine.requirements.common import build_container_name
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.supabase import build_supabase_project_name
+from envctl_engine.requirements.supabase_auth_users import (
+    sync_results_to_requirement_payload,
+    sync_supabase_auth_users,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
@@ -48,6 +52,13 @@ def start_project_context(
     requirements = _requirements_for_project_context(orchestrator, context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):
         raise RuntimeError(_requirements_failure_message(context.name, requirements))
+    _sync_supabase_auth_users_before_services(
+        orchestrator,
+        context=context,
+        mode=mode,
+        route=route,
+        requirements=requirements,
+    )
     requirements_progress_message = _requirements_ready_progress_message(
         orchestrator,
         context=context,
@@ -83,6 +94,77 @@ def start_project_context(
         services=project_services,
         warnings=list(rt._consume_project_startup_warnings(context.name)),
     )
+
+
+def _sync_supabase_auth_users_before_services(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    context: ProjectContextLike,
+    mode: str,
+    route: Route,
+    requirements: RequirementsResult,
+) -> None:
+    rt = orchestrator.runtime
+    config_errors = tuple(getattr(rt.config, "supabase_auth_user_errors", ()) or ())
+    if config_errors:
+        raise RuntimeError("Invalid Supabase Auth user config: " + "; ".join(config_errors))
+    configured_users = tuple(getattr(rt.config, "supabase_auth_users", ()) or ())
+    enabled_users = tuple(
+        user
+        for user in configured_users
+        if callable(getattr(user, "enabled_for_mode", None)) and user.enabled_for_mode(mode)
+    )
+    if not enabled_users:
+        return
+    component = requirements.component("supabase")
+    if not bool(component.get("enabled", False)) or not bool(component.get("success", False)):
+        return
+    env = _supabase_project_env(runtime=rt, context=context, requirements=requirements, route=route)
+    base_url = str(env.get("SUPABASE_URL", "") or "").strip()
+    service_role_key = str(env.get("SUPABASE_SERVICE_ROLE_KEY", "") or "").strip()
+    rt._emit(
+        "supabase.auth_users.sync.start",
+        project=context.name,
+        mode=mode,
+        users=len(enabled_users),
+    )
+    runtime_root = Path(getattr(rt, "runtime_root", getattr(rt.config, "runtime_scope_dir", ".")))
+    summary = sync_supabase_auth_users(
+        mode=mode,
+        configured_users=enabled_users,
+        base_url=base_url,
+        service_role_key=service_role_key,
+        runtime_root=runtime_root,
+        dry_run=bool(route.flags.get("dry_run")),
+    )
+    for result in summary.results:
+        rt._emit(
+            "supabase.auth_users.sync.user",
+            project=context.name,
+            slug=result.name,
+            status=result.status,
+            supabase_user_id=result.id,
+        )
+    component["auth_users"] = sync_results_to_requirement_payload(summary)
+    rt._emit(
+        "supabase.auth_users.sync.finish",
+        project=context.name,
+        success=summary.success,
+        users=len(summary.results),
+    )
+    if summary.success:
+        return
+    errors = [f"{item.name}: {item.error}" for item in summary.results if item.status == "failed" and item.error]
+    message = "Supabase Auth user sync failed" + (": " + "; ".join(errors) if errors else "")
+    if bool(getattr(rt.config, "supabase_auth_users_strict", True)):
+        raise RuntimeError(message)
+    rt._record_project_startup_warning(context.name, message)
+
+
+def _supabase_project_env(**kwargs: object) -> dict[str, str]:
+    from envctl_engine.requirements.dependencies.supabase import project_env
+
+    return project_env(**kwargs)
 
 
 def _requirements_for_project_context(

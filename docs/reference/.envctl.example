@@ -74,6 +74,14 @@ N8N_PORT_BASE=5678
 # Public Supabase API/Kong port. ENVCTL_SOURCE_SUPABASE_URL uses this port; DB URLs use DB_PORT.
 SUPABASE_PUBLIC_PORT=54321
 
+# Optional managed Supabase Auth users for local/E2E login.
+# ENVCTL_SUPABASE_AUTH_USERS=e2e
+# ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test
+# ENVCTL_SUPABASE_USER_E2E_PASSWORD=change-me-local-only
+# ENVCTL_SUPABASE_USER_E2E_USER_METADATA_JSON={"company_name":"E2E Co"}
+# ENVCTL_SUPABASE_USER_E2E_APP_METADATA_JSON={"role":"tester"}
+# ENVCTL_SUPABASE_AUTH_USERS_STRICT=true
+
 # ==========================================
 # Main mode startup profile
 # ==========================================
@@ -139,6 +147,9 @@ DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://
 REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
 N8N_URL=${ENVCTL_SOURCE_N8N_URL}  # n8n base URL; e.g. http://localhost:5678
 SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # Supabase base URL; e.g. http://localhost:54321
+SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}  # backend-only JWT verification JWKS URL
+SUPABASE_JWT_SECRET=${ENVCTL_SOURCE_SUPABASE_JWT_SECRET}  # backend-only local JWT secret
+SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}  # backend-only Admin API key
 SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}  # SQLAlchemy sync URL; e.g. postgresql+psycopg://user:pass@host:5432/dbname
 ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; e.g. postgresql+asyncpg://user:pass@host:5432/dbname
 # APP_DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # extra backend alias example
@@ -146,6 +157,8 @@ ASYNC_DATABASE_URL=${ENVCTL_SOURCE_ASYNC_DATABASE_URL}  # SQLAlchemy async URL; 
 
 # >>> envctl frontend launch env >>>
 # VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+# VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}  # frontend-safe Supabase anon key
+# Do not map ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY in frontend sections.
 # <<< envctl frontend launch env <<<
 
 # Additional service launch env sections use the configured service slug.

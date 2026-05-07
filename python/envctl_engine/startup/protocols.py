@@ -10,7 +10,6 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
-from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.ui.selection_types import TargetSelection
 
 
@@ -18,6 +17,12 @@ class ProjectContextLike(Protocol):
     name: str
     root: Path
     ports: Mapping[str, PortPlan]
+
+
+class ProjectStartupResultLike(Protocol):
+    requirements: RequirementsResult
+    services: dict[str, ServiceRecord]
+    warnings: list[str]
 
 
 class StartupRuntime(Protocol):
@@ -100,7 +105,7 @@ class StartupRuntime(Protocol):
     def _reconcile_state_truth(self, state: RunState, *, emit_events: bool = True) -> list[str]: ...
     def _start_project_context(
         self, *, context: ProjectContextLike, mode: str, route: Route, run_id: str
-    ) -> ProjectStartupResult: ...
+    ) -> ProjectStartupResultLike: ...
     def _run_dir_path(self, run_id: str) -> Path: ...
     def _project_service_env(
         self,
@@ -148,6 +153,7 @@ class StartupRuntime(Protocol):
     def _should_enter_post_start_interactive(self, route: Route) -> bool: ...
     def _run_pr_action(self, route: Route, targets: list[ProjectContextLike]) -> int: ...
     def _reset_project_startup_warnings(self) -> None: ...
+    def _record_project_startup_warning(self, project: str, message: str) -> None: ...
     def _consume_project_startup_warnings(self, project_name: str) -> list[str]: ...
 
 
@@ -177,7 +183,7 @@ class StartupOrchestratorLike(Protocol):
         mode: str,
         route: Route,
         run_id: str,
-    ) -> ProjectStartupResult: ...
+    ) -> ProjectStartupResultLike: ...
     def _restart_include_requirements(self, route: Route) -> bool: ...
     def _restart_service_types_for_project(
         self,

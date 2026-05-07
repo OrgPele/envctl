@@ -1310,7 +1310,11 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         class _Runtime:
             @staticmethod
             def _command_override_value(key: str) -> str | None:
-                return None
+                return {
+                    "SUPABASE_ANON_KEY": "anon-secret",
+                    "SUPABASE_SERVICE_ROLE_KEY": "service-secret",
+                    "SUPABASE_JWT_SECRET": "jwt-secret",
+                }.get(key)
 
         class _Context:
             ports = {"db": type("Plan", (), {"final": 5432})()}
@@ -1332,6 +1336,11 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertIn("supabase-db-password", env["DATABASE_URL"])
         self.assertEqual(env["DATABASE_URL"], env["SQLALCHEMY_DATABASE_URL"])
         self.assertEqual(env["DATABASE_URL"], env["ASYNC_DATABASE_URL"])
+        self.assertEqual(env["SUPABASE_URL"], "http://localhost:5432")
+        self.assertEqual(env["SUPABASE_ANON_KEY"], "anon-secret")
+        self.assertEqual(env["SUPABASE_SERVICE_ROLE_KEY"], "service-secret")
+        self.assertEqual(env["SUPABASE_JWT_SECRET"], "jwt-secret")
+        self.assertEqual(env["SUPABASE_JWKS_URL"], "http://localhost:5432/auth/v1/.well-known/jwks.json")
 
     def test_supabase_native_db_recreates_existing_container_without_host_port_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,9 +1,47 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+
+
+DEFAULT_SUPABASE_JWT_SECRET = "supabase-local-jwt-secret"
+
+
+def default_supabase_anon_key(*, secret: str | None = None) -> str:
+    return local_supabase_jwt(role="anon", secret=secret or DEFAULT_SUPABASE_JWT_SECRET)
+
+
+def default_supabase_service_role_key(*, secret: str | None = None) -> str:
+    return local_supabase_jwt(role="service_role", secret=secret or DEFAULT_SUPABASE_JWT_SECRET)
+
+
+def local_supabase_jwt(*, role: str, secret: str) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "iss": "supabase",
+        "ref": "localhost",
+        "role": role,
+        "iat": 1641769200,
+        "exp": 1957345200,
+    }
+    signing_input = b".".join(
+        (
+            _base64url(json.dumps(header, separators=(",", ":")).encode("utf-8")),
+            _base64url(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
+        )
+    )
+    signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{signing_input.decode('ascii')}.{_base64url(signature).decode('ascii')}"
+
+
+def _base64url(data: bytes) -> bytes:
+    return base64.urlsafe_b64encode(data).rstrip(b"=")
 
 
 @dataclass(slots=True)
@@ -73,15 +111,17 @@ def supabase_managed_env(
     )
     db_password = values.get("SUPABASE_DB_PASSWORD") or values.get("DB_PASSWORD") or "supabase-db-password"
     public_url = values.get("SUPABASE_PUBLIC_URL") or f"http://localhost:{resolved_public_port}"
+    jwt_secret = values.get("SUPABASE_JWT_SECRET") or DEFAULT_SUPABASE_JWT_SECRET
     return {
         "SUPABASE_DB_PORT": str(int(db_port)),
         "SUPABASE_PUBLIC_PORT": str(resolved_public_port),
         "SUPABASE_API_PORT": str(resolved_public_port),
         "SUPABASE_DB_PASSWORD": db_password,
         "SUPABASE_PUBLIC_URL": public_url,
-        "SUPABASE_JWT_SECRET": values.get("SUPABASE_JWT_SECRET", "supabase-local-jwt-secret"),
-        "SUPABASE_ANON_KEY": values.get("SUPABASE_ANON_KEY", "local-anon-key"),
-        "SUPABASE_SERVICE_ROLE_KEY": values.get("SUPABASE_SERVICE_ROLE_KEY", "local-service-role-key"),
+        "SUPABASE_JWT_SECRET": jwt_secret,
+        "SUPABASE_ANON_KEY": values.get("SUPABASE_ANON_KEY") or default_supabase_anon_key(secret=jwt_secret),
+        "SUPABASE_SERVICE_ROLE_KEY": values.get("SUPABASE_SERVICE_ROLE_KEY")
+        or default_supabase_service_role_key(secret=jwt_secret),
         "SUPABASE_DB_IMAGE": values.get("SUPABASE_DB_IMAGE", "supabase/postgres:15.1.0.147"),
         "SUPABASE_AUTH_IMAGE": values.get("SUPABASE_AUTH_IMAGE", "supabase/gotrue:v2.150.0"),
         "SUPABASE_KONG_IMAGE": values.get("SUPABASE_KONG_IMAGE", "kong:2.8.1"),

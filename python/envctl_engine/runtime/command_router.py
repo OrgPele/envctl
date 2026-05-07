@@ -141,6 +141,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--ulw",
     "--tmux-new-session",
     "--with-codex-skills",
+    "--confirm",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
 
@@ -176,6 +177,11 @@ VALUE_FLAGS = {
     "--timeout",
     "--debug-capture",
     "--debug-auto-pack",
+    "--mode",
+    "--email",
+    "--password",
+    "--metadata-json",
+    "--app-metadata-json",
 }
 
 PAIR_FLAGS = {"--setup-worktrees", "--setup-worktree"}
@@ -377,6 +383,12 @@ _COMMAND_ALIAS_PAIRS = (
     ("--codex-tmux", "codex-tmux"),
     ("ensure-worktree", "ensure-worktree"),
     ("--ensure-worktree", "ensure-worktree"),
+    ("supabase-user", "supabase-user"),
+    ("supabase-users", "supabase-user"),
+    ("auth-user", "supabase-user"),
+    ("--supabase-user", "supabase-user"),
+    ("--supabase-users", "supabase-user"),
+    ("--auth-user", "supabase-user"),
     ("session", "session"),
     ("--session", "session"),
     ("dash", "dashboard"),
@@ -414,6 +426,7 @@ SUPPORTED_COMMANDS = sorted(
         "migrate",
         "migrate-hooks",
         "ensure-worktree",
+        "supabase-user",
         "install-prompts",
         "codex-tmux",
         "list-commands",
@@ -499,6 +512,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
+    _apply_mode_override_flag(state)
     _apply_default_runtime_scope_policy(state)
     _apply_default_headless_policy(state)
     _validate_plan_agent_cli_flags(state)
@@ -1010,6 +1024,12 @@ def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:
     )
 
 
+def _apply_mode_override_flag(state: _ParserState) -> None:
+    mode_override = state.flags.get("mode_override")
+    if isinstance(mode_override, str) and mode_override in {"main", "trees"}:
+        state.mode = mode_override
+
+
 def _apply_default_headless_policy(state: _ParserState) -> None:
     if state.command not in DEFAULT_HEADLESS_COMMANDS:
         return
@@ -1130,6 +1150,7 @@ def _boolean_flag_name(token: str) -> str:
         "--ulw": "ulw",
         "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",
+        "--confirm": "confirm",
     }
     return mapping[token]
 
@@ -1167,8 +1188,19 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--timeout": "timeout",
         "--debug-capture": "debug_capture",
         "--debug-auto-pack": "debug_auto_pack",
+        "--mode": "mode_override",
+        "--email": "email",
+        "--password": "password",
+        "--metadata-json": "metadata_json",
+        "--app-metadata-json": "app_metadata_json",
     }
     key = mapping[token]
+    if key == "mode_override":
+        normalized = str(value).strip().lower()
+        if normalized not in {"main", "trees"}:
+            raise RouteError("--mode must be main or trees")
+        flags[key] = normalized
+        return
     if key in {"services", "include_existing_worktrees", "set_values"}:
         existing = flags.get(key)
         values = [value] if key == "set_values" else _parse_projects(value)
