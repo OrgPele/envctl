@@ -27,7 +27,7 @@ class CommandHelpTopic:
 
 WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan"})
 DEBUG_COMMANDS = frozenset({"debug-pack", "debug-report", "debug-last", "doctor"})
-UTILITY_COMMANDS = frozenset({"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks"})
+UTILITY_COMMANDS = frozenset({"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user"})
 DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
 GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan")
 GENERAL_ACTION_ORDER = (
@@ -58,7 +58,7 @@ GENERAL_INSPECTION_ORDER = (
     "session",
 )
 GENERAL_DIAGNOSTIC_ORDER = ("doctor", "debug-pack", "debug-report", "debug-last")
-GENERAL_UTILITY_ORDER = ("install-prompts", "codex-tmux", "ensure-worktree", "migrate-hooks")
+GENERAL_UTILITY_ORDER = ("install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "migrate-hooks")
 
 
 def render_help_text(route: Route | None) -> str:
@@ -850,6 +850,44 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         examples=("envctl ensure-worktree feature-a --json",),
         aliases=("--ensure-worktree",),
         related=("plan", "list-trees", "delete-worktree"),
+    ),
+    "supabase-user": CommandHelpTopic(
+        command="supabase-user",
+        summary="manage Supabase Auth users through the Admin API",
+        usage=(
+            "envctl supabase-user sync [--mode main|trees] [--json] [--dry-run]",
+            "envctl supabase-user list [--json]",
+            "envctl supabase-user create <email> --password <password> [--metadata-json <json>]",
+            "envctl supabase-user update <email|id> [--password <password>] [--metadata-json <json>]",
+            "envctl supabase-user delete <email|id> --yes",
+        ),
+        what_it_does=(
+            "uses the Supabase Auth Admin API with the service-role key from active managed state or explicit env",
+            "syncs configured .envctl Auth users idempotently for local E2E credentials",
+            "lists, creates, updates, shows, or deletes Auth users without direct auth.users SQL edits",
+        ),
+        flags=(
+            "--mode main|trees        choose which saved managed Supabase state to inspect for connection details",
+            "--json                   emit a stable machine-readable result",
+            "--dry-run                preview sync/delete mutations where supported",
+            "--email <email>          provide a target email when not passed positionally",
+            "--password <password>    set a password for create/update",
+            "--metadata-json <json>   set user_metadata object for create/update",
+            "--app-metadata-json <json> set app_metadata object for create/update",
+            "--yes | --headless       required for delete in non-JSON interactive paths",
+        ),
+        notes=(
+            "The service-role key is never printed; errors redact secrets through the Admin client.",
+            "Standalone commands require managed Supabase state or explicit SUPABASE_URL/service-role env.",
+        ),
+        examples=(
+            "envctl supabase-user sync --headless --json",
+            "envctl supabase-user list --json",
+            "envctl supabase-user create e2e@example.test --password local-secret",
+            "envctl supabase-user delete e2e@example.test --yes",
+        ),
+        aliases=("supabase-users", "auth-user", "--supabase-user", "--supabase-users", "--auth-user"),
+        related=("start", "show-state", "health"),
     ),
     "migrate-hooks": CommandHelpTopic(
         command="migrate-hooks",

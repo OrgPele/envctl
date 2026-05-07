@@ -40,6 +40,7 @@
       "start",
       "stop",
       "stop-all",
+      "supabase-user",
       "test"
     ],
     "python_supported_flag_tokens": [
@@ -47,6 +48,8 @@
       "--all",
       "--analyze",
       "--analyze-mode",
+      "--app-metadata-json",
+      "--auth-user",
       "--backend",
       "--backend-log-level",
       "--backend-log-profile",
@@ -74,6 +77,7 @@
       "--commit-message",
       "--commit-message-file",
       "--config",
+      "--confirm",
       "--copy-db-storage",
       "--dashboard",
       "--dashboard-interactive",
@@ -99,6 +103,7 @@
       "--docker-temp",
       "--doctor",
       "--dry-run",
+      "--email",
       "--ensure-worktree",
       "--entire-system",
       "--errors",
@@ -147,8 +152,10 @@
       "--main-services-local",
       "--main-services-remote",
       "--main=true",
+      "--metadata-json",
       "--migrate",
       "--migrate-hooks",
+      "--mode",
       "--no-auto-resume",
       "--no-codex-goal",
       "--no-copy-db-storage",
@@ -173,6 +180,7 @@
       "--parallel-plan",
       "--parallel-trees",
       "--parallel-trees-max",
+      "--password",
       "--plan",
       "--plan-parallel",
       "--plan-selection",
@@ -227,6 +235,8 @@
       "--stop-all",
       "--stop-all-remove-volumes",
       "--stop-docker-on-exit",
+      "--supabase-user",
+      "--supabase-users",
       "--team",
       "--temp-docker",
       "--test",
@@ -318,12 +328,12 @@
     ]
   },
   "summary": {
-    "feature_count": 51,
-    "user_visible_feature_count": 50,
+    "feature_count": 52,
+    "user_visible_feature_count": 51,
     "areas": {
       "actions": 5,
       "artifacts": 3,
-      "cli": 10,
+      "cli": 11,
       "diagnostics": 5,
       "inspection": 10,
       "launcher": 3,
@@ -332,7 +342,7 @@
       "requirements": 3
     },
     "parity_status": {
-      "verified_python": 51
+      "verified_python": 52
     }
   },
   "features": [
@@ -1084,6 +1094,30 @@
     },
     {
       "id": "F-038",
+      "area": "cli",
+      "feature": "Command: manage Supabase Auth users for local E2E and explicit Admin API operations",
+      "user_visible": true,
+      "shell_source_of_truth": [],
+      "python_source_of_truth": [
+        "python/envctl_engine/runtime/command_router.py",
+        "python/envctl_engine/runtime/command_policy.py",
+        "python/envctl_engine/runtime/supabase_user_command_support.py",
+        "python/envctl_engine/runtime/utility_command_support.py",
+        "python/envctl_engine/requirements/supabase_auth_users.py"
+      ],
+      "evidence_tests": [
+        "tests/python/runtime/test_cli_router.py",
+        "tests/python/runtime/test_command_exit_codes.py",
+        "tests/python/runtime/test_supabase_user_command_support.py",
+        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/requirements/test_supabase_auth_users.py"
+      ],
+      "parity_status": "verified_python",
+      "notes": "Supabase Auth user management is Python-owned through the utility dispatcher and the dependency-free Auth Admin client.",
+      "command": "supabase-user"
+    },
+    {
+      "id": "F-039",
       "area": "actions",
       "feature": "Command: run tests for selected projects and service scopes",
       "user_visible": true,
@@ -1111,7 +1145,7 @@
       "wave": "Wave D"
     },
     {
-      "id": "F-039",
+      "id": "F-040",
       "area": "launcher",
       "feature": "Top-level envctl launcher resolves repo root, honors --repo, and forwards commands into the runtime",
       "user_visible": true,
@@ -1137,7 +1171,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-040",
+      "id": "F-041",
       "area": "launcher",
       "feature": "envctl install writes a shell-file hook block that exposes envctl on PATH",
       "user_visible": true,
@@ -1164,7 +1198,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-041",
+      "id": "F-042",
       "area": "launcher",
       "feature": "envctl uninstall removes the shell-file hook block cleanly and idempotently",
       "user_visible": true,
@@ -1191,7 +1225,7 @@
       "wave": "Wave A"
     },
     {
-      "id": "F-042",
+      "id": "F-043",
       "area": "cli",
       "feature": "Python command parser remains aligned with the supported public command and flag surface",
       "user_visible": true,
@@ -1207,7 +1241,7 @@
       "notes": "Parser compatibility is now enforced against the Python-owned public command and documentation surface."
     },
     {
-      "id": "F-043",
+      "id": "F-044",
       "area": "planning",
       "feature": "Interactive planning selection and count synchronization preserve existing runs while adding or removing trees",
       "user_visible": true,
@@ -1234,7 +1268,7 @@
       "wave": "Wave B"
     },
     {
-      "id": "F-044",
+      "id": "F-045",
       "area": "planning",
       "feature": "Worktree setup flags reuse, recreate, and include-existing-worktrees behave consistently across planning workflows",
       "user_visible": true,
@@ -1260,7 +1294,7 @@
       "wave": "Wave B"
     },
     {
-      "id": "F-045",
+      "id": "F-046",
       "area": "requirements",
       "feature": "Dependency startup and cleanup remain symmetric for postgres, redis, supabase, and n8n across startup, stop, blast, and planning scale-down",
       "user_visible": true,
@@ -1287,7 +1321,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-046",
+      "id": "F-047",
       "area": "requirements",
       "feature": "Supabase lifecycle, project naming, and container cleanup remain stable for long project names and repeated plan cycles",
       "user_visible": true,
@@ -1314,7 +1348,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-047",
+      "id": "F-048",
       "area": "requirements",
       "feature": "Seed or copy-db-storage behavior for per-tree requirements remains consistent with existing workflows",
       "user_visible": true,
@@ -1340,7 +1374,7 @@
       "wave": "Wave C"
     },
     {
-      "id": "F-048",
+      "id": "F-049",
       "area": "artifacts",
       "feature": "Run state, runtime map, ports manifest, and error report remain the authoritative per-run artifact set",
       "user_visible": true,
@@ -1357,7 +1391,7 @@
       "notes": "Core runtime artifacts are already Python-owned and well covered."
     },
     {
-      "id": "F-049",
+      "id": "F-050",
       "area": "artifacts",
       "feature": "Test results and review artifacts live under the scoped runtime /tmp tree and retain valid dashboard links",
       "user_visible": true,
@@ -1375,7 +1409,7 @@
       "notes": "Artifact relocation into runtime scope is Python-owned and covered by focused tests."
     },
     {
-      "id": "F-050",
+      "id": "F-051",
       "area": "artifacts",
       "feature": "Artifact retention and cleanup remain correct across stop, blast, resume, and plan scale-down flows",
       "user_visible": true,
@@ -1402,7 +1436,7 @@
       "wave": "Wave E"
     },
     {
-      "id": "F-051",
+      "id": "F-052",
       "area": "diagnostics",
       "feature": "Release or shipability checks reflect the retained product contract instead of historical shell migration governance",
       "user_visible": false,

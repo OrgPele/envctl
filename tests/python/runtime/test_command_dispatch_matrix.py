@@ -48,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 38 commands
-        self.assertEqual(len(commands), 38, f"Expected 38 commands, got {len(commands)}")
+        # Verify we have exactly 39 commands
+        self.assertEqual(len(commands), 39, f"Expected 39 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -64,6 +64,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "config",
             "doctor",
             "ensure-worktree",
+            "supabase-user",
             "test",
             "logs",
             "clear-logs",
@@ -139,6 +140,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "migrate": "action_command_orchestrator",
             "install-prompts": "utility_dispatch",
             "codex-tmux": "utility_dispatch",
+            "supabase-user": "utility_dispatch",
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",
