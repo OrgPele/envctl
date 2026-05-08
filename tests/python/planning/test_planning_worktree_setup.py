@@ -569,6 +569,116 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertTrue((repo / "trees" / "implementations_task" / "1").is_dir())
             self.assertTrue((repo / "trees" / "implementations_task" / "2").is_dir())
 
+    def test_fresh_ai_worktree_is_not_scaled_down_while_session_marker_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            for iteration in ("1", "2", "3"):
+                worktree = repo / "trees" / "implementations_task" / iteration
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / ".git").write_text(f"gitdir: /tmp/worktree-{iteration}\n", encoding="utf-8")
+            protected = repo / "trees" / "implementations_task" / "3"
+            (protected / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (protected / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "plan_file": "implementations/task.md",
+                        "created_for_fresh_ai_launch": True,
+                        "fresh_ai_launch_status": "launching",
+                        "launch_transport": "omx",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._runtime(repo, runtime)
+            events: list[dict[str, object]] = []
+            engine._emit = lambda event, **payload: events.append({"event": event, **payload})  # type: ignore[method-assign]
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            def fake_delete_worktree_path(**kwargs):  # noqa: ANN001
+                shutil.rmtree(Path(kwargs["worktree_root"]))
+
+                class _Result:
+                    success = True
+                    message = ""
+
+                return _Result()
+
+            with patch("envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path):
+                result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 1},
+                    raw_projects=raw_projects,
+                    keep_plan=True,
+                )
+
+            self.assertIsNone(result.error)
+            self.assertTrue(protected.is_dir())
+            self.assertTrue(
+                any(
+                    event.get("event") == "planning.worktree.cleanup.skipped_active_ai_session"
+                    and event.get("worktree") == "implementations_task-3"
+                    for event in events
+                )
+            )
+
+    def test_stale_fresh_ai_worktree_can_be_scaled_down_after_session_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            for iteration in ("1", "2"):
+                worktree = repo / "trees" / "implementations_task" / iteration
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / ".git").write_text(f"gitdir: /tmp/worktree-{iteration}\n", encoding="utf-8")
+            stale = repo / "trees" / "implementations_task" / "2"
+            (stale / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (stale / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "plan_file": "implementations/task.md",
+                        "created_for_fresh_ai_launch": True,
+                        "fresh_ai_launch_status": "launched",
+                        "launch_transport": "omx",
+                        "session_name": "omx-missing-session",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._runtime(repo, runtime)
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            def fake_delete_worktree_path(**kwargs):  # noqa: ANN001
+                shutil.rmtree(Path(kwargs["worktree_root"]))
+
+                class _Result:
+                    success = True
+                    message = ""
+
+                return _Result()
+
+            with patch("envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path):
+                result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 1},
+                    raw_projects=raw_projects,
+                    keep_plan=True,
+                )
+
+            self.assertIsNone(result.error)
+            self.assertFalse(stale.exists())
+
     def test_setup_worktree_creation_resets_existing_branch_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

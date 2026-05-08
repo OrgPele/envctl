@@ -1203,6 +1203,20 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
+            provenance_path = repo / ".envctl-state" / "worktree-provenance.json"
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "plan_file": "a.md",
+                        "created_for_fresh_ai_launch": True,
+                        "fresh_ai_launch_status": "launching",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             rt = self._runtime(
                 repo,
                 runtime,
@@ -1240,6 +1254,129 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.attach_target.session_name, "omx-feature-session")
             self.assertEqual(result.attach_target.window_name, "%42")
             self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", "omx-feature-session"))
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            self.assertEqual(provenance["fresh_ai_launch_status"], "launched")
+            self.assertEqual(provenance["launch_transport"], "omx")
+            self.assertEqual(provenance["session_name"], "omx-feature-session")
+
+    def test_omx_launch_fails_when_attach_target_disappears_after_workflow_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "launch_failed")
+            self.assertIsNone(result.attach_target)
+            self.assertEqual(result.outcomes[0].status, "failed")
+            self.assertEqual(result.outcomes[0].reason, "omx_attach_target_stale")
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.attach_validation.failed")[-1]["reason"],
+                "omx_attach_target_stale",
+            )
+
+    def test_omx_launch_fails_when_worktree_removed_after_attach_target_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+
+            def _queue_then_remove_worktree(*_args: object, **_kwargs: object) -> None:
+                repo.rmdir()
+                return None
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", side_effect=_queue_then_remove_worktree),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIsNone(result.attach_target)
+            self.assertEqual(result.outcomes[0].reason, "worktree_removed_after_launch")
+
+    def test_omx_launch_records_late_spawn_exit_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+
+            class _ExitedProcess:
+                pid = 4242
+                args = ["script", "-qfc", "omx --tmux", "/dev/null"]
+
+                def poll(self) -> int:
+                    return 7
+
+            rt._omx_spawn_processes = [_ExitedProcess()]  # type: ignore[attr-defined]
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.outcomes[0].reason, "omx_session_exited")
+            exited_events = self._events(rt, "planning.agent_launch.omx_spawn.exited_early")
+            self.assertEqual(exited_events[-1]["pid"], 4242)
+            self.assertEqual(exited_events[-1]["returncode"], 7)
 
     def test_omx_workflow_launch_wraps_initial_prompt_with_workflow_keyword(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -183,6 +183,14 @@ class PlanAgentAttachTarget:
 
 
 @dataclass(slots=True, frozen=True)
+class PlanAgentAttachValidation:
+    ok: bool
+    reason: str
+    session_name: str = ""
+    attach_command: str = ""
+
+
+@dataclass(slots=True, frozen=True)
 class AgentTerminalLaunchResult:
     status: str
     reason: str
@@ -1130,6 +1138,38 @@ def _launch_plan_agent_omx_terminals(
                 )
             )
             continue
+        validation = validate_plan_agent_attach_target(
+            runtime,
+            attach_target,
+            worktree=worktree,
+            transport="omx",
+            phase="post_workflow_queue",
+        )
+        if not validation.ok:
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason=validation.reason,
+                session_name=attach_target.session_name,
+                window_name=attach_target.window_name,
+                worktree=worktree.name,
+                transport="omx",
+            )
+            outcomes.append(
+                PlanAgentLaunchOutcome(
+                    worktree_name=worktree.name,
+                    worktree_root=worktree.root,
+                    surface_id=None,
+                    status="failed",
+                    reason=validation.reason,
+                )
+            )
+            continue
+        _mark_worktree_plan_agent_launch(
+            worktree,
+            status="launched",
+            transport="omx",
+            session_name=attach_target.session_name,
+        )
         runtime._emit(
             "planning.agent_launch.surface_created",
             session_name=attach_target.session_name,
@@ -1938,6 +1978,131 @@ def _omx_spawn_failure_text(*, returncode: object, stdout: str, stderr: str) -> 
     if normalized_code:
         return f"omx exited with status {normalized_code}"
     return "omx exited before creating a managed session"
+
+
+def validate_plan_agent_attach_target(
+    runtime: Any,
+    attach_target: PlanAgentAttachTarget | None,
+    *,
+    worktree: CreatedPlanWorktree | None = None,
+    transport: str = "",
+    phase: str = "handoff",
+) -> PlanAgentAttachValidation:
+    session_name = str(getattr(attach_target, "session_name", "") or "").strip() if attach_target else ""
+    attach_command = " ".join(
+        str(part).strip()
+        for part in (getattr(attach_target, "attach_command", ()) if attach_target is not None else ())
+        if str(part).strip()
+    )
+    worktree_root = Path(getattr(worktree, "root", "") or "") if worktree is not None else None
+    worktree_name = str(getattr(worktree, "name", "") or "").strip() if worktree is not None else ""
+    payload = {
+        "session_name": session_name or None,
+        "attach_command": attach_command or None,
+        "worktree": worktree_name or None,
+        "worktree_root": str(worktree_root.resolve(strict=False)) if worktree_root is not None else None,
+        "transport": str(transport or "").strip() or None,
+        "phase": str(phase or "").strip() or None,
+    }
+    if not session_name:
+        reason = "omx_session_unavailable" if str(transport).strip().lower() == "omx" else "attach_target_unavailable"
+        runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
+        return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
+    if worktree_root is not None and not worktree_root.is_dir():
+        reason = "worktree_removed_after_launch"
+        runtime._emit("planning.agent_launch.worktree_missing_after_launch", reason=reason, **payload)
+        runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
+        return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
+    if not _tmux_session_exists(runtime, session_name):
+        reason = "omx_attach_target_stale" if str(transport).strip().lower() == "omx" else "attach_target_stale"
+        runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
+        return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
+    pane_ok, pane_id = _tmux_display_message_succeeds(runtime, session_name)
+    if not pane_ok:
+        reason = "omx_session_unavailable" if str(transport).strip().lower() == "omx" else "attach_target_unavailable"
+        runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
+        return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
+    if str(transport).strip().lower() == "omx":
+        exit_reason = _omx_late_spawn_exit_reason(runtime, session_name=session_name, worktree=worktree)
+        if exit_reason:
+            runtime._emit("planning.agent_launch.attach_validation.failed", reason=exit_reason, **payload)
+            return PlanAgentAttachValidation(False, exit_reason, session_name=session_name, attach_command=attach_command)
+    runtime._emit("planning.agent_launch.attach_validation.ok", pane_id=pane_id, **payload)
+    return PlanAgentAttachValidation(True, "ok", session_name=session_name, attach_command=attach_command)
+
+
+def _tmux_display_message_succeeds(runtime: Any, session_name: str) -> tuple[bool, str]:
+    result = _run_tmux_probe(
+        runtime,
+        ("tmux", "display-message", "-p", "-t", session_name, "#{pane_id}"),
+        cwd=Path(runtime.config.base_dir).resolve(),
+    )
+    if result.returncode != 0:
+        return False, ""
+    return True, str(getattr(result, "stdout", "")).strip()
+
+
+def _omx_late_spawn_exit_reason(
+    runtime: Any,
+    *,
+    session_name: str,
+    worktree: CreatedPlanWorktree | None,
+) -> str | None:
+    retained = getattr(runtime, "_omx_spawn_processes", None)
+    if not isinstance(retained, list):
+        return None
+    still_running: list[object] = []
+    exited = False
+    for process in retained:
+        poll = getattr(process, "poll", None)
+        try:
+            returncode = poll() if callable(poll) else getattr(process, "returncode", None)
+        except Exception:
+            returncode = None
+        if returncode is None:
+            still_running.append(process)
+            continue
+        exited = True
+        runtime._emit(
+            "planning.agent_launch.omx_spawn.exited_early",
+            pid=getattr(process, "pid", None),
+            returncode=returncode,
+            session_name=session_name,
+            worktree=str(getattr(worktree, "name", "") or "") or None,
+            transport="omx",
+        )
+    retained[:] = still_running
+    return "omx_session_exited" if exited else None
+
+
+def _mark_worktree_plan_agent_launch(
+    worktree: CreatedPlanWorktree,
+    *,
+    status: str,
+    transport: str,
+    session_name: str,
+) -> None:
+    path = Path(worktree.root) / _WORKTREE_PROVENANCE_PATH
+    if not path.is_file():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    payload["fresh_ai_launch_status"] = str(status or "").strip() or "launched"
+    normalized_transport = str(transport or "").strip().lower()
+    if normalized_transport:
+        payload["launch_transport"] = normalized_transport
+    normalized_session = str(session_name or "").strip()
+    if normalized_session:
+        payload["session_name"] = normalized_session
+    payload["launch_recorded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def _summarize_failed_launch_outcomes(outcomes: list[PlanAgentLaunchOutcome], *, limit: int = 2) -> str:

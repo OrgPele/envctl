@@ -387,7 +387,8 @@ Optional plan-agent launch config for `--plan`:
 - `envctl --plan <selector> --omx --ralph` enters the explicit Ralph compatibility workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --team` enters the Team OMX workflow inside that OMX-managed Codex session
 - OMX-managed plan-agent launches set a deterministic envctl-owned `OMX_ROOT` under `<worktree>/.envctl-state/omx/<worktree-name>/` so envctl can discover OMX's managed tmux session, submit optional Codex `/goal` framing, submit the rendered prompt, and queue follow-up workflow steps even when OMX isolates unsafe/YOLO runtime state
-- if that handoff fails, envctl records structured diagnostics that distinguish spawn failure, missing `session.json`, wrong-worktree state, tmux candidate mismatch, and prompt bootstrap failure
+- if that handoff fails, envctl records structured diagnostics that distinguish spawn failure, missing `session.json`, wrong-worktree state, tmux candidate mismatch, prompt bootstrap failure, stale final attach targets, exited OMX sessions, and removed worktrees
+- OMX-managed plan launches revalidate the final tmux attach target before headless output prints `attach:` guidance; stale or exited OMX sessions are reported as failed/degraded handoffs with diagnostic metadata instead of stale attach commands
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch

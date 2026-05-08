@@ -71,6 +71,9 @@ class StartupSession:
     pending_plan_agent_worktrees: tuple[CreatedPlanWorktree, ...] = ()
     plan_agent_dependency_bootstrap_results: tuple[Any, ...] = ()
     plan_agent_handoff_degraded: bool = False
+    plan_agent_stale_session_name: str = ""
+    plan_agent_stale_attach_command: str = ""
+    plan_agent_handoff_validation_reason: str = ""
     local_startup_failures: list[LocalStartupFailure] = field(default_factory=list)
 
     @property

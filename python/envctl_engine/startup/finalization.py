@@ -119,6 +119,14 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         metadata["implementation_session_running"] = bool(session.plan_agent_session_started)
         metadata["local_startup_failed"] = bool(session.local_startup_failures)
         metadata["local_startup_failures"] = [failure.to_metadata() for failure in session.local_startup_failures]
+    if session.plan_agent_handoff_validation_reason:
+        metadata["plan_agent_handoff_degraded"] = True
+        metadata["implementation_session_running"] = False
+        metadata["plan_agent_handoff_validation_reason"] = session.plan_agent_handoff_validation_reason
+    if session.plan_agent_stale_session_name:
+        metadata["plan_agent_stale_session_name"] = session.plan_agent_stale_session_name
+    if session.plan_agent_stale_attach_command:
+        metadata["plan_agent_stale_attach_command"] = session.plan_agent_stale_attach_command
     attach_target = session.plan_agent_attach_target
     if attach_target is None and session.plan_agent_launch_result is not None:
         attach_target = getattr(session.plan_agent_launch_result, "attach_target", None)

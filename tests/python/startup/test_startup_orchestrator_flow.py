@@ -364,6 +364,72 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --tmux-new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
+    def test_headless_plan_does_not_print_stale_attach_target_after_validation_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"TREES_STARTUP_ENABLE": "false"})
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-stale-session",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-stale-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+            captured: dict[str, object] = {}
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(engine, "_write_artifacts", side_effect=lambda state, contexts, *, errors: captured.update({"state": state, "contexts": list(contexts), "errors": list(errors)})),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertNotIn("attach: tmux attach -t omx-stale-session", rendered)
+            self.assertIn("Plan agent launch did not leave an attachable AI session.", rendered)
+            self.assertIn("reason: attach_target_stale_after_launch", rendered)
+            state = cast(RunState, captured["state"])
+            self.assertEqual(state.metadata["plan_agent_launch_status"], "failed")
+            self.assertEqual(state.metadata["plan_agent_launch_reason"], "attach_target_stale_after_launch")
+            self.assertFalse(state.metadata["implementation_session_running"])
+            self.assertEqual(state.metadata["plan_agent_stale_session_name"], "omx-stale-session")
+            self.assertEqual(state.metadata["plan_agent_stale_attach_command"], "tmux attach -t omx-stale-session")
+            self.assertNotIn("plan_agent_attach_command", state.metadata)
+
     def test_existing_omx_plan_session_summary_reuses_selected_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -412,6 +478,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_record_launch),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -574,6 +641,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                         attach_target=attach_target,
                     ),
                 ),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
                 patch(
                     "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
                     return_value=RunReuseDecision(
@@ -810,6 +878,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
                 patch.object(
                     engine,
                     "_start_project_context",
@@ -907,6 +976,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
                 patch.object(
                     engine,
                     "_start_project_context",

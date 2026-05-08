@@ -69,7 +69,7 @@ pass `--interactive` only when you want prompts.
 | `--ralph` | OMX workflow modifier for `--plan --omx`; starts the Ralph compatibility workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 | `--team` | OMX workflow modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 
-Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. Non-plan commands and plan runs without a running AI session remain fatal.
+Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. For OMX-managed launches, envctl revalidates the tmux attach target before printing `attach:` guidance; stale or exited OMX sessions are reported as a failed/degraded handoff with diagnostic metadata instead of a copy-pastable stale attach command. Non-plan commands and plan runs without a running AI session remain fatal.
 
 ## Performance and Reliability
 | Flag | Purpose |
