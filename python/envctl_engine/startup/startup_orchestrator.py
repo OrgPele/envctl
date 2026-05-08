@@ -1788,9 +1788,14 @@ class StartupOrchestrator:
         route_transport = (
             "omx" if bool(route.flags.get("omx")) else ("tmux" if bool(route.flags.get("tmux")) else "cmux")
         )
-        omx_workflow = (
-            "ralph" if bool(route.flags.get("ralph")) else ("team" if bool(route.flags.get("team")) else None)
-        )
+        if bool(route.flags.get("ultragoal")):
+            omx_workflow = "ultragoal"
+        elif bool(route.flags.get("ralph")):
+            omx_workflow = "ralph"
+        elif bool(route.flags.get("team")):
+            omx_workflow = "team"
+        else:
+            omx_workflow = None
         self.runtime._emit(
             "startup.project.warning",
             project=project_name,

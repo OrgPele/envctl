@@ -782,11 +782,11 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
         "create_plan_auto_omx": CodexSkillMetadata(
             skill_name="envctl-create-plan-auto-omx",
             display_name="Envctl Create Plan Auto OMX",
-            short_description="Create a plan and auto-launch OMX Ralph implementation",
+            short_description="Create a plan and auto-launch OMX Ultragoal implementation",
             description=(
                 "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
-                "implementation plan and automatically launch the OMX Ralph implementation workflow with full-stack "
-                "E2E scope by default."
+                "implementation plan and automatically launch the OMX Ultragoal implementation workflow with "
+                "full-stack E2E scope by default."
             ),
         ),
         "ship_release": CodexSkillMetadata(

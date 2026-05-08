@@ -540,7 +540,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             omx_config = launch_support.resolve_plan_agent_launch_config(
                 config,
                 {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
-                route=parse_route(["--plan", "features/example", "--omx", "--ralph"], env={}),
+                route=parse_route(["--plan", "features/example", "--omx", "--ultragoal"], env={}),
             )
             omx_workflow = _build_plan_agent_workflow(
                 cli=omx_config.cli,
@@ -565,7 +565,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(omx_config.transport, "omx")
         self.assertEqual(omx_config.cli, "codex")
-        self.assertEqual(omx_config.omx_workflow, "ralph")
+        self.assertEqual(omx_config.omx_workflow, "ultragoal")
         self.assertEqual(omx_config.codex_cycles, 4)
         self.assertIsNone(omx_config.codex_cycles_warning)
         self.assertTrue(omx_config.pr_review_comments_followup_enable)
@@ -602,62 +602,64 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertFalse(disabled.codex_goal_enable)
         self.assertTrue(enabled_by_route.codex_goal_enable)
 
-    def test_omx_goal_then_ralph_then_cycle_queue_order(self) -> None:
+    def test_omx_goal_then_workflow_then_cycle_queue_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_dir = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime_dir)
-            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
-            launch_config = launch_support.PlanAgentLaunchConfig(
-                enabled=True,
-                transport="omx",
-                cli="codex",
-                cli_command="codex",
-                preset="implement_task",
-                codex_cycles=1,
-                codex_cycles_warning=None,
-                shell="zsh",
-                require_cmux_context=True,
-                cmux_workspace="",
-                direct_prompt_enabled=False,
-                ulw_loop_prefix=False,
-                ulw_suffix=False,
-                omx_workflow="ralph",
-                codex_goal_enable=True,
-            )
-            workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
-            submitted: list[str] = []
-            queued: list[str] = []
+            for workflow_name in ("ralph", "ultragoal"):
+                with self.subTest(workflow_name=workflow_name):
+                    rt = self._runtime(repo, runtime_dir)
+                    worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
+                    launch_config = launch_support.PlanAgentLaunchConfig(
+                        enabled=True,
+                        transport="omx",
+                        cli="codex",
+                        cli_command="codex",
+                        preset="implement_task",
+                        codex_cycles=1,
+                        codex_cycles_warning=None,
+                        shell="zsh",
+                        require_cmux_context=True,
+                        cmux_workspace="",
+                        direct_prompt_enabled=False,
+                        ulw_loop_prefix=False,
+                        ulw_suffix=False,
+                        omx_workflow=workflow_name,
+                        codex_goal_enable=True,
+                    )
+                    workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+                    submitted: list[str] = []
+                    queued: list[str] = []
 
-            def fake_submit(*_args, prompt_text, **_kwargs):  # noqa: ANN202, ANN001
-                submitted.append(prompt_text)
-                return None
+                    def fake_submit(*_args, prompt_text, **_kwargs):  # noqa: ANN202, ANN001
+                        submitted.append(prompt_text)
+                        return None
 
-            def fake_queue(*_args, queued_steps, **_kwargs):  # noqa: ANN202, ANN001
-                queued.extend(step.kind for step in queued_steps)
-                return None
+                    def fake_queue(*_args, queued_steps, **_kwargs):  # noqa: ANN202, ANN001
+                        queued.extend(step.kind for step in queued_steps)
+                        return None
 
-            with (
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
-                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
-                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
-            ):
-                error = launch_support._run_tmux_existing_session_workflow(
-                    rt,
-                    session_name="session",
-                    window_name="window",
-                    launch_config=launch_config,
-                    workflow=workflow,
-                    worktree=worktree,
-                )
+                    with (
+                        patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value=None),
+                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
+                        patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
+                        patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
+                    ):
+                        error = launch_support._run_tmux_existing_session_workflow(
+                            rt,
+                            session_name="session",
+                            window_name="window",
+                            launch_config=launch_config,
+                            workflow=workflow,
+                            worktree=worktree,
+                        )
 
-        self.assertIsNone(error)
-        self.assertEqual(len(submitted), 1)
-        self.assertTrue(submitted[0].startswith("$ralph"))
-        self.assertEqual(queued, ["queue_direct_prompt", "queue_message", "queue_message"])
+                    self.assertIsNone(error)
+                    self.assertEqual(len(submitted), 1)
+                    self.assertTrue(submitted[0].startswith(f"${workflow_name}"))
+                    self.assertEqual(queued, ["queue_direct_prompt", "queue_message", "queue_message"])
 
     def test_omx_goal_fallback_still_submits_ralph_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -845,7 +847,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 }
             )
 
-            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+            for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
                 with self.subTest(token=token):
                     launch_config = launch_support.resolve_plan_agent_launch_config(
                         config,
@@ -895,7 +897,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 }
             )
 
-            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+            for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
                 with self.subTest(token=token):
                     launch_config = launch_support.resolve_plan_agent_launch_config(
                         config,
@@ -1240,7 +1242,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            for workflow_name in ("ralph", "team"):
+            for workflow_name in ("ultragoal", "ralph", "team"):
                 with self.subTest(workflow_name=workflow_name):
                     rt = self._runtime(repo, runtime)
                     worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
@@ -1285,7 +1287,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     self.assertEqual(submitted_prompts, [f"${workflow_name}\n\nIMPLEMENT TASK BODY"])
 
     def test_omx_workflow_launch_does_not_double_wrap_existing_keyword(self) -> None:
-        for workflow_name in ("ralph", "team"):
+        for workflow_name in ("ultragoal", "ralph", "team"):
             with self.subTest(workflow_name=workflow_name):
                 prompt = f"${workflow_name}\n\nIMPLEMENT TASK BODY"
                 self.assertEqual(
@@ -1816,7 +1818,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             rt = self._runtime(repo, runtime)
             worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
-            for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+            for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
                 with self.subTest(token=token):
                     command = launch_support._new_session_command_for_route(
                         rt,

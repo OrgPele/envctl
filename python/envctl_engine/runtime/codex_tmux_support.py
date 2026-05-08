@@ -86,7 +86,10 @@ def run_codex_tmux_command(runtime: Any, route: object) -> int:
 def _omx_command_for_flags(flags: dict[str, object], *, passthrough_args: tuple[str, ...]) -> tuple[str, ...]:
     command = ["omx"]
     workflow = ""
-    if bool(flags.get("ralph")):
+    if bool(flags.get("ultragoal")):
+        workflow = "ultragoal"
+        command.append("ultragoal")
+    elif bool(flags.get("ralph")):
         workflow = "ralph"
         command.append("ralph")
     elif bool(flags.get("team")):
@@ -95,7 +98,7 @@ def _omx_command_for_flags(flags: dict[str, object], *, passthrough_args: tuple[
     command.append("--tmux")
     if passthrough_args:
         command.extend(passthrough_args)
-    elif workflow == "ralph":
+    elif workflow in {"ultragoal", "ralph"}:
         command.append("Implement MAIN_TASK.md end-to-end.")
     return tuple(command)
 

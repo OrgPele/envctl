@@ -970,6 +970,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("envctl plan", output)
         self.assertIn("--dry-run", output)
         self.assertIn("--ulw", output)
+        self.assertIn("--omx --ultragoal", output)
         self.assertIn("--omx --ralph", output)
         self.assertIn("preview selected/reused/created worktrees without mutating", output)
 
@@ -1680,7 +1681,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertNotIn("Starting project", rendered)
         self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
 
-    def test_plan_dry_run_with_omx_ralph_does_not_launch_agent_or_start_services(self) -> None:
+    def test_plan_dry_run_with_omx_ultragoal_does_not_launch_agent_or_start_services(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         repo = Path(tmpdir.name) / "repo"
@@ -1699,7 +1700,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         buffer = StringIO()
         with redirect_stdout(buffer):
             code = runtime.dispatch(
-                parse_route(["--plan", "feature/task", "--headless", "--dry-run", "--omx", "--ralph"], env={})
+                parse_route(["--plan", "feature/task", "--headless", "--dry-run", "--omx", "--ultragoal"], env={})
             )
 
         self.assertEqual(code, 0)
@@ -1864,7 +1865,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             }
         )
 
-        for token, workflow_name in (("--ralph", "ralph"), ("--team", "team")):
+        for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
             with self.subTest(token=token):
                 runtime = PythonEngineRuntime(config, env={})
                 buffer = StringIO()

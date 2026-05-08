@@ -152,6 +152,23 @@ class CodexTmuxSupportTests(unittest.TestCase):
             )
             self.assertEqual(runner.probe_calls, [])
 
+    def test_codex_tmux_omx_ultragoal_launches_omx_workflow_in_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runner = _RecordingProcessRunner()
+            runtime = self._runtime(repo_root, process_runner=runner)
+            route = SimpleNamespace(command="codex-tmux", flags={"omx": True, "ultragoal": True}, passthrough_args=[])
+
+            code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                runner.interactive_calls,
+                [["omx", "ultragoal", "--tmux", "Implement MAIN_TASK.md end-to-end."]],
+            )
+            self.assertEqual(runner.probe_calls, [])
+
     def test_codex_tmux_omx_ralph_dry_run_reports_omx_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -173,6 +190,27 @@ class CodexTmuxSupportTests(unittest.TestCase):
             self.assertIn('"--tmux"', stdout.getvalue())
             self.assertIn('Implement MAIN_TASK.md end-to-end.', stdout.getvalue())
 
+    def test_codex_tmux_omx_ultragoal_dry_run_reports_omx_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runtime = self._runtime(repo_root)
+            route = SimpleNamespace(
+                command="codex-tmux",
+                flags={"omx": True, "ultragoal": True, "dry_run": True, "json": True},
+                passthrough_args=[],
+            )
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertIn('"omx_command": [', stdout.getvalue())
+            self.assertIn('"ultragoal"', stdout.getvalue())
+            self.assertIn('"--tmux"', stdout.getvalue())
+            self.assertIn('Implement MAIN_TASK.md end-to-end.', stdout.getvalue())
+
     def test_codex_tmux_omx_ralph_preserves_explicit_task_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -189,6 +227,23 @@ class CodexTmuxSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(runner.interactive_calls, [["omx", "ralph", "--tmux", "Fix the dashboard bug"]])
+
+    def test_codex_tmux_omx_ultragoal_preserves_explicit_task_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            runner = _RecordingProcessRunner()
+            runtime = self._runtime(repo_root, process_runner=runner)
+            route = SimpleNamespace(
+                command="codex-tmux",
+                flags={"omx": True, "ultragoal": True},
+                passthrough_args=["Fix the dashboard bug"],
+            )
+
+            code = run_codex_tmux_command(runtime, route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(runner.interactive_calls, [["omx", "ultragoal", "--tmux", "Fix the dashboard bug"]])
 
     def test_codex_tmux_missing_executable_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

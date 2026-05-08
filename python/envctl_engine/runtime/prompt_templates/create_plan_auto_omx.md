@@ -104,7 +104,7 @@ Before launching envctl, choose exactly one integer from `0` through `8` as an i
 - `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
 - `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
 
-Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags. This recommendation is informational on the OMX Ralph surface; do not add `ENVCTL_PLAN_AGENT_CODEX_CYCLES` to the launch command.
+Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags. This recommendation is informational on the OMX Ultragoal surface; do not add `ENVCTL_PLAN_AGENT_CODEX_CYCLES` to the launch command.
 
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
@@ -124,14 +124,14 @@ The prompt must not begin implementing in the original planning session after la
 Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
 
 ```bash
-cd <repo-root> && envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session
+cd <repo-root> && envctl --plan <category>/<slug> --omx --ultragoal --entire-system --headless --tmux-new-session
 ```
 
 For example, a frontend-only plan still keeps `--entire-system` by default; use `--only-frontend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
-OMX-managed launches are Codex-only, and `--ralph` is the persistence workflow for this surface. Codex `/goal` framing is submitted first when enabled, Ralph wraps the initial implementation prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Set `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` when you want only the initial Ralph prompt plus enabled final follow-ups.
+OMX-managed launches are Codex-only, and `--ultragoal` is the default persistence workflow for this surface. Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial implementation prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Set `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` when you want only the initial Ultragoal prompt plus enabled final follow-ups; use `--ralph` explicitly when you need the Ralph compatibility workflow.
 
-In the final response, include `Recommended Codex-equivalent cycles: <n>` and mark it informational. Also state: `OMX Ralph selected; envctl may queue Codex follow-up cycles for this surface using the current cycle configuration.`
+In the final response, include `Recommended Codex-equivalent cycles: <n>` and mark it informational. Also state: `OMX Ultragoal selected; envctl may queue Codex follow-up cycles for this surface using the current cycle configuration.`
 
 ## Final response format
 1. Path of the plan file created.

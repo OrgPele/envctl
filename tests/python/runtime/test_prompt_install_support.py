@@ -593,12 +593,13 @@ class PromptInstallSupportTests(unittest.TestCase):
                 ),
             },
             "create_plan_auto_omx": {
-                "command": "envctl --plan <category>/<slug> --omx --ralph --entire-system --headless --tmux-new-session",
+                "command": "envctl --plan <category>/<slug> --omx --ultragoal --entire-system --headless --tmux-new-session",
                 "phrases": (
                     "Recommended Codex-equivalent cycles: <n>",
                     "informational",
                     "OMX-managed launches are Codex-only",
-                    "`--ralph` is the persistence workflow for this surface",
+                    "`--ultragoal` is the default persistence workflow for this surface",
+                    "use `--ralph` explicitly when you need the Ralph compatibility workflow",
                     "envctl can queue the same Codex follow-up cycle workflow",
                 ),
             },
@@ -786,6 +787,10 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
+            "cd <repo> && envctl --plan <selector> --omx --ultragoal",
+            plan_prompt.body,
+        )
+        self.assertIn(
             "cd <repo> && envctl --plan <selector> --omx --ralph",
             plan_prompt.body,
         )
@@ -802,7 +807,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "same OMX-managed launch, but the first submitted prompt enters the Ralph workflow",
+            "same OMX-managed launch, but the first submitted prompt enters the Ultragoal workflow",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "same OMX-managed launch, but the first submitted prompt enters the Ralph compatibility workflow",
             plan_prompt.body,
         )
         self.assertIn(

@@ -864,7 +864,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertEqual(degraded_events[-1].get("reason"), "missing_service_start_command")
             self.assertEqual(degraded_events[-1].get("route_transport"), "tmux")
 
-    def test_omx_ralph_headless_plan_agent_handoff_survives_local_startup_failure(self) -> None:
+    def test_omx_ultragoal_headless_plan_agent_handoff_survives_local_startup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = self._repo(root)
@@ -919,7 +919,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 with redirect_stdout(out):
                     code = engine.dispatch(
                         parse_route(
-                            ["--plan", "feature-a", "--omx", "--ralph", "--headless"],
+                            ["--plan", "feature-a", "--omx", "--ultragoal", "--headless"],
                             env={"ENVCTL_DEFAULT_MODE": "trees"},
                         )
                     )

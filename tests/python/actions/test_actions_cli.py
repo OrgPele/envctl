@@ -1551,7 +1551,11 @@ class ActionsCliTests(unittest.TestCase):
             home = tmp_root / "home"
             home.mkdir(parents=True, exist_ok=True)
             git_env = {
-                **os.environ,
+                **{
+                    key: value
+                    for key, value in os.environ.items()
+                    if key != "ENVCTL_EXECUTION_ROOT"
+                },
                 "HOME": str(home),
                 "XDG_CONFIG_HOME": str(home / ".config"),
                 "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
