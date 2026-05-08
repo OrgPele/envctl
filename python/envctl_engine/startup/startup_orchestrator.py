@@ -13,10 +13,13 @@ from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
+    PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
     attach_plan_agent_terminal,
     launch_plan_agent_terminals,
+    plan_agent_native_recovery_command,
     resolve_plan_agent_launch_config,
+    validate_plan_agent_attach_target,
 )
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
@@ -555,6 +558,7 @@ class StartupOrchestrator:
         )
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
+        self._validate_plan_agent_handoff(session, phase="post_launch")
         self._emit_plan_agent_launch_state(session, launch_result)
         return None
 
@@ -696,6 +700,7 @@ class StartupOrchestrator:
         rt._write_artifacts(run_state, session.selected_contexts, errors=[])
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
         if route.command == "plan":
+            self._validate_plan_agent_handoff(session, phase="disabled_startup_finalization")
             self._print_plan_dry_run_preview(session)
             print(
                 "Planning mode complete; skipping service startup because "
@@ -1427,6 +1432,7 @@ class StartupOrchestrator:
             return self._finalize_plan_agent_degraded_handoff(session)
         rt = self.runtime
         self._ensure_run_id(session)
+        self._validate_plan_agent_handoff(session, phase="success_finalization")
         run_state = build_success_run_state(rt, session)
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
@@ -1522,6 +1528,7 @@ class StartupOrchestrator:
             print(f"{context.name}: {action}")
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
+        self._validate_plan_agent_handoff(session, phase="interactive_attach")
         attach_target = session.plan_agent_attach_target
         if attach_target is None:
             return None
@@ -1535,6 +1542,7 @@ class StartupOrchestrator:
     def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
         rt = self.runtime
         self._ensure_run_id(session)
+        self._validate_plan_agent_handoff(session, phase="degraded_finalization")
         run_state = build_success_run_state(rt, session)
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
@@ -1553,8 +1561,21 @@ class StartupOrchestrator:
         *,
         attach_target: object | None = None,
     ) -> None:
+        if attach_target is None:
+            self._validate_plan_agent_handoff(session, phase="headless_output")
         for line in self._plan_session_summary_lines(session, attach_target=attach_target):
             print(line)
+        if attach_target is None and session.plan_agent_attach_target is None:
+            reason = str(session.plan_agent_handoff_validation_reason or "").strip()
+            stale_name = str(session.plan_agent_stale_session_name or "").strip()
+            if reason:
+                print("Plan agent launch did not leave an attachable AI session.")
+                print(f"reason: {reason}")
+                if stale_name:
+                    print(f"stale_session: {stale_name}")
+                recovery_command = str(session.plan_agent_recovery_command or "").strip()
+                if recovery_command:
+                    print(f"recovery: {recovery_command}")
 
     def _plan_session_summary_lines(
         self,
@@ -1751,6 +1772,7 @@ class StartupOrchestrator:
         session.started_context_names.append(context.name)
 
     def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
+        self._validate_plan_agent_handoff(session, phase="local_startup_failure")
         route = session.effective_route
         if route.command != "plan":
             return False
@@ -1761,6 +1783,97 @@ class StartupOrchestrator:
         if bool(route.flags.get("batch")):
             return True
         return session.plan_agent_attach_target is not None
+
+    def _validate_plan_agent_handoff(self, session: StartupSession, *, phase: str) -> None:
+        if not self._plan_agent_handoff_validation_required(session):
+            return
+        attach_target = session.plan_agent_attach_target
+        if attach_target is None:
+            return
+        created_worktrees = tuple(session.pending_plan_agent_worktrees)
+        worktree = created_worktrees[0] if created_worktrees else None
+        validation = validate_plan_agent_attach_target(
+            self.runtime,
+            attach_target,
+            worktree=worktree,
+            transport="omx",
+            phase=phase,
+        )
+        if validation.ok:
+            return
+        self._record_stale_plan_agent_handoff(session, validation_reason="attach_target_stale_after_launch")
+
+    def _plan_agent_handoff_validation_required(self, session: StartupSession) -> bool:
+        route = session.effective_route
+        if route.command != "plan":
+            return False
+        return bool(route.flags.get("omx"))
+
+    def _record_stale_plan_agent_handoff(self, session: StartupSession, *, validation_reason: str) -> None:
+        attach_target = session.plan_agent_attach_target
+        if attach_target is None:
+            return
+        stale_session_name = str(getattr(attach_target, "session_name", "") or "").strip()
+        stale_attach_command = " ".join(
+            str(part).strip() for part in getattr(attach_target, "attach_command", ()) if str(part).strip()
+        )
+        session.plan_agent_stale_session_name = stale_session_name
+        session.plan_agent_stale_attach_command = stale_attach_command
+        session.plan_agent_handoff_validation_reason = validation_reason
+        launch_config = resolve_plan_agent_launch_config(
+            self.runtime.config,
+            getattr(self.runtime, "env", {}),
+            route=session.effective_route,
+        )
+        recovery_command = shlex.join(
+            plan_agent_native_recovery_command(
+                self.runtime,
+                route=session.effective_route,
+                launch_config=launch_config,
+                created_worktrees=tuple(session.pending_plan_agent_worktrees),
+            )
+        )
+        session.plan_agent_recovery_command = recovery_command
+        session.plan_agent_attach_target = None
+        launch_result = session.plan_agent_launch_result
+        outcomes = tuple(getattr(launch_result, "outcomes", ()) or ()) if launch_result is not None else ()
+        failed_outcomes = []
+        for outcome in outcomes:
+            failed_outcomes.append(
+                PlanAgentLaunchOutcome(
+                    worktree_name=str(getattr(outcome, "worktree_name", "") or ""),
+                    worktree_root=Path(getattr(outcome, "worktree_root", ".") or "."),
+                    surface_id=getattr(outcome, "surface_id", None),
+                    status="failed",
+                    reason=validation_reason,
+                )
+            )
+        session.plan_agent_launch_result = PlanAgentLaunchResult(
+            status="failed",
+            reason=validation_reason,
+            outcomes=tuple(failed_outcomes),
+            attach_target=None,
+        )
+        session.base_metadata.update(
+            {
+                "plan_agent_handoff_degraded": True,
+                "implementation_session_running": False,
+                "plan_agent_stale_session_name": stale_session_name,
+                "plan_agent_stale_attach_command": stale_attach_command,
+                "plan_agent_handoff_validation_reason": validation_reason,
+                "plan_agent_launch_status": "failed",
+                "plan_agent_launch_reason": validation_reason,
+            }
+        )
+        if recovery_command:
+            session.base_metadata["plan_agent_recovery_command"] = recovery_command
+        self.runtime._emit(
+            "startup.plan_agent_handoff.validation_failed",
+            reason=validation_reason,
+            stale_session_name=stale_session_name or None,
+            stale_attach_command=stale_attach_command or None,
+            recovery_command=recovery_command or None,
+        )
 
     @staticmethod
     def _local_startup_failure_reason(error: str) -> str | None:

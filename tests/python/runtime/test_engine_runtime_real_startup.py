@@ -2885,6 +2885,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
                     return_value=launch_result,
                 ),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
                     engine,
                     "_start_project_context",

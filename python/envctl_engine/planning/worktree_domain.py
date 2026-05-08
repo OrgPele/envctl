@@ -18,6 +18,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
     PlanSelectionResult,
     PlanWorktreeSyncResult,
 )
+from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
@@ -44,6 +45,7 @@ class ProjectContextLike(Protocol):
 
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
+FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
@@ -540,6 +542,8 @@ def _select_plan_projects(
                 plan_counts=plan_counts,
                 raw_projects=raw_projects,
                 keep_plan=keep_plan,
+                fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
+                launch_transport=_fresh_ai_launch_transport(route),
             )
             raw_projects = list(sync_result.raw_projects)
             if sync_result.error:
@@ -711,6 +715,8 @@ def _select_plan_projects(
         plan_counts=plan_counts,
         raw_projects=raw_projects,
         keep_plan=keep_plan,
+        fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
+        launch_transport=_fresh_ai_launch_transport(route),
     )
     raw_projects = list(sync_result.raw_projects)
     if sync_result.error:
@@ -820,6 +826,15 @@ def _route_requests_fresh_ai_worktree(route: Route) -> bool:
     if bool(flags.get("dry_run")):
         return False
     return bool(flags.get("tmux") or flags.get("omx"))
+
+
+def _fresh_ai_launch_transport(route: Route) -> str:
+    flags = getattr(route, "flags", {}) or {}
+    if bool(flags.get("omx")):
+        return "omx"
+    if bool(flags.get("tmux")):
+        return "tmux"
+    return ""
 
 
 def _adjust_plan_counts_for_fresh_ai_launch(
@@ -1064,6 +1079,8 @@ def _sync_plan_worktrees_from_plan_counts(
     plan_counts: Mapping[str, int],
     raw_projects: list[tuple[str, Path]],
     keep_plan: bool,
+    fresh_ai_launch: bool = False,
+    launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
     projects = list(raw_projects)
     created_worktrees: list[CreatedPlanWorktree] = []
@@ -1097,6 +1114,8 @@ def _sync_plan_worktrees_from_plan_counts(
                     desired_raw=desired_raw,
                     projects=projects,
                     keep_plan=keep_plan,
+                    fresh_ai_launch=fresh_ai_launch,
+                    launch_transport=launch_transport,
                     enabled=enabled,
                     active_spinner=active_spinner,
                     op_id="worktree.sync",
@@ -1149,6 +1168,8 @@ def _sync_single_plan_worktree_target(
     enabled: bool,
     active_spinner: Any,
     op_id: str,
+    fresh_ai_launch: bool = False,
+    launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
     desired = max(0, int(desired_raw))
     feature = planning_feature_name(plan_file)
@@ -1182,6 +1203,8 @@ def _sync_single_plan_worktree_target(
             feature=feature,
             count=create_count,
             plan_file=plan_file,
+            created_for_fresh_ai_launch=fresh_ai_launch,
+            launch_transport=launch_transport,
         )
         if create_result.error:
             return PlanWorktreeSyncResult(raw_projects=projects, error=create_result.error)
@@ -1224,21 +1247,19 @@ def _sync_single_plan_worktree_target(
                 created_worktrees=created_worktrees,
                 error=remove_error,
             )
+        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
+        current_names = {name for name, _root in projects}
+        removed_worktrees = tuple(name for name, _root in candidates if name not in current_names)
         print(
-            f"Blasted and deleted {remove_count} worktree(s) for "
+            f"Blasted and deleted {len(removed_worktrees)} worktree(s) for "
             f"{rendered_plan_path}."
         )
-        removed_worktrees = tuple(name for name, _root in sorted(
-            candidates,
-            key=lambda item: self._project_sort_key_for_feature(item[0], feature),
-            reverse=True,
-        )[:remove_count])
-        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
         if desired == 0:
             self._cleanup_empty_feature_root(feature=feature)
             projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
 
-    if desired == 0 and existing > 0 and not keep_plan:
+    remaining_feature_worktrees = self._feature_project_candidates(projects=projects, feature=feature)
+    if desired == 0 and existing > 0 and not keep_plan and not remaining_feature_worktrees:
         self._move_plan_to_done(plan_file)
         archived_plan_files = (plan_file,)
     return PlanWorktreeSyncResult(
@@ -1259,6 +1280,8 @@ def _create_feature_worktrees_result(
     feature: str,
     count: int,
     plan_file: str,
+    created_for_fresh_ai_launch: bool = False,
+    launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
     if count <= 0:
         return PlanWorktreeSyncResult(raw_projects=[])
@@ -1287,7 +1310,13 @@ def _create_feature_worktrees_result(
             if error:
                 return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
         else:
-            _write_worktree_provenance(self, target=target, plan_file=plan_file)
+            _write_worktree_provenance(
+                self,
+                target=target,
+                plan_file=plan_file,
+                created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+                launch_transport=launch_transport,
+            )
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
         created_worktrees.append(
@@ -1380,8 +1409,20 @@ def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
     return parse_bool(raw, False)
 
 
-def _write_worktree_provenance(self: Any, *, target: Path, plan_file: str | None = None) -> None:
-    provenance = _build_worktree_provenance(self, plan_file=plan_file)
+def _write_worktree_provenance(
+    self: Any,
+    *,
+    target: Path,
+    plan_file: str | None = None,
+    created_for_fresh_ai_launch: bool = False,
+    launch_transport: str = "",
+) -> None:
+    provenance = _build_worktree_provenance(
+        self,
+        plan_file=plan_file,
+        created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+        launch_transport=launch_transport,
+    )
     if provenance is None or not target.is_dir():
         return
     path = target / WORKTREE_PROVENANCE_PATH
@@ -1428,7 +1469,13 @@ def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
             continue
 
 
-def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> dict[str, object] | None:
+def _build_worktree_provenance(
+    self: Any,
+    *,
+    plan_file: str | None = None,
+    created_for_fresh_ai_launch: bool = False,
+    launch_transport: str = "",
+) -> dict[str, object] | None:
     source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if source_branch and source_branch != "HEAD":
         return _worktree_provenance_payload(
@@ -1436,6 +1483,8 @@ def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> di
             source_branch=source_branch,
             resolution_reason="attached_branch",
             plan_file=plan_file,
+            created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+            launch_transport=launch_transport,
         )
 
     default_branch = _detect_default_branch(self)
@@ -1446,6 +1495,8 @@ def _build_worktree_provenance(self: Any, *, plan_file: str | None = None) -> di
         source_branch=default_branch,
         resolution_reason="default_branch_detached_head",
         plan_file=plan_file,
+        created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+        launch_transport=launch_transport,
     )
 
 
@@ -1455,6 +1506,8 @@ def _worktree_provenance_payload(
     source_branch: str,
     resolution_reason: str,
     plan_file: str | None = None,
+    created_for_fresh_ai_launch: bool = False,
+    launch_transport: str = "",
 ) -> dict[str, object]:
     source_ref = _resolve_branch_ref(self, source_branch=source_branch)
     payload: dict[str, object] = {
@@ -1468,6 +1521,12 @@ def _worktree_provenance_payload(
     normalized_plan_file = str(plan_file or "").strip()
     if normalized_plan_file:
         payload["plan_file"] = normalized_plan_file
+    if created_for_fresh_ai_launch:
+        payload["created_for_fresh_ai_launch"] = True
+        payload["fresh_ai_launch_status"] = "launching"
+    normalized_transport = str(launch_transport or "").strip().lower()
+    if normalized_transport:
+        payload["launch_transport"] = normalized_transport
     return payload
 
 
@@ -1533,7 +1592,19 @@ def _delete_feature_worktrees(
         key=lambda item: self._project_sort_key_for_feature(item[0], feature),
         reverse=True,
     )
-    for _name, root in ordered[:remove_count]:
+    deleted_count = 0
+    for _name, root in ordered:
+        if deleted_count >= remove_count:
+            break
+        protection_reason = _active_fresh_ai_worktree_protection_reason(self, name=_name, root=root)
+        if protection_reason:
+            self._emit(  # type: ignore[attr-defined]
+                "planning.worktree.cleanup.skipped_active_ai_session",
+                worktree=_name,
+                root=str(Path(root).resolve(strict=False)),
+                reason=protection_reason,
+            )
+            continue
         blast_cleanup = getattr(self, "_blast_worktree_before_delete", None)
         if callable(blast_cleanup):
             warnings = blast_cleanup(
@@ -1558,7 +1629,47 @@ def _delete_feature_worktrees(
         )
         if not result.success:
             return result.message
+        deleted_count += 1
     return None
+
+
+def _active_fresh_ai_worktree_protection_reason(self: Any, *, name: str, root: Path) -> str:
+    provenance = _read_worktree_provenance(root)
+    if not parse_bool(provenance.get("created_for_fresh_ai_launch"), False):
+        return ""
+    status = str(provenance.get("fresh_ai_launch_status") or "").strip().lower()
+    if status in {"launching", "queued", "starting"}:
+        recorded_at = str(provenance.get("recorded_at") or "").strip()
+        if _fresh_ai_launch_marker_is_fresh(recorded_at):
+            return "fresh_ai_launch_in_progress"
+    session_name = str(provenance.get("session_name") or provenance.get("native_session_id") or "").strip()
+    if session_name and _tmux_session_exists(self, session_name):
+        return "active_ai_session"
+    return ""
+
+
+def _fresh_ai_launch_marker_is_fresh(recorded_at: str) -> bool:
+    if not recorded_at:
+        return True
+    try:
+        parsed = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    age = datetime.now(tz=UTC) - parsed.astimezone(UTC)
+    return age.total_seconds() <= FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS
+
+
+def _read_worktree_provenance(root: Path) -> dict[str, object]:
+    path = Path(root) / WORKTREE_PROVENANCE_PATH
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
