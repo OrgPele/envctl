@@ -143,6 +143,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--tmux-new-session",
     "--with-codex-skills",
     "--confirm",
+    "--strict",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
 
@@ -183,6 +184,8 @@ VALUE_FLAGS = {
     "--password",
     "--metadata-json",
     "--app-metadata-json",
+    "--locale",
+    "--seed",
 }
 
 PAIR_FLAGS = {"--setup-worktrees", "--setup-worktree"}
@@ -221,6 +224,10 @@ SPECIAL_FLAGS = {
     "--isolated-deps",
     "--isolated-dependency",
     "--isolated-dependencies",
+    "--separate-dep",
+    "--separate-deps",
+    "--separate-dependency",
+    "--separate-dependencies",
 }
 
 _ENV_ASSIGNMENT_KEYS = {
@@ -289,6 +296,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("show-config", "show-config"),
     ("--show-state", "show-state"),
     ("show-state", "show-state"),
+    ("--endpoints", "endpoints"),
+    ("endpoints", "endpoints"),
     ("--explain-startup", "explain-startup"),
     ("explain-startup", "explain-startup"),
     ("--preflight", "preflight"),
@@ -390,6 +399,12 @@ _COMMAND_ALIAS_PAIRS = (
     ("--supabase-user", "supabase-user"),
     ("--supabase-users", "supabase-user"),
     ("--auth-user", "supabase-user"),
+    ("qa-user", "qa-user"),
+    ("qa-users", "qa-user"),
+    ("--qa-user", "qa-user"),
+    ("--qa-users", "qa-user"),
+    ("playwright", "playwright"),
+    ("--playwright", "playwright"),
     ("session", "session"),
     ("--session", "session"),
     ("dash", "dashboard"),
@@ -428,6 +443,8 @@ SUPPORTED_COMMANDS = sorted(
         "migrate-hooks",
         "ensure-worktree",
         "supabase-user",
+        "qa-user",
+        "playwright",
         "install-prompts",
         "codex-tmux",
         "list-commands",
@@ -436,6 +453,7 @@ SUPPORTED_COMMANDS = sorted(
         "session",
         "show-config",
         "show-state",
+        "endpoints",
         "explain-startup",
         "preflight",
         "help",
@@ -502,6 +520,8 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     """Parse CLI arguments through staged declarative pipeline."""
     state = _ParserState(env)
 
+    argv, passthrough_after_separator = _split_passthrough_separator(argv)
+
     # Phase 1: Normalization - standardize token formats
     normalized = _phase_normalize(argv)
 
@@ -513,6 +533,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)
+    state.passthrough.extend(passthrough_after_separator)
     _apply_mode_override_flag(state)
     _apply_default_runtime_scope_policy(state)
     _apply_default_headless_policy(state)
@@ -532,6 +553,13 @@ def _phase_normalize(argv: list[str]) -> list[tuple[str, str]]:
         norm = token.lower() if not token.startswith("-") else token
         normalized.append((token, norm))
     return normalized
+
+
+def _split_passthrough_separator(argv: list[str]) -> tuple[list[str], list[str]]:
+    if "--" not in argv:
+        return list(argv), []
+    index = argv.index("--")
+    return list(argv[:index]), list(argv[index + 1 :])
 
 
 def _phase_classify(normalized: list[tuple[str, str]]) -> list[dict[str, str | object]]:
@@ -830,7 +858,16 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["launch_dependencies"] = False
     elif token in {"--shared-dep", "--shared-deps", "--shared-dependency", "--shared-dependencies"}:
         _set_dependency_scope(flags, "shared")
-    elif token in {"--isolated-dep", "--isolated-deps", "--isolated-dependency", "--isolated-dependencies"}:
+    elif token in {
+        "--isolated-dep",
+        "--isolated-deps",
+        "--isolated-dependency",
+        "--isolated-dependencies",
+        "--separate-dep",
+        "--separate-deps",
+        "--separate-dependency",
+        "--separate-dependencies",
+    }:
         _set_dependency_scope(flags, "isolated")
     elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
         flags["seed_requirements_from_base"] = False
@@ -1159,6 +1196,7 @@ def _boolean_flag_name(token: str) -> str:
         "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",
         "--confirm": "confirm",
+        "--strict": "strict",
     }
     return mapping[token]
 
@@ -1201,6 +1239,8 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "--password": "password",
         "--metadata-json": "metadata_json",
         "--app-metadata-json": "app_metadata_json",
+        "--locale": "locale",
+        "--seed": "seed",
     }
     key = mapping[token]
     if key == "mode_override":
@@ -1209,7 +1249,7 @@ def _store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
             raise RouteError("--mode must be main or trees")
         flags[key] = normalized
         return
-    if key in {"services", "include_existing_worktrees", "set_values"}:
+    if key in {"services", "include_existing_worktrees", "set_values", "seed"}:
         existing = flags.get(key)
         values = [value] if key == "set_values" else _parse_projects(value)
         if isinstance(existing, list):

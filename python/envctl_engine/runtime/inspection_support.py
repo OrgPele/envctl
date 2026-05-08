@@ -35,7 +35,9 @@ from envctl_engine.runtime.session_management import (
     kill_session,
 )
 from envctl_engine.state import state_to_dict
+from envctl_engine.state.project_runtime import cwd_runtime_warnings, dependency_mode_summary, resolve_requested_project_state
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.runtime.endpoints_command_support import run_endpoints_command
 
 
 def dispatch_direct_inspection(runtime: Any, route: object) -> int:
@@ -49,6 +51,8 @@ def dispatch_direct_inspection(runtime: Any, route: object) -> int:
         return _print_config(runtime, json_output=bool(getattr(route, "flags", {}).get("json")))
     if command == "show-state":
         return _print_state(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
+    if command == "endpoints":
+        return run_endpoints_command(runtime, route)
     if command == "explain-startup":
         return _print_startup_explanation(runtime, route, json_output=bool(getattr(route, "flags", {}).get("json")))
     if command == "preflight":
@@ -333,13 +337,49 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
         else:
             print("No previous state found.")
         return 1
+    requested_projects = list(getattr(route, "projects", []) or [])
+    if requested_projects:
+        resolution = resolve_requested_project_state(
+            state,
+            requested_projects,
+            command="show-state",
+            runtime=runtime,
+        )
+        if not resolution.ok:
+            emitter = getattr(runtime, "_emit", None)
+            if callable(emitter):
+                emitter(
+                    "state.project_resolution.failed",
+                    command="show-state",
+                    requested_project=resolution.requested_project,
+                    active_projects=resolution.active_projects,
+                    run_id=state.run_id,
+                )
+            if json_output:
+                print(json.dumps(resolution.payload(), indent=2, sort_keys=True))
+            else:
+                print(f"Requested project is not running: {resolution.requested_project}")
+                print("Active runtime projects: " + (", ".join(resolution.active_projects) or "none"))
+            return 1
+        if resolution.state is not None and not bool(getattr(route, "flags", {}).get("all")):
+            state = resolution.state
 
+    dependency_summary = dependency_mode_summary(state)
+    cwd_project, warnings = cwd_runtime_warnings(
+        state,
+        runtime=runtime,
+        requested_projects=list(getattr(route, "projects", []) or []),
+    )
     payload = {
         "found": True,
         "runtime_root": str(runtime.runtime_root),
         "run_state_path": str(runtime._run_state_path()),
         "state": state_to_dict(state),
         "runtime_map": build_runtime_map(state),
+        "dependency_mode": dependency_summary["dependency_mode"],
+        "shared_dependencies": dependency_summary["shared_dependencies"],
+        "cwd_project": cwd_project,
+        "warnings": warnings,
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -350,6 +390,8 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     print(f"mode: {state_payload['mode']}")
     print(f"services: {len(state_payload['services'])}")
     print(f"requirements: {len(state_payload['requirements'])}")
+    for warning in warnings:
+        print(f"Warning: {warning['message']}")
     print("run_state_path:")
     print(render_path_for_terminal(payload["run_state_path"], env=getattr(runtime, "env", {})))
     return 0

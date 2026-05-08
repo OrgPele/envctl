@@ -17,6 +17,7 @@ These are the highest-value flags for daily use.
 | `--dashboard` | Show runtime dashboard and exit. |
 | `show-config --json` | Print the effective managed config without starting services. |
 | `show-state --json` | Print the latest saved runtime state. |
+| `endpoints --project <name> --json` | Print project-scoped frontend/backend/dependency endpoints from active runtime state. |
 | `explain-startup --json` | Print the runtime's startup decision before executing it. |
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
@@ -45,6 +46,9 @@ pass `--interactive` only when you want prompts.
 | `--only-backend` | Startup/plan modifier: launch only the backend app service; skip frontend, managed dependencies, and dependency prep. |
 | `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
 | `--no-infra` | Startup/plan modifier: skip backend, frontend, managed dependencies, and plan-agent dependency prep. |
+| `--isolated-deps` | Tree startup modifier: use isolated managed dependencies for worktrees. |
+| `--separate-deps` | Alias for `--isolated-deps`. |
+| `--strict` | For `health`, make optional-only degradation return non-zero while preserving non-blocking semantics in JSON. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |

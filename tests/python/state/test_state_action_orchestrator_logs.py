@@ -224,7 +224,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             code = orchestrator.execute(route)
 
         rendered = strip_ansi(output.getvalue())
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertIn("status: healthy/running=1 starting/simulated=1 issues=2", rendered)
         self.assertIn("✗ Backend", rendered)
         self.assertIn("• Frontend", rendered)
@@ -449,6 +449,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         state = RunState(
             run_id="run-1",
             mode="main",
+            metadata={"dependency_mode": "shared", "shared_dependencies": True},
             services={
                 "Main Backend": ServiceRecord(
                     name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000
@@ -472,10 +473,164 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
 
         payload = json.loads(output.getvalue())
         self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall"], "healthy")
+        self.assertFalse(payload["blocking"])
+        self.assertTrue(payload["critical_services_healthy"])
+        self.assertEqual(payload["dependency_mode"], "shared")
+        self.assertTrue(payload["shared_dependencies"])
         self.assertTrue(payload["healthy"])
         self.assertEqual(payload["run_id"], "run-1")
         self.assertEqual(payload["services"][0]["name"], "Main Backend")
         self.assertEqual(payload["dependencies"][0]["component"], "redis")
+
+    def test_health_project_missing_json_fails_closed_without_active_rows(self) -> None:
+        state = RunState(
+            run_id="run-wrong-project",
+            mode="trees",
+            services={
+                "Active Backend": ServiceRecord(
+                    name="Active Backend",
+                    type="backend",
+                    cwd="/tmp/active",
+                    project="active",
+                    status="running",
+                    actual_port=8001,
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        route = Route(command="health", mode="trees", projects=["missing"], flags={"json": True})
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        self.assertEqual(code, 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(
+            payload,
+            {
+                "ok": False,
+                "error": "requested_project_not_running",
+                "requested_project": "missing",
+                "active_projects": ["active"],
+            },
+        )
+        self.assertNotIn("services", payload)
+        self.assertIn(
+            {
+                "event": "state.project_resolution.failed",
+                "command": "health",
+                "requested_project": "missing",
+                "active_projects": ["active"],
+                "run_id": "run-wrong-project",
+            },
+            runtime.events,
+        )
+
+    def test_health_project_active_json_filters_services_and_dependencies(self) -> None:
+        state = RunState(
+            run_id="run-filter",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend", type="backend", cwd="/tmp/a", project="Alpha", status="running"
+                ),
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend", type="backend", cwd="/tmp/b", project="Beta", status="running"
+                ),
+            },
+            requirements={
+                "Alpha": RequirementsResult(project="Alpha", redis={"enabled": True, "success": True}),
+                "Beta": RequirementsResult(project="Beta", redis={"enabled": True, "success": True}),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        route = Route(command="health", mode="trees", projects=["alpha"], flags={"json": True})
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual([service["project"] for service in payload["services"]], ["Alpha"])
+        self.assertEqual([dependency["project"] for dependency in payload["dependencies"]], ["Alpha"])
+
+    def test_health_optional_degraded_service_is_non_blocking_unless_strict(self) -> None:
+        state = RunState(
+            run_id="run-optional",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="running", critical=True
+                ),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice",
+                    status="failed",
+                    service_slug="voice-runtime",
+                    critical=False,
+                    degraded=True,
+                    failure_detail="startup failed",
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall"], "degraded")
+        self.assertFalse(payload["blocking"])
+        self.assertTrue(payload["critical_services_healthy"])
+        self.assertEqual(payload["optional_failures"], ["voice-runtime"])
+        self.assertEqual(payload["critical_failures"], [])
+
+        strict_output = StringIO()
+        with redirect_stdout(strict_output):
+            strict_code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True, "strict": True}))
+
+        strict_payload = json.loads(strict_output.getvalue())
+        self.assertEqual(strict_code, 1)
+        self.assertTrue(strict_payload["ok"])
+        self.assertFalse(strict_payload["blocking"])
+        self.assertTrue(strict_payload["strict_blocking"])
+
+    def test_health_critical_failure_is_blocking(self) -> None:
+        state = RunState(
+            run_id="run-critical",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="failed", critical=True
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime._reconcile_state_truth = lambda _state: ["Main Backend"]  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["overall"], "unhealthy")
+        self.assertTrue(payload["blocking"])
+        self.assertFalse(payload["critical_services_healthy"])
+        self.assertEqual(payload["critical_failures"], ["Main Backend"])
 
     def test_errors_supports_json_output(self) -> None:
         state = RunState(

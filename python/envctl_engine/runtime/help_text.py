@@ -27,7 +27,9 @@ class CommandHelpTopic:
 
 WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan"})
 DEBUG_COMMANDS = frozenset({"debug-pack", "debug-report", "debug-last", "doctor"})
-UTILITY_COMMANDS = frozenset({"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user"})
+UTILITY_COMMANDS = frozenset(
+    {"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user", "qa-user", "playwright"}
+)
 DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
 GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan")
 GENERAL_ACTION_ORDER = (
@@ -56,9 +58,18 @@ GENERAL_INSPECTION_ORDER = (
     "explain-startup",
     "preflight",
     "session",
+    "endpoints",
 )
 GENERAL_DIAGNOSTIC_ORDER = ("doctor", "debug-pack", "debug-report", "debug-last")
-GENERAL_UTILITY_ORDER = ("install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "migrate-hooks")
+GENERAL_UTILITY_ORDER = (
+    "install-prompts",
+    "codex-tmux",
+    "ensure-worktree",
+    "supabase-user",
+    "qa-user",
+    "playwright",
+    "migrate-hooks",
+)
 
 
 def render_help_text(route: Route | None) -> str:
@@ -148,6 +159,7 @@ def _render_general_help() -> str:
             "  --entire-system         dependencies + every configured app service",
             "  --shared-deps           tree runs use the main/shared managed dependency stack (default)",
             "  --isolated-deps         tree runs use isolated managed dependencies",
+            "  --separate-deps         alias for --isolated-deps",
             "  --only-frontend         launch only frontend; skip backend and dependencies/prep",
             "  --only-backend          launch only backend; skip frontend and dependencies/prep",
             "  --no-deps               skip managed dependencies and plan-agent dependency prep",
@@ -897,6 +909,58 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         ),
         aliases=("supabase-users", "auth-user", "--supabase-user", "--supabase-users", "--auth-user"),
         related=("start", "show-state", "health"),
+    ),
+    "endpoints": CommandHelpTopic(
+        command="endpoints",
+        summary="print project-scoped runtime URLs and dependency ports",
+        usage=("envctl endpoints --project <name> --json", "envctl endpoints --project <name>"),
+        what_it_does=(
+            "loads the active saved runtime state and fails closed when the requested project is not running",
+            "reports frontend/backend local and public URLs plus dependency ports for the selected project",
+            "includes dependency_mode and shared_dependencies for auditability",
+        ),
+        flags=("--project <name>        required unless exactly one project is active", "--json                  canonical automation output"),
+        examples=("envctl endpoints --project feature-a-1 --json",),
+        aliases=("--endpoints",),
+        related=("health", "show-state", "playwright"),
+    ),
+    "qa-user": CommandHelpTopic(
+        command="qa-user",
+        summary="ensure deterministic local QA credentials against the active project Supabase Auth",
+        usage=(
+            "envctl qa-user ensure --project <name> --email <email> --password <password> --json",
+            "envctl qa-user ensure --project <name> --email <email> --password <password> --seed crm,calendar",
+        ),
+        what_it_does=(
+            "resolves the requested active project before touching Supabase Auth",
+            "creates the Auth user if missing or reuses the existing user idempotently",
+            "runs optional seed hooks when ENVCTL_QA_USER_SEED_*_CMD is configured and reports skipped seeds otherwise",
+        ),
+        flags=(
+            "--project <name>        required project guard",
+            "--email <email>        QA Auth email",
+            "--password <password>  local QA password echoed only in the JSON credentials payload",
+            "--locale <locale>      optional user metadata locale",
+            "--seed <names>         comma-separated seed domains; repeatable",
+            "--json                 stable machine-readable result",
+        ),
+        examples=("envctl qa-user ensure --project feature-a-1 --email qa@example.test --password local-secret --json",),
+        aliases=("qa-users", "--qa-user", "--qa-users"),
+        related=("supabase-user", "endpoints", "playwright"),
+    ),
+    "playwright": CommandHelpTopic(
+        command="playwright",
+        summary="run a browser-test command against an already running project frontend",
+        usage=("envctl playwright --project <name> -- <command>",),
+        what_it_does=(
+            "fails closed if the requested project or frontend endpoint is not active",
+            "exports QA_BASE_URL and BASE_URL from envctl endpoint truth before running the passthrough command",
+            "writes playwright-runtime-metadata.json under the run test-results directory",
+        ),
+        flags=("--project <name>        required project guard", "--json                  print wrapper result as JSON", "--                    separates envctl flags from the passthrough command"),
+        examples=("envctl playwright --project feature-a-1 -- npx playwright test",),
+        aliases=("--playwright",),
+        related=("endpoints", "qa-user", "test"),
     ),
     "migrate-hooks": CommandHelpTopic(
         command="migrate-hooks",

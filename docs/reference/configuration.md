@@ -157,6 +157,17 @@ User slugs must use lowercase letters, numbers, and hyphens. Env suffixes use up
 
 `ENVCTL_SUPABASE_AUTH_USERS_STRICT=false` allows startup to continue after provisioning failures, but malformed user config still fails early. Passwords are never included in JSON command output or the runtime artifact.
 
+## QA User Seed Hooks
+
+`envctl qa-user ensure --seed <name>` can call project-provided deterministic seed hooks after the Auth user is created or reused. Configure either one generic command or per-seed commands:
+
+```dotenv
+ENVCTL_QA_USER_SEED_CMD=scripts/envctl/seed-qa-user.sh
+ENVCTL_QA_USER_SEED_CRM_CMD=scripts/envctl/seed-crm-qa-user.sh
+```
+
+Seed commands receive `ENVCTL_QA_USER_ID`, `ENVCTL_QA_USER_EMAIL`, `ENVCTL_QA_USER_LOCALE`, `ENVCTL_QA_USER_SEEDS`, and `ENVCTL_PROJECT_NAME`. When no hook is configured, envctl reports the requested seed as skipped with `reason=no_seed_hook_configured` instead of assuming an app schema.
+
 ## Additional App Services
 
 Additional app services are long-running application processes owned by the repo, not managed infrastructure dependencies. They are enabled through `.envctl` and participate in normal startup, state, runtime-map, logs, health, dashboard, and `envctl test --service <slug>` flows.

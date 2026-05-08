@@ -32,15 +32,16 @@ DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
         "session",
         "show-config",
         "show-state",
+        "endpoints",
         "explain-startup",
         "preflight",
     }
 )
 UTILITY_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user"}
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "qa-user", "playwright"}
 )
 DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user"}
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "qa-user", "playwright"}
 )
 
 LIFECYCLE_CLEANUP_COMMANDS: Final[frozenset[str]] = frozenset({"stop", "stop-all", "blast-all"})
