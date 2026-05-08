@@ -2133,6 +2133,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         prompt = _browser_e2e_instruction_text()
 
         self.assertIn("$browser-use", prompt)
+        self.assertIn("envctl endpoints --project <current-worktree-name> --json", prompt)
+        self.assertIn("envctl qa-user ensure --project <current-worktree-name>", prompt)
+        self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", prompt)
         self.assertIn("MAIN_TASK.md", prompt)
         self.assertIn("completely implemented end-to-end", prompt)
         self.assertIn("visible in the browser", prompt)

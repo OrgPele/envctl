@@ -43,6 +43,12 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - At the end of every implementation, run the final relevant validation yourself after the code is complete. If a runtime was needed or started, report the actual addresses for every available dependency plus backend and frontend targets, including host/port and URL where applicable (for example DB, Redis, n8n, Supabase, backend API, and frontend app). Use `envctl health --json`, `envctl show-state --json`, runtime output, or direct probes to get real addresses; do not guess.
 - At the end of verification, kill the exact scope you started so no stray services remain, then offer to start it again for human verification if the user wants to manually inspect the running app.
 
+## Codex skills and envctl validation helpers
+- When this prompt is installed as a Codex skill or direct prompt, you may use available Codex skills named in the session, including `$browser-use` for browser validation when it is present. Follow the active AGENTS.md and skill instructions before invoking a skill.
+- Prefer `envctl endpoints --project <current-worktree-name> --json` to discover the canonical frontend, backend, and dependency addresses for an already-running target instead of hand-composing URLs.
+- Use `envctl qa-user ensure --project <current-worktree-name> --email <email> --password <password> --json` when browser or auth validation needs deterministic local QA credentials.
+- Use `envctl playwright --project <current-worktree-name> -- <command>` for Playwright or browser-test commands that should run against the active project frontend without starting a second dev server.
+
 ## Context-gathering protocol (do this before coding)
 0. Run `git add .` and verify the baseline is staged (`git status --short`).
 1. Open the authoritative spec file and extract explicit requirements and implied constraints.
