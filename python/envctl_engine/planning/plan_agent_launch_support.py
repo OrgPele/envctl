@@ -2026,7 +2026,12 @@ def validate_plan_agent_attach_target(
         exit_reason = _omx_late_spawn_exit_reason(runtime, session_name=session_name, worktree=worktree)
         if exit_reason:
             runtime._emit("planning.agent_launch.attach_validation.failed", reason=exit_reason, **payload)
-            return PlanAgentAttachValidation(False, exit_reason, session_name=session_name, attach_command=attach_command)
+            return PlanAgentAttachValidation(
+                False,
+                exit_reason,
+                session_name=session_name,
+                attach_command=attach_command,
+            )
     runtime._emit("planning.agent_launch.attach_validation.ok", pane_id=pane_id, **payload)
     return PlanAgentAttachValidation(True, "ok", session_name=session_name, attach_command=attach_command)
 
