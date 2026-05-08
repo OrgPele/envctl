@@ -201,6 +201,7 @@ Behavior:
 - fails closed with `requested_project_not_running` when the requested project does not match active state
 - returns frontend/backend `local_url`, `public_url`, status, ports, dependency ports, `dependency_mode`, `shared_dependencies`, `run_id`, `mode`, and `project_root`
 - projects public URLs through `ENVCTL_PUBLIC_HOST` when a service does not already have an explicit public URL
+- emits sanitized `state.project_resolution.ok` or `state.project_resolution.failed` events with command, run id, mode, requested/selected/active projects, and inferred cwd project
 
 ## `qa-user`
 
@@ -215,8 +216,13 @@ Behavior:
 
 - resolves the requested project before touching Supabase
 - uses managed Supabase connection details from that project's active runtime state, or explicit `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-- creates the Auth user when missing and reuses an existing user by email
+- creates the Auth user when missing and reuses an existing user by email without mutation by default
+- updates existing users only with `--update-password` and/or `--update-metadata`; update responses report `updated=true` and `updated_fields` without echoing secrets beyond the explicit local JSON credentials payload
+- returns `artifact_path` and `project_resolution` in JSON output
+- writes a redacted `qa-user-ensure.json` artifact under the active run directory with user id/email, created/reused/updated flags, selected seed names, seed results, timestamp, dependency mode, and redacted credentials
+- emits a redacted `qa_user.ensure` event with project, run id, status, user id, email hash, created/reused/updated flags, and seed names/results
 - reports seed hooks as `skipped` with `reason=no_seed_hook_configured` unless `ENVCTL_QA_USER_SEED_CMD` or `ENVCTL_QA_USER_SEED_<NAME>_CMD` is configured
+- seed hook results include status, exit code, cwd, and redacted stdout/stderr snippets; service-role keys and passwords are never stored in artifacts or events
 
 ## `playwright`
 
@@ -231,8 +237,20 @@ Behavior:
 
 - resolves exactly one active project through the same fail-closed project guard
 - exports `QA_BASE_URL`, `BASE_URL`, `ENVCTL_PROJECT_NAME`, `ENVCTL_RUN_ID`, `ENVCTL_RUNTIME_MODE`, and `ENVCTL_DEPENDENCY_MODE`
+- writes `playwright-endpoints.json` under the active run's `test-results` directory and exports its path as `ENVCTL_ENDPOINTS_JSON` and `ENVCTL_ENDPOINTS_JSON_PATH`
 - prefers the project's public frontend URL when one is projected or explicitly configured
-- writes `playwright-runtime-metadata.json` under the active run's `test-results` directory
+- writes `playwright-runtime-metadata.json` under the active run's `test-results` directory with the endpoint artifact path and without persisting the inherited subprocess environment
+
+
+## Runtime Resolution Events
+
+Project-scoped runtime commands emit sanitized observability events when they resolve state:
+
+- `state.project_resolution.ok` for successful guarded resolution
+- `state.project_resolution.failed` for fail-closed resolution errors such as `requested_project_not_running`, `multiple_projects_not_supported`, and `ambiguous_project_selector`
+- `state.cwd_runtime_mismatch` whenever a command computes a cwd/runtime mismatch warning, including JSON output paths
+
+Resolution events include command, run id, mode, requested projects, selected projects, active projects, and inferred cwd project. They do not include passwords, service-role keys, full environment maps, or command env maps.
 
 ## Main Runtime Commands
 

@@ -127,6 +127,8 @@ class CliRouterParityTests(unittest.TestCase):
                 "--seed",
                 "crm,calendar",
                 "--seed=support",
+                "--update-password",
+                "--update-metadata",
                 "--json",
             ],
             env={},
@@ -140,6 +142,8 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.flags.get("locale"), "he-IL")
         self.assertEqual(route.flags.get("seed"), ["crm", "calendar", "support"])
         self.assertTrue(route.flags.get("json"))
+        self.assertTrue(route.flags.get("update_password"))
+        self.assertTrue(route.flags.get("update_metadata"))
 
     def test_setup_worktrees_allows_isolated_dependency_scope(self) -> None:
         route = parse_route(["--setup-worktrees", "feature-a", "1", "--isolated-deps"], env={})

@@ -917,7 +917,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         what_it_does=(
             "loads the active saved runtime state and fails closed when the requested project is not running",
             "reports frontend/backend local and public URLs plus dependency ports for the selected project",
-            "includes dependency_mode and shared_dependencies for auditability",
+            "includes dependency_mode, shared_dependencies, and emits project-resolution success/failure events",
         ),
         flags=(
             "--project <name>        required unless exactly one project is active",
@@ -937,15 +937,21 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         what_it_does=(
             "resolves the requested active project before touching Supabase Auth",
             "creates the Auth user if missing or reuses the existing user idempotently",
-            "runs optional seed hooks when ENVCTL_QA_USER_SEED_*_CMD is configured and reports skipped seeds otherwise",
+            "updates existing users only when --update-password or --update-metadata is supplied",
+            "writes a redacted qa-user-ensure.json artifact under the active run directory",
+            "runs optional seed hooks from the selected project root and reports redacted stdout/stderr snippets",
         ),
         flags=(
             "--project <name>        required project guard",
             "--email <email>        QA Auth email",
             "--password <password>  local QA password echoed only in the JSON credentials payload",
             "--locale <locale>      optional user metadata locale",
+            "--metadata-json <json> set user_metadata for create or --update-metadata",
+            "--app-metadata-json <json> set app_metadata for create or --update-metadata",
+            "--update-password      mutate an existing user's password; otherwise existing users are reused unchanged",
+            "--update-metadata      mutate an existing user's metadata; otherwise existing users are reused unchanged",
             "--seed <names>         comma-separated seed domains; repeatable",
-            "--json                 stable machine-readable result",
+            "--json                 stable machine-readable result including artifact_path and project_resolution",
         ),
         examples=(
             "envctl qa-user ensure --project feature-a-1 --email qa@example.test --password local-secret --json",
@@ -960,7 +966,9 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         what_it_does=(
             "fails closed if the requested project or frontend endpoint is not active",
             "exports QA_BASE_URL and BASE_URL from envctl endpoint truth before running the passthrough command",
-            "writes playwright-runtime-metadata.json under the run test-results directory",
+            "writes playwright-endpoints.json and exports ENVCTL_ENDPOINTS_JSON/ENVCTL_ENDPOINTS_JSON_PATH",
+            "writes playwright-runtime-metadata.json under the run test-results directory "
+            "with the endpoint artifact path",
         ),
         flags=(
             "--project <name>        required project guard",

@@ -5,6 +5,7 @@ from io import StringIO
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -87,6 +88,46 @@ class PlaywrightCommandSupportTests(unittest.TestCase):
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         self.assertEqual(metadata["selected_url"], "http://public.example.test:3100")
         self.assertEqual(metadata["exit_code"], 0)
+
+
+    def test_writes_endpoint_artifact_and_exports_path(self) -> None:
+        runner = _Runner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir) / "runs" / "run-pw" / "test-results"
+            runtime = SimpleNamespace(
+                env={"ENVCTL_PUBLIC_HOST": "public.example.test", "KEEP": "1"},
+                config=SimpleNamespace(raw={}),
+                runtime_root=Path(tmpdir),
+                state_repository=SimpleNamespace(test_results_dir_path=lambda run_id: artifact_dir),
+                process_runner=runner,
+                _try_load_existing_state=lambda **_kwargs: _state(),
+                _state_lookup_strict_mode_match=lambda _route: True,
+                _emit=lambda *_args, **_kwargs: None,
+            )
+            route = Route(
+                command="playwright",
+                mode="trees",
+                projects=["feature-a-1"],
+                passthrough_args=["python", "-c", "print('x')"],
+                flags={"json": True},
+            )
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                code = run_playwright_command(runtime, route)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(code, 0)
+            endpoint_path = Path(payload["endpoints_path"])
+            self.assertEqual(endpoint_path, artifact_dir / "playwright-endpoints.json")
+            endpoints = json.loads(endpoint_path.read_text(encoding="utf-8"))
+            self.assertEqual(endpoints["project"], "feature-a-1")
+            env = runner.calls[0]["env"]
+            self.assertEqual(env["ENVCTL_ENDPOINTS_JSON"], str(endpoint_path))
+            self.assertEqual(env["ENVCTL_ENDPOINTS_JSON_PATH"], str(endpoint_path))
+            metadata = json.loads((artifact_dir / "playwright-runtime-metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["endpoints_path"], str(endpoint_path))
+            self.assertNotIn("KEEP", metadata)
 
     def test_requires_project_when_multiple_projects_are_active(self) -> None:
         runner = _Runner()

@@ -18,6 +18,8 @@ These are the highest-value flags for daily use.
 | `show-config --json` | Print the effective managed config without starting services. |
 | `show-state --json` | Print the latest saved runtime state. |
 | `endpoints --project <name> --json` | Print project-scoped frontend/backend/dependency endpoints from active runtime state. |
+| `qa-user ensure --update-password --update-metadata` | Explicitly mutate an existing QA Auth user; omitted update flags reuse existing users unchanged. |
+| `playwright --project <name> -- <command>` | Run a passthrough command with `QA_BASE_URL` plus `ENVCTL_ENDPOINTS_JSON` pointing at the selected endpoint artifact. |
 | `explain-startup --json` | Print the runtime's startup decision before executing it. |
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.

@@ -38,6 +38,7 @@ from envctl_engine.state import state_to_dict
 from envctl_engine.state.project_runtime import (
     cwd_runtime_warnings,
     dependency_mode_summary,
+    project_resolution_event_payload,
     resolve_requested_project_state,
 )
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -348,16 +349,14 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
             requested_projects,
             command="show-state",
             runtime=runtime,
+            allow_multi=False,
         )
         if not resolution.ok:
             emitter = getattr(runtime, "_emit", None)
             if callable(emitter):
                 emitter(
                     "state.project_resolution.failed",
-                    command="show-state",
-                    requested_project=resolution.requested_project,
-                    active_projects=resolution.active_projects,
-                    run_id=state.run_id,
+                    **project_resolution_event_payload(resolution, state, runtime=runtime),
                 )
             if json_output:
                 print(json.dumps(resolution.payload(), indent=2, sort_keys=True))
@@ -365,6 +364,12 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
                 print(f"Requested project is not running: {resolution.requested_project}")
                 print("Active runtime projects: " + (", ".join(resolution.active_projects) or "none"))
             return 1
+        emitter = getattr(runtime, "_emit", None)
+        if callable(emitter):
+            emitter(
+                "state.project_resolution.ok",
+                **project_resolution_event_payload(resolution, state, runtime=runtime),
+            )
         if resolution.state is not None and not bool(getattr(route, "flags", {}).get("all")):
             state = resolution.state
 
@@ -374,6 +379,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
         runtime=runtime,
         requested_projects=list(getattr(route, "projects", []) or []),
     )
+    _emit_cwd_runtime_mismatch_warnings(runtime, command="show-state", state=state, warnings=warnings)
     payload = {
         "found": True,
         "runtime_root": str(runtime.runtime_root),
@@ -400,6 +406,30 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
     print(render_path_for_terminal(payload["run_state_path"], env=getattr(runtime, "env", {})))
     return 0
 
+
+
+
+def _emit_cwd_runtime_mismatch_warnings(
+    runtime: Any,
+    *,
+    command: str,
+    state: Any,
+    warnings: list[dict[str, object]],
+) -> None:
+    emitter = getattr(runtime, "_emit", None)
+    if not callable(emitter):
+        return
+    for warning in warnings:
+        if str(warning.get("code") or "") != "cwd_runtime_mismatch":
+            continue
+        emitter(
+            "state.cwd_runtime_mismatch",
+            run_id=getattr(state, "run_id", ""),
+            mode=getattr(state, "mode", ""),
+            command=command,
+            cwd_project=warning.get("cwd_project"),
+            active_projects=warning.get("active_projects"),
+        )
 
 
 def _additional_service_enabled_for_context(runtime: Any, mode: str, service: object, context: object) -> bool:

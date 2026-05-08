@@ -10,6 +10,7 @@ from envctl_engine.state.models import RequirementsResult, RunState, ServiceReco
 from envctl_engine.state.project_runtime import (
     active_project_names,
     dependency_mode_summary,
+    project_resolution_event_payload,
     project_root_for_state,
     resolve_requested_project_state,
 )
@@ -23,12 +24,9 @@ def run_endpoints_command(runtime: Any, route: Route) -> int:
         return _emit_payload(payload, json_output=json_output, ok=False)
     active = active_project_names(state, runtime=runtime)
     requested = list(getattr(route, "projects", []) or [])
-    if not requested:
-        if len(active) == 1:
-            requested = [active[0]]
-        else:
-            payload = {"ok": False, "error": "project_required", "active_projects": active}
-            return _emit_payload(payload, json_output=json_output, ok=False)
+    if not requested and len(active) != 1:
+        payload = {"ok": False, "error": "project_required", "active_projects": active}
+        return _emit_payload(payload, json_output=json_output, ok=False)
     resolution = resolve_requested_project_state(
         state,
         requested,
@@ -37,8 +35,9 @@ def run_endpoints_command(runtime: Any, route: Route) -> int:
         allow_multi=False,
     )
     if not resolution.ok:
-        _emit_resolution_failure(runtime, resolution, state)
+        _emit_resolution(runtime, "state.project_resolution.failed", resolution, state)
         return _emit_payload(resolution.payload(), json_output=json_output, ok=False)
+    _emit_resolution(runtime, "state.project_resolution.ok", resolution, state)
     project = resolution.selected_projects[0]
     payload = build_endpoints_payload(
         resolution.state or state,
@@ -189,14 +188,8 @@ def _human_endpoints(payload: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _emit_resolution_failure(runtime: Any, resolution: Any, state: RunState) -> None:
+def _emit_resolution(runtime: Any, event: str, resolution: Any, state: RunState) -> None:
     emitter = getattr(runtime, "_emit", None)
     if not callable(emitter):
         return
-    emitter(
-        "state.project_resolution.failed",
-        command="endpoints",
-        requested_project=resolution.requested_project,
-        active_projects=resolution.active_projects,
-        run_id=state.run_id,
-    )
+    emitter(event, **project_resolution_event_payload(resolution, state, runtime=runtime))

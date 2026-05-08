@@ -27,6 +27,7 @@ from envctl_engine.shared.services import service_matches_selector
 from envctl_engine.state.project_runtime import (
     cwd_runtime_warnings,
     dependency_mode_summary,
+    project_resolution_event_payload,
     resolve_requested_project_state,
 )
 from envctl_engine.ui.status_symbols import health_status_badge, health_status_severity
@@ -177,16 +178,17 @@ class StateActionOrchestrator:
             if not resolution.ok:
                 self._emit(
                     "state.project_resolution.failed",
-                    command=command,
-                    requested_project=resolution.requested_project,
-                    active_projects=resolution.active_projects,
-                    run_id=current_state.run_id,
+                    **project_resolution_event_payload(resolution, current_state, runtime=rt.raw_runtime),
                 )
                 if bool(route.flags.get("json")):
                     print(json.dumps(resolution.payload(), indent=2, sort_keys=True))
                 else:
                     print(self._project_mismatch_message(resolution.payload()))
                 return 1
+            self._emit(
+                "state.project_resolution.ok",
+                **project_resolution_event_payload(resolution, current_state, runtime=rt.raw_runtime),
+            )
             if not bool(route.flags.get("all")) and resolution.state is not None:
                 current_state = resolution.state
 
@@ -352,6 +354,7 @@ class StateActionOrchestrator:
                     runtime=rt.raw_runtime,
                     requested_projects=route.projects,
                 )
+                self._emit_cwd_runtime_mismatch_warnings(command=command, state=current_state, warnings=warnings)
                 print(
                     json.dumps(
                         self._health_payload(
@@ -400,17 +403,24 @@ class StateActionOrchestrator:
             )
             for warning in warnings:
                 print(f"{yellow}Warning: {warning['message']}{reset}")
-                self._emit(
-                    "state.cwd_runtime_mismatch",
-                    run_id=current_state.run_id,
-                    cwd_project=warning.get("cwd_project"),
-                    active_projects=warning.get("active_projects"),
-                )
+            self._emit_cwd_runtime_mismatch_warnings(command=command, state=current_state, warnings=warnings)
+            health_status = self._health_status_summary(
+                service_rows=service_rows,
+                dependency_rows=dependency_rows,
+                failing_services=failing_services,
+                requirement_issues=requirement_issues,
+                recent_failures=recent_failures,
+            )
             print(
                 "status: "
                 f"{green}healthy/running={status_counts['ok']}{reset} "
                 f"{yellow}starting/simulated={status_counts['warn']}{reset} "
                 f"{red}issues={status_counts['bad']}{reset}"
+            )
+            print(
+                "summary: "
+                f"critical_issues={len(health_status['critical_failures'])} "
+                f"optional_degraded={len(health_status['optional_failures'])}"
             )
             self._print_health_rows(service_rows=service_rows, dependency_rows=dependency_rows, palette=palette)
 
@@ -420,13 +430,6 @@ class StateActionOrchestrator:
             if not failing_services and not requirement_issues and recent_failures:
                 for failure in recent_failures:
                     print(failure)
-            health_status = self._health_status_summary(
-                service_rows=service_rows,
-                dependency_rows=dependency_rows,
-                failing_services=failing_services,
-                requirement_issues=requirement_issues,
-                recent_failures=recent_failures,
-            )
             strict_blocking = bool(route.flags.get("strict")) and bool(health_status["optional_failures"])
             return finish_action(0 if bool(health_status["ok"]) and not strict_blocking else 1, current_state)
         if command == "errors":
@@ -514,6 +517,26 @@ class StateActionOrchestrator:
 
         return rt.unsupported_command(command)
 
+
+    def _emit_cwd_runtime_mismatch_warnings(
+        self,
+        *,
+        command: str,
+        state: RunState,
+        warnings: list[dict[str, object]],
+    ) -> None:
+        for warning in warnings:
+            if str(warning.get("code") or "") != "cwd_runtime_mismatch":
+                continue
+            self._emit(
+                "state.cwd_runtime_mismatch",
+                run_id=state.run_id,
+                mode=state.mode,
+                command=command,
+                cwd_project=warning.get("cwd_project"),
+                active_projects=warning.get("active_projects"),
+            )
+
     def _health_payload(
         self,
         *,
@@ -593,7 +616,12 @@ class StateActionOrchestrator:
         for service_name in failing_services:
             if service_name not in critical_failures and service_name not in optional_failures:
                 critical_failures.append(service_name)
-        critical_failures.extend(recent_failures)
+        for failure in recent_failures:
+            optional_identifier = self._optional_recent_failure_identifier(failure, service_rows)
+            if optional_identifier is None:
+                critical_failures.append(failure)
+            else:
+                optional_failures.append(optional_identifier)
         deduped_critical = _dedupe_strings(critical_failures)
         deduped_optional = _dedupe_strings(optional_failures)
         blocking = bool(deduped_critical)
@@ -614,6 +642,25 @@ class StateActionOrchestrator:
             "optional_failures": deduped_optional,
             "critical_failures": deduped_critical,
         }
+
+
+    @staticmethod
+    def _optional_recent_failure_identifier(failure: str, service_rows: list[dict[str, object]]) -> str | None:
+        failure_text = str(failure).casefold()
+        matched_optional: str | None = None
+        for row in service_rows:
+            tokens = {
+                str(row.get("name") or "").strip(),
+                str(row.get("service_slug") or "").strip(),
+                str(row.get("type") or "").strip(),
+            }
+            tokens = {token for token in tokens if token}
+            if not tokens or not any(token.casefold() in failure_text for token in tokens):
+                continue
+            if bool(row.get("critical", True)):
+                return None
+            matched_optional = str(row.get("service_slug") or row.get("name") or "service").strip()
+        return matched_optional
 
     def _errors_payload(
         self,

@@ -55,6 +55,47 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
         self.assertEqual(set(resolution.state.requirements), {"Alpha"})
         self.assertEqual(resolution.state.metadata["project_roots"], {"Alpha": "/tmp/a"})
 
+
+    def test_ambiguous_normalized_project_selector_fails_closed(self) -> None:
+        state = RunState(
+            run_id="run-ambiguous",
+            mode="trees",
+            requirements={
+                "Feature-A": RequirementsResult(project="Feature-A"),
+                "feature-a": RequirementsResult(project="feature-a"),
+            },
+        )
+
+        resolution = resolve_requested_project_state(state, ["FEATURE-A"], command="health")
+
+        self.assertFalse(resolution.ok)
+        self.assertEqual(resolution.error, "ambiguous_project_selector")
+        self.assertEqual(
+            resolution.payload(),
+            {
+                "ok": False,
+                "error": "ambiguous_project_selector",
+                "requested_project": "FEATURE-A",
+                "active_projects": ["Feature-A", "feature-a"],
+                "matches": ["Feature-A", "feature-a"],
+            },
+        )
+
+    def test_exact_match_wins_when_normalized_project_names_collide(self) -> None:
+        state = RunState(
+            run_id="run-exact",
+            mode="trees",
+            requirements={
+                "Feature-A": RequirementsResult(project="Feature-A"),
+                "feature-a": RequirementsResult(project="feature-a"),
+            },
+        )
+
+        resolution = resolve_requested_project_state(state, ["feature-a"], command="health")
+
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.selected_projects, ["feature-a"])
+
     def test_missing_requested_project_returns_fail_closed_payload(self) -> None:
         state = RunState(
             run_id="run-active",

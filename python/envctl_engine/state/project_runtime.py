@@ -17,6 +17,7 @@ class ProjectRuntimeResolution:
     selected_projects: list[str]
     state: RunState | None = None
     error: str | None = None
+    matches: list[str] | None = None
 
     @property
     def requested_project(self) -> str | None:
@@ -41,6 +42,14 @@ class ProjectRuntimeResolution:
                 "error": "multiple_projects_not_supported",
                 "requested_projects": list(self.requested_projects),
                 "active_projects": list(self.active_projects),
+            }
+        if self.error == "ambiguous_project_selector":
+            return {
+                "ok": False,
+                "error": "ambiguous_project_selector",
+                "requested_project": self.requested_project,
+                "active_projects": list(self.active_projects),
+                "matches": list(self.matches or []),
             }
         return {
             "ok": False,
@@ -76,7 +85,7 @@ def active_project_names(state: RunState, *, runtime: Any | None = None) -> list
             normalized = str(name).strip()
             if normalized:
                 names.add(normalized)
-    return sorted(names, key=lambda value: value.lower())
+    return sorted(names, key=lambda value: (value.lower(), value))
 
 
 def resolve_requested_project_state(
@@ -108,10 +117,25 @@ def resolve_requested_project_state(
             error="multiple_projects_not_supported",
         )
     canonical_by_exact = {project: project for project in active}
-    canonical_by_lower = {project.lower(): project for project in active}
+    canonical_by_normalized: dict[str, list[str]] = {}
+    for project in active:
+        canonical_by_normalized.setdefault(_normalize_project_selector(project), []).append(project)
     selected: list[str] = []
     for project in requested:
-        canonical = canonical_by_exact.get(project) or canonical_by_lower.get(project.lower())
+        canonical = canonical_by_exact.get(project)
+        if canonical is None:
+            matches = canonical_by_normalized.get(_normalize_project_selector(project), [])
+            if len(matches) > 1:
+                return ProjectRuntimeResolution(
+                    ok=False,
+                    command=command,
+                    requested_projects=requested,
+                    active_projects=active,
+                    selected_projects=selected,
+                    error="ambiguous_project_selector",
+                    matches=matches,
+                )
+            canonical = matches[0] if matches else None
         if canonical is None:
             return ProjectRuntimeResolution(
                 ok=False,
@@ -131,6 +155,11 @@ def resolve_requested_project_state(
         selected_projects=selected,
         state=filter_state_to_projects(state, selected),
     )
+
+
+
+def _normalize_project_selector(project: str) -> str:
+    return str(project).strip().casefold()
 
 
 def filter_state_to_projects(state: RunState, projects: list[str] | tuple[str, ...] | set[str]) -> RunState:
@@ -253,6 +282,31 @@ def cwd_runtime_warnings(
     ]
 
 
+
+def project_resolution_event_payload(
+    resolution: ProjectRuntimeResolution,
+    state: RunState,
+    *,
+    runtime: Any | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "command": resolution.command,
+        "run_id": state.run_id,
+        "mode": state.mode,
+        "requested_projects": list(resolution.requested_projects),
+        "selected_projects": list(resolution.selected_projects),
+        "active_projects": list(resolution.active_projects),
+        "cwd_project": infer_cwd_project(state, runtime=runtime),
+    }
+    if resolution.requested_project is not None:
+        payload["requested_project"] = resolution.requested_project
+    if resolution.error:
+        payload["error"] = resolution.error
+    if resolution.matches:
+        payload["matches"] = list(resolution.matches)
+    return payload
+
+
 def _runtime_truth_project_names(state: RunState, *, runtime: Any | None = None) -> list[str]:
     names: set[str] = set()
     for name in getattr(state, "requirements", {}) or {}:
@@ -273,7 +327,7 @@ def _runtime_truth_project_names(state: RunState, *, runtime: Any | None = None)
             project = service_project_name(service)
         if project:
             names.add(project)
-    return sorted(names, key=lambda value: value.lower())
+    return sorted(names, key=lambda value: (value.lower(), value))
 
 
 def _runtime_cwd(runtime: Any | None) -> Path | None:

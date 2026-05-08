@@ -678,9 +678,10 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "tests/python/runtime/test_endpoints_command_support.py",
             "tests/python/state/test_project_runtime_resolution.py",
             "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_command_exit_codes.py",
         ),
         parity_status="verified_python",
-        notes="Endpoints is Python-owned and uses fail-closed project runtime resolution before exposing URLs and dependency ports.",
+        notes="Endpoints is Python-owned and uses fail-closed project runtime resolution with sanitized success/failure events before exposing URLs and dependency ports.",
     ),
     "qa-user": FeatureDefinition(
         area="cli",
@@ -696,9 +697,10 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         evidence_tests=(
             "tests/python/runtime/test_qa_user_command_support.py",
             "tests/python/runtime/test_cli_router_parity.py",
+            "tests/python/runtime/test_qa_user_supabase_smoke.py",
         ),
         parity_status="verified_python",
-        notes="QA user ensure is Python-owned and scopes Supabase Auth operations through the active project runtime resolver.",
+        notes="QA user ensure is Python-owned, scopes Supabase Auth operations through the active project runtime resolver, writes redacted artifacts/events, and mutates existing users only with explicit update flags.",
     ),
     "playwright": FeatureDefinition(
         area="actions",
@@ -713,9 +715,10 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         evidence_tests=(
             "tests/python/runtime/test_playwright_command_support.py",
             "tests/python/runtime/test_cli_router_parity.py",
+            "tests/python/runtime/test_command_exit_codes.py",
         ),
         parity_status="verified_python",
-        notes="Playwright passthrough is Python-owned and exports QA_BASE_URL from endpoint truth without starting a second dev server.",
+        notes="Playwright passthrough is Python-owned and exports QA_BASE_URL plus ENVCTL_ENDPOINTS_JSON from endpoint truth without starting a second dev server.",
     ),
     "session": FeatureDefinition(
         area="inspection",

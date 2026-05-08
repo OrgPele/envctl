@@ -144,6 +144,8 @@ _BOOLEAN_FLAG_TOKENS = (
     "--with-codex-skills",
     "--confirm",
     "--strict",
+    "--update-password",
+    "--update-metadata",
 )
 BOOLEAN_FLAGS = _unique_tokens(registry_name="BOOLEAN_FLAGS", tokens=_BOOLEAN_FLAG_TOKENS)
 
@@ -1197,6 +1199,8 @@ def _boolean_flag_name(token: str) -> str:
         "--with-codex-skills": "with_codex_skills",
         "--confirm": "confirm",
         "--strict": "strict",
+        "--update-password": "update_password",
+        "--update-metadata": "update_metadata",
     }
     return mapping[token]
 
