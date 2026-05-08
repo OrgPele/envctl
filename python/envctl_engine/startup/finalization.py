@@ -127,6 +127,8 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         metadata["plan_agent_stale_session_name"] = session.plan_agent_stale_session_name
     if session.plan_agent_stale_attach_command:
         metadata["plan_agent_stale_attach_command"] = session.plan_agent_stale_attach_command
+    if session.plan_agent_recovery_command:
+        metadata["plan_agent_recovery_command"] = session.plan_agent_recovery_command
     attach_target = session.plan_agent_attach_target
     if attach_target is None and session.plan_agent_launch_result is not None:
         attach_target = getattr(session.plan_agent_launch_result, "attach_target", None)

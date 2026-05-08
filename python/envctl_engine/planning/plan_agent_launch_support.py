@@ -53,6 +53,7 @@ _OMX_SESSION_READY_POLL_INTERVAL_SECONDS = 0.1
 _OMX_SESSION_STATE_RELATIVE_PATH = Path(".omx") / "state" / "session.json"
 _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH = Path(".omx") / "state" / "tmux-extended-keys"
 _OMX_TMUX_LOCK_STALE_SECONDS = 30.0
+_OMX_SPAWN_OUTPUT_EXCERPT_CHARS = 1000
 _CODEX_QUEUE_READY_TIMEOUT_SECONDS = 10.0
 _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS = 0.1
 _CODEX_QUEUE_MAX_TAB_ATTEMPTS = 2
@@ -231,6 +232,18 @@ class _OmxSessionRecord:
     omx_root: Path
     state_path: Path
     payload: dict[str, object]
+
+
+@dataclass(slots=True, frozen=True)
+class _OmxSpawnProcessRecord:
+    process: object
+    command: tuple[str, ...]
+    popen_command: tuple[str, ...]
+    worktree_name: str
+    worktree_root: Path
+    omx_root: Path
+    started_at: str
+    madmax: bool
 
 
 class _QueueFailure(str):
@@ -1208,6 +1221,16 @@ def _launch_plan_agent_omx_terminals(
         _print_launch_summary(
             f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}.{suffix}"
         )
+        recovery_command = _plan_agent_recovery_command_text(
+            plan_agent_native_recovery_command(
+                runtime,
+                route=route,
+                launch_config=launch_config,
+                created_worktrees=created_worktrees,
+            )
+        )
+        if recovery_command:
+            _print_launch_summary(f"recovery: {recovery_command}")
         return PlanAgentLaunchResult(
             status="partial",
             reason="partial_failure",
@@ -1218,6 +1241,16 @@ def _launch_plan_agent_omx_terminals(
         details = _summarize_failed_launch_outcomes(failed)
         suffix = f" Details: {details}." if details else ""
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).{suffix}")
+        recovery_command = _plan_agent_recovery_command_text(
+            plan_agent_native_recovery_command(
+                runtime,
+                route=route,
+                launch_config=launch_config,
+                created_worktrees=created_worktrees,
+            )
+        )
+        if recovery_command:
+            _print_launch_summary(f"recovery: {recovery_command}")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
     _print_launch_summary(f"Plan agent launch prepared {len(launched)} OMX-managed tmux session(s).")
     return PlanAgentLaunchResult(
@@ -1384,6 +1417,87 @@ def _prompt_existing_tmux_session_action(
     return "new"
 
 
+def _plan_selector_for_route(route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]) -> str:
+    route_passthrough = list(getattr(route, "passthrough_args", []) or [])
+    if route_passthrough:
+        selector = str(route_passthrough[0]).strip()
+        if selector:
+            return selector
+    route_projects = list(getattr(route, "projects", []) or [])
+    if route_projects:
+        selector = str(route_projects[0]).strip()
+        if selector:
+            return selector
+    if created_worktrees:
+        plan_file = str(created_worktrees[0].plan_file or "").strip()
+        if plan_file:
+            return plan_file.removesuffix(".md")
+    return ""
+
+
+def plan_agent_native_recovery_command(
+    runtime: Any,
+    *,
+    route: object,
+    launch_config: PlanAgentLaunchConfig,
+    created_worktrees: tuple[CreatedPlanWorktree, ...],
+) -> tuple[str, ...]:
+    selector = _plan_selector_for_route(route, created_worktrees)
+    if not selector:
+        return ()
+    command: list[str] = []
+    if launch_config.codex_cycles > 0:
+        command.append(f"ENVCTL_PLAN_AGENT_CODEX_CYCLES={launch_config.codex_cycles}")
+    command.extend(
+        [
+            "ENVCTL_USE_REPO_WRAPPER=1",
+            str(Path(runtime.config.base_dir).resolve() / "bin" / "envctl"),
+            "--plan",
+            selector,
+            "--tmux",
+        ]
+    )
+    if launch_config.cli == "opencode":
+        command.append("--opencode")
+    elif launch_config.cli == "codex":
+        command.append("--codex")
+    route_flags = getattr(route, "flags", {}) or {}
+    scope_token_by_value = {
+        "backend": "--backend",
+        "frontend": "--frontend",
+        "fullstack": "--fullstack",
+        "dependencies": "--dependencies",
+        "entire-system": "--entire-system",
+    }
+    scope_token = scope_token_by_value.get(str(route_flags.get("runtime_scope") or ""))
+    if scope_token:
+        command.append(scope_token)
+    launch_backend = route_flags.get("launch_backend")
+    launch_frontend = route_flags.get("launch_frontend")
+    launch_dependencies = route_flags.get("launch_dependencies")
+    if launch_backend is False and launch_frontend is False and launch_dependencies is False:
+        command.append("--no-infra")
+    elif launch_backend is True and launch_frontend is False and launch_dependencies is False:
+        command.append("--only-backend")
+    elif launch_backend is False and launch_frontend is True and launch_dependencies is False:
+        command.append("--only-frontend")
+    elif launch_dependencies is False:
+        command.append("--no-deps")
+    dependency_scope = str(route_flags.get("dependency_scope") or "").strip()
+    if dependency_scope == "shared":
+        command.append("--shared-deps")
+    elif dependency_scope == "isolated":
+        command.append("--isolated-deps")
+    if bool(route_flags.get("batch") or route_flags.get("default_headless")):
+        command.append("--headless")
+    command.append("--tmux-new-session")
+    return tuple(command)
+
+
+def _plan_agent_recovery_command_text(command: tuple[str, ...]) -> str:
+    return shlex.join(command) if command else ""
+
+
 def _new_session_command_for_route(
     runtime: Any,
     *,
@@ -1391,17 +1505,7 @@ def _new_session_command_for_route(
     launch_config: PlanAgentLaunchConfig,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> tuple[str, ...]:
-    selector = ""
-    route_passthrough = list(getattr(route, "passthrough_args", []) or [])
-    if route_passthrough:
-        selector = str(route_passthrough[0]).strip()
-    route_projects = list(getattr(route, "projects", []) or [])
-    if not selector and route_projects:
-        selector = str(route_projects[0]).strip()
-    if not selector and created_worktrees:
-        plan_file = str(created_worktrees[0].plan_file or "").strip()
-        if plan_file:
-            selector = plan_file.removesuffix(".md")
+    selector = _plan_selector_for_route(route, created_worktrees)
     if not selector:
         return ()
     command = [
@@ -1969,6 +2073,93 @@ def _wrap_omx_initial_prompt_for_workflow(text: str, *, workflow: str) -> str:
     return f"{prefix}\n\n{text}"
 
 
+def _utc_timestamp_from_epoch(value: float | None = None) -> str:
+    timestamp = time.time() if value is None else value
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+
+
+def _bounded_process_output_excerpt(value: object) -> str:
+    return str(value or "")[:_OMX_SPAWN_OUTPUT_EXCERPT_CHARS]
+
+
+def _omx_spawn_metadata_payload(
+    *,
+    process: object,
+    command: tuple[str, ...],
+    popen_command: tuple[str, ...],
+    worktree: CreatedPlanWorktree,
+    omx_root: Path,
+    started_at: str,
+    madmax: bool,
+) -> dict[str, object]:
+    return {
+        "pid": getattr(process, "pid", None),
+        "command": list(command),
+        "popen_command": list(popen_command),
+        "worktree": worktree.name,
+        "worktree_root": str(Path(worktree.root).resolve(strict=False)),
+        "omx_root": str(Path(omx_root).resolve(strict=False)),
+        "transport": "omx",
+        "madmax": bool(madmax),
+        "started_at": started_at,
+        "phase": "spawn",
+    }
+
+
+def _retained_omx_spawn_process(record: object) -> object:
+    return getattr(record, "process", record)
+
+
+def _retained_omx_spawn_returncode(record: object) -> object:
+    process = _retained_omx_spawn_process(record)
+    poll = getattr(process, "poll", None)
+    try:
+        return poll() if callable(poll) else getattr(process, "returncode", None)
+    except Exception:
+        return None
+
+
+def _retained_omx_spawn_event_payload(
+    record: object,
+    *,
+    session_name: str,
+    worktree: CreatedPlanWorktree | None,
+    returncode: object,
+) -> dict[str, object]:
+    process = _retained_omx_spawn_process(record)
+    record_worktree_root = getattr(record, "worktree_root", None)
+    if record_worktree_root is None and worktree is not None:
+        record_worktree_root = worktree.root
+    record_omx_root = getattr(record, "omx_root", None)
+    if record_omx_root is None and worktree is not None:
+        record_omx_root = _deterministic_omx_root_for_worktree(worktree)
+    command = getattr(record, "command", None) or getattr(process, "args", None) or ()
+    popen_command = getattr(record, "popen_command", None) or getattr(process, "args", None) or ()
+    payload: dict[str, object] = {
+        "pid": getattr(process, "pid", None),
+        "returncode": returncode,
+        "session_name": session_name,
+        "command": [str(part) for part in command],
+        "popen_command": [str(part) for part in popen_command],
+        "worktree": str(getattr(record, "worktree_name", "") or getattr(worktree, "name", "") or "") or None,
+        "transport": "omx",
+    }
+    if record_worktree_root is not None:
+        payload["worktree_root"] = str(Path(record_worktree_root).resolve(strict=False))
+    if record_omx_root is not None:
+        payload["omx_root"] = str(Path(record_omx_root).resolve(strict=False))
+    if getattr(record, "started_at", ""):
+        payload["started_at"] = str(getattr(record, "started_at"))
+    if hasattr(record, "madmax"):
+        payload["madmax"] = bool(getattr(record, "madmax"))
+    return payload
+
+
+def _deterministic_omx_root_for_worktree(worktree: CreatedPlanWorktree) -> Path:
+    token = _sanitize_omx_tmux_token(worktree.name)
+    return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
+
+
 def _omx_spawn_failure_text(*, returncode: object, stdout: str, stderr: str) -> str:
     for stream in (stderr, stdout):
         lines = [line.strip() for line in str(stream or "").splitlines() if line.strip()]
@@ -1978,6 +2169,48 @@ def _omx_spawn_failure_text(*, returncode: object, stdout: str, stderr: str) -> 
     if normalized_code:
         return f"omx exited with status {normalized_code}"
     return "omx exited before creating a managed session"
+
+
+def _omx_attach_target_state_check(
+    runtime: Any,
+    *,
+    session_name: str,
+    worktree: CreatedPlanWorktree | None,
+) -> tuple[bool | None, dict[str, object]]:
+    if worktree is None:
+        return None, {}
+    records = _omx_session_records_for_worktree(runtime, worktree)
+    if not records:
+        return None, {}
+    current_candidates: list[str] = []
+    wrong_worktree_candidates: list[str] = []
+    records_checked = 0
+    wrong_worktree_records = 0
+    for record in records:
+        candidates = [candidate for candidate in _omx_payload_candidates(record, worktree) if candidate]
+        if not candidates:
+            continue
+        records_checked += 1
+        if _record_cwd_matches_worktree(record, worktree):
+            for candidate in candidates:
+                if candidate not in current_candidates:
+                    current_candidates.append(candidate)
+        else:
+            wrong_worktree_records += 1
+            for candidate in candidates:
+                if candidate not in wrong_worktree_candidates:
+                    wrong_worktree_candidates.append(candidate)
+    diagnostics: dict[str, object] = {
+        "omx_session_candidates": current_candidates,
+        "omx_wrong_worktree_candidates": wrong_worktree_candidates,
+        "omx_session_records_checked": records_checked,
+        "omx_wrong_worktree_records": wrong_worktree_records,
+    }
+    if current_candidates:
+        return (session_name in current_candidates), diagnostics
+    if session_name in wrong_worktree_candidates:
+        return False, diagnostics
+    return None, diagnostics
 
 
 def validate_plan_agent_attach_target(
@@ -2023,6 +2256,20 @@ def validate_plan_agent_attach_target(
         runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
         return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
     if str(transport).strip().lower() == "omx":
+        state_ok, state_diagnostics = _omx_attach_target_state_check(
+            runtime,
+            session_name=session_name,
+            worktree=worktree,
+        )
+        if state_ok is False:
+            reason = "omx_attach_target_stale"
+            runtime._emit(
+                "planning.agent_launch.attach_validation.failed",
+                reason=reason,
+                **payload,
+                **state_diagnostics,
+            )
+            return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
         exit_reason = _omx_late_spawn_exit_reason(runtime, session_name=session_name, worktree=worktree)
         if exit_reason:
             runtime._emit("planning.agent_launch.attach_validation.failed", reason=exit_reason, **payload)
@@ -2058,23 +2305,20 @@ def _omx_late_spawn_exit_reason(
         return None
     still_running: list[object] = []
     exited = False
-    for process in retained:
-        poll = getattr(process, "poll", None)
-        try:
-            returncode = poll() if callable(poll) else getattr(process, "returncode", None)
-        except Exception:
-            returncode = None
+    for record in retained:
+        returncode = _retained_omx_spawn_returncode(record)
         if returncode is None:
-            still_running.append(process)
+            still_running.append(record)
             continue
         exited = True
         runtime._emit(
             "planning.agent_launch.omx_spawn.exited_early",
-            pid=getattr(process, "pid", None),
-            returncode=returncode,
-            session_name=session_name,
-            worktree=str(getattr(worktree, "name", "") or "") or None,
-            transport="omx",
+            **_retained_omx_spawn_event_payload(
+                record,
+                session_name=session_name,
+                worktree=worktree,
+                returncode=returncode,
+            ),
         )
     retained[:] = still_running
     return "omx_session_exited" if exited else None
@@ -4142,8 +4386,8 @@ def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig)
 
 
 def _omx_runtime_root_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> Path:
-    token = _sanitize_omx_tmux_token(worktree.name)
-    return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
+    _ = runtime
+    return _deterministic_omx_root_for_worktree(worktree)
 
 
 def _omx_session_state_path_for_root(omx_root: Path) -> Path:
@@ -4523,6 +4767,7 @@ def _spawn_omx_session_for_worktree(
         omx_root=str(omx_root),
         transport="omx",
     )
+    started_at = _utc_timestamp_from_epoch()
     try:
         process = subprocess.Popen(
             popen_command,
@@ -4536,6 +4781,16 @@ def _spawn_omx_session_for_worktree(
         )
     except OSError as exc:
         return str(exc)
+    spawn_payload = _omx_spawn_metadata_payload(
+        process=process,
+        command=tuple(command),
+        popen_command=tuple(popen_command),
+        worktree=worktree,
+        omx_root=omx_root,
+        started_at=started_at,
+        madmax=wants_bypass,
+    )
+    runtime._emit("planning.agent_launch.omx_spawn.started", **spawn_payload)
     if process.poll() is not None:
         if _read_omx_session_id(runtime, worktree):
             return None
@@ -4545,18 +4800,39 @@ def _spawn_omx_session_for_worktree(
             stdout, stderr = process.communicate()
         except Exception:
             stdout, stderr = "", ""
-        return _omx_spawn_failure_text(returncode=getattr(process, "returncode", None), stdout=stdout, stderr=stderr)
+        error = _omx_spawn_failure_text(returncode=getattr(process, "returncode", None), stdout=stdout, stderr=stderr)
+        runtime._emit(
+            "planning.agent_launch.omx_spawn.failed",
+            **spawn_payload,
+            returncode=getattr(process, "returncode", None),
+            error=error,
+            stdout_excerpt=_bounded_process_output_excerpt(stdout),
+            stderr_excerpt=_bounded_process_output_excerpt(stderr),
+        )
+        return error
     process_stdout = getattr(process, "stdout", None)
     if process_stdout is not None:
         process_stdout.close()
     process_stderr = getattr(process, "stderr", None)
     if process_stderr is not None:
         process_stderr.close()
-    _retain_omx_spawn_process(runtime, process)
+    _retain_omx_spawn_process(
+        runtime,
+        _OmxSpawnProcessRecord(
+            process=process,
+            command=tuple(command),
+            popen_command=tuple(popen_command),
+            worktree_name=worktree.name,
+            worktree_root=Path(worktree.root).resolve(strict=False),
+            omx_root=Path(omx_root).resolve(strict=False),
+            started_at=started_at,
+            madmax=wants_bypass,
+        ),
+    )
     return None
 
 
-def _retain_omx_spawn_process(runtime: Any, process: subprocess.Popen[str]) -> None:
+def _retain_omx_spawn_process(runtime: Any, record: object) -> None:
     retained = getattr(runtime, "_omx_spawn_processes", None)
     if not isinstance(retained, list):
         retained = []
@@ -4564,8 +4840,8 @@ def _retain_omx_spawn_process(runtime: Any, process: subprocess.Popen[str]) -> N
             setattr(runtime, "_omx_spawn_processes", retained)
         except Exception:
             return
-    retained[:] = [item for item in retained if getattr(item, "poll", lambda: 0)() is None]
-    retained.append(process)
+    retained[:] = [item for item in retained if _retained_omx_spawn_returncode(item) is None]
+    retained.append(record)
 
 
 def _find_existing_omx_attach_target(

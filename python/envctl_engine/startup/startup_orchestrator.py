@@ -17,6 +17,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
     PlanAgentLaunchResult,
     attach_plan_agent_terminal,
     launch_plan_agent_terminals,
+    plan_agent_native_recovery_command,
     resolve_plan_agent_launch_config,
     validate_plan_agent_attach_target,
 )
@@ -1572,6 +1573,9 @@ class StartupOrchestrator:
                 print(f"reason: {reason}")
                 if stale_name:
                     print(f"stale_session: {stale_name}")
+                recovery_command = str(session.plan_agent_recovery_command or "").strip()
+                if recovery_command:
+                    print(f"recovery: {recovery_command}")
 
     def _plan_session_summary_lines(
         self,
@@ -1816,6 +1820,20 @@ class StartupOrchestrator:
         session.plan_agent_stale_session_name = stale_session_name
         session.plan_agent_stale_attach_command = stale_attach_command
         session.plan_agent_handoff_validation_reason = validation_reason
+        launch_config = resolve_plan_agent_launch_config(
+            self.runtime.config,
+            getattr(self.runtime, "env", {}),
+            route=session.effective_route,
+        )
+        recovery_command = shlex.join(
+            plan_agent_native_recovery_command(
+                self.runtime,
+                route=session.effective_route,
+                launch_config=launch_config,
+                created_worktrees=tuple(session.pending_plan_agent_worktrees),
+            )
+        )
+        session.plan_agent_recovery_command = recovery_command
         session.plan_agent_attach_target = None
         launch_result = session.plan_agent_launch_result
         outcomes = tuple(getattr(launch_result, "outcomes", ()) or ()) if launch_result is not None else ()
@@ -1847,11 +1865,14 @@ class StartupOrchestrator:
                 "plan_agent_launch_reason": validation_reason,
             }
         )
+        if recovery_command:
+            session.base_metadata["plan_agent_recovery_command"] = recovery_command
         self.runtime._emit(
             "startup.plan_agent_handoff.validation_failed",
             reason=validation_reason,
             stale_session_name=stale_session_name or None,
             stale_attach_command=stale_attach_command or None,
+            recovery_command=recovery_command or None,
         )
 
     @staticmethod

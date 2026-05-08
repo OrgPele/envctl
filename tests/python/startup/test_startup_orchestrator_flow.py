@@ -414,7 +414,10 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 out = StringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(
-                        parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                        parse_route(
+                            ["--plan", "feature-a", "--omx", "--codex", "--entire-system", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
                     )
 
             self.assertEqual(code, 0)
@@ -422,12 +425,26 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertNotIn("attach: tmux attach -t omx-stale-session", rendered)
             self.assertIn("Plan agent launch did not leave an attachable AI session.", rendered)
             self.assertIn("reason: attach_target_stale_after_launch", rendered)
+            self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
+            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
+            self.assertIn("--entire-system", rendered)
+            self.assertIn("--headless", rendered)
+            self.assertIn("--tmux-new-session", rendered)
+            self.assertNotIn("--omx", rendered)
             state = cast(RunState, captured["state"])
             self.assertEqual(state.metadata["plan_agent_launch_status"], "failed")
             self.assertEqual(state.metadata["plan_agent_launch_reason"], "attach_target_stale_after_launch")
             self.assertFalse(state.metadata["implementation_session_running"])
             self.assertEqual(state.metadata["plan_agent_stale_session_name"], "omx-stale-session")
             self.assertEqual(state.metadata["plan_agent_stale_attach_command"], "tmux attach -t omx-stale-session")
+            recovery_command = str(state.metadata["plan_agent_recovery_command"])
+            self.assertIn("--tmux", recovery_command)
+            self.assertIn("--entire-system", recovery_command)
+            self.assertIn("--tmux-new-session", recovery_command)
+            self.assertNotIn("--omx", recovery_command)
+            self.assertNotIn("--ralph", recovery_command)
+            self.assertNotIn("--ultragoal", recovery_command)
+            self.assertNotIn("--team", recovery_command)
             self.assertNotIn("plan_agent_attach_command", state.metadata)
 
     def test_existing_omx_plan_session_summary_reuses_selected_worktree(self) -> None:

@@ -74,6 +74,7 @@ class StartupSession:
     plan_agent_stale_session_name: str = ""
     plan_agent_stale_attach_command: str = ""
     plan_agent_handoff_validation_reason: str = ""
+    plan_agent_recovery_command: str = ""
     local_startup_failures: list[LocalStartupFailure] = field(default_factory=list)
 
     @property
