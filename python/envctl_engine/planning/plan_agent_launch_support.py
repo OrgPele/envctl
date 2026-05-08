@@ -218,6 +218,13 @@ class _PlanAgentWorkflow:
     steps: tuple[_PlanAgentWorkflowStep, ...]
 
 
+@dataclass(slots=True, frozen=True)
+class _OmxSessionRecord:
+    omx_root: Path
+    state_path: Path
+    payload: dict[str, object]
+
+
 class _QueueFailure(str):
     step_index: int | None
     step_kind: str | None
@@ -1041,7 +1048,8 @@ def _launch_plan_agent_omx_terminals(
     outcomes: list[PlanAgentLaunchOutcome] = []
     first_attach_target: PlanAgentAttachTarget | None = None
     for worktree in created_worktrees:
-        previous_session_id = _read_omx_session_id(worktree.root)
+        previous_session_id = _read_omx_session_id(runtime, worktree)
+        previous_session_ids = _read_omx_session_ids(runtime, worktree)
         spawn_error = _spawn_omx_session_for_worktree(runtime, launch_config=launch_config, worktree=worktree)
         if spawn_error is not None:
             runtime._emit(
@@ -1066,14 +1074,17 @@ def _launch_plan_agent_omx_terminals(
             repo_root=repo_root,
             worktree=worktree,
             previous_session_id=previous_session_id,
+            previous_session_ids=previous_session_ids,
             attach_via=attach_via,
         )
         if attach_target is None:
+            diagnostics = _omx_attach_discovery_diagnostics(runtime, worktree)
             runtime._emit(
                 "planning.agent_launch.failed",
                 reason="omx_session_unavailable",
                 worktree=worktree.name,
                 transport="omx",
+                **diagnostics,
             )
             outcomes.append(
                 PlanAgentLaunchOutcome(
@@ -1171,10 +1182,28 @@ def _launch_plan_agent_omx_terminals(
     )
 
 
-def _cleanup_stale_omx_tmux_locks(runtime: Any, *, worktree_root: Path) -> None:
-    lock_root = Path(worktree_root).resolve() / _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH
+def _cleanup_stale_omx_tmux_locks(runtime: Any, *, worktree_root: Path, omx_root: Path | None = None) -> None:
+    roots = [Path(worktree_root).resolve()]
+    if omx_root is not None:
+        resolved_omx_root = Path(omx_root).expanduser().resolve(strict=False)
+        if resolved_omx_root not in roots:
+            roots.insert(0, resolved_omx_root)
+    removed_roots: list[str] = []
+    for root in roots:
+        if _cleanup_stale_omx_tmux_locks_under_root(root):
+            removed_roots.append(str(root))
+    if removed_roots:
+        runtime._emit(
+            "planning.agent_launch.omx_lock_cleanup",
+            worktree=str(Path(worktree_root).resolve()),
+            transport="omx",
+        )
+
+
+def _cleanup_stale_omx_tmux_locks_under_root(root: Path) -> bool:
+    lock_root = Path(root).resolve() / _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH
     if not lock_root.is_dir():
-        return
+        return False
     removed_any = False
     now = time.time()
     for child in lock_root.iterdir():
@@ -1195,12 +1224,7 @@ def _cleanup_stale_omx_tmux_locks(runtime: Any, *, worktree_root: Path) -> None:
         except OSError:
             continue
         removed_any = True
-    if removed_any:
-        runtime._emit(
-            "planning.agent_launch.omx_lock_cleanup",
-            worktree=str(Path(worktree_root).resolve()),
-            transport="omx",
-        )
+    return removed_any
 
 
 def _launch_single_worktree(
@@ -3941,12 +3965,20 @@ def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig)
     return missing
 
 
+def _omx_runtime_root_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> Path:
+    token = _sanitize_omx_tmux_token(worktree.name)
+    return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
+
+
+def _omx_session_state_path_for_root(omx_root: Path) -> Path:
+    return Path(omx_root).expanduser().resolve(strict=False) / _OMX_SESSION_STATE_RELATIVE_PATH
+
+
 def _omx_session_state_path(worktree_root: Path) -> Path:
-    return Path(worktree_root).resolve() / _OMX_SESSION_STATE_RELATIVE_PATH
+    return _omx_session_state_path_for_root(Path(worktree_root).resolve())
 
 
-def _read_omx_session_payload(worktree_root: Path) -> dict[str, object] | None:
-    path = _omx_session_state_path(worktree_root)
+def _read_omx_session_payload_from_path(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
     try:
@@ -3956,10 +3988,215 @@ def _read_omx_session_payload(worktree_root: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _read_omx_session_id(worktree_root: Path) -> str:
-    payload = _read_omx_session_payload(worktree_root) or {}
+def _read_omx_session_payload(worktree_root: Path) -> dict[str, object] | None:
+    return _read_omx_session_payload_from_path(_omx_session_state_path(worktree_root))
+
+
+def _read_omx_session_payload_from_root(omx_root: Path) -> dict[str, object] | None:
+    return _read_omx_session_payload_from_path(_omx_session_state_path_for_root(omx_root))
+
+
+def _omx_session_records_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> list[_OmxSessionRecord]:
+    roots = [
+        _omx_runtime_root_for_worktree(runtime, worktree),
+        Path(worktree.root).expanduser().resolve(strict=False),
+    ]
+    records: list[_OmxSessionRecord] = []
+    seen_paths: set[Path] = set()
+    for root in roots:
+        state_path = _omx_session_state_path_for_root(root)
+        if state_path in seen_paths:
+            continue
+        seen_paths.add(state_path)
+        payload = _read_omx_session_payload_from_path(state_path)
+        if payload is None:
+            continue
+        records.append(_OmxSessionRecord(omx_root=root, state_path=state_path, payload=payload))
+    return records
+
+
+def _record_cwd_matches_worktree(record: _OmxSessionRecord, worktree: CreatedPlanWorktree) -> bool:
+    raw_cwd = record.payload.get("cwd")
+    if not isinstance(raw_cwd, str) or not raw_cwd.strip():
+        return True
+    candidate = Path(raw_cwd).expanduser().resolve(strict=False)
+    return candidate == Path(worktree.root).expanduser().resolve(strict=False)
+
+
+def _read_omx_session_payload_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> dict[str, object] | None:
+    for record in _omx_session_records_for_worktree(runtime, worktree):
+        if _record_cwd_matches_worktree(record, worktree):
+            return record.payload
+    return None
+
+
+def _read_omx_session_id(runtime: Any, worktree: CreatedPlanWorktree) -> str:
+    payload = _read_omx_session_payload_for_worktree(runtime, worktree) or {}
     value = payload.get("session_id")
     return str(value).strip() if isinstance(value, str) else ""
+
+
+def _read_omx_session_ids(runtime: Any, worktree: CreatedPlanWorktree) -> tuple[str, ...]:
+    values: list[str] = []
+    for record in _omx_session_records_for_worktree(runtime, worktree):
+        if not _record_cwd_matches_worktree(record, worktree):
+            continue
+        value = record.payload.get("session_id")
+        session_id = str(value).strip() if isinstance(value, str) else ""
+        if session_id and session_id not in values:
+            values.append(session_id)
+    return tuple(values)
+
+
+def _omx_payload_candidates(record: _OmxSessionRecord, worktree: CreatedPlanWorktree) -> list[str]:
+    session_id = str(record.payload.get("session_id") or "").strip()
+    if not session_id:
+        return []
+    candidates: list[str] = []
+    native_session_id = str(record.payload.get("native_session_id") or "").strip()
+    if native_session_id:
+        candidates.append(native_session_id)
+    candidates.append(_omx_tmux_session_name(worktree.root, session_id))
+    return candidates
+
+
+def _omx_worktree_tmux_prefixes(worktree: CreatedPlanWorktree) -> tuple[str, ...]:
+    prefixes = [f"omx-{_omx_tmux_dir_token(worktree.root)}-"]
+    name_prefix = f"omx-{_sanitize_omx_tmux_token(worktree.name)}-"
+    if name_prefix not in prefixes:
+        prefixes.append(name_prefix)
+    return tuple(prefixes)
+
+
+def _find_omx_tmux_panes_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> list[tuple[str, str]]:
+    separator_pane = "|||ENVCTL_TMUX_PANE|||"
+    separator_path = "|||ENVCTL_TMUX_PATH|||"
+    result = _run_tmux_probe(
+        runtime,
+        (
+            "tmux",
+            "list-panes",
+            "-a",
+            "-F",
+            f"#{{session_name}}{separator_pane}#{{pane_id}}{separator_path}#{{pane_current_path}}",
+        ),
+        cwd=Path(runtime.config.base_dir).resolve(),
+    )
+    if result.returncode != 0:
+        return []
+    target = Path(worktree.root).expanduser().resolve(strict=False)
+    prefixes = _omx_worktree_tmux_prefixes(worktree)
+    matches: list[tuple[str, str]] = []
+    for raw_line in str(getattr(result, "stdout", "")).splitlines():
+        session_name, pane_separator, rest = raw_line.partition(separator_pane)
+        pane_id, path_separator, raw_path = rest.partition(separator_path)
+        if not pane_separator or not path_separator:
+            continue
+        session_name = session_name.strip()
+        pane_id = pane_id.strip()
+        normalized_path = raw_path.strip()
+        if not session_name or not pane_id or not normalized_path:
+            continue
+        if not any(session_name.startswith(prefix) for prefix in prefixes):
+            continue
+        candidate = Path(normalized_path).expanduser().resolve(strict=False)
+        if candidate == target or target in candidate.parents:
+            matches.append((session_name, pane_id))
+    return matches
+
+
+def _attach_target_from_omx_record(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    worktree: CreatedPlanWorktree,
+    record: _OmxSessionRecord,
+    attach_via: str,
+    previous_session_id: str = "",
+    previous_session_ids: tuple[str, ...] = (),
+    candidates_checked: list[str] | None = None,
+) -> PlanAgentAttachTarget | None:
+    if not _record_cwd_matches_worktree(record, worktree):
+        return None
+    session_id = str(record.payload.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    previous = {str(value).strip() for value in previous_session_ids if str(value).strip()}
+    if str(previous_session_id).strip():
+        previous.add(str(previous_session_id).strip())
+    if session_id in previous:
+        return None
+    for candidate in _omx_payload_candidates(record, worktree):
+        if candidates_checked is not None and candidate not in candidates_checked:
+            candidates_checked.append(candidate)
+        if not candidate or not _tmux_session_exists(runtime, candidate):
+            continue
+        return PlanAgentAttachTarget(
+            repo_root=repo_root,
+            session_name=candidate,
+            window_name=_tmux_active_pane_id(runtime, candidate),
+            attach_via=attach_via,
+            attach_command=_guidance_attach_command(candidate),
+        )
+    for session_name, pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree):
+        if candidates_checked is not None and session_name not in candidates_checked:
+            candidates_checked.append(session_name)
+        return PlanAgentAttachTarget(
+            repo_root=repo_root,
+            session_name=session_name,
+            window_name=pane_id,
+            attach_via=attach_via,
+            attach_command=_guidance_attach_command(session_name),
+        )
+    return None
+
+
+def _attach_target_from_omx_tmux_pane_fallback(
+    runtime: Any,
+    *,
+    repo_root: Path,
+    worktree: CreatedPlanWorktree,
+    attach_via: str,
+    candidates_checked: list[str] | None = None,
+) -> PlanAgentAttachTarget | None:
+    for session_name, pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree):
+        if candidates_checked is not None and session_name not in candidates_checked:
+            candidates_checked.append(session_name)
+        return PlanAgentAttachTarget(
+            repo_root=repo_root,
+            session_name=session_name,
+            window_name=pane_id,
+            attach_via=attach_via,
+            attach_command=_guidance_attach_command(session_name),
+        )
+    return None
+
+
+def _omx_attach_discovery_diagnostics(runtime: Any, worktree: CreatedPlanWorktree) -> dict[str, object]:
+    selected_root = _omx_runtime_root_for_worktree(runtime, worktree)
+    selected_state_path = _omx_session_state_path_for_root(selected_root)
+    records = _omx_session_records_for_worktree(runtime, worktree)
+    payload = records[0].payload if records else {}
+    session_id = str(payload.get("session_id") or "").strip() if isinstance(payload, dict) else ""
+    candidates: list[str] = []
+    for record in records:
+        if not _record_cwd_matches_worktree(record, worktree):
+            continue
+        for candidate in _omx_payload_candidates(record, worktree):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    panes = _find_omx_tmux_panes_for_worktree(runtime, worktree)
+    for session_name, _pane_id in panes:
+        if session_name not in candidates:
+            candidates.append(session_name)
+    return {
+        "omx_root": str(selected_root),
+        "omx_roots": [str(selected_root), str(Path(worktree.root).resolve())],
+        "session_state_exists": selected_state_path.is_file(),
+        "session_id_present": bool(session_id),
+        "tmux_candidates_checked": candidates,
+        "worktree_panes_found": len(panes),
+    }
 
 
 def _sanitize_omx_tmux_token(value: str) -> str:
@@ -3984,7 +4221,7 @@ def _git_branch_name(cwd: Path) -> str | None:
     return branch or None
 
 
-def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
+def _omx_tmux_dir_token(worktree_root: Path) -> str:
     cwd = Path(worktree_root).resolve()
     parent_path = cwd.parent
     parent_dir = parent_path.name
@@ -3997,9 +4234,12 @@ def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
         repo_dir = grandparent_path.parent.name
     else:
         repo_dir = None
-    dir_token = (
-        _sanitize_omx_tmux_token(f"{repo_dir}-{dir_name}") if repo_dir else _sanitize_omx_tmux_token(dir_name)
-    )
+    return _sanitize_omx_tmux_token(f"{repo_dir}-{dir_name}") if repo_dir else _sanitize_omx_tmux_token(dir_name)
+
+
+def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
+    cwd = Path(worktree_root).resolve()
+    dir_token = _omx_tmux_dir_token(cwd)
     branch_token = _sanitize_omx_tmux_token(_git_branch_name(cwd) or "detached")
     session_token = _sanitize_omx_tmux_token(str(session_id).replace("omx-", "", 1))
     prefix = f"omx-{dir_token}-{branch_token}"
@@ -4041,7 +4281,12 @@ def _spawn_omx_session_for_worktree(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    _cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree.root)
+    omx_root = _omx_runtime_root_for_worktree(runtime, worktree)
+    try:
+        omx_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return str(exc)
+    _cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree.root, omx_root=omx_root)
     cli_command = shlex.split(launch_config.cli_command) if str(launch_config.cli_command).strip() else []
     wants_bypass = any(token == _CODEX_BYPASS_FLAGS for token in cli_command[1:])
     command = ["omx", "--tmux"]
@@ -4049,9 +4294,16 @@ def _spawn_omx_session_for_worktree(
         command.append("--madmax")
     popen_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
     env = _omx_launch_env(runtime)
+    env["OMX_ROOT"] = str(omx_root)
     env["OMX_LAUNCH_POLICY"] = "detached-tmux"
     if launch_config.omx_workflow == "team":
         env["OMX_TEAM_WORKER_LAUNCH_ARGS"] = _CODEX_BYPASS_FLAGS
+    runtime._emit(
+        "planning.agent_launch.omx_state_root_selected",
+        worktree=worktree.name,
+        omx_root=str(omx_root),
+        transport="omx",
+    )
     try:
         process = subprocess.Popen(
             popen_command,
@@ -4066,7 +4318,7 @@ def _spawn_omx_session_for_worktree(
     except OSError as exc:
         return str(exc)
     if process.poll() is not None:
-        if _read_omx_session_id(worktree.root):
+        if _read_omx_session_id(runtime, worktree):
             return None
         try:
             stdout, stderr = process.communicate(timeout=0.5)
@@ -4105,25 +4357,24 @@ def _find_existing_omx_attach_target(
 ) -> PlanAgentAttachTarget | None:
     attach_via = "attach-session"
     for worktree in created_worktrees:
-        payload = _read_omx_session_payload(worktree.root) or {}
-        session_id = str(payload.get("session_id") or "").strip()
-        if not session_id:
-            continue
-        candidates = []
-        native_session_id = str(payload.get("native_session_id") or "").strip()
-        if native_session_id:
-            candidates.append(native_session_id)
-        candidates.append(_omx_tmux_session_name(worktree.root, session_id))
-        for candidate in candidates:
-            if not candidate or not _tmux_session_exists(runtime, candidate):
-                continue
-            return PlanAgentAttachTarget(
+        for record in _omx_session_records_for_worktree(runtime, worktree):
+            attach_target = _attach_target_from_omx_record(
+                runtime,
                 repo_root=repo_root,
-                session_name=candidate,
-                window_name=_tmux_active_pane_id(runtime, candidate),
+                worktree=worktree,
+                record=record,
                 attach_via=attach_via,
-                attach_command=_guidance_attach_command(candidate),
             )
+            if attach_target is not None:
+                return attach_target
+        attach_target = _attach_target_from_omx_tmux_pane_fallback(
+            runtime,
+            repo_root=repo_root,
+            worktree=worktree,
+            attach_via=attach_via,
+        )
+        if attach_target is not None:
+            return attach_target
     return None
 
 
@@ -4133,31 +4384,32 @@ def _wait_for_omx_attach_target(
     repo_root: Path,
     worktree: CreatedPlanWorktree,
     previous_session_id: str,
+    previous_session_ids: tuple[str, ...] = (),
     attach_via: str,
 ) -> PlanAgentAttachTarget | None:
     deadline = time.monotonic() + _OMX_SESSION_READY_TIMEOUT_SECONDS
     previous = str(previous_session_id).strip()
     while time.monotonic() < deadline:
-        payload = _read_omx_session_payload(worktree.root) or {}
-        session_id = str(payload.get("session_id") or "").strip()
-        if not session_id or (previous and session_id == previous):
-            time.sleep(_OMX_SESSION_READY_POLL_INTERVAL_SECONDS)
-            continue
-        candidates = []
-        native_session_id = str(payload.get("native_session_id") or "").strip()
-        if native_session_id:
-            candidates.append(native_session_id)
-        candidates.append(_omx_tmux_session_name(worktree.root, session_id))
-        for candidate in candidates:
-            if not candidate or not _tmux_session_exists(runtime, candidate):
-                continue
-            return PlanAgentAttachTarget(
+        for record in _omx_session_records_for_worktree(runtime, worktree):
+            attach_target = _attach_target_from_omx_record(
+                runtime,
                 repo_root=repo_root,
-                session_name=candidate,
-                window_name=_tmux_active_pane_id(runtime, candidate),
+                worktree=worktree,
+                record=record,
                 attach_via=attach_via,
-                attach_command=_guidance_attach_command(candidate),
+                previous_session_id=previous,
+                previous_session_ids=previous_session_ids,
             )
+            if attach_target is not None:
+                return attach_target
+        attach_target = _attach_target_from_omx_tmux_pane_fallback(
+            runtime,
+            repo_root=repo_root,
+            worktree=worktree,
+            attach_via=attach_via,
+        )
+        if attach_target is not None:
+            return attach_target
         time.sleep(_OMX_SESSION_READY_POLL_INTERVAL_SECONDS)
     return None
 

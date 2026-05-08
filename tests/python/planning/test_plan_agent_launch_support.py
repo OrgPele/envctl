@@ -150,6 +150,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         harness._plan_agent_events = events
         return harness
 
+    def _expected_omx_root(self, worktree: CreatedPlanWorktree) -> Path:
+        token = launch_support._sanitize_omx_tmux_token(worktree.name)
+        return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
+
     def test_disabled_feature_returns_skipped_without_running_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1347,6 +1351,402 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 missing = launch_support._missing_launch_commands(rt, launch_config)
 
             self.assertEqual(missing, ["script"])
+
+    def test_omx_spawn_sets_deterministic_omx_root_for_madmax_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            inherited_root = Path(tmpdir) / "inherited-omx"
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "OMX_ROOT": str(inherited_root),
+                    "OMX_STATE_ROOT": str(Path(tmpdir) / "stale-state"),
+                    "TMUX": "/tmp/tmux-0/default,1,0",
+                    "TMUX_PANE": "%7",
+                },
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="omx",
+                cli="codex",
+                cli_command="codex --dangerously-bypass-approvals-and-sandbox",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                omx_workflow="ralph",
+            )
+            popen_calls: list[dict[str, object]] = []
+
+            class _RunningPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    self.stdin = None
+                    self.stdout = None
+                    self.stderr = None
+
+                def poll(self):
+                    return None
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _RunningPopen):
+                error = launch_support._spawn_omx_session_for_worktree(
+                    rt,
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+            self.assertIsNone(error)
+            self.assertEqual(popen_calls[0]["cmd"], ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
+            env = cast(dict[str, str], popen_calls[0]["env"])
+            self.assertEqual(env["OMX_ROOT"], str(self._expected_omx_root(worktree)))
+            self.assertNotEqual(env["OMX_ROOT"], str(inherited_root))
+            self.assertEqual(env["OMX_LAUNCH_POLICY"], "detached-tmux")
+            self.assertNotIn("TMUX", env)
+            self.assertNotIn("TMUX_PANE", env)
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.omx_state_root_selected"),
+                [
+                    {
+                        "event": "planning.agent_launch.omx_state_root_selected",
+                        "worktree": "feature-a-1",
+                        "omx_root": str(self._expected_omx_root(worktree)),
+                        "transport": "omx",
+                    }
+                ],
+            )
+
+    def test_omx_wait_discovers_session_from_deterministic_omx_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            omx_root = self._expected_omx_root(worktree)
+            session_path = omx_root / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-new-session",
+                        "native_session_id": "omx-feature-session",
+                        "cwd": str(worktree_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="old-session",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "omx-feature-session")
+            self.assertEqual(attach_target.window_name, "%42")
+
+    def test_omx_wait_rejects_state_for_other_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            other_root = repo / "trees" / "other" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            other_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            session_path = worktree_root / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-wrong-cwd",
+                        "native_session_id": "omx-feature-session",
+                        "cwd": str(other_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNone(attach_target)
+
+    def test_find_existing_omx_attach_target_reads_deterministic_omx_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            session_path = self._expected_omx_root(worktree) / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-abc123",
+                        "native_session_id": "omx-feature-session",
+                        "cwd": str(worktree_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                attach_target = launch_support._find_existing_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "omx-feature-session")
+            self.assertEqual(attach_target.window_name, "%42")
+
+    def test_omx_new_session_wait_ignores_previous_session_id_from_selected_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            session_path = self._expected_omx_root(worktree) / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "old-session",
+                        "native_session_id": "old-native",
+                        "cwd": str(worktree_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def _write_new_session(_seconds: float) -> None:
+                session_path.write_text(
+                    json.dumps(
+                        {
+                            "session_id": "new-session",
+                            "native_session_id": "new-native",
+                            "cwd": str(worktree_root.resolve()),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=_write_new_session),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="old-session",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "new-native")
+
+    def test_omx_wait_falls_back_to_legacy_worktree_session_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            session_path = worktree_root / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-legacy",
+                        "native_session_id": "omx-legacy-session",
+                        "cwd": str(worktree_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%43"),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "omx-legacy-session")
+            self.assertEqual(attach_target.window_name, "%43")
+
+    def test_omx_wait_falls_back_to_tmux_pane_path_for_matching_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout=f"omx-feature-a-1-main-abc|||ENVCTL_TMUX_PANE|||%77|||ENVCTL_TMUX_PATH|||{worktree_root}\n",
+                        stderr="",
+                    ),
+                ]
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+            session_path = self._expected_omx_root(worktree) / ".omx" / "state" / "session.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "omx-abc",
+                        "cwd": str(worktree_root.resolve()),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "omx-feature-a-1-main-abc")
+            self.assertEqual(attach_target.window_name, "%77")
+
+    def test_omx_wait_falls_back_to_tmux_pane_path_without_session_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["tmux"],
+                        returncode=0,
+                        stdout=f"omx-feature-a-1-main-abc|||ENVCTL_TMUX_PANE|||%77|||ENVCTL_TMUX_PATH|||{worktree_root}\n",
+                        stderr="",
+                    ),
+                ]
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+            ):
+                attach_target = launch_support._wait_for_omx_attach_target(
+                    rt,
+                    repo_root=repo,
+                    worktree=worktree,
+                    previous_session_id="",
+                    attach_via="attach-session",
+                )
+
+            self.assertIsNotNone(attach_target)
+            assert attach_target is not None
+            self.assertEqual(attach_target.session_name, "omx-feature-a-1-main-abc")
+            self.assertEqual(attach_target.window_name, "%77")
+
+    def test_omx_unavailable_event_includes_state_root_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"},
+            )
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+
+            with (
+                redirect_stdout(StringIO()),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--omx", "--codex"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            self.assertEqual(result.status, "failed")
+            failed_events = self._events(rt, "planning.agent_launch.failed")
+            unavailable_events = [event for event in failed_events if event.get("reason") == "omx_session_unavailable"]
+            self.assertEqual(len(unavailable_events), 1)
+            event = unavailable_events[0]
+            self.assertEqual(event.get("omx_root"), str(self._expected_omx_root(worktree)))
+            self.assertEqual(event.get("session_state_exists"), False)
+            self.assertEqual(event.get("session_id_present"), False)
+            self.assertIn("tmux_candidates_checked", event)
+            self.assertIn("worktree_panes_found", event)
 
     def test_omx_team_spawn_forces_worker_bypass_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
