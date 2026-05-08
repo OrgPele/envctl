@@ -2632,13 +2632,16 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             class _DummyPopen:
                 def __init__(self, cmd, **kwargs):  # noqa: ANN001
                     popen_calls.append({"cmd": list(cmd), **kwargs})
-                    session_path = Path(str(kwargs["cwd"])) / ".omx" / "state" / "session.json"
+                    omx_root = Path(str(kwargs["env"]["OMX_ROOT"]))
+                    session_path = omx_root / ".omx" / "state" / "session.json"
                     session_path.parent.mkdir(parents=True, exist_ok=True)
+                    worktree_root = Path(str(kwargs["cwd"]))
                     session_path.write_text(
                         json.dumps(
                             {
                                 "session_id": "omx-session-123",
                                 "native_session_id": "omx-feature-session",
+                                "cwd": str(worktree_root.resolve()),
                             }
                         ),
                         encoding="utf-8",
@@ -2665,7 +2668,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             cmd = cast(list[str], popen_calls[0]["cmd"])
             self.assertEqual(cmd, ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
             self.assertNotIn("--model", " ".join(str(part) for part in cmd))
-            self.assertTrue((repo / "trees" / "feature_task" / "1" / ".omx" / "state" / "session.json").is_file())
+            child_env = cast(dict[str, str], popen_calls[0]["env"])
+            expected_omx_root = repo / "trees" / "feature_task" / "1" / ".envctl-state" / "omx" / "feature-task-1"
+            self.assertEqual(child_env["OMX_ROOT"], str(expected_omx_root))
+            self.assertTrue((expected_omx_root / ".omx" / "state" / "session.json").is_file())
             rendered = out.getvalue()
             self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)

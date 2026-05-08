@@ -386,6 +386,8 @@ Optional plan-agent launch config for `--plan`:
 - `envctl --plan <selector> --omx --ultragoal` enters the default/recommended Ultragoal OMX workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --ralph` enters the explicit Ralph compatibility workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --team` enters the Team OMX workflow inside that OMX-managed Codex session
+- OMX-managed plan-agent launches set a deterministic envctl-owned `OMX_ROOT` under `<worktree>/.envctl-state/omx/<worktree-name>/` so envctl can discover OMX's managed tmux session, submit optional Codex `/goal` framing, submit the rendered prompt, and queue follow-up workflow steps even when OMX isolates unsafe/YOLO runtime state
+- if that handoff fails, envctl records structured diagnostics that distinguish spawn failure, missing `session.json`, wrong-worktree state, tmux candidate mismatch, and prompt bootstrap failure
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
@@ -398,7 +400,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CODEX_YOLO=true` appends `--dangerously-bypass-approvals-and-sandbox` to the default envctl-owned Codex cmux/tmux launch command; set it to `false` in `.envctl` when your Codex wrapper or config already supplies that flag
-- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; when set, this raw command wins over the default Codex YOLO command builder; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session
+- `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; when set, this raw command wins over the default Codex YOLO command builder; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session after discovering it from the selected OMX state root
 - plan-agent launches prepare backend and frontend dependencies inside the selected worktree before the AI prompt is submitted; this is dependency prep only, not service startup or migrations
 - generic configured backend Python commands such as `ENVCTL_BACKEND_START_CMD=python -m uvicorn ...` use the prepared backend runtime when a Poetry project or backend virtualenv is available
 - `--ultragoal`, `--ralph`, and `--team` are mutually exclusive OMX-only launch modifiers; using them without `--omx` fails fast
