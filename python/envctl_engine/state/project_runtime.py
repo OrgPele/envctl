@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from envctl_engine.shared.services import service_project_name
-from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState
 
 
 @dataclass(slots=True)

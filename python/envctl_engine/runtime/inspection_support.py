@@ -35,7 +35,11 @@ from envctl_engine.runtime.session_management import (
     kill_session,
 )
 from envctl_engine.state import state_to_dict
-from envctl_engine.state.project_runtime import cwd_runtime_warnings, dependency_mode_summary, resolve_requested_project_state
+from envctl_engine.state.project_runtime import (
+    cwd_runtime_warnings,
+    dependency_mode_summary,
+    resolve_requested_project_state,
+)
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.endpoints_command_support import run_endpoints_command
 

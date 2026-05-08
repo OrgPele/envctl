@@ -8,14 +8,22 @@ from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.endpoints_command_support import build_endpoints_payload
-from envctl_engine.state.project_runtime import active_project_names, project_root_for_state, resolve_requested_project_state
+from envctl_engine.state.project_runtime import (
+    active_project_names,
+    project_root_for_state,
+    resolve_requested_project_state,
+)
 
 
 def run_playwright_command(runtime: Any, route: Route) -> int:
     json_output = bool(getattr(route, "flags", {}).get("json"))
     command = [str(arg) for arg in getattr(route, "passthrough_args", []) if str(arg)]
     if not command:
-        return _emit({"ok": False, "error": "playwright requires a command after --"}, json_output=json_output, ok=False)
+        return _emit(
+            {"ok": False, "error": "playwright requires a command after --"},
+            json_output=json_output,
+            ok=False,
+        )
     state = _load_state(runtime, route)
     if state is None:
         return _emit({"ok": False, "error": "state_not_found"}, json_output=json_output, ok=False)
@@ -47,7 +55,11 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
     frontend = endpoints.get("frontend") if isinstance(endpoints.get("frontend"), dict) else {}
     selected_url = str(frontend.get("public_url") or frontend.get("local_url") or "").strip()
     if not selected_url:
-        return _emit({"ok": False, "error": "frontend_not_running", "project": project, "run_id": state.run_id}, json_output=json_output, ok=False)
+        return _emit(
+            {"ok": False, "error": "frontend_not_running", "project": project, "run_id": state.run_id},
+            json_output=json_output,
+            ok=False,
+        )
     cwd = Path(str(project_root_for_state(selected_state, project) or ".")).resolve()
     env = dict(os.environ)
     env.update({str(key): str(value) for key, value in (getattr(runtime, "env", {}) or {}).items()})

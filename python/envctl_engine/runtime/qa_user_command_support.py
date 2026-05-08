@@ -9,7 +9,11 @@ from typing import Any
 from envctl_engine.requirements.supabase_auth_users import SupabaseAuthAdminClient, SupabaseAuthAdminError
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.supabase_user_command_support import _connection_from_requirements
-from envctl_engine.state.project_runtime import active_project_names, dependency_mode_summary, resolve_requested_project_state
+from envctl_engine.state.project_runtime import (
+    active_project_names,
+    dependency_mode_summary,
+    resolve_requested_project_state,
+)
 
 
 def run_qa_user_command(runtime: Any, route: Route) -> int:
@@ -18,7 +22,11 @@ def run_qa_user_command(runtime: Any, route: Route) -> int:
     args = [str(arg).strip() for arg in getattr(route, "passthrough_args", []) if str(arg).strip()]
     subcommand = args[0].lower() if args else "ensure"
     if subcommand != "ensure":
-        return _emit({"ok": False, "error": f"unsupported qa-user command: {subcommand}"}, json_output=json_output, ok=False)
+        return _emit(
+            {"ok": False, "error": f"unsupported qa-user command: {subcommand}"},
+            json_output=json_output,
+            ok=False,
+        )
     state = _load_state(runtime, route)
     if state is None:
         return _emit({"ok": False, "error": "state_not_found"}, json_output=json_output, ok=False)
@@ -43,7 +51,11 @@ def run_qa_user_command(runtime: Any, route: Route) -> int:
     email = str(flags.get("email") or (args[1] if len(args) > 1 else "") or "").strip()
     password = str(flags.get("password") or "").strip()
     if not email or not password:
-        return _emit({"ok": False, "error": "qa-user ensure requires --email and --password"}, json_output=json_output, ok=False)
+        return _emit(
+            {"ok": False, "error": "qa-user ensure requires --email and --password"},
+            json_output=json_output,
+            ok=False,
+        )
     try:
         base_url, service_role_key = _resolve_project_supabase_connection(runtime, resolution.state or state, project)
         client = SupabaseAuthAdminClient(base_url=base_url, service_role_key=service_role_key)
@@ -78,7 +90,10 @@ def run_qa_user_command(runtime: Any, route: Route) -> int:
             "run_id": state.run_id,
             "dependency_mode": dependency_summary["dependency_mode"],
             "shared_dependencies": dependency_summary["shared_dependencies"],
-            "user": {"id": str(getattr(record, "id", "") or ""), "email": str(getattr(record, "email", email) or email)},
+            "user": {
+                "id": str(getattr(record, "id", "") or ""),
+                "email": str(getattr(record, "email", email) or email),
+            },
             "credentials": {"email": email, "password": password},
             "created": created,
             "reused": reused,
@@ -120,7 +135,13 @@ def _run_seed_hooks(
     results: list[dict[str, object]] = []
     for seed in seeds:
         key = f"ENVCTL_QA_USER_SEED_{seed.upper().replace('-', '_')}_CMD"
-        command = str(env.get(key) or raw.get(key) or env.get("ENVCTL_QA_USER_SEED_CMD") or raw.get("ENVCTL_QA_USER_SEED_CMD") or "").strip()
+        command = str(
+            env.get(key)
+            or raw.get(key)
+            or env.get("ENVCTL_QA_USER_SEED_CMD")
+            or raw.get("ENVCTL_QA_USER_SEED_CMD")
+            or ""
+        ).strip()
         if not command:
             results.append({"seed": seed, "status": "skipped", "reason": "no_seed_hook_configured"})
             continue
@@ -135,8 +156,16 @@ def _run_seed_hooks(
                 "ENVCTL_QA_USER_SEEDS": ",".join(seeds),
             }
         )
-        completed = subprocess.run(shlex.split(command), env=hook_env, text=True, capture_output=True, check=False)
-        results.append({"seed": seed, "status": "ok" if completed.returncode == 0 else "failed", "code": completed.returncode})
+        completed = subprocess.run(
+            shlex.split(command),
+            env=hook_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        results.append(
+            {"seed": seed, "status": "ok" if completed.returncode == 0 else "failed", "code": completed.returncode}
+        )
     return results
 
 

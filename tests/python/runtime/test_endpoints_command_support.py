@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 from io import StringIO
 import json
-from pathlib import Path
 from types import SimpleNamespace
 import unittest
 

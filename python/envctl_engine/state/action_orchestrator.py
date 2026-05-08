@@ -24,7 +24,11 @@ from envctl_engine.ui.selection_support import (
 )
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.shared.services import service_matches_selector
-from envctl_engine.state.project_runtime import cwd_runtime_warnings, dependency_mode_summary, resolve_requested_project_state
+from envctl_engine.state.project_runtime import (
+    cwd_runtime_warnings,
+    dependency_mode_summary,
+    resolve_requested_project_state,
+)
 from envctl_engine.ui.status_symbols import health_status_badge, health_status_severity
 
 
