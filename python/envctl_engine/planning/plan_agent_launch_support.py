@@ -1050,6 +1050,11 @@ def _launch_plan_agent_omx_terminals(
     for worktree in created_worktrees:
         previous_session_id = _read_omx_session_id(runtime, worktree)
         previous_session_ids = _read_omx_session_ids(runtime, worktree)
+        previous_tmux_session_names = (
+            tuple(session_name for session_name, _pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree))
+            if create_new_session
+            else ()
+        )
         spawn_error = _spawn_omx_session_for_worktree(runtime, launch_config=launch_config, worktree=worktree)
         if spawn_error is not None:
             runtime._emit(
@@ -1075,6 +1080,7 @@ def _launch_plan_agent_omx_terminals(
             worktree=worktree,
             previous_session_id=previous_session_id,
             previous_session_ids=previous_session_ids,
+            previous_tmux_session_names=previous_tmux_session_names,
             attach_via=attach_via,
         )
         if attach_target is None:
@@ -4060,6 +4066,41 @@ def _omx_payload_candidates(record: _OmxSessionRecord, worktree: CreatedPlanWork
     return candidates
 
 
+def _previous_omx_tmux_session_names_for_worktree(
+    runtime: Any,
+    worktree: CreatedPlanWorktree,
+    *,
+    previous_session_id: str = "",
+    previous_session_ids: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    previous = {str(value).strip() for value in previous_session_ids if str(value).strip()}
+    if str(previous_session_id).strip():
+        previous.add(str(previous_session_id).strip())
+    if not previous:
+        return ()
+    names: list[str] = []
+    for record in _omx_session_records_for_worktree(runtime, worktree):
+        if not _record_cwd_matches_worktree(record, worktree):
+            continue
+        session_id = str(record.payload.get("session_id") or "").strip()
+        if session_id not in previous:
+            continue
+        for candidate in _omx_payload_candidates(record, worktree):
+            if candidate and candidate not in names:
+                names.append(candidate)
+    return tuple(names)
+
+
+def _combined_omx_tmux_exclusions(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    for group in groups:
+        for value in group:
+            name = str(value).strip()
+            if name and name not in names:
+                names.append(name)
+    return tuple(names)
+
+
 def _omx_worktree_tmux_prefixes(worktree: CreatedPlanWorktree) -> tuple[str, ...]:
     prefixes = [f"omx-{_omx_tmux_dir_token(worktree.root)}-"]
     name_prefix = f"omx-{_sanitize_omx_tmux_token(worktree.name)}-"
@@ -4115,6 +4156,7 @@ def _attach_target_from_omx_record(
     previous_session_id: str = "",
     previous_session_ids: tuple[str, ...] = (),
     candidates_checked: list[str] | None = None,
+    excluded_session_names: tuple[str, ...] = (),
 ) -> PlanAgentAttachTarget | None:
     if not _record_cwd_matches_worktree(record, worktree):
         return None
@@ -4138,9 +4180,12 @@ def _attach_target_from_omx_record(
             attach_via=attach_via,
             attach_command=_guidance_attach_command(candidate),
         )
+    excluded = {str(value).strip() for value in excluded_session_names if str(value).strip()}
     for session_name, pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree):
         if candidates_checked is not None and session_name not in candidates_checked:
             candidates_checked.append(session_name)
+        if session_name in excluded:
+            continue
         return PlanAgentAttachTarget(
             repo_root=repo_root,
             session_name=session_name,
@@ -4158,10 +4203,14 @@ def _attach_target_from_omx_tmux_pane_fallback(
     worktree: CreatedPlanWorktree,
     attach_via: str,
     candidates_checked: list[str] | None = None,
+    excluded_session_names: tuple[str, ...] = (),
 ) -> PlanAgentAttachTarget | None:
+    excluded = {str(value).strip() for value in excluded_session_names if str(value).strip()}
     for session_name, pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree):
         if candidates_checked is not None and session_name not in candidates_checked:
             candidates_checked.append(session_name)
+        if session_name in excluded:
+            continue
         return PlanAgentAttachTarget(
             repo_root=repo_root,
             session_name=session_name,
@@ -4385,10 +4434,20 @@ def _wait_for_omx_attach_target(
     worktree: CreatedPlanWorktree,
     previous_session_id: str,
     previous_session_ids: tuple[str, ...] = (),
+    previous_tmux_session_names: tuple[str, ...] = (),
     attach_via: str,
 ) -> PlanAgentAttachTarget | None:
     deadline = time.monotonic() + _OMX_SESSION_READY_TIMEOUT_SECONDS
     previous = str(previous_session_id).strip()
+    excluded_session_names = _combined_omx_tmux_exclusions(
+        _previous_omx_tmux_session_names_for_worktree(
+            runtime,
+            worktree,
+            previous_session_id=previous,
+            previous_session_ids=previous_session_ids,
+        ),
+        previous_tmux_session_names,
+    )
     while time.monotonic() < deadline:
         for record in _omx_session_records_for_worktree(runtime, worktree):
             attach_target = _attach_target_from_omx_record(
@@ -4399,6 +4458,7 @@ def _wait_for_omx_attach_target(
                 attach_via=attach_via,
                 previous_session_id=previous,
                 previous_session_ids=previous_session_ids,
+                excluded_session_names=excluded_session_names,
             )
             if attach_target is not None:
                 return attach_target
@@ -4407,6 +4467,7 @@ def _wait_for_omx_attach_target(
             repo_root=repo_root,
             worktree=worktree,
             attach_via=attach_via,
+            excluded_session_names=excluded_session_names,
         )
         if attach_target is not None:
             return attach_target
