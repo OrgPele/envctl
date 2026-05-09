@@ -88,6 +88,12 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             "repo_scope_id": runtime.config.runtime_scope_id,
         }
     )
+    dependency_mode = effective_dependency_scope(session.effective_route, session.runtime_mode)
+    metadata["dependency_mode"] = dependency_mode
+    metadata["shared_dependencies"] = dependency_mode == "shared"
+    requested_dependency_scope = session.effective_route.flags.get("dependency_scope")
+    if requested_dependency_scope is not None:
+        metadata["dependency_scope_requested"] = str(requested_dependency_scope)
     project_configured_services = _project_configured_services_metadata(runtime, session)
     if project_configured_services:
         metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = project_configured_services

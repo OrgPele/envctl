@@ -41,7 +41,7 @@ Use this section when you need to know which `envctl` commands are safe before r
 | Command family | What it covers today | Boundary |
 | --- | --- | --- |
 | launcher-owned commands | `--help`, `--version`, launcher `doctor`, `install`, `uninstall` | handled by the launcher before the normal runtime path |
-| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
+| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `endpoints`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user`, `qa-user`, `playwright` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
 | operational runtime commands | `start`, `plan`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
 
 This boundary is grounded in the current launcher and Python runtime behavior, not a separate documentation-only model.
@@ -77,6 +77,7 @@ envctl list-targets --json
 envctl list-trees --json
 envctl show-config --json
 envctl show-state --json
+envctl endpoints --project feature-a-1 --json
 envctl explain-startup --json
 envctl preflight --json
 ```
@@ -87,6 +88,8 @@ Compatibility note:
 
 - `list-commands`, `list-targets`, and `list-trees` also accept `--list-commands`, `--list-targets`, and `--list-trees`
 - `preflight` and `--preflight` expose the same startup inspection logic through the versioned `envctl.preflight.v1` JSON contract
+
+State-backed commands that accept `--project` now fail closed when the requested project is not present in the active runtime state. For example, `envctl health --project feature-a-1 --json` returns `ok=false`, `error=requested_project_not_running`, the requested project, and the active projects instead of rendering another worktree's services. Without an explicit `--project`, JSON state/health output includes `cwd_project` and `warnings` when the invocation cwd appears to belong to a different worktree than the active runtime.
 
 ## AI CLI Presets
 
@@ -183,6 +186,72 @@ Behavior:
 - JSON output includes command status, ids, emails, and errors only after secret redaction
 - if no running managed Supabase state can be loaded, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` or start the stack first with `envctl --entire-system --headless`
 
+## `endpoints`
+
+`endpoints` is the canonical machine-readable way to retrieve the active URLs and dependency ports for one running project.
+
+```bash
+envctl endpoints --project feature-a-1 --json
+envctl endpoints --project feature-a-1
+```
+
+Behavior:
+
+- requires a matching active project unless exactly one project is running
+- fails closed with `requested_project_not_running` when the requested project does not match active state
+- returns frontend/backend `local_url`, `public_url`, status, ports, dependency ports, `dependency_mode`, `shared_dependencies`, `run_id`, `mode`, and `project_root`
+- projects public URLs through `ENVCTL_PUBLIC_HOST` when a service does not already have an explicit public URL
+- emits sanitized `state.project_resolution.ok` or `state.project_resolution.failed` events with command, run id, mode, requested/selected/active projects, and inferred cwd project
+
+## `qa-user`
+
+`qa-user ensure` creates or reuses deterministic local QA credentials for the requested active project.
+
+```bash
+envctl qa-user ensure --project feature-a-1 --email qa@example.test --password local-password --json
+envctl qa-user ensure --project feature-a-1 --email qa@example.test --password local-password --seed crm,calendar --json
+```
+
+Behavior:
+
+- resolves the requested project before touching Supabase
+- uses managed Supabase connection details from that project's active runtime state, or explicit `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+- creates the Auth user when missing and reuses an existing user by email without mutation by default
+- updates existing users only with `--update-password` and/or `--update-metadata`; update responses report `updated=true` and `updated_fields` without echoing secrets beyond the explicit local JSON credentials payload
+- returns `artifact_path` and `project_resolution` in JSON output
+- writes a redacted `qa-user-ensure.json` artifact under the active run directory with user id/email, created/reused/updated flags, selected seed names, seed results, timestamp, dependency mode, and redacted credentials
+- emits a redacted `qa_user.ensure` event with project, run id, status, user id, email hash, created/reused/updated flags, and seed names/results
+- reports seed hooks as `skipped` with `reason=no_seed_hook_configured` unless `ENVCTL_QA_USER_SEED_CMD` or `ENVCTL_QA_USER_SEED_<NAME>_CMD` is configured
+- seed hook results include status, exit code, cwd, and redacted stdout/stderr snippets; service-role keys and passwords are never stored in artifacts or events
+
+## `playwright`
+
+`playwright` runs a passthrough command against an already running frontend without starting another dev server.
+
+```bash
+envctl playwright --project feature-a-1 -- npx playwright test
+envctl playwright --project feature-a-1 --json -- python -c 'import os; print(os.environ["QA_BASE_URL"])'
+```
+
+Behavior:
+
+- resolves exactly one active project through the same fail-closed project guard
+- exports `QA_BASE_URL`, `BASE_URL`, `ENVCTL_PROJECT_NAME`, `ENVCTL_RUN_ID`, `ENVCTL_RUNTIME_MODE`, and `ENVCTL_DEPENDENCY_MODE`
+- writes `playwright-endpoints.json` under the active run's `test-results` directory and exports its path as `ENVCTL_ENDPOINTS_JSON` and `ENVCTL_ENDPOINTS_JSON_PATH`
+- prefers the project's public frontend URL when one is projected or explicitly configured
+- writes `playwright-runtime-metadata.json` under the active run's `test-results` directory with the endpoint artifact path and without persisting the inherited subprocess environment
+
+
+## Runtime Resolution Events
+
+Project-scoped runtime commands emit sanitized observability events when they resolve state:
+
+- `state.project_resolution.ok` for successful guarded resolution
+- `state.project_resolution.failed` for fail-closed resolution errors such as `requested_project_not_running`, `multiple_projects_not_supported`, and `ambiguous_project_selector`
+- `state.cwd_runtime_mismatch` whenever a command computes a cwd/runtime mismatch warning, including JSON output paths
+
+Resolution events include command, run id, mode, requested projects, selected projects, active projects, and inferred cwd project. They do not include passwords, service-role keys, full environment maps, or command env maps.
+
 ## Main Runtime Commands
 
 High-value command families:
@@ -223,6 +292,7 @@ Current supported command surface:
 - `debug-report`
 - `delete-worktree`
 - `doctor`
+- `endpoints`
 - `ensure-worktree`
 - `errors`
 - `explain-startup`
@@ -236,8 +306,10 @@ Current supported command surface:
 - `logs`
 - `migrate`
 - `migrate-hooks`
+- `playwright`
 - `plan`
 - `pr`
+- `qa-user`
 - `restart`
 - `resume`
 - `review`

@@ -837,6 +837,131 @@ class CommandExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 1)
         restore_mock.assert_called_once()
 
+
+    def test_cli_health_missing_project_json_fails_closed(self) -> None:
+        state = self._runtime_smoke_state()
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, env, dispatcher = self._runtime_smoke_dispatcher(Path(tmpdir), state)
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)), redirect_stdout(stdout):
+                code = cli.run(["health", "--project", "missing", "--json"], env=env, dispatcher=dispatcher)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "requested_project_not_running")
+        self.assertEqual(payload["requested_project"], "missing")
+        self.assertEqual(payload["active_projects"], ["Alpha"])
+
+    def test_cli_show_state_missing_project_json_fails_closed(self) -> None:
+        state = self._runtime_smoke_state()
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, env, dispatcher = self._runtime_smoke_dispatcher(Path(tmpdir), state)
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)), redirect_stdout(stdout):
+                code = cli.run(["show-state", "--project", "missing", "--json"], env=env, dispatcher=dispatcher)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "requested_project_not_running")
+        self.assertNotIn("state", payload)
+
+    def test_cli_endpoints_active_project_json_reports_projected_urls(self) -> None:
+        state = self._runtime_smoke_state()
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, env, dispatcher = self._runtime_smoke_dispatcher(Path(tmpdir), state)
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)), redirect_stdout(stdout):
+                code = cli.run(["endpoints", "--project", "Alpha", "--json"], env=env, dispatcher=dispatcher)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["project"], "Alpha")
+        self.assertEqual(payload["frontend"]["public_url"], "http://public.example.test:3100")
+        self.assertEqual(payload["backend"]["public_url"], "http://public.example.test:8100")
+        self.assertNotIn("Beta", json.dumps(payload))
+
+    def test_cli_playwright_exports_qa_base_url_without_browser_binaries(self) -> None:
+        state = self._runtime_smoke_state()
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            output_path = tmp_path / "qa-base-url.txt"
+            repo, env, dispatcher = self._runtime_smoke_dispatcher(tmp_path, state)
+            python_bin = __import__("shutil").which("python3") or sys.executable
+            script = f"import os, pathlib; pathlib.Path({str(output_path)!r}).write_text(os.environ['QA_BASE_URL'])"
+            with patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)), redirect_stdout(stdout):
+                code = cli.run(
+                    ["playwright", "--project", "Alpha", "--json", "--", python_bin, "-c", script],
+                    env=env,
+                    dispatcher=dispatcher,
+                )
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "http://public.example.test:3100")
+            self.assertTrue(Path(payload["endpoints_path"]).is_file())
+
+    def _runtime_smoke_state(self):  # noqa: ANN201
+        from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+
+        return RunState(
+            run_id="run-cli-smoke",
+            mode="trees",
+            metadata={
+                "project_roots": {"Alpha": "/tmp/alpha"},
+                "dependency_mode": "isolated",
+                "shared_dependencies": False,
+            },
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend",
+                    type="backend",
+                    cwd="/tmp/alpha/api",
+                    project="Alpha",
+                    status="running",
+                    actual_port=8100,
+                ),
+                "Alpha Frontend": ServiceRecord(
+                    name="Alpha Frontend",
+                    type="frontend",
+                    cwd="/tmp/alpha/web",
+                    project="Alpha",
+                    status="running",
+                    actual_port=3100,
+                ),
+            },
+            requirements={"Alpha": RequirementsResult(project="Alpha", redis={"enabled": True, "success": True, "final": 6380})},
+        )
+
+    def _runtime_smoke_dispatcher(self, tmp_path: Path, state):  # noqa: ANN001, ANN201
+        from envctl_engine.config import load_config
+        from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+        import envctl_engine.runtime.engine_runtime as engine_runtime_module
+
+        repo = tmp_path / "repo"
+        runtime_root = tmp_path / "runtime"
+        project_root = tmp_path / "alpha"
+        (project_root / "api").mkdir(parents=True, exist_ok=True)
+        (project_root / "web").mkdir(parents=True, exist_ok=True)
+        state.metadata["project_roots"] = {"Alpha": str(project_root)}
+        state.services["Alpha Backend"].cwd = str(project_root / "api")
+        state.services["Alpha Frontend"].cwd = str(project_root / "web")
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\nENVCTL_PUBLIC_HOST=public.example.test\n", encoding="utf-8")
+        env = {"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_root)}
+        config = load_config(env)
+        runtime = PythonEngineRuntime(config, env=env)
+        runtime.state_repository.save_resume_state(
+            state=state,
+            emit=runtime._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
+        )
+
+        def dispatcher(route, config):  # noqa: ANN001
+            return PythonEngineRuntime(config, env=env).dispatch(route)
+
+        return repo, env, dispatcher
+
     @staticmethod
     def _bootstrap_result():
         return type("BootstrapResult", (), {"changed": False, "message": None})()

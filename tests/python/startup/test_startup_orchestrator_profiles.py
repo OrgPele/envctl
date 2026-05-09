@@ -131,6 +131,8 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertEqual(state.metadata.get("dashboard_dependency_scope"), "shared")
         self.assertEqual(state.metadata.get("dashboard_shared_dependency_project"), "Main")
+        self.assertEqual(state.metadata.get("dependency_mode"), "shared")
+        self.assertTrue(state.metadata.get("shared_dependencies"))
 
     def test_build_run_state_does_not_mark_isolated_tree_dependency_dashboard_scope(self) -> None:
         runtime = SimpleNamespace(
@@ -153,6 +155,31 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertNotEqual(state.metadata.get("dashboard_dependency_scope"), "shared")
         self.assertNotIn("dashboard_shared_dependency_project", state.metadata)
+        self.assertEqual(state.metadata.get("dependency_mode"), "isolated")
+        self.assertFalse(state.metadata.get("shared_dependencies"))
+        self.assertEqual(state.metadata.get("dependency_scope_requested"), "isolated")
+
+    def test_build_run_state_marks_main_dependency_mode_as_shared(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, _service_name: False,
+        )
+        contexts = [SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})]
+        route = parse_route(["--main"], env={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="main",
+            run_id="run-main",
+            selected_contexts=contexts,
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertEqual(state.metadata.get("dependency_mode"), "shared")
+        self.assertTrue(state.metadata.get("shared_dependencies"))
 
     def test_restart_service_types_respect_default_service_set(self) -> None:
         route = parse_route(["restart", "--service", "Main Frontend"], env={"ENVCTL_DEFAULT_MODE": "main"})

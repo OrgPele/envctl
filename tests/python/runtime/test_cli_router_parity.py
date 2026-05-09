@@ -35,6 +35,8 @@ class CliRouterParityTests(unittest.TestCase):
             "--install-prompts": "install-prompts",
             "--codex-tmux": "codex-tmux",
             "--debug-ui-pack": "debug-pack",
+            "--endpoints": "endpoints",
+            "--qa-user": "qa-user",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})
@@ -49,6 +51,10 @@ class CliRouterParityTests(unittest.TestCase):
             "show-state": "show-state",
             "explain-startup": "explain-startup",
             "preflight": "preflight",
+            "endpoints": "endpoints",
+            "qa-user": "qa-user",
+            "qa-users": "qa-user",
+            "playwright": "playwright",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})
@@ -77,6 +83,67 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["--trees", "--isolated-deps"], env={})
 
         self.assertEqual(route.flags.get("dependency_scope"), "isolated")
+
+        for token in ("--separate-deps", "--separate-dep", "--separate-dependency", "--separate-dependencies"):
+            with self.subTest(token=token):
+                route = parse_route(["--trees", token], env={})
+                self.assertEqual(route.flags.get("dependency_scope"), "isolated")
+
+    def test_playwright_preserves_passthrough_after_separator(self) -> None:
+        route = parse_route(
+            [
+                "playwright",
+                "--project",
+                "feature-a-1",
+                "--json",
+                "--",
+                "npx",
+                "playwright",
+                "test",
+                "--grep",
+                "smoke",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "playwright")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertTrue(route.flags.get("json"))
+        self.assertEqual(route.passthrough_args, ["npx", "playwright", "test", "--grep", "smoke"])
+
+    def test_qa_user_flags_are_parsed(self) -> None:
+        route = parse_route(
+            [
+                "qa-user",
+                "ensure",
+                "--project",
+                "feature-a-1",
+                "--email",
+                "qa@example.test",
+                "--password",
+                "secret",
+                "--locale",
+                "he-IL",
+                "--seed",
+                "crm,calendar",
+                "--seed=support",
+                "--update-password",
+                "--update-metadata",
+                "--json",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "qa-user")
+        self.assertEqual(route.passthrough_args, ["ensure"])
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertEqual(route.flags.get("email"), "qa@example.test")
+        self.assertEqual(route.flags.get("password"), "secret")
+        self.assertEqual(route.flags.get("locale"), "he-IL")
+        self.assertEqual(route.flags.get("seed"), ["crm", "calendar", "support"])
+        self.assertTrue(route.flags.get("json"))
+        self.assertTrue(route.flags.get("update_password"))
+        self.assertTrue(route.flags.get("update_metadata"))
 
     def test_setup_worktrees_allows_isolated_dependency_scope(self) -> None:
         route = parse_route(["--setup-worktrees", "feature-a", "1", "--isolated-deps"], env={})
