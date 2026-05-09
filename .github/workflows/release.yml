@@ -1,18 +1,17 @@
 name: Release
 
-# Cuts an envctl release in one shot:
+# Protected-main release flow:
 #
-#   1. Computes the next version from the current `pyproject.toml` (default
-#      bump is `patch`; can be overridden via inputs).
-#   2. Generates release notes by aggregating every PR merged since the
-#      previous version tag, using GitHub's own auto-generated release-notes
-#      endpoint.
-#   3. Updates `pyproject.toml`, `README.md` badges, and writes
-#      `docs/changelog/RELEASE_NOTES_<version>.md`.
-#   4. Commits the bump straight to `main`, tags `<version>`, builds wheel +
-#      sdist, and creates the GitHub Release with the matching notes file.
+#   1. A manual dispatch computes the next version, generates release notes,
+#      updates release metadata, and opens a release PR from
+#      `release/envctl-<version>`.
+#   2. Repository rules merge that version bump through the normal PR path.
+#   3. When that release PR is merged, this workflow builds artifacts from
+#      `main`, tags `<version>`, and creates the GitHub Release with the
+#      checked-in release notes file.
 #
-# Trigger from the Actions tab. No PR number is required.
+# Trigger from the Actions tab to prepare the release PR. Publish happens after
+# that PR is merged.
 
 on:
   workflow_dispatch:
@@ -30,20 +29,28 @@ on:
         description: "Optional explicit MAJOR.MINOR.PATCH version (overrides bump)."
         required: false
         type: string
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: prepare release PR
+    if: github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
@@ -51,14 +58,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: false
 
@@ -107,7 +114,7 @@ jobs:
             echo "new=$new"
             echo "tag=$new"
           } >> "$GITHUB_OUTPUT"
-          echo "Releasing ${previous} -> ${new} (previous tag: ${previous_tag:-<none>})"
+          echo "Preparing ${previous} -> ${new} (previous tag: ${previous_tag:-<none>})"
 
       - name: Generate release notes from merged PRs
         id: notes
@@ -159,40 +166,145 @@ jobs:
               --notes-body-file .release-tmp/notes-body.md
           fi
 
-      - name: Commit bump to main
-        env:
-          NEW_VERSION: ${{ steps.version.outputs.new }}
+      - name: Build release artifacts for validation
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add pyproject.toml README.md "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
-          git commit -m "Release envctl ${NEW_VERSION}"
-          git push origin "HEAD:main"
-
-      - name: Build wheel and sdist
-        run: |
-          set -euo pipefail
-          rm -rf dist build *.egg-info
+          rm -rf dist build ./*.egg-info
           .venv/bin/python -m build --wheel --sdist
 
-      - name: Create tag
-        env:
-          NEW_VERSION: ${{ steps.version.outputs.new }}
-        run: |
-          set -euo pipefail
-          git tag -a "$NEW_VERSION" -m "envctl ${NEW_VERSION}"
-          git push origin "$NEW_VERSION"
-
-      - name: Create GitHub Release
+      - name: Open release PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
           set -euo pipefail
+          branch="release/envctl-${NEW_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add pyproject.toml README.md "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
+
+          if git diff --cached --quiet; then
+            echo "::error::release preparation produced no version metadata changes" >&2
+            exit 1
+          fi
+
+          git commit -m "Release envctl ${NEW_VERSION}"
+          git push --force-with-lease origin "$branch"
+
+          body=".release-tmp/release-pr-body.md"
+          {
+            echo "## Summary"
+            echo "- Release envctl ${NEW_VERSION}."
+            echo "- Update pyproject metadata, README badges, and release notes."
+            echo
+            echo "## Validation"
+            echo "- .venv/bin/python scripts/release_shipability_gate.py --repo ."
+            echo "- .venv/bin/python -m build --wheel --sdist"
+            echo
+            echo "## Publish"
+            echo "Merging this PR triggers the Release workflow publish job, which tags ${NEW_VERSION} and creates the GitHub Release."
+          } > "$body"
+
+          existing_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')
+          if [ -n "$existing_url" ]; then
+            gh pr edit "$existing_url" --title "Release envctl ${NEW_VERSION}" --body-file "$body"
+            echo "Release PR already exists: $existing_url"
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$branch" \
+              --title "Release envctl ${NEW_VERSION}" \
+              --body-file "$body"
+          fi
+
+  publish:
+    name: publish merged release
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/envctl-')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: false
+
+      - name: Create validation environment
+        run: |
+          set -euo pipefail
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e '.[dev]'
+
+      - name: Resolve release metadata
+        id: release
+        run: |
+          set -euo pipefail
+          version=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          notes="docs/changelog/RELEASE_NOTES_${version}.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::release notes file is missing or empty: $notes" >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${version}" >/dev/null; then
+            echo "::notice::tag ${version} already exists; skipping publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Release shipability gate
+        if: steps.release.outputs.publish == 'true'
+        run: .venv/bin/python scripts/release_shipability_gate.py --repo .
+
+      - name: Build wheel and sdist
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          rm -rf dist build ./*.egg-info
+          .venv/bin/python -m build --wheel --sdist
+
+      - name: Create tag
+        if: steps.release.outputs.publish == 'true'
+        env:
+          NEW_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_VERSION" -m "envctl ${NEW_VERSION}"
+          git push origin "$NEW_VERSION"
+
+      - name: Create GitHub Release
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.release.outputs.version }}
+          NOTES_FILE: ${{ steps.release.outputs.notes }}
+        run: |
+          set -euo pipefail
           gh release create "$NEW_VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --title "envctl ${NEW_VERSION}" \
-            --notes-file "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md" \
+            --notes-file "$NOTES_FILE" \
             dist/*
