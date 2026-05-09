@@ -585,6 +585,7 @@ def start_project_services(
                 pid=pid,
                 requested_port=requested,
                 service_name="backend",
+                log_path=backend_log_path,
             )
             if detected is not None:
                 actual = detected
@@ -634,12 +635,14 @@ def start_project_services(
                 pid=pid,
                 requested_port=probe_port,
                 service_name="frontend",
+                log_path=frontend_log_path,
             )
             if detected is None and probe_port != requested:
                 detected = rt._detect_service_actual_port(
                     pid=pid,
                     requested_port=requested,
                     service_name="frontend",
+                    log_path=frontend_log_path,
                 )
             if detected is not None:
                 actual = detected
@@ -689,7 +692,12 @@ def start_project_services(
             )
             return None
         rt._emit("service.bind.requested", project=context.name, service=service_name, requested_port=requested)
-        detected = rt._detect_service_actual_port(pid=pid, requested_port=requested, service_name=service_name)
+        detected = rt._detect_service_actual_port(
+            pid=pid,
+            requested_port=requested,
+            service_name=service_name,
+            log_path=launch.log_path,
+        )
         if detected is not None:
             if detected != requested:
                 rt._emit("port.rebound", project=context.name, service=service_name, port=detected)
