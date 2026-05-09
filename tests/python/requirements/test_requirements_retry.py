@@ -71,6 +71,20 @@ class RequirementsRetryTests(unittest.TestCase):
         )
         self.assertEqual(failure_class, FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE)
 
+    def test_supabase_connection_refused_health_failure_is_retryable_transient_class(self) -> None:
+        orchestrator = RequirementsOrchestrator()
+        failure_class = orchestrator.classify_failure(
+            "supabase",
+            (
+                "Supabase DB is healthy but Supabase Auth/Kong is not reachable at "
+                "http://127.0.0.1:54321/auth/v1/health: "
+                "phase=http last_error=urlopen error [Errno 111] Connection refused"
+            ),
+            strict=True,
+        )
+
+        self.assertEqual(failure_class, FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE)
+
 
 if __name__ == "__main__":
     unittest.main()

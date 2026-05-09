@@ -907,7 +907,7 @@ This appendix lists every file on the startup/resume path that matters to the cu
 - [python/envctl_engine/requirements/redis.py](../../python/envctl_engine/requirements/redis.py)
   Native Redis container lifecycle.
 - [python/envctl_engine/requirements/supabase.py](../../python/envctl_engine/requirements/supabase.py)
-  Native Supabase DB/compose lifecycle and reliability contract handling.
+  Native Supabase DB/compose lifecycle and reliability contract handling. Managed Supabase readiness is two-phase: the DB listener must become healthy first, then Auth/Kong must answer `/auth/v1/health` on the published API port. After DB health, the adapter uses a loopback probe for local readiness and performs bounded, service-scoped Auth/Kong restart and recreate recovery before returning a transient probe failure.
 - [python/envctl_engine/requirements/n8n.py](../../python/envctl_engine/requirements/n8n.py)
   Native n8n container lifecycle.
 

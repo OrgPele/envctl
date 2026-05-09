@@ -123,6 +123,18 @@ class RequirementsStartupDomainTests(unittest.TestCase):
                     stage_events=[
                         {"stage": "discover", "reason": None, "detail": None, "elapsed_ms": 1.1},
                         {
+                            "stage": "supabase.db.probe",
+                            "reason": "ready",
+                            "detail": "port=5432 attempts=1",
+                            "elapsed_ms": 1.5,
+                        },
+                        {
+                            "stage": "supabase.auth.inspect",
+                            "reason": "initial_probe_failed",
+                            "detail": "supabase-auth:status=running",
+                            "elapsed_ms": 1.8,
+                        },
+                        {
                             "stage": "probe.retry.restart",
                             "reason": "transient_probe_timeout_retryable",
                             "detail": None,
@@ -167,6 +179,13 @@ class RequirementsStartupDomainTests(unittest.TestCase):
         self.assertIn("requirements.adapter.retry_path", emitted_names)
         self.assertIn("requirements.adapter.port_mismatch", emitted_names)
         self.assertIn("requirements.adapter", emitted_names)
+        emitted_stages = [
+            str(event.get("stage", ""))
+            for event in runtime.events
+            if event.get("event") == "requirements.adapter.stage"
+        ]
+        self.assertIn("supabase.db.probe", emitted_stages)
+        self.assertIn("supabase.auth.inspect", emitted_stages)
 
         adapter_events = [item for item in runtime.events if item.get("event") == "requirements.adapter"]
         self.assertTrue(adapter_events)
