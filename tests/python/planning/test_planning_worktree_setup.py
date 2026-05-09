@@ -64,6 +64,40 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual(selected, [])
             self.assertIn("Planning file not found", out.getvalue())
 
+    def test_plan_selection_uses_execution_root_plans_from_linked_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+            (worktree / "todo" / "plans" / "features").mkdir(parents=True, exist_ok=True)
+            (worktree / "todo" / "plans" / "features" / "task.md").write_text("# task\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            engine = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_EXECUTION_ROOT": str(worktree),
+                    "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                },
+            )
+            route = parse_route(["--plan", "features/task"], env={})
+
+            selected = engine._select_plan_projects(route, [])
+
+            self.assertEqual(engine.config.base_dir, repo.resolve())
+            self.assertEqual(engine.config.planning_dir, (worktree / "todo" / "plans").resolve())
+            self.assertEqual([ctx.name for ctx in selected], ["features_task-1"])
+            self.assertEqual(
+                (repo / "trees" / "features_task" / "1" / "MAIN_TASK.md").read_text(encoding="utf-8"),
+                "# task\n",
+            )
+
 
     def test_interactive_plan_dry_run_previews_without_syncing_worktrees_or_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

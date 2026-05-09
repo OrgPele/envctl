@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from envctl_engine.runtime import cli as runtime_cli
 from envctl_engine.runtime.launcher_support import (
     LauncherError,
+    find_repo_root_from_cwd,
     install_or_uninstall,
     launcher_doctor_payload,
     launcher_doctor_text,
@@ -72,12 +73,28 @@ def _binary_path() -> str:
         return argv0
 
 
-def _forward_to_engine(root: Path, repo_root: Path, argv: Sequence[str]) -> int:
+def _resolve_execution_root(*, repo_arg: str | None, cwd: Path) -> Path:
+    if repo_arg:
+        candidate = Path(repo_arg).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        detected = find_repo_root_from_cwd(candidate.resolve())
+        if detected is None:
+            raise LauncherError(f"Invalid --repo path: {repo_arg}")
+        return detected.resolve()
+    detected = find_repo_root_from_cwd(cwd)
+    if detected is None:
+        raise LauncherError("Could not resolve repository root. Use --repo <path>.")
+    return detected.resolve()
+
+
+def _forward_to_engine(root: Path, repo_root: Path, execution_root: Path, argv: Sequence[str]) -> int:
     env = dict(os.environ)
     env["ENVCTL_ROOT_DIR"] = str(root)
     env["RUN_LAUNCHER_NAME"] = "envctl"
     env["RUN_LAUNCHER_CONTEXT"] = "envctl"
     env["RUN_REPO_ROOT"] = str(repo_root)
+    env["ENVCTL_EXECUTION_ROOT"] = str(execution_root)
     env["RUN_ENGINE_PATH"] = "python:envctl_engine.runtime.cli"
     env["ENVCTL_INVOCATION_CWD"] = str(Path.cwd().resolve())
     return int(runtime_cli.run(list(argv), env=env))
@@ -126,8 +143,10 @@ def run(argv: Sequence[str] | None = None) -> int:
                     )
                 )
             return 0
-        repo_root = resolve_repo_root(repo_arg=repo_arg, cwd=Path.cwd())
-        return _forward_to_engine(root, repo_root, argv)
+        cwd = Path.cwd()
+        repo_root = resolve_repo_root(repo_arg=repo_arg, cwd=cwd)
+        execution_root = _resolve_execution_root(repo_arg=repo_arg, cwd=cwd)
+        return _forward_to_engine(root, repo_root, execution_root, argv)
     except LauncherError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -89,6 +89,8 @@ class CommandExitCodeTests(unittest.TestCase):
             worktree.mkdir(parents=True, exist_ok=True)
             (worktree / "api").mkdir(parents=True, exist_ok=True)
             (worktree / "api" / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (worktree / "todo" / "plans" / "features").mkdir(parents=True, exist_ok=True)
+            (worktree / "todo" / "plans" / "features" / "task.md").write_text("# task\n", encoding="utf-8")
             (repo / ".git").mkdir(exist_ok=True)
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
             (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
@@ -99,6 +101,7 @@ class CommandExitCodeTests(unittest.TestCase):
                 seen["base_dir"] = config.base_dir
                 seen["execution_root"] = config.execution_root
                 seen["backend_dir_name"] = config.backend_dir_name
+                seen["planning_dir"] = config.planning_dir
                 return 0
 
             code = cli.run(
@@ -111,6 +114,7 @@ class CommandExitCodeTests(unittest.TestCase):
         self.assertEqual(seen.get("base_dir"), repo.resolve())
         self.assertEqual(seen.get("execution_root"), worktree.resolve())
         self.assertEqual(seen.get("backend_dir_name"), "api")
+        self.assertEqual(seen.get("planning_dir"), (worktree / "todo" / "plans").resolve())
 
     def test_cli_route_uses_default_mode_from_repo_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
