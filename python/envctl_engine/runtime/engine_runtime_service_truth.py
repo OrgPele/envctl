@@ -27,7 +27,12 @@ def service_listener_failure_detail(runtime: Any, *, log_path: str | None, pid: 
             pass
     if isinstance(log_path, str) and log_path.strip():
         parts.append(f"log_path: {log_path}")
-    log_hint = tail_log_error_line(log_path)
+    progress_hint = tail_log_startup_progress_line(log_path)
+    if progress_hint:
+        parts.append(f"startup still in progress: {progress_hint}")
+        log_hint = None
+    else:
+        log_hint = tail_log_error_line(log_path)
     if log_hint:
         parts.append(f"log: {log_hint}")
     if not parts:
@@ -185,6 +190,44 @@ def service_startup_progress_timeout(runtime: Any) -> float:
         return 0.0
 
 
+def emit_service_startup_progress_once(
+    runtime: Any,
+    *,
+    service_name: str,
+    pid: int,
+    port: int,
+    progress_line: str,
+    emitted_progress_lines: set[str],
+) -> None:
+    if progress_line in emitted_progress_lines:
+        return
+    emitted_progress_lines.add(progress_line)
+    runtime._emit(
+        "service.startup.progress",
+        service=service_name,
+        pid=pid,
+        port=port,
+        log=progress_line,
+    )
+
+
+def emit_service_startup_progress_timeout(
+    runtime: Any,
+    *,
+    service_name: str,
+    pid: int,
+    port: int,
+    progress_line: str,
+) -> None:
+    runtime._emit(
+        "service.startup.progress.timeout",
+        service=service_name,
+        pid=pid,
+        port=port,
+        log=progress_line,
+    )
+
+
 def detect_service_actual_port(
     runtime: Any,
     *,
@@ -212,30 +255,44 @@ def detect_service_actual_port(
             if not progress_line:
                 return requested_port
             if time.monotonic() >= progress_deadline:
-                return requested_port
-            if progress_line not in emitted_progress_lines:
-                emitted_progress_lines.add(progress_line)
-                runtime._emit(
-                    "service.startup.progress",
-                    service=service_name,
+                emit_service_startup_progress_timeout(
+                    runtime,
+                    service_name=service_name,
                     pid=pid,
                     port=requested_port,
-                    log=progress_line,
+                    progress_line=progress_line,
                 )
+                return None
+            emit_service_startup_progress_once(
+                runtime,
+                service_name=service_name,
+                pid=pid,
+                port=requested_port,
+                progress_line=progress_line,
+                emitted_progress_lines=emitted_progress_lines,
+            )
             time.sleep(min(max(runtime._service_listener_timeout(), 0.05), 1.0))
             continue
         progress_line = tail_log_startup_progress_line(log_path)
         if not progress_line or time.monotonic() >= progress_deadline:
+            if progress_line:
+                emit_service_startup_progress_timeout(
+                    runtime,
+                    service_name=service_name,
+                    pid=pid,
+                    port=requested_port,
+                    progress_line=progress_line,
+                )
+                return None
             break
-        if progress_line not in emitted_progress_lines:
-            emitted_progress_lines.add(progress_line)
-            runtime._emit(
-                "service.startup.progress",
-                service=service_name,
-                pid=pid,
-                port=requested_port,
-                log=progress_line,
-            )
+        emit_service_startup_progress_once(
+            runtime,
+            service_name=service_name,
+            pid=pid,
+            port=requested_port,
+            progress_line=progress_line,
+            emitted_progress_lines=emitted_progress_lines,
+        )
         time.sleep(min(max(runtime._service_listener_timeout(), 0.05), 1.0))
     if debug_listener_group not in {"", "rebound_discovery"}:
         return None
