@@ -113,6 +113,47 @@ class EndpointsCommandSupportTests(unittest.TestCase):
         self.assertEqual(payload["dependencies"]["supabase_api"]["port"], 54321)
         self.assertNotIn("feature-b-1", json.dumps(payload))
 
+    def test_command_uses_runtime_project_resolver_for_endpoint_services(self) -> None:
+        state = RunState(
+            run_id="run-runtime-endpoints",
+            mode="trees",
+            services={
+                "opaque-backend": ServiceRecord(
+                    name="opaque-backend",
+                    type="backend",
+                    cwd="/tmp/canonical/api",
+                    status="running",
+                    actual_port=8100,
+                ),
+                "opaque-frontend": ServiceRecord(
+                    name="opaque-frontend",
+                    type="frontend",
+                    cwd="/tmp/canonical/web",
+                    status="running",
+                    actual_port=3100,
+                ),
+            },
+        )
+        runtime = SimpleNamespace(
+            env={"ENVCTL_PUBLIC_HOST": "public.example.test"},
+            config=SimpleNamespace(raw={}),
+            _try_load_existing_state=lambda **_kwargs: state,
+            _state_lookup_strict_mode_match=lambda _route: True,
+            _project_name_from_service=lambda _service_name: "Canonical",
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        route = Route(command="endpoints", mode="trees", projects=["Canonical"], flags={"json": True})
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            code = run_endpoints_command(runtime, route)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["backend"]["local_url"], "http://localhost:8100")
+        self.assertEqual(payload["project_root"], "/tmp/canonical/api")
+        self.assertEqual(payload["frontend"]["public_url"], "http://public.example.test:3100")
+
     def test_command_requires_project_when_state_has_multiple_projects(self) -> None:
         runtime = SimpleNamespace(
             env={},

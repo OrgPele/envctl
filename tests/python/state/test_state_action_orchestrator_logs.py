@@ -548,7 +548,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         )
         runtime = _RuntimeStub(state)
         orchestrator = StateActionOrchestrator(runtime)
-        route = Route(command="health", mode="trees", projects=["alpha"], flags={"json": True})
+        route = Route(command="health", mode="trees", projects=["Alpha"], flags={"json": True})
 
         output = StringIO()
         with redirect_stdout(output):
@@ -651,7 +651,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         orchestrator = StateActionOrchestrator(runtime)
 
         with redirect_stdout(StringIO()):
-            code = orchestrator.execute(Route(command="health", mode="trees", projects=["alpha"], flags={"json": True}))
+            code = orchestrator.execute(Route(command="health", mode="trees", projects=["Alpha"], flags={"json": True}))
 
         self.assertEqual(code, 0)
         events = [event for event in runtime.events if event.get("event") == "state.project_resolution.ok"]
@@ -659,7 +659,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertEqual(events[0]["command"], "health")
         self.assertEqual(events[0]["run_id"], "run-resolution-ok")
         self.assertEqual(events[0]["mode"], "trees")
-        self.assertEqual(events[0]["requested_projects"], ["alpha"])
+        self.assertEqual(events[0]["requested_projects"], ["Alpha"])
         self.assertEqual(events[0]["selected_projects"], ["Alpha"])
         self.assertEqual(events[0]["active_projects"], ["Alpha", "Beta"])
         self.assertEqual(events[0]["cwd_project"], "Alpha")

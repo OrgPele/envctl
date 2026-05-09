@@ -9,6 +9,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import subprocess
 
 from envctl_engine.requirements.supabase_auth_users import SupabaseAuthUserRecord
 from envctl_engine.runtime.command_router import Route
@@ -270,6 +271,35 @@ class QaUserCommandSupportTests(unittest.TestCase):
             self.assertIn("http://127.0.0.1:54321", result["stdout"])
             self.assertNotIn("service-secret", json.dumps(payload))
             self.assertEqual((project_root / "seed.cwd").read_text(encoding="utf-8"), str(project_root))
+
+    def test_seed_hook_runs_with_timeout_and_reports_timeout_failure(self) -> None:
+        route = Route(
+            command="qa-user",
+            mode="trees",
+            projects=["feature-a-1"],
+            passthrough_args=["ensure"],
+            flags={"json": True, "email": "qa@example.test", "password": "secret", "seed": ["crm"]},
+        )
+        stdout = StringIO()
+        captured: dict[str, object] = {}
+
+        def fake_run(*args, **kwargs):  # noqa: ANN001
+            captured.update(kwargs)
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+
+        with (
+            patch("envctl_engine.runtime.qa_user_command_support.SupabaseAuthAdminClient", _FakeClient),
+            patch("envctl_engine.runtime.qa_user_command_support.subprocess.run", side_effect=fake_run),
+        ):
+            with redirect_stdout(stdout):
+                code = run_qa_user_command(self._runtime(seed_cmd=f"{sys.executable} -c pass"), route)
+
+        payload = json.loads(stdout.getvalue())
+        result = payload["seed_results"][0]
+        self.assertEqual(code, 1)
+        self.assertGreater(captured["timeout"], 0)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["reason"], "timeout")
 
     def test_explicit_env_fallback_keeps_service_role_key_out_of_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

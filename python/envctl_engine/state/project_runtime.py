@@ -117,25 +117,9 @@ def resolve_requested_project_state(
             error="multiple_projects_not_supported",
         )
     canonical_by_exact = {project: project for project in active}
-    canonical_by_normalized: dict[str, list[str]] = {}
-    for project in active:
-        canonical_by_normalized.setdefault(_normalize_project_selector(project), []).append(project)
     selected: list[str] = []
     for project in requested:
         canonical = canonical_by_exact.get(project)
-        if canonical is None:
-            matches = canonical_by_normalized.get(_normalize_project_selector(project), [])
-            if len(matches) > 1:
-                return ProjectRuntimeResolution(
-                    ok=False,
-                    command=command,
-                    requested_projects=requested,
-                    active_projects=active,
-                    selected_projects=selected,
-                    error="ambiguous_project_selector",
-                    matches=matches,
-                )
-            canonical = matches[0] if matches else None
         if canonical is None:
             return ProjectRuntimeResolution(
                 ok=False,
@@ -153,23 +137,38 @@ def resolve_requested_project_state(
         requested_projects=requested,
         active_projects=active,
         selected_projects=selected,
-        state=filter_state_to_projects(state, selected),
+        state=filter_state_to_projects(state, selected, runtime=runtime),
     )
 
+def _service_project_name(service_name: str, service: object, *, runtime: Any | None = None) -> str:
+    explicit_project = str(getattr(service, "project", "") or "").strip()
+    if explicit_project:
+        return explicit_project
+    if runtime is not None:
+        resolver = getattr(runtime, "_project_name_from_service", None)
+        if callable(resolver):
+            try:
+                resolved = str(resolver(str(service_name)) or "").strip()
+            except Exception:
+                resolved = ""
+            if resolved:
+                return resolved
+    return service_project_name(service)
 
 
-def _normalize_project_selector(project: str) -> str:
-    return str(project).strip().casefold()
-
-
-def filter_state_to_projects(state: RunState, projects: list[str] | tuple[str, ...] | set[str]) -> RunState:
+def filter_state_to_projects(
+    state: RunState,
+    projects: list[str] | tuple[str, ...] | set[str],
+    *,
+    runtime: Any | None = None,
+) -> RunState:
     selected = {str(project).strip() for project in projects if str(project).strip()}
     if not selected:
         return RunState(run_id=state.run_id, mode=state.mode)
     services = {
         name: service
         for name, service in state.services.items()
-        if service_project_name(service) in selected
+        if _service_project_name(name, service, runtime=runtime) in selected
     }
     requirements = _filtered_requirements(state.requirements, selected)
     metadata = dict(state.metadata)
@@ -229,14 +228,14 @@ def dependency_mode_summary(state: RunState) -> dict[str, object]:
     return {"dependency_mode": "unknown", "shared_dependencies": None}
 
 
-def project_root_for_state(state: RunState, project: str) -> str | None:
+def project_root_for_state(state: RunState, project: str, *, runtime: Any | None = None) -> str | None:
     roots = getattr(state, "metadata", {}).get("project_roots")
     if isinstance(roots, Mapping):
         raw = roots.get(project)
         if raw is not None and str(raw).strip():
             return str(raw).strip()
-    for service in state.services.values():
-        if service_project_name(service) == project:
+    for service_name, service in state.services.items():
+        if _service_project_name(service_name, service, runtime=runtime) == project:
             cwd = str(getattr(service, "cwd", "") or "").strip()
             if cwd:
                 return cwd

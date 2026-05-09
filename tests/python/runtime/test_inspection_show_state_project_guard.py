@@ -78,7 +78,7 @@ class ShowStateProjectGuardTests(unittest.TestCase):
 
     def test_success_json_filters_state_and_runtime_map_to_selected_project(self) -> None:
         runtime = self._runtime()
-        route = Route(command="show-state", mode="trees", projects=["alpha"], flags={"json": True})
+        route = Route(command="show-state", mode="trees", projects=["Alpha"], flags={"json": True})
         stdout = StringIO()
 
         with redirect_stdout(stdout):
@@ -95,7 +95,7 @@ class ShowStateProjectGuardTests(unittest.TestCase):
 
     def test_success_json_with_all_keeps_full_state(self) -> None:
         runtime = self._runtime()
-        route = Route(command="show-state", mode="trees", projects=["alpha"], flags={"json": True, "all": True})
+        route = Route(command="show-state", mode="trees", projects=["Alpha"], flags={"json": True, "all": True})
         stdout = StringIO()
 
         with redirect_stdout(stdout):

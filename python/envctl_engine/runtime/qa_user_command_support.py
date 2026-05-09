@@ -22,6 +22,7 @@ from envctl_engine.state.project_runtime import (
 
 _REDACTED = "<redacted>"
 _SNIPPET_LIMIT = 4096
+_DEFAULT_SEED_HOOK_TIMEOUT_SECONDS = 120.0
 
 
 def run_qa_user_command(runtime: Any, route: Route) -> int:
@@ -214,7 +215,13 @@ def _run_seed_hooks(
     raw = getattr(getattr(runtime, "config", None), "raw", {}) or {}
     runtime_env = dict(getattr(runtime, "env", {}) or {})
     results: list[dict[str, object]] = []
-    cwd = Path(str(project_root_for_state(state, project) or runtime_env.get("ENVCTL_INVOCATION_CWD") or os.getcwd()))
+    cwd = Path(
+        str(
+            project_root_for_state(state, project, runtime=runtime)
+            or runtime_env.get("ENVCTL_INVOCATION_CWD")
+            or os.getcwd()
+        )
+    )
     for seed in seeds:
         key = f"ENVCTL_QA_USER_SEED_{seed.upper().replace('-', '_')}_CMD"
         command = str(
@@ -239,14 +246,29 @@ def _run_seed_hooks(
                 "ENVCTL_QA_USER_SEEDS": ",".join(seeds),
             }
         )
-        completed = subprocess.run(
-            shlex.split(command),
-            cwd=str(cwd),
-            env=hook_env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                shlex.split(command),
+                cwd=str(cwd),
+                env=hook_env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=_seed_hook_timeout_seconds(runtime),
+            )
+        except subprocess.TimeoutExpired as exc:
+            results.append(
+                {
+                    "seed": seed,
+                    "status": "failed",
+                    "reason": "timeout",
+                    "timeout_seconds": exc.timeout,
+                    "cwd": str(cwd),
+                    "stdout": _redact_text(exc.stdout, secrets),
+                    "stderr": _redact_text(exc.stderr, secrets),
+                }
+            )
+            continue
         status = "ok" if completed.returncode == 0 else "failed"
         results.append(
             {
@@ -287,6 +309,17 @@ def _supabase_component_env(requirements: object | None) -> dict[str, str]:
         return {}
     raw_env = component.get("env") if isinstance(component.get("env"), dict) else {}
     return {str(key): str(value) for key, value in raw_env.items() if str(value).strip()}
+
+
+def _seed_hook_timeout_seconds(runtime: Any) -> float:
+    raw = getattr(getattr(runtime, "config", None), "raw", {}) or {}
+    runtime_env = getattr(runtime, "env", {}) if isinstance(getattr(runtime, "env", {}), dict) else {}
+    value = runtime_env.get("ENVCTL_QA_USER_SEED_TIMEOUT_SECONDS") or raw.get("ENVCTL_QA_USER_SEED_TIMEOUT_SECONDS")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_SEED_HOOK_TIMEOUT_SECONDS
+    return parsed if parsed > 0 else _DEFAULT_SEED_HOOK_TIMEOUT_SECONDS
 
 
 def _seed_values(raw: object) -> list[str]:

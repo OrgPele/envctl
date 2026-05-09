@@ -54,6 +54,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
         project=project,
         env=getattr(runtime, "env", {}),
         config=getattr(runtime, "config", None),
+        runtime=runtime,
     )
     frontend = endpoints.get("frontend") if isinstance(endpoints.get("frontend"), dict) else {}
     selected_url = str(frontend.get("public_url") or frontend.get("local_url") or "").strip()
@@ -63,7 +64,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
             json_output=json_output,
             ok=False,
         )
-    cwd = Path(str(project_root_for_state(selected_state, project) or ".")).resolve()
+    cwd = Path(str(project_root_for_state(selected_state, project, runtime=runtime) or ".")).resolve()
     env = dict(os.environ)
     env.update({str(key): str(value) for key, value in (getattr(runtime, "env", {}) or {}).items()})
     metadata_path = _metadata_path(runtime, state.run_id)

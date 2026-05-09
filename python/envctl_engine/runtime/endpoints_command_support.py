@@ -14,6 +14,7 @@ from envctl_engine.state.project_runtime import (
     project_root_for_state,
     resolve_requested_project_state,
 )
+from envctl_engine.shared.services import service_project_name
 
 
 def run_endpoints_command(runtime: Any, route: Route) -> int:
@@ -44,6 +45,7 @@ def run_endpoints_command(runtime: Any, route: Route) -> int:
         project=project,
         env=getattr(runtime, "env", {}),
         config=getattr(runtime, "config", None),
+        runtime=runtime,
     )
     return _emit_payload(payload, json_output=json_output, ok=bool(payload.get("ok")))
 
@@ -54,10 +56,23 @@ def build_endpoints_payload(
     project: str,
     env: Mapping[str, str] | None,
     config: Any | None,
+    runtime: Any | None = None,
 ) -> dict[str, object]:
     public_host = resolve_public_host(env=env, config=config)
-    backend = _service_endpoint(state, project=project, service_type="backend", public_host=public_host)
-    frontend = _service_endpoint(state, project=project, service_type="frontend", public_host=public_host)
+    backend = _service_endpoint(
+        state,
+        project=project,
+        service_type="backend",
+        public_host=public_host,
+        runtime=runtime,
+    )
+    frontend = _service_endpoint(
+        state,
+        project=project,
+        service_type="frontend",
+        public_host=public_host,
+        runtime=runtime,
+    )
     requirements = _requirements_for_project(state, project)
     dependency_summary = dependency_mode_summary(state)
     return {
@@ -65,7 +80,7 @@ def build_endpoints_payload(
         "run_id": state.run_id,
         "mode": state.mode,
         "project": project,
-        "project_root": project_root_for_state(state, project),
+        "project_root": project_root_for_state(state, project, runtime=runtime),
         "dependency_mode": dependency_summary["dependency_mode"],
         "shared_dependencies": dependency_summary["shared_dependencies"],
         "frontend": frontend,
@@ -80,8 +95,9 @@ def _service_endpoint(
     project: str,
     service_type: str,
     public_host: str,
+    runtime: Any | None = None,
 ) -> dict[str, object]:
-    service = _service_for_project_type(state, project=project, service_type=service_type)
+    service = _service_for_project_type(state, project=project, service_type=service_type, runtime=runtime)
     if service is None:
         return {"status": "missing", "port": None, "local_url": None, "public_url": None}
     port = service.actual_port if service.actual_port is not None else service.requested_port
@@ -100,19 +116,35 @@ def _service_endpoint(
     }
 
 
-def _service_for_project_type(state: RunState, *, project: str, service_type: str) -> ServiceRecord | None:
-    for service in state.services.values():
-        if str(getattr(service, "project", "") or "").strip() != project:
-            continue
-        if str(getattr(service, "type", "") or "").strip().lower() == service_type:
-            return service
-    for service in state.services.values():
-        name = str(getattr(service, "name", "") or "")
-        if not name.startswith(f"{project} "):
+def _service_for_project_type(
+    state: RunState,
+    *,
+    project: str,
+    service_type: str,
+    runtime: Any | None = None,
+) -> ServiceRecord | None:
+    for service_name, service in state.services.items():
+        if _service_project_name(service_name, service, runtime=runtime) != project:
             continue
         if str(getattr(service, "type", "") or "").strip().lower() == service_type:
             return service
     return None
+
+
+def _service_project_name(service_name: str, service: ServiceRecord, *, runtime: Any | None = None) -> str:
+    explicit = str(getattr(service, "project", "") or "").strip()
+    if explicit:
+        return explicit
+    if runtime is not None:
+        resolver = getattr(runtime, "_project_name_from_service", None)
+        if callable(resolver):
+            try:
+                resolved = str(resolver(str(service_name)) or "").strip()
+            except Exception:
+                resolved = ""
+            if resolved:
+                return resolved
+    return service_project_name(service)
 
 
 def _requirements_for_project(state: RunState, project: str) -> RequirementsResult | None:

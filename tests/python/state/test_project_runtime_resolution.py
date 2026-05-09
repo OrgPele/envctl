@@ -29,7 +29,7 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
 
         self.assertEqual(active_project_names(state), ["alpha", "beta", "delta", "gamma"])
 
-    def test_requested_project_match_filters_state_to_canonical_project(self) -> None:
+    def test_exact_requested_project_match_filters_state_to_canonical_project(self) -> None:
         state = RunState(
             run_id="run-active",
             mode="trees",
@@ -44,10 +44,10 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
             metadata={"project_roots": {"Alpha": "/tmp/a", "Beta": "/tmp/b"}},
         )
 
-        resolution = resolve_requested_project_state(state, ["alpha"], command="health")
+        resolution = resolve_requested_project_state(state, ["Alpha"], command="health")
 
         self.assertTrue(resolution.ok)
-        self.assertEqual(resolution.requested_project, "alpha")
+        self.assertEqual(resolution.requested_project, "Alpha")
         self.assertEqual(resolution.selected_projects, ["Alpha"])
         self.assertIsNotNone(resolution.state)
         assert resolution.state is not None
@@ -56,32 +56,28 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
         self.assertEqual(resolution.state.metadata["project_roots"], {"Alpha": "/tmp/a"})
 
 
-    def test_ambiguous_normalized_project_selector_fails_closed(self) -> None:
+    def test_case_mismatched_project_selector_fails_closed(self) -> None:
         state = RunState(
-            run_id="run-ambiguous",
+            run_id="run-case",
             mode="trees",
-            requirements={
-                "Feature-A": RequirementsResult(project="Feature-A"),
-                "feature-a": RequirementsResult(project="feature-a"),
-            },
+            requirements={"Feature-A": RequirementsResult(project="Feature-A")},
         )
 
-        resolution = resolve_requested_project_state(state, ["FEATURE-A"], command="health")
+        resolution = resolve_requested_project_state(state, ["feature-a"], command="health")
 
         self.assertFalse(resolution.ok)
-        self.assertEqual(resolution.error, "ambiguous_project_selector")
+        self.assertEqual(resolution.error, "requested_project_not_running")
         self.assertEqual(
             resolution.payload(),
             {
                 "ok": False,
-                "error": "ambiguous_project_selector",
-                "requested_project": "FEATURE-A",
-                "active_projects": ["Feature-A", "feature-a"],
-                "matches": ["Feature-A", "feature-a"],
+                "error": "requested_project_not_running",
+                "requested_project": "feature-a",
+                "active_projects": ["Feature-A"],
             },
         )
 
-    def test_exact_match_wins_when_normalized_project_names_collide(self) -> None:
+    def test_exact_match_still_works_when_case_variants_are_active(self) -> None:
         state = RunState(
             run_id="run-exact",
             mode="trees",
@@ -173,6 +169,21 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
         )
 
         self.assertEqual(active_project_names(state, runtime=runtime), ["Canonical"])
+
+    def test_runtime_backed_project_resolution_keeps_matching_services(self) -> None:
+        runtime = SimpleNamespace(_project_name_from_service=lambda service_name: "Canonical")
+        state = RunState(
+            run_id="run-runtime-filter",
+            mode="trees",
+            services={"raw-service": ServiceRecord(name="raw-service", type="backend", cwd="/tmp/raw")},
+        )
+
+        resolution = resolve_requested_project_state(state, ["Canonical"], command="health", runtime=runtime)
+
+        self.assertTrue(resolution.ok)
+        self.assertIsNotNone(resolution.state)
+        assert resolution.state is not None
+        self.assertEqual(set(resolution.state.services), {"raw-service"})
 
     def test_cwd_runtime_warning_reports_when_invocation_cwd_differs_from_active_project(self) -> None:
         state = RunState(
