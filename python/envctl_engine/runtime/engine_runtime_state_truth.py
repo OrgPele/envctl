@@ -6,6 +6,7 @@ import concurrent.futures
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.requirements.component_ports import component_primary_port
 from envctl_engine.requirements.common import build_container_name, container_exists, container_host_port
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.state.models import RequirementsResult, RunState
@@ -20,7 +21,7 @@ def state_fingerprint(state: RunState) -> str:
 
 
 def requirement_component_port(component_data: dict[str, object]) -> object:
-    return component_data.get("final") or component_data.get("requested")
+    return component_primary_port(component_data)
 
 
 def reconcile_requirement_container_ports(

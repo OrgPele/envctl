@@ -191,7 +191,7 @@ def _dependency_endpoints(requirements: RequirementsResult | None) -> dict[str, 
         endpoints["supabase_api"] = {
             "enabled": bool(supabase.get("enabled")),
             "status": str(supabase.get("runtime_status") or ("healthy" if supabase.get("success") else "unknown")),
-            "port": positive_int(resources.get("api")) or positive_int(supabase.get("final")),
+            "port": positive_int(resources.get("api")),
         }
     return endpoints
 

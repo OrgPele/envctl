@@ -495,7 +495,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
                         "enabled": True,
                         "runtime_status": "healthy",
                         "success": True,
-                        "resources": {"db": 5574, "api": 54463, "primary": 5574},
+                        "resources": {"db": 5574, "api": 54463, "primary": 5574, "requested": 5662},
                     },
                 )
             },

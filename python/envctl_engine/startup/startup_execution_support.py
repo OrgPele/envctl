@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from envctl_engine.requirements.common import build_container_name
 from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.requirements.component_ports import dependency_display_port
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.requirements.supabase_auth_users import (
     sync_results_to_requirement_payload,
@@ -409,13 +410,7 @@ def _float_ms(value: object) -> float:
 
 def _component_port_summary(requirements: RequirementsResult, dependency_id: str) -> int | None:
     component = requirements.component(dependency_id)
-    final_port = component.get("final")
-    if isinstance(final_port, int) and final_port > 0:
-        return final_port
-    requested_port = component.get("requested")
-    if isinstance(requested_port, int) and requested_port > 0:
-        return requested_port
-    return None
+    return dependency_display_port(dependency_id, component)
 
 
 def _service_ready_label(service: object | None) -> str:
