@@ -438,6 +438,33 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             "postgres:FailureClass.BIND_CONFLICT_RETRYABLE:bind: address already in use",
         )
 
+    def test_requirements_failure_message_keeps_supabase_auth_kong_traceback_condensed(self) -> None:
+        concise_error = (
+            "Supabase DB is healthy but Supabase Auth/Kong is not reachable at "
+            "http://127.0.0.1:54321/auth/v1/health: "
+            "phase=http actions=initial_probe,restart,recreate last_error="
+            "urlopen error [Errno 111] Connection refused"
+        )
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            components={
+                "supabase": {
+                    "enabled": True,
+                    "success": False,
+                    "error": concise_error,
+                }
+            },
+            health="degraded",
+            failures=[f"supabase:FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE:{concise_error}"],
+        )
+
+        message = _requirements_failure_message("feature-a-1", requirements)
+
+        self.assertIn("Requirements unavailable for feature-a-1", message)
+        self.assertIn("supabase:FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE", message)
+        self.assertIn("Connection refused", message)
+        self.assertNotIn("Traceback", message)
+
     def test_start_project_services_allows_parallel_prep_with_sequential_attach_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

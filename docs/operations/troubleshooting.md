@@ -179,6 +179,21 @@ Check toggles:
 - `REDIS_*`
 - `N8N_*`
 
+## Supabase DB is healthy but Auth/Kong is not reachable
+
+Managed Supabase has two readiness phases: PostgreSQL first, then the Auth API through Kong at `/auth/v1/health`. This error means the DB listener became healthy but the published Supabase API port did not pass the Auth/Kong health probe before bounded recovery was exhausted.
+
+Envctl probes the local loopback URL for the published Supabase API port, while preserving `SUPABASE_PUBLIC_URL` / `SUPABASE_URL` for app and browser access. If the probe fails, envctl can restart only `supabase-auth` and `supabase-kong`, then optionally stop/remove/recreate only those secondary services. It does not remove the Supabase DB service or volumes from this recovery path.
+
+Useful knobs:
+- `ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS`
+- `ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE`
+- `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS`
+- `ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE`
+- `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS`
+
+For stage evidence, rerun with `ENVCTL_DEBUG_REQUIREMENTS_TRACE=true`. The trace includes stages such as `supabase.db.up`, `supabase.secondary.up`, `supabase.auth.probe`, `supabase.auth.restart`, `supabase.auth.recreate`, and the condensed last probe error. If scoped Auth/Kong recovery is exhausted because the managed compose contract or initialized DB state is invalid, use the existing Supabase reinit/cleanup workflow rather than manually deleting Docker volumes.
+
 ## Alembic or settings import fails before migrations run
 - Run:
   - `envctl migrate --project <target>`

@@ -58,6 +58,8 @@ def start_supabase_stack(
     runtime_root: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ContainerStartResult:
+    stage_events: list[dict[str, object]] = []
+    probe_attempts: list[dict[str, object]] = []
     compose_project_name = build_supabase_project_name(
         project_root=project_root,
         project_name=project_name,
@@ -101,6 +103,7 @@ def start_supabase_stack(
     gateway_service = _resolve_service_name(available_services, ("supabase-kong", "kong", "gateway"))
 
     db_handoff_recovered = False
+    stage_events.append({"stage": "supabase.db.up"})
     up_db = _compose_run(
         process_runner=process_runner,
         compose_root=compose_root,
@@ -231,12 +234,14 @@ def start_supabase_stack(
                 success=False,
                 container_name=compose_project_name,
                 error=f"probe timeout waiting for readiness on port {db_port}{suffix}",
+                stage_events=stage_events,
             )
 
     secondary_services = [
         service for service in (auth_service, gateway_service) if isinstance(service, str) and service
     ]
     if secondary_services:
+        stage_events.append({"stage": "supabase.secondary.up", "detail": ",".join(secondary_services)})
         up_secondary = _compose_run(
             process_runner=process_runner,
             compose_root=compose_root,
@@ -261,22 +266,120 @@ def start_supabase_stack(
             ):
                 return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
 
-    health_url = _supabase_auth_health_url(env, resolved_public_port)
-    auth_ready, auth_error = _probe_supabase_auth_health(
+    public_health_url = _supabase_auth_health_url(env, resolved_public_port)
+    health_url = _supabase_local_auth_health_url(resolved_public_port)
+    actions_attempted: list[str] = ["initial_probe"]
+    stage_events.append({"stage": "supabase.auth.probe", "detail": health_url})
+    auth_probe = _probe_supabase_auth_health_with_attempts(
         process_runner=process_runner,
         public_port=resolved_public_port,
         health_url=health_url,
         env=env,
+        attempts=1,
+        action="initial_probe",
     )
-    if not auth_ready:
-        detail = auth_error or f"Supabase Auth/Kong is not reachable at {health_url}"
+    probe_attempts.extend(auth_probe.attempts)
+
+    container_recreated = False
+    if not auth_probe.ready and secondary_services and _auth_restart_on_probe_failure_enabled(env):
+        actions_attempted.append("restart")
+        stage_events.append({"stage": "supabase.auth.restart", "detail": ",".join(secondary_services)})
+        restart_error = _compose_run(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            args=["restart", *secondary_services],
+        )
+        if restart_error is not None:
+            detail = restart_error.strip()
+            return ContainerStartResult(
+                success=False,
+                container_name=compose_project_name,
+                error=(
+                    f"failed restarting supabase auth/kong services: {detail}"
+                    if detail
+                    else "failed restarting supabase auth/kong services"
+                ),
+                stage_events=stage_events,
+                probe_attempts=probe_attempts,
+                probe_attempt_count=len(probe_attempts),
+            )
+        auth_probe = _probe_supabase_auth_health_with_attempts(
+            process_runner=process_runner,
+            public_port=resolved_public_port,
+            health_url=health_url,
+            env=env,
+            attempts=_auth_restart_probe_attempts(env),
+            action="restart",
+        )
+        probe_attempts.extend(auth_probe.attempts)
+
+    if not auth_probe.ready and secondary_services and _auth_recreate_on_probe_failure_enabled(env):
+        actions_attempted.append("recreate")
+        stage_events.append({"stage": "supabase.auth.recreate", "detail": ",".join(secondary_services)})
+        recreate_error = _recreate_auth_gateway_services(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            service_names=secondary_services,
+        )
+        if recreate_error is not None:
+            detail = recreate_error.strip()
+            return ContainerStartResult(
+                success=False,
+                container_name=compose_project_name,
+                error=(
+                    f"failed recreating supabase auth/kong services: {detail}"
+                    if detail
+                    else "failed recreating supabase auth/kong services"
+                ),
+                stage_events=stage_events,
+                probe_attempts=probe_attempts,
+                probe_attempt_count=len(probe_attempts),
+            )
+        container_recreated = True
+        auth_probe = _probe_supabase_auth_health_with_attempts(
+            process_runner=process_runner,
+            public_port=resolved_public_port,
+            health_url=health_url,
+            env=env,
+            attempts=_auth_recreate_probe_attempts(env),
+            action="recreate",
+        )
+        probe_attempts.extend(auth_probe.attempts)
+
+    if not auth_probe.ready:
+        stage_events.append({"stage": "supabase.auth.probe.final", "reason": "failed", "detail": auth_probe.last_error})
+        detail = _supabase_auth_failure_detail(
+            probe=auth_probe,
+            actions=actions_attempted,
+            service_names=secondary_services,
+            public_port=resolved_public_port,
+            public_health_url=public_health_url,
+        )
         return ContainerStartResult(
             success=False,
             container_name=compose_project_name,
             error=f"Supabase DB is healthy but Supabase Auth/Kong is not reachable at {health_url}: {detail}",
+            stage_events=stage_events,
+            probe_attempts=probe_attempts,
+            probe_attempt_count=len(probe_attempts),
+            container_recreated=container_recreated,
         )
 
-    return ContainerStartResult(success=True, container_name=compose_project_name)
+    stage_events.append({"stage": "supabase.auth.probe.final", "reason": "ready", "detail": health_url})
+    return ContainerStartResult(
+        success=True,
+        container_name=compose_project_name,
+        stage_events=stage_events,
+        probe_attempts=probe_attempts,
+        probe_attempt_count=len(probe_attempts),
+        container_recreated=container_recreated,
+    )
 
 
 def _start_supabase_db_native(
@@ -1345,6 +1448,45 @@ def _recreate_db_service(
     return up_error
 
 
+def _recreate_auth_gateway_services(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+) -> str | None:
+    stop_error = _compose_run(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=["stop", *service_names],
+    )
+    if stop_error is not None:
+        return stop_error
+    rm_error = _compose_run(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=["rm", "-f", *service_names],
+    )
+    if rm_error is not None:
+        return rm_error
+    return _compose_run(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=["up", "-d", *service_names],
+    )
+
+
 def _normalize_compose_error(error: str, *, compose_project_name: str) -> str:
     lines: list[str] = []
     seen: set[str] = set()
@@ -1464,6 +1606,20 @@ def _supabase_auth_health_url(env: Mapping[str, str] | None, public_port: int) -
     return f"{public_url}/auth/v1/health"
 
 
+def _supabase_local_auth_health_url(public_port: int) -> str:
+    return f"http://127.0.0.1:{public_port}/auth/v1/health"
+
+
+@dataclass(slots=True)
+class SupabaseAuthHealthProbeResult:
+    ready: bool
+    phase: str
+    health_url: str
+    attempts: list[dict[str, object]]
+    last_error: str | None = None
+    listener_ready: bool = False
+
+
 def _probe_supabase_auth_health(
     *,
     process_runner,
@@ -1471,9 +1627,97 @@ def _probe_supabase_auth_health(
     health_url: str,
     env: Mapping[str, str] | None,
 ) -> tuple[bool, str | None]:
+    result = _probe_supabase_auth_health_with_attempts(
+        process_runner=process_runner,
+        public_port=public_port,
+        health_url=health_url,
+        env=env,
+        attempts=1,
+        action="probe",
+    )
+    return result.ready, result.last_error
+
+
+def _probe_supabase_auth_health_with_attempts(
+    *,
+    process_runner,
+    public_port: int,
+    health_url: str,
+    env: Mapping[str, str] | None,
+    attempts: int,
+    action: str,
+) -> SupabaseAuthHealthProbeResult:
+    last_result: SupabaseAuthHealthProbeResult | None = None
+    all_attempts: list[dict[str, object]] = []
+    for index in range(max(1, attempts)):
+        result = _probe_supabase_auth_health_once(
+            process_runner=process_runner,
+            public_port=public_port,
+            health_url=health_url,
+            env=env,
+            action=action,
+            action_attempt=index + 1,
+        )
+        all_attempts.extend(result.attempts)
+        if result.ready:
+            result.attempts = all_attempts
+            return result
+        last_result = result
+    if last_result is None:
+        return SupabaseAuthHealthProbeResult(
+            ready=False,
+            phase="listener",
+            health_url=health_url,
+            attempts=all_attempts,
+            last_error="Supabase Auth/Kong health probe did not run",
+            listener_ready=False,
+        )
+    last_result.attempts = all_attempts
+    return last_result
+
+
+def _probe_supabase_auth_health_once(
+    *,
+    process_runner,
+    public_port: int,
+    health_url: str,
+    env: Mapping[str, str] | None,
+    action: str,
+    action_attempt: int,
+) -> SupabaseAuthHealthProbeResult:
+    probe_attempts: list[dict[str, object]] = []
     timeout_seconds = _auth_probe_timeout_seconds(env)
     if public_port > 0 and not bool(process_runner.wait_for_port(public_port, timeout=timeout_seconds)):
-        return False, f"listener probe failed on port {public_port}"
+        error = f"listener probe failed on port {public_port}"
+        probe_attempts.append(
+            {
+                "phase": "listener",
+                "action": action,
+                "action_attempt": action_attempt,
+                "port": public_port,
+                "health_url": health_url,
+                "ready": False,
+                "error": error,
+            }
+        )
+        return SupabaseAuthHealthProbeResult(
+            ready=False,
+            phase="listener",
+            health_url=health_url,
+            attempts=probe_attempts,
+            last_error=error,
+            listener_ready=False,
+        )
+    probe_attempts.append(
+        {
+            "phase": "listener",
+            "action": action,
+            "action_attempt": action_attempt,
+            "port": public_port,
+            "health_url": health_url,
+            "ready": True,
+        }
+    )
     probe_code = (
         "import sys, urllib.request; "
         "url=sys.argv[1]; "
@@ -1485,7 +1729,9 @@ def _probe_supabase_auth_health(
     deadline = time.monotonic() + timeout_seconds
     sleeper = getattr(process_runner, "sleep", time.sleep)
     last_error = "HTTP health probe failed"
+    http_attempt = 0
     while True:
+        http_attempt += 1
         remaining = max(0.1, deadline - time.monotonic())
         result = process_runner.run(
             [sys.executable, "-c", probe_code, health_url, str(min(timeout_seconds, remaining))],
@@ -1493,18 +1739,109 @@ def _probe_supabase_auth_health(
             timeout=min(timeout_seconds, remaining) + 1.0,
         )
         if getattr(result, "returncode", 1) == 0:
-            return True, None
-        last_error = str(
+            probe_attempts.append(
+                {
+                    "phase": "http",
+                    "action": action,
+                    "action_attempt": action_attempt,
+                    "attempt": http_attempt,
+                    "health_url": health_url,
+                    "ready": True,
+                    "returncode": 0,
+                }
+            )
+            return SupabaseAuthHealthProbeResult(
+                ready=True,
+                phase="http",
+                health_url=health_url,
+                attempts=probe_attempts,
+                listener_ready=True,
+            )
+        last_error = _condense_probe_error(str(
             getattr(result, "stderr", "") or getattr(result, "stdout", "") or "HTTP health probe failed"
-        ).strip()
+        ).strip())
+        probe_attempts.append(
+            {
+                "phase": "http",
+                "action": action,
+                "action_attempt": action_attempt,
+                "attempt": http_attempt,
+                "health_url": health_url,
+                "ready": False,
+                "returncode": int(getattr(result, "returncode", 1) or 1),
+                "error": last_error,
+            }
+        )
         if time.monotonic() >= deadline:
-            return False, last_error
+            return SupabaseAuthHealthProbeResult(
+                ready=False,
+                phase="http",
+                health_url=health_url,
+                attempts=probe_attempts,
+                last_error=last_error,
+                listener_ready=True,
+            )
         sleeper(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
+def _condense_probe_error(error: str) -> str:
+    lines = [line.strip() for line in str(error or "").splitlines() if line.strip()]
+    if not lines:
+        return "HTTP health probe failed"
+    for line in reversed(lines):
+        if "urlopen error" in line.lower():
+            match = re.search(r"urlopen error [^>]+", line, re.IGNORECASE)
+            return match.group(0) if match else line
+    for line in reversed(lines):
+        lowered = line.lower()
+        if "connectionrefusederror" in lowered or "connection refused" in lowered:
+            return line
+        if "timed out" in lowered or "timeout" in lowered:
+            return line
+        if "httperror" in lowered or re.search(r"\b[45]\d\d\b", line):
+            return line
+    return lines[-1]
+
+
+def _supabase_auth_failure_detail(
+    *,
+    probe: SupabaseAuthHealthProbeResult,
+    actions: list[str],
+    service_names: list[str],
+    public_port: int,
+    public_health_url: str,
+) -> str:
+    parts = [
+        f"phase={probe.phase}",
+        f"services={','.join(service_names) if service_names else 'none'}",
+        f"public_port={public_port}",
+        f"actions={','.join(actions)}",
+        f"last_error={probe.last_error or 'unknown'}",
+    ]
+    if public_health_url != probe.health_url:
+        parts.append(f"public_url={public_health_url}")
+    return " ".join(parts)
 
 
 def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
     parsed = env_float(env, "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS", 5.0, minimum=0.5)
     return parsed if parsed > 0 else 5.0
+
+
+def _auth_restart_probe_attempts(env: Mapping[str, str] | None) -> int:
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 1, minimum=1)
+
+
+def _auth_recreate_probe_attempts(env: Mapping[str, str] | None) -> int:
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 1, minimum=1)
+
+
+def _auth_restart_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
+    return env_bool(env, "ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE", True)
+
+
+def _auth_recreate_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
+    return env_bool(env, "ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE", True)
 
 
 def _db_probe_attempts(env: Mapping[str, str] | None) -> int:

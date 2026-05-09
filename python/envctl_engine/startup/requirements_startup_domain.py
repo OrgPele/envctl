@@ -137,6 +137,13 @@ def _coerce_returncode(value: object) -> int:
         return 1
 
 
+def _coerce_float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass(slots=True)
 class _NativeAdapterStartResult:
     success: bool
@@ -532,7 +539,9 @@ def _start_requirement_with_native_adapter(
     stage_events = [item for item in stage_events_raw if isinstance(item, dict)]
     stage_durations_ms = result.stage_durations_ms if isinstance(result.stage_durations_ms, dict) else {}
     listener_wait_ms = float(result.listener_wait_ms or 0.0)
-    probe_attempts = _extract_probe_attempts(command_timings, service_name=service_name)
+    result_probe_attempts_raw = result.probe_attempts if isinstance(result.probe_attempts, list) else []
+    result_probe_attempts = [item for item in result_probe_attempts_raw if isinstance(item, dict)]
+    probe_attempts = result_probe_attempts or _extract_probe_attempts(command_timings, service_name=service_name)
     effective_port = (
         int(result.effective_port)
         if isinstance(result.effective_port, int) and result.effective_port > 0
@@ -571,9 +580,13 @@ def _start_requirement_with_native_adapter(
             port=port,
             listener_wait_ms=round(listener_wait_ms, 2),
         )
-        restart_used = any(str(item.get("stage", "")).startswith("probe.retry.restart") for item in stage_events)
+        restart_used = any(
+            str(item.get("stage", "")).startswith(("probe.retry.restart", "supabase.auth.restart"))
+            for item in stage_events
+        )
         recreate_used = bool(result.container_recreated) or any(
-            str(item.get("stage", "")).startswith("probe.retry.recreate") for item in stage_events
+            str(item.get("stage", "")).startswith(("probe.retry.recreate", "supabase.auth.recreate"))
+            for item in stage_events
         )
         self._emit(
             "requirements.adapter.retry_path",
@@ -590,10 +603,13 @@ def _start_requirement_with_native_adapter(
                 project=context.name,
                 service=service_name,
                 port=port,
-                attempt=int(attempt.get("attempt", 0) or 0),
-                duration_ms=round(float(attempt.get("duration_ms", 0.0) or 0.0), 2),
+                attempt=_coerce_returncode(attempt.get("attempt", 0)),
+                phase=attempt.get("phase"),
+                action=attempt.get("action"),
+                duration_ms=round(_coerce_float(attempt.get("duration_ms", 0.0)), 2),
                 returncode=_coerce_returncode(attempt.get("returncode", 1)),
                 timed_out=bool(attempt.get("timed_out", False)),
+                error=attempt.get("error"),
             )
         if mismatch_action is not None:
             self._emit(
@@ -619,7 +635,7 @@ def _start_requirement_with_native_adapter(
                 order=index,
                 stage=_classify_docker_stage(command_tokens),
                 command=command_tokens,
-                duration_ms=round(float(command_item.get("duration_ms", 0.0) or 0.0), 2),
+                duration_ms=round(_coerce_float(command_item.get("duration_ms", 0.0)), 2),
                 timeout_s=command_item.get("timeout_s"),
                 returncode=_coerce_returncode(command_item.get("returncode", 1)),
                 timed_out=bool(command_item.get("timed_out", False)),
