@@ -469,7 +469,12 @@ class DashboardRenderingParityTests(unittest.TestCase):
             shared_requirements = RequirementsResult(
                 project="Main",
                 redis={"enabled": True, "runtime_status": "healthy", "final": 6380, "success": True},
-                supabase={"enabled": True, "runtime_status": "healthy", "final": 54321, "success": True},
+                supabase={
+                    "enabled": True,
+                    "runtime_status": "healthy",
+                    "success": True,
+                    "resources": {"db": 5574, "api": 54463, "primary": 5574},
+                },
                 n8n={"enabled": True, "runtime_status": "healthy", "final": 5678, "success": True},
             )
             state = RunState(
@@ -519,7 +524,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertEqual(output.count("supabase:"), 1)
             self.assertEqual(output.count("n8n:"), 1)
             self.assertIn("redis: http://192.0.2.42:6380 [Healthy]", output)
-            self.assertIn("supabase: http://192.0.2.42:54321 [Healthy]", output)
+            self.assertIn("supabase: http://192.0.2.42:54463 [Healthy]", output)
+            self.assertNotIn("supabase: http://192.0.2.42:5574", output)
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertLess(output.index("feature-b-1"), output.index("Shared dependencies:"))
 

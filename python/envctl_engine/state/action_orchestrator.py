@@ -10,6 +10,7 @@ import sys
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
@@ -951,14 +952,13 @@ class StateActionOrchestrator:
                         status = "healthy"
                     else:
                         status = "unknown"
-                raw_port = data.get("final") or data.get("requested")
-                port = raw_port if isinstance(raw_port, int) and raw_port > 0 else None
                 rows.append(
                     {
                         "project": project,
                         "component": component,
                         "status": status,
-                        "port": port,
+                        "port": dependency_display_port(component, data),
+                        "resources": component_resource_ports(data),
                     }
                 )
         rows.sort(key=lambda row: (str(row["project"]).lower(), component_order.get(str(row["component"]), 99)))

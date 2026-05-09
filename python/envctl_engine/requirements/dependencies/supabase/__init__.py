@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from envctl_engine.config.profile_defaults import dependency_default_enabled
+from envctl_engine.requirements.component_ports import component_resource_ports
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.supabase import start_supabase_stack
 from envctl_engine.shared.dependency_compose_assets import (
@@ -13,7 +14,7 @@ from envctl_engine.startup.public_urls import browser_backend_url, resolve_publi
 
 def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]:
     component = requirements.component("supabase")
-    resources = component.get("resources") if isinstance(component.get("resources"), dict) else {}
+    resources = component_resource_ports(component)
     port = resources.get("db") or component.get("final") or component.get("requested") or int(context.ports["db"].final)
     public_port = resources.get("api") or _context_port(context, "supabase_api") or port
     db_host = runtime._command_override_value("DB_HOST") or "localhost"

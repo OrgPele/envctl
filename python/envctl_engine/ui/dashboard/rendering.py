@@ -18,6 +18,7 @@ from envctl_engine.dashboard_metadata import (
     dashboard_project_configured_services_from_metadata,
     normalize_dashboard_service_types,
 )
+from envctl_engine.requirements.component_ports import dependency_display_port
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -510,7 +511,7 @@ def _dashboard_dependency_line(
     component = requirements.component(dependency_id)
     if not bool(component.get("enabled", False)) or dependency_id == "postgres":
         return None
-    port = component.get("final") or component.get("requested")
+    port = dependency_display_port(dependency_id, component)
     runtime_status = str(component.get("runtime_status", "")).strip().lower()
     badge = dependency_status_badge(
         runtime_status,

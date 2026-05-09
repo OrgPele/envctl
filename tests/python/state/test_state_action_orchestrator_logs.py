@@ -484,6 +484,37 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertEqual(payload["services"][0]["name"], "Main Backend")
         self.assertEqual(payload["dependencies"][0]["component"], "redis")
 
+    def test_health_json_reports_dependency_resource_ports(self) -> None:
+        state = RunState(
+            run_id="run-supabase-resources",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    supabase={
+                        "enabled": True,
+                        "runtime_status": "healthy",
+                        "success": True,
+                        "resources": {"db": 5574, "api": 54463, "primary": 5574},
+                    },
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="health", mode="main", flags={"json": True})
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        dependency = payload["dependencies"][0]
+        self.assertEqual(dependency["component"], "supabase")
+        self.assertEqual(dependency["port"], 54463)
+        self.assertEqual(dependency["resources"], {"api": 54463, "db": 5574, "primary": 5574})
+
     def test_health_project_missing_json_fails_closed_without_active_rows(self) -> None:
         state = RunState(
             run_id="run-wrong-project",

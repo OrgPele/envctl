@@ -109,6 +109,8 @@ class EndpointsCommandSupportTests(unittest.TestCase):
         self.assertEqual(payload["backend"]["local_url"], "http://localhost:8100")
         self.assertEqual(payload["backend"]["public_url"], "http://public.example.test:8100")
         self.assertEqual(payload["dependencies"]["redis"]["port"], 6380)
+        self.assertEqual(payload["dependencies"]["supabase"]["port"], 54321)
+        self.assertEqual(payload["dependencies"]["supabase"]["resources"], {"api": 54321, "db": 5432, "primary": 5432})
         self.assertEqual(payload["dependencies"]["supabase_db"]["port"], 5432)
         self.assertEqual(payload["dependencies"]["supabase_api"]["port"], 54321)
         self.assertNotIn("feature-b-1", json.dumps(payload))
