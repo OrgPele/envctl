@@ -76,6 +76,13 @@ That sequence answers four different questions:
 - Adjust base ports in `.envctl`.
 - Inspect `${RUN_SH_RUNTIME_DIR:-/tmp/envctl-runtime}/python-engine/ports_manifest.json`.
 
+## Supabase Auth/Kong is not reachable after DB readiness
+When startup reports `Supabase DB is healthy but Supabase Auth/Kong is not reachable`, PostgreSQL reached its listener probe but the public Auth/Kong API did not pass `/auth/v1/health` on the published Supabase API port.
+
+Use `ENVCTL_DEBUG_REQUIREMENTS_TRACE=1` to capture the staged evidence. The relevant stage sequence is `supabase.db.up`, `supabase.db.probe`, `supabase.secondary.up`, `supabase.auth.probe`, optional `supabase.auth.inspect`, optional `supabase.auth.restart`, optional `supabase.auth.recreate`, and `supabase.auth.probe.final`. The `supabase.auth.inspect` entries summarize Auth/Kong container state without dumping Docker inspect JSON or secrets.
+
+The final failure line keeps the local probe URL, attempted recovery actions, the last health-probe error, and compact service-state summaries. If Auth/Kong recovery is exhausted, use the existing Supabase reinit/cleanup path only when preserving the local Supabase DB state is no longer required.
+
 ## Slow startup latency (requirements dominate)
 Recommended capture:
 1. Run a deep startup sample:

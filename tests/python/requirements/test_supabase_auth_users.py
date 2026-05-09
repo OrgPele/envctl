@@ -336,6 +336,22 @@ class SupabaseAuthUserTests(unittest.TestCase):
                     env=env,
                 )
                 self.assertTrue(start_result.success, start_result.error)
+                stage_names = [str(item.get("stage", "")) for item in start_result.stage_events or []]
+                self.assertIn("supabase.db.probe", stage_names)
+                self.assertTrue(
+                    any(
+                        item.get("stage") == "supabase.auth.probe.final" and item.get("reason") == "ready"
+                        for item in start_result.stage_events or []
+                    )
+                )
+                health_request = Request(
+                    f"http://localhost:{public_port}/auth/v1/health",
+                    headers={"Accept": "application/json"},
+                    method="GET",
+                )
+                with urlopen(health_request, timeout=10.0) as health_response:
+                    self.assertLess(health_response.status, 500)
+
                 auth_user = _configured_user("e2e", "e2e@example.test", password="local-password-123")
 
                 sync_result = sync_supabase_auth_users(

@@ -35,6 +35,8 @@ class _FakeRunner:
         self.port_mapping_errors: dict[tuple[str, str], str] = {}
         self.existing: set[str] = set()
         self.status: dict[str, str] = {}
+        self.health_status: dict[str, str] = {}
+        self.exit_code: dict[str, int] = {}
         self.start_returncode: dict[str, int] = {}
         self.start_stderr: dict[str, str] = {}
         self.start_timeout: set[str] = set()
@@ -56,6 +58,8 @@ class _FakeRunner:
         self.compose_returncode_sequence: dict[str, list[int]] = {}
         self.compose_stderr_sequence: dict[str, list[str]] = {}
         self.compose_ps_q_stdout: dict[str, list[str] | str] = {}
+        self.compose_ps_q_returncode: dict[str, int] = {}
+        self.compose_ps_q_stderr: dict[str, str] = {}
         self.restart_returncode: dict[str, int] = {}
         self.restart_stderr: dict[str, str] = {}
         self.compose_services_stdout: str = "supabase-db\nsupabase-auth\nsupabase-kong\n"
@@ -112,6 +116,15 @@ class _FakeRunner:
                     host_port = text.splitlines()[0].rsplit(":", 1)[-1].strip()
                     bindings[f"{port}/tcp"] = [{"HostIp": "", "HostPort": host_port}]
                 return subprocess.CompletedProcess(command, 0, json.dumps(bindings), "")
+            if "json .State" in inspect_format:
+                state: dict[str, object] = {
+                    "Status": self.status.get(container, "running"),
+                    "ExitCode": self.exit_code.get(container, 0),
+                    "Error": self.state_error.get(container, ""),
+                }
+                if container in self.health_status:
+                    state["Health"] = {"Status": self.health_status[container]}
+                return subprocess.CompletedProcess(command, 0, json.dumps(state), "")
             if ".State.Error" in inspect_format:
                 return subprocess.CompletedProcess(command, 0, self.state_error.get(container, "") + "\n", "")
             return subprocess.CompletedProcess(command, 0, self.status.get(container, "running") + "\n", "")
@@ -240,12 +253,14 @@ class _FakeRunner:
             compose_key = " ".join(compose_args)
             if compose_args[:2] == ["ps", "-q"] and len(compose_args) >= 3:
                 service_name = compose_args[2]
+                rc = self.compose_ps_q_returncode.get(service_name, 0)
+                stderr = self.compose_ps_q_stderr.get(service_name, "")
                 configured = self.compose_ps_q_stdout.get(service_name, "")
                 if isinstance(configured, list):
                     stdout = configured.pop(0) if configured else ""
                 else:
                     stdout = configured
-                return subprocess.CompletedProcess(command, 0, stdout, "")
+                return subprocess.CompletedProcess(command, rc, stdout if rc == 0 else "", stderr)
             sequence = self.compose_returncode_sequence.get(compose_key)
             if sequence:
                 rc = sequence.pop(0)
@@ -857,6 +872,60 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertNotIn("envctl-redis-main-deadbeef_default", removed_networks)
             self.assertNotIn("envctl-supabase-active_supabase-net", removed_networks)
 
+    def test_supabase_stack_records_db_probe_stage_when_db_becomes_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_overrides[5432] = True
+            runner.wait_for_port_overrides[54321] = True
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+            )
+
+            self.assertTrue(result.success)
+            db_probe_events = [
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.db.probe"
+            ]
+            self.assertTrue(db_probe_events)
+            self.assertEqual(db_probe_events[-1].get("reason"), "ready")
+            self.assertIn("port=5432", str(db_probe_events[-1].get("detail", "")))
+
+    def test_supabase_stack_records_db_probe_stage_when_db_probe_exhausts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [False, False]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_DB_RESTART_ON_PROBE_FAILURE": "false"},
+            )
+
+            self.assertFalse(result.success)
+            db_probe_events = [
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.db.probe"
+            ]
+            self.assertTrue(db_probe_events)
+            self.assertEqual(db_probe_events[-1].get("reason"), "failed")
+            self.assertIn("attempts=2", str(db_probe_events[-1].get("detail", "")))
+
     def test_supabase_stack_fails_when_auth_kong_health_unreachable_after_db_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -893,6 +962,85 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 any(
                     cmd[:2] == ["docker", "compose"]
                     and cmd[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+
+    def test_supabase_auth_kong_failure_records_service_inspection_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_overrides[5432] = True
+            runner.wait_for_port_overrides[54321] = False
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "exited"
+            runner.status["kong-container-id"] = "running"
+            runner.state_error["auth-container-id"] = "SERVICE_ROLE_KEY=should-not-leak crashed"
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS": "1"},
+            )
+
+            self.assertFalse(result.success)
+            inspect_events = [
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.auth.inspect"
+            ]
+            self.assertGreaterEqual(len(inspect_events), 2)
+            inspect_detail = " ".join(str(item.get("detail", "")) for item in inspect_events)
+            self.assertIn("supabase-auth", inspect_detail)
+            self.assertIn("status=exited", inspect_detail)
+            self.assertIn("supabase-kong", inspect_detail)
+            self.assertIn("status=running", inspect_detail)
+            self.assertIn("service_state=", result.error or "")
+            self.assertIn("supabase-auth", result.error or "")
+            self.assertIn("status=exited", result.error or "")
+            self.assertNotIn("SERVICE_ROLE_KEY", result.error or "")
+            self.assertNotIn("should-not-leak", result.error or "")
+            self.assertNotIn("Traceback", result.error or "")
+
+    def test_supabase_auth_kong_inspect_failure_is_summarized_without_blocking_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [False, True]
+            runner.compose_ps_q_returncode["supabase-auth"] = 1
+            runner.compose_ps_q_stderr["supabase-auth"] = "compose ps failed"
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS": "1"},
+            )
+
+            self.assertTrue(result.success)
+            inspect_events = [
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.auth.inspect"
+            ]
+            self.assertTrue(inspect_events)
+            inspect_detail = " ".join(str(item.get("detail", "")) for item in inspect_events)
+            self.assertIn("inspect_error", inspect_detail)
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-3:] == ["restart", "supabase-auth", "supabase-kong"]
                     for cmd in runner.commands
                 )
             )

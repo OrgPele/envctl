@@ -130,7 +130,9 @@ def start_supabase_stack(
         db_probe_attempts = _db_probe_attempts(env)
         db_probe_timeout = _db_probe_timeout_seconds(env)
         db_ready = False
+        db_initial_attempts_used = 0
         for attempt in range(db_probe_attempts):
+            db_initial_attempts_used = attempt + 1
             if bool(process_runner.wait_for_port(db_port, timeout=db_probe_timeout)):
                 db_ready = True
                 break
@@ -161,6 +163,15 @@ def start_supabase_stack(
                             error=f"{retry_up_db} (retry db bring-up failed)",
                         )
 
+        _record_db_probe_stage(
+            stage_events,
+            db_port=db_port,
+            attempts=db_initial_attempts_used,
+            action="initial",
+            ready=db_ready,
+            timeout_seconds=db_probe_timeout,
+        )
+
         if not db_ready and _db_restart_on_probe_failure_enabled(env):
             restart_error = _compose_run(
                 process_runner=process_runner,
@@ -179,6 +190,7 @@ def start_supabase_stack(
                         if restart_error.strip()
                         else "failed restarting supabase db service"
                     ),
+                    stage_events=stage_events,
                 )
             restart_probe_attempts = _db_restart_probe_attempts(env, default=db_probe_attempts)
             db_ready = _probe_db_listener(
@@ -186,6 +198,14 @@ def start_supabase_stack(
                 db_port=db_port,
                 timeout_seconds=db_probe_timeout,
                 attempts=restart_probe_attempts,
+            )
+            _record_db_probe_stage(
+                stage_events,
+                db_port=db_port,
+                attempts=restart_probe_attempts,
+                action="restart",
+                ready=db_ready,
+                timeout_seconds=db_probe_timeout,
             )
 
             if not db_ready and _db_recreate_on_probe_failure_enabled(env):
@@ -206,6 +226,7 @@ def start_supabase_stack(
                             if recreate_error.strip()
                             else "failed recreating supabase db service"
                         ),
+                        stage_events=stage_events,
                     )
                 recreate_probe_attempts = _db_recreate_probe_attempts(env, default=restart_probe_attempts)
                 db_ready = _probe_db_listener(
@@ -214,11 +235,20 @@ def start_supabase_stack(
                     timeout_seconds=db_probe_timeout,
                     attempts=recreate_probe_attempts,
                 )
+                _record_db_probe_stage(
+                    stage_events,
+                    db_port=db_port,
+                    attempts=recreate_probe_attempts,
+                    action="recreate",
+                    ready=db_ready,
+                    timeout_seconds=db_probe_timeout,
+                )
                 if not db_ready:
                     return ContainerStartResult(
                         success=False,
                         container_name=compose_project_name,
                         error=f"probe timeout waiting for readiness on port {db_port} after recreate",
+                        stage_events=stage_events,
                     )
 
             if not db_ready:
@@ -226,6 +256,7 @@ def start_supabase_stack(
                     success=False,
                     container_name=compose_project_name,
                     error=f"probe timeout waiting for readiness on port {db_port} after restart",
+                    stage_events=stage_events,
                 )
 
         if not db_ready:
@@ -280,7 +311,31 @@ def start_supabase_stack(
     )
     probe_attempts.extend(auth_probe.attempts)
 
+    service_state_summaries: list[dict[str, object]] = []
+
+    def record_auth_service_state(reason: str) -> None:
+        nonlocal service_state_summaries
+        service_state_summaries = _inspect_auth_gateway_services(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            service_names=secondary_services,
+        )
+        for service_state in service_state_summaries:
+            stage_events.append(
+                {
+                    "stage": "supabase.auth.inspect",
+                    "reason": reason,
+                    "detail": _format_auth_service_state(service_state),
+                }
+            )
+
     container_recreated = False
+    if not auth_probe.ready and secondary_services:
+        record_auth_service_state("initial_probe_failed")
+
     if not auth_probe.ready and secondary_services and _auth_restart_on_probe_failure_enabled(env):
         actions_attempted.append("restart")
         stage_events.append({"stage": "supabase.auth.restart", "detail": ",".join(secondary_services)})
@@ -315,6 +370,8 @@ def start_supabase_stack(
             action="restart",
         )
         probe_attempts.extend(auth_probe.attempts)
+        if not auth_probe.ready:
+            record_auth_service_state("restart_probe_failed")
 
     if not auth_probe.ready and secondary_services and _auth_recreate_on_probe_failure_enabled(env):
         actions_attempted.append("recreate")
@@ -351,6 +408,8 @@ def start_supabase_stack(
             action="recreate",
         )
         probe_attempts.extend(auth_probe.attempts)
+        if not auth_probe.ready:
+            record_auth_service_state("recreate_probe_failed")
 
     if not auth_probe.ready:
         stage_events.append({"stage": "supabase.auth.probe.final", "reason": "failed", "detail": auth_probe.last_error})
@@ -360,6 +419,7 @@ def start_supabase_stack(
             service_names=secondary_services,
             public_port=resolved_public_port,
             public_health_url=public_health_url,
+            service_states=service_state_summaries,
         )
         return ContainerStartResult(
             success=False,
@@ -1408,6 +1468,27 @@ def _probe_db_listener(
     return False
 
 
+def _record_db_probe_stage(
+    stage_events: list[dict[str, object]],
+    *,
+    db_port: int,
+    attempts: int,
+    action: str,
+    ready: bool,
+    timeout_seconds: float,
+) -> None:
+    stage_events.append(
+        {
+            "stage": "supabase.db.probe",
+            "reason": "ready" if ready else "failed",
+            "detail": (
+                f"action={action} port={db_port} attempts={max(1, attempts)} "
+                f"timeout_s={timeout_seconds:g}"
+            ),
+        }
+    )
+
+
 def _recreate_db_service(
     *,
     process_runner,
@@ -1446,6 +1527,120 @@ def _recreate_db_service(
         args=["up", "-d", db_service],
     )
     return up_error
+
+
+def _inspect_auth_gateway_services(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+) -> list[dict[str, object]]:
+    return [
+        _inspect_auth_gateway_service(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            service_name=service_name,
+        )
+        for service_name in service_names
+    ]
+
+
+def _inspect_auth_gateway_service(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_name: str,
+) -> dict[str, object]:
+    result, run_error = run_docker(
+        process_runner,
+        ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "-q", service_name],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    summary: dict[str, object] = {"service": service_name}
+    if result is None:
+        summary["inspect_error"] = _sanitize_service_state_text(run_error or "docker compose ps failed")
+        return summary
+    if getattr(result, "returncode", 1) != 0:
+        summary["inspect_error"] = _sanitize_service_state_text(run_result_error(result, "docker compose ps failed"))
+        return summary
+    container_id = str(getattr(result, "stdout", "") or "").strip().splitlines()[0:1]
+    if not container_id:
+        summary["status"] = "missing"
+        return summary
+    summary["container"] = container_id[0]
+    state_result, state_error = run_docker(
+        process_runner,
+        ["inspect", "-f", "{{json .State}}", container_id[0]],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    if state_result is None:
+        summary["inspect_error"] = _sanitize_service_state_text(state_error or "docker inspect failed")
+        return summary
+    if getattr(state_result, "returncode", 1) != 0:
+        summary["inspect_error"] = _sanitize_service_state_text(run_result_error(state_result, "docker inspect failed"))
+        return summary
+    state_text = str(getattr(state_result, "stdout", "") or "").strip()
+    try:
+        state = json.loads(state_text) if state_text else {}
+    except json.JSONDecodeError:
+        state = {"Status": state_text}
+    if isinstance(state, dict):
+        status = state.get("Status")
+        if status:
+            summary["status"] = str(status)
+        health = state.get("Health")
+        if isinstance(health, dict) and health.get("Status"):
+            summary["health"] = str(health.get("Status"))
+        exit_code = state.get("ExitCode")
+        if isinstance(exit_code, int) or (isinstance(exit_code, str) and exit_code.strip()):
+            summary["exit_code"] = str(exit_code)
+        state_error_value = state.get("Error")
+        if state_error_value:
+            summary["state_error"] = _sanitize_service_state_text(str(state_error_value))
+    if len(summary) == 2 and "container" in summary:
+        summary["status"] = "unknown"
+    return summary
+
+
+def _format_auth_service_state(service_state: Mapping[str, object]) -> str:
+    service = str(service_state.get("service") or "unknown")
+    parts = [service]
+    container = str(service_state.get("container") or "").strip()
+    if container:
+        parts.append(f"container={container[:12]}")
+    for key in ("status", "health", "exit_code", "state_error", "inspect_error"):
+        value = str(service_state.get(key) or "").strip()
+        if value:
+            parts.append(f"{key}={_sanitize_service_state_text(value)}")
+    return ":".join(parts[:1]) + (":" + " ".join(parts[1:]) if len(parts) > 1 else "")
+
+
+def _format_auth_service_states(service_states: list[dict[str, object]]) -> str:
+    return "|".join(_format_auth_service_state(service_state) for service_state in service_states)
+
+
+def _sanitize_service_state_text(value: str) -> str:
+    text = " ".join(str(value or "").split())
+    text = re.sub(
+        r"\b[A-Z0-9_]*(?:KEY|SECRET|PASSWORD|TOKEN|AUTHORIZATION|APIKEY)[A-Z0-9_]*=[^\s;]+",
+        "[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text[:240]
 
 
 def _recreate_auth_gateway_services(
@@ -1810,6 +2005,7 @@ def _supabase_auth_failure_detail(
     service_names: list[str],
     public_port: int,
     public_health_url: str,
+    service_states: list[dict[str, object]] | None = None,
 ) -> str:
     parts = [
         f"phase={probe.phase}",
@@ -1818,6 +2014,8 @@ def _supabase_auth_failure_detail(
         f"actions={','.join(actions)}",
         f"last_error={probe.last_error or 'unknown'}",
     ]
+    if service_states:
+        parts.append(f"service_state={_format_auth_service_states(service_states)}")
     if public_health_url != probe.health_url:
         parts.append(f"public_url={public_health_url}")
     return " ".join(parts)
