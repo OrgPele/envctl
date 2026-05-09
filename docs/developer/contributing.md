@@ -62,8 +62,9 @@ Releases are produced by `.github/workflows/release.yml`. From the Actions tab, 
 
 1. Computes the next version from `pyproject.toml`.
 2. Aggregates merged PR titles since the previous version tag using GitHub's auto-generated release notes.
-3. Updates `pyproject.toml`, the README badges, and writes `docs/changelog/RELEASE_NOTES_<version>.md`.
-4. Commits the bump to `main`, tags the new version, builds wheel + sdist, and creates the GitHub Release.
+3. Updates `pyproject.toml`, the README badges, and writes `docs/changelog/RELEASE_NOTES_<version>.md` on a `release/envctl-<version>` branch.
+4. Opens a release PR so protected `main` receives the bump through repository rules.
+5. After that release PR is merged, tags the new version from `main`, builds wheel + sdist, and creates the GitHub Release.
 
 If you need to dry-run the version bump locally, `python scripts/prepare_release.py compute-version --bump patch` prints the next version without modifying any files.
 
