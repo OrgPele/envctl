@@ -234,7 +234,7 @@ def _shared_main_requirements(
 ) -> RequirementsResult:
     cached = getattr(orchestrator, "_shared_dependency_requirements", None)
     if isinstance(cached, RequirementsResult):
-        return cached
+        return _reconcile_shared_main_requirements(orchestrator, cached)
     lock = getattr(orchestrator, "_shared_dependency_lock", None)
     if lock is None:
         return _annotate_shared_main_requirements(
@@ -248,7 +248,7 @@ def _shared_main_requirements(
     with lock:
         cached = getattr(orchestrator, "_shared_dependency_requirements", None)
         if isinstance(cached, RequirementsResult):
-            return cached
+            return _reconcile_shared_main_requirements(orchestrator, cached)
         requirements = _load_or_start_shared_main_requirements(
             orchestrator,
             route=route,
@@ -323,7 +323,18 @@ def _annotate_shared_main_requirements(
             project_root=project_root,
             project_name="Main",
         ) + "-supabase-db-1"
-    return cloned
+    return _reconcile_shared_main_requirements(orchestrator, cloned)
+
+
+def _reconcile_shared_main_requirements(
+    orchestrator: StartupOrchestratorLike,
+    requirements: RequirementsResult,
+) -> RequirementsResult:
+    project_root = orchestrator.runtime.config.execution_root
+    reconcile = getattr(orchestrator.runtime, "_reconcile_project_requirement_truth", None)
+    if callable(reconcile):
+        reconcile("Main", requirements, project_root=project_root)
+    return requirements
 
 
 def startup_summary_payload(

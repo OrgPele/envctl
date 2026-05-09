@@ -16,7 +16,9 @@ from envctl_engine.startup.requirements_execution import start_requirements_for_
 from envctl_engine.startup.service_execution import start_project_services as service_start_impl  # noqa: E402
 from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     _maybe_prewarm_docker,
+    _annotate_shared_main_requirements,
     _requirements_failure_message,
+    _shared_main_requirements,
     start_requirements_for_project,
     start_project_services,
     start_project_context,
@@ -60,6 +62,75 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_annotate_shared_main_requirements_reconciles_container_ports_before_reuse(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "resources": {"primary": 5662, "db": 5662, "api": 54551},
+            },
+        )
+
+        def reconcile(project, req, *, project_root=None):  # noqa: ANN001, ANN202
+            self.assertEqual(project, "Main")
+            self.assertEqual(project_root, Path("/tmp/repo"))
+            req.supabase["final"] = 5574
+            req.supabase["resources"]["primary"] = 5574
+            req.supabase["resources"]["db"] = 5574
+            req.supabase["resources"]["api"] = 54463
+            return []
+
+        orchestrator = SimpleNamespace(
+            runtime=SimpleNamespace(
+                config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+                _reconcile_project_requirement_truth=reconcile,
+            )
+        )
+
+        cloned = _annotate_shared_main_requirements(orchestrator, requirements)
+
+        self.assertEqual(requirements.supabase["final"], 5662)
+        self.assertEqual(cloned.supabase["final"], 5574)
+        self.assertEqual(cloned.supabase["resources"]["db"], 5574)
+        self.assertEqual(cloned.supabase["resources"]["api"], 54463)
+
+    def test_shared_main_requirements_reconciles_cached_requirements_before_reuse(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "resources": {"primary": 5662, "db": 5662, "api": 54551},
+            },
+        )
+
+        def reconcile(project, req, *, project_root=None):  # noqa: ANN001, ANN202
+            self.assertEqual(project, "Main")
+            self.assertEqual(project_root, Path("/tmp/repo"))
+            req.supabase["final"] = 5574
+            req.supabase["resources"]["primary"] = 5574
+            req.supabase["resources"]["db"] = 5574
+            req.supabase["resources"]["api"] = 54463
+            return []
+
+        orchestrator = SimpleNamespace(
+            _shared_dependency_requirements=requirements,
+            runtime=SimpleNamespace(
+                config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+                _reconcile_project_requirement_truth=reconcile,
+            ),
+        )
+
+        reused = _shared_main_requirements(orchestrator, route=parse_route(["start"], env={}))
+
+        self.assertIs(reused, requirements)
+        self.assertEqual(reused.supabase["final"], 5574)
+        self.assertEqual(reused.supabase["resources"]["db"], 5574)
+        self.assertEqual(reused.supabase["resources"]["api"], 54463)
 
     def test_start_project_context_rejects_invalid_supabase_auth_user_config_before_services(self) -> None:
         order: list[str] = []
