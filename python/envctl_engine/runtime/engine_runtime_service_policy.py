@@ -25,6 +25,16 @@ def service_listener_timeout(runtime: Any) -> float:
     return 10.0 if runtime._listener_truth_enforced() else 3.0
 
 
+def service_startup_progress_timeout(runtime: Any) -> float:
+    raw = runtime.env.get("ENVCTL_SERVICE_STARTUP_PROGRESS_TIMEOUT") or runtime.config.raw.get(
+        "ENVCTL_SERVICE_STARTUP_PROGRESS_TIMEOUT"
+    )
+    parsed = parse_float_or_none(raw)
+    if isinstance(parsed, float) and parsed > 0:
+        return parsed
+    return 90.0 if runtime._listener_truth_enforced() else 0.0
+
+
 def service_truth_timeout(runtime: Any) -> float:
     raw = runtime.env.get("ENVCTL_SERVICE_TRUTH_TIMEOUT") or runtime.config.raw.get("ENVCTL_SERVICE_TRUTH_TIMEOUT")
     parsed = parse_float_or_none(raw)

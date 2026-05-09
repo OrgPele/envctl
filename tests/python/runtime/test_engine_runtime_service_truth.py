@@ -88,10 +88,11 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         events: list[tuple[str, dict[str, object]]] = []
         runner = _RunnerStub()
         runner.wait_for_port_result = True
+        runner.process_tree_probe_supported = False
         runtime = SimpleNamespace(
             process_runner=runner,
             config=SimpleNamespace(runtime_truth_mode="auto"),
-            _listener_probe_supported=False,
+            _listener_probe_supported=True,
             _service_listener_timeout=lambda: 2.0,
             _emit=lambda event, **payload: events.append((event, payload)),
         )
@@ -101,6 +102,127 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(events[0][0], "service.bind.port_fallback")
         self.assertEqual(events[0][1]["service"], "Main Backend")
+
+    def test_wait_for_service_listener_rejects_generic_port_when_process_tree_probe_is_available(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        runner = _RunnerStub()
+        runner.wait_for_port_result = True
+        runner.process_tree_probe_supported = True
+        runtime = SimpleNamespace(
+            process_runner=runner,
+            config=SimpleNamespace(runtime_truth_mode="auto"),
+            _listener_probe_supported=True,
+            _service_listener_timeout=lambda: 0.01,
+            _service_startup_progress_timeout=lambda: 0.0,
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        ok = wait_for_service_listener(runtime, 1234, 8000, service_name="Main Backend")
+
+        self.assertFalse(ok)
+        self.assertEqual(events, [])
+
+    def test_detect_service_actual_port_extends_wait_while_startup_log_progresses(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class _ProgressRunner(_RunnerStub):
+            def __init__(self) -> None:
+                super().__init__()
+                self.wait_calls = 0
+
+            def wait_for_pid_port(
+                self,
+                pid: int,
+                port: int,
+                *,
+                host: str = "127.0.0.1",
+                timeout: float = 30.0,
+                debug_pid_wait_group: str = "",
+            ) -> bool:  # noqa: ARG002
+                self.wait_calls += 1
+                return self.wait_calls >= 2
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text(
+                "INFO  [alembic.runtime.migration] Running upgrade a -> b, Add account settings\n",
+                encoding="utf-8",
+            )
+            runner = _ProgressRunner()
+            runtime = SimpleNamespace(
+                process_runner=runner,
+                config=SimpleNamespace(runtime_truth_mode="auto"),
+                _listener_probe_supported=True,
+                _service_listener_timeout=lambda: 0.01,
+                _service_startup_progress_timeout=lambda: 0.2,
+                _service_rebound_max_delta=lambda: 50,
+                _emit=lambda event, **payload: events.append((event, payload)),
+            )
+
+            detected = detect_service_actual_port(
+                runtime,
+                pid=4321,
+                requested_port=8000,
+                service_name="Main Backend",
+                log_path=str(log_path),
+            )
+
+        self.assertEqual(detected, 8000)
+        self.assertGreaterEqual(runner.wait_calls, 2)
+        self.assertTrue(any(event == "service.startup.progress" for event, _payload in events))
+
+    def test_detect_service_actual_port_defers_listener_while_startup_log_is_still_progressing(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class _ReadyRunner(_RunnerStub):
+            def __init__(self, log_path: Path) -> None:
+                super().__init__()
+                self.log_path = log_path
+                self.wait_calls = 0
+
+            def wait_for_pid_port(
+                self,
+                pid: int,
+                port: int,
+                *,
+                host: str = "127.0.0.1",
+                timeout: float = 30.0,
+                debug_pid_wait_group: str = "",
+            ) -> bool:  # noqa: ARG002
+                self.wait_calls += 1
+                if self.wait_calls == 2:
+                    self.log_path.write_text(
+                        "INFO:     Waiting for application startup.\n"
+                        "INFO:     Application startup complete.\n",
+                        encoding="utf-8",
+                    )
+                return True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("INFO:     Waiting for application startup.\n", encoding="utf-8")
+            runner = _ReadyRunner(log_path)
+            runtime = SimpleNamespace(
+                process_runner=runner,
+                config=SimpleNamespace(runtime_truth_mode="auto"),
+                _listener_probe_supported=True,
+                _service_listener_timeout=lambda: 0.01,
+                _service_startup_progress_timeout=lambda: 0.2,
+                _service_rebound_max_delta=lambda: 50,
+                _emit=lambda event, **payload: events.append((event, payload)),
+            )
+
+            detected = detect_service_actual_port(
+                runtime,
+                pid=4321,
+                requested_port=8000,
+                service_name="Main Backend",
+                log_path=str(log_path),
+            )
+
+        self.assertEqual(detected, 8000)
+        self.assertEqual(runner.wait_calls, 2)
+        self.assertTrue(any(event == "service.startup.progress" for event, _payload in events))
 
     def test_service_truth_fallback_enabled_respects_modes(self) -> None:
         strict_runtime = SimpleNamespace(
@@ -113,9 +235,23 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
             _listener_probe_supported=True,
             process_runner=_RunnerStub(),
         )
+        auto_supported_runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_truth_mode="auto"),
+            _listener_probe_supported=True,
+            process_runner=_RunnerStub(),
+        )
+        auto_unsupported_runner = _RunnerStub()
+        auto_unsupported_runner.process_tree_probe_supported = False
+        auto_unsupported_runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_truth_mode="auto"),
+            _listener_probe_supported=True,
+            process_runner=auto_unsupported_runner,
+        )
 
         self.assertFalse(service_truth_fallback_enabled(strict_runtime))
         self.assertTrue(service_truth_fallback_enabled(best_effort_runtime))
+        self.assertFalse(service_truth_fallback_enabled(auto_supported_runtime))
+        self.assertTrue(service_truth_fallback_enabled(auto_unsupported_runtime))
 
     def test_detect_service_actual_port_emits_discovery_when_rebound(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
