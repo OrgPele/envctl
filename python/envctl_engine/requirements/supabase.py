@@ -1983,19 +1983,33 @@ def _condense_probe_error(error: str) -> str:
     lines = [line.strip() for line in str(error or "").splitlines() if line.strip()]
     if not lines:
         return "HTTP health probe failed"
-    for line in reversed(lines):
+
+    actionable_lines = [line for line in lines if not _is_python_traceback_frame(line)]
+
+    for line in reversed(actionable_lines):
         if "urlopen error" in line.lower():
             match = re.search(r"urlopen error [^>]+", line, re.IGNORECASE)
             return match.group(0) if match else line
-    for line in reversed(lines):
+    for line in reversed(actionable_lines):
         lowered = line.lower()
         if "connectionrefusederror" in lowered or "connection refused" in lowered:
             return line
         if "timed out" in lowered or "timeout" in lowered:
             return line
-        if "httperror" in lowered or re.search(r"\b[45]\d\d\b", line):
+        if "httperror" in lowered or "http error" in lowered:
             return line
-    return lines[-1]
+        if re.search(r"\b(?:status(?: code)?|http status|response status)[= :]+[45]\d\d\b", lowered):
+            return line
+    return actionable_lines[-1] if actionable_lines else "HTTP health probe failed"
+
+
+def _is_python_traceback_frame(line: str) -> bool:
+    stripped = line.strip()
+    return bool(
+        stripped == "Traceback (most recent call last):"
+        or stripped.startswith("During handling of the above exception")
+        or re.match(r'^File ".+", line \d+, in .+$', stripped)
+    )
 
 
 def _supabase_auth_failure_detail(
@@ -2027,11 +2041,11 @@ def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
 
 
 def _auth_restart_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 1, minimum=1)
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 2, minimum=1)
 
 
 def _auth_recreate_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 1, minimum=1)
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 3, minimum=1)
 
 
 def _auth_restart_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:

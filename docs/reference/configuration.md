@@ -455,9 +455,9 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `SUPABASE_PUBLIC_PORT` | `54321` | Public Supabase API/Kong port used for `ENVCTL_SOURCE_SUPABASE_URL`. |
 | `ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS` | `5.0` | Per-phase timeout for managed Supabase Auth/Kong `/auth/v1/health` readiness probes. |
 | `ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE` | `true` | Restart only Auth/Kong after DB is healthy but the public API health probe fails. |
-| `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped restart; clamped to at least 1. |
+| `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS` | `2` | Number of Auth/Kong health probe windows after scoped restart; clamped to at least 1. |
 | `ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE` | `true` | Stop/remove/recreate only Auth/Kong after restart recovery is exhausted. Does not remove the Supabase DB service or volumes. |
-| `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped recreate; clamped to at least 1. |
+| `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS` | `3` | Number of Auth/Kong health probe windows after scoped recreate; clamped to at least 1. |
 | `ENVCTL_SUPABASE_AUTH_USERS` | unset | Comma-separated managed Supabase Auth user slugs for local/E2E provisioning. |
 | `ENVCTL_SUPABASE_USER_<SUFFIX>_EMAIL` | unset | Required email for an enabled managed Auth user. |
 | `ENVCTL_SUPABASE_USER_<SUFFIX>_PASSWORD` | unset | Required local/E2E password for an enabled managed Auth user. |
