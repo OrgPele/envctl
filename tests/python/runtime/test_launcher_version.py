@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -120,6 +121,46 @@ class LauncherVersionTests(unittest.TestCase):
         self.assertIn("envctl <command> --help", output)
         self.assertIn("Use this wrapper section when PATH/repo", output)
         runtime_run.assert_not_called()
+
+    def test_launcher_repo_arg_overrides_stale_execution_root_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            stale_repo = root / "stale-repo"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            stale_repo.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            seen: dict[str, object] = {}
+
+            def fake_runtime_run(argv, *, env):  # noqa: ANN001
+                seen["argv"] = argv
+                seen["run_repo_root"] = env.get("RUN_REPO_ROOT")
+                seen["execution_root"] = env.get("ENVCTL_EXECUTION_ROOT")
+                return 0
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "RUN_REPO_ROOT": str(stale_repo),
+                        "ENVCTL_EXECUTION_ROOT": str(stale_repo),
+                    },
+                    clear=False,
+                ),
+                patch("envctl_engine.runtime.launcher_cli._envctl_root", return_value=Path("/tmp/envctl-root")),
+                patch("envctl_engine.runtime.launcher_cli.runtime_cli.run", side_effect=fake_runtime_run),
+            ):
+                code = launcher_cli.run(["--repo", str(worktree), "--show-config"])
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen["argv"], ["--show-config"])
+            self.assertEqual(seen["run_repo_root"], str(repo.resolve()))
+            self.assertEqual(seen["execution_root"], str(worktree.resolve()))
 
     def test_runtime_entrypoint_prints_version_without_bootstrap(self) -> None:
         stdout = StringIO()
