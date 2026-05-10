@@ -442,7 +442,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         concise_error = (
             "Supabase DB is healthy but Supabase Auth/Kong is not reachable at "
             "http://127.0.0.1:54321/auth/v1/health: "
-            "phase=http actions=initial_probe,restart,recreate last_error="
+            "phase=http services=supabase-auth,supabase-kong public_port=54321 "
+            "actions=initial_probe,restart,recreate "
+            "public_url=http://72.61.80.25:54321/auth/v1/health last_error="
             "urlopen error [Errno 111] Connection refused"
         )
         requirements = RequirementsResult(
@@ -462,8 +464,13 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
 
         self.assertIn("Requirements unavailable for feature-a-1", message)
         self.assertIn("supabase:FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE", message)
+        self.assertIn("phase=http", message)
+        self.assertIn("services=supabase-auth,supabase-kong", message)
+        self.assertIn("public_url=http://72.61.80.25:54321/auth/v1/health", message)
+        self.assertIn("actions=initial_probe,restart,recreate", message)
         self.assertIn("Connection refused", message)
         self.assertNotIn("Traceback", message)
+        self.assertNotIn('File "', message)
 
     def test_start_project_services_allows_parallel_prep_with_sequential_attach_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

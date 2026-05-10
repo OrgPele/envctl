@@ -431,6 +431,37 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertEqual(runner.run_calls, 2)
         self.assertTrue(runner.sleep_calls)
 
+    def test_supabase_auth_health_probe_does_not_surface_partial_urllib_traceback(self) -> None:
+        class _PartialTracebackRunner:
+            def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+                _ = port, host, timeout
+                return True
+
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                _ = cwd, env, timeout, process_started_callback
+                return subprocess.CompletedProcess(
+                    list(cmd),
+                    1,
+                    "",
+                    "Traceback (most recent call last):\n"
+                    '  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain\n',
+                )
+
+            def sleep(self, seconds: float) -> None:
+                _ = seconds
+
+        ready, error = _probe_supabase_auth_health(
+            process_runner=_PartialTracebackRunner(),
+            public_port=54321,
+            health_url="http://127.0.0.1:54321/auth/v1/health",
+            env={"ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS": "0.5"},
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(error, "HTTP health probe failed")
+        self.assertNotIn("urllib/request.py", error or "")
+        self.assertNotIn('File "', error or "")
+
     def test_redis_adopts_existing_port_mapping_without_recreate_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -872,6 +903,160 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertNotIn("envctl-redis-main-deadbeef_default", removed_networks)
             self.assertNotIn("envctl-supabase-active_supabase-net", removed_networks)
 
+    def test_supabase_stack_recovers_missing_network_during_db_up_with_scoped_compose_down(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db"] = [
+                "failed to set up container networking: network 3b2e1a0f9d8c not found",
+                "",
+            ]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+            )
+
+            self.assertTrue(result.success)
+            compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
+            db_ups = [
+                cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
+            ]
+            self.assertEqual(len(db_ups), 2)
+            self.assertTrue(
+                any(
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"]
+                    and cmd[-2:] == ["down", "--remove-orphans"]
+                    for cmd in runner.commands
+                )
+            )
+            network_events = [
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.compose.network_recovery"
+            ]
+            self.assertTrue(network_events)
+            self.assertIn("compose_down_remove_orphans", str(network_events[-1].get("detail", "")))
+            self.assertFalse(any(cmd[:3] == ["docker", "network", "rm"] for cmd in runner.commands))
+
+    def test_supabase_stack_recovers_missing_network_during_secondary_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_returncode_sequence["up -d supabase-auth supabase-kong"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-auth supabase-kong"] = [
+                "failed to set up container networking: network 0123456789abcdef not found",
+                "",
+            ]
+            runner.wait_for_port_overrides[5432] = True
+            runner.wait_for_port_overrides[54321] = True
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+            )
+
+            self.assertTrue(result.success)
+            secondary_ups = [
+                cmd
+                for cmd in runner.commands
+                if cmd[:2] == ["docker", "compose"] and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
+            ]
+            self.assertEqual(len(secondary_ups), 2)
+            self.assertTrue(any(cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["down", "--remove-orphans"] for cmd in runner.commands))
+
+    def test_supabase_missing_network_recovery_does_not_remove_other_worktree_or_non_empty_networks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
+            runner = _FakeRunner()
+            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db"] = [
+                "Error response from daemon: failed to set up container networking: network 0123456789ab not found",
+                "",
+            ]
+            runner.compose_returncode["down --remove-orphans"] = 1
+            runner.compose_stderr["down --remove-orphans"] = "compose down failed"
+            runner.network_names = [
+                f"{compose_project}_default",
+                f"{compose_project}_supabase-net",
+                f"{compose_project}_other",
+                f"{compose_project}_supabase-net_nonempty",
+                "envctl-supabase-otherworktree_default",
+                "envctl-redis-main-deadbeef_default",
+                "bridge",
+            ]
+            runner.network_container_counts = {
+                f"{compose_project}_supabase-net_nonempty": 2,
+                "envctl-supabase-otherworktree_default": 0,
+            }
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+            )
+
+            self.assertTrue(result.success)
+            removed_networks = [cmd[-1] for cmd in runner.commands if cmd[:3] == ["docker", "network", "rm"]]
+            self.assertEqual(removed_networks, [f"{compose_project}_default", f"{compose_project}_supabase-net"])
+            self.assertNotIn(f"{compose_project}_supabase-net_nonempty", removed_networks)
+            self.assertNotIn("envctl-supabase-otherworktree_default", removed_networks)
+            self.assertNotIn("envctl-redis-main-deadbeef_default", removed_networks)
+
+    def test_supabase_missing_network_recovery_reports_exhausted_scoped_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 1]
+            runner.compose_stderr_sequence["up -d supabase-db"] = [
+                "failed to set up container networking: network 0123456789ab not found",
+                "still missing network",
+            ]
+            runner.compose_returncode["down --remove-orphans"] = 1
+            runner.compose_stderr["down --remove-orphans"] = "compose down failed"
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("scoped Supabase network recovery", result.error or "")
+            self.assertIn("compose_down_error=compose down failed", result.error or "")
+            self.assertIn("still missing network", result.error or "")
+            self.assertIn(build_supabase_project_name(project_root=root, project_name="feature-a-1"), result.error or "")
+
     def test_supabase_stack_records_db_probe_stage_when_db_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -949,8 +1134,10 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertIn("Supabase DB is healthy but Supabase Auth/Kong is not reachable", result.error or "")
             self.assertIn("http://127.0.0.1:54321/auth/v1/health", result.error or "")
+            self.assertIn("probe_url=http://127.0.0.1:54321/auth/v1/health", result.error or "")
             self.assertIn("actions=initial_probe,restart,recreate", result.error or "")
             self.assertNotIn("Traceback", result.error or "")
+            self.assertNotIn('File "', result.error or "")
             self.assertTrue(
                 any(
                     cmd[:2] == ["docker", "compose"]
@@ -980,7 +1167,12 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
             runner.status["auth-container-id"] = "exited"
             runner.status["kong-container-id"] = "running"
-            runner.state_error["auth-container-id"] = "SERVICE_ROLE_KEY=should-not-leak crashed"
+            runner.health_status["kong-container-id"] = "starting"
+            runner.state_error["auth-container-id"] = (
+                "Traceback (most recent call last):\n"
+                '  File "/app/auth.py", line 12, in boot\n'
+                "SERVICE_ROLE_KEY=should-not-leak crashed"
+            )
 
             result = start_supabase_stack(
                 process_runner=runner,
@@ -1001,12 +1193,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertIn("status=exited", inspect_detail)
             self.assertIn("supabase-kong", inspect_detail)
             self.assertIn("status=running", inspect_detail)
+            self.assertIn("health=starting", inspect_detail)
             self.assertIn("service_state=", result.error or "")
             self.assertIn("supabase-auth", result.error or "")
             self.assertIn("status=exited", result.error or "")
+            self.assertIn("health=starting", result.error or "")
             self.assertNotIn("SERVICE_ROLE_KEY", result.error or "")
             self.assertNotIn("should-not-leak", result.error or "")
             self.assertNotIn("Traceback", result.error or "")
+            self.assertNotIn('File "', result.error or "")
 
     def test_supabase_auth_kong_inspect_failure_is_summarized_without_blocking_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

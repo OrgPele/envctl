@@ -113,18 +113,27 @@ def start_supabase_stack(
         args=["up", "-d", db_service],
     )
     if up_db is not None:
-        db_handoff_recovered = _compose_timeout_recovered(
-            process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
-            service_name=db_service,
-            probe_port=db_port,
-            error=up_db,
-        )
+        if _is_compose_network_recovery_marker(up_db):
+            _record_compose_network_recovery_stage(stage_events, up_db)
+            db_handoff_recovered = True
+        else:
+            db_handoff_recovered = _compose_timeout_recovered(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_name=db_service,
+                probe_port=db_port,
+                error=up_db,
+            )
         if not db_handoff_recovered:
-            return ContainerStartResult(success=False, container_name=compose_project_name, error=up_db)
+            return ContainerStartResult(
+                success=False,
+                container_name=compose_project_name,
+                error=up_db,
+                stage_events=stage_events,
+            )
 
     if db_port > 0:
         db_probe_attempts = _db_probe_attempts(env)
@@ -146,21 +155,26 @@ def start_supabase_stack(
                     args=["up", "-d", db_service],
                 )
                 if retry_up_db is not None:
-                    db_handoff_recovered = _compose_timeout_recovered(
-                        process_runner=process_runner,
-                        compose_root=compose_root,
-                        compose_project_name=compose_project_name,
-                        compose_path=compose_path,
-                        env=env,
-                        service_name=db_service,
-                        probe_port=db_port,
-                        error=retry_up_db,
-                    )
+                    if _is_compose_network_recovery_marker(retry_up_db):
+                        _record_compose_network_recovery_stage(stage_events, retry_up_db)
+                        db_handoff_recovered = True
+                    else:
+                        db_handoff_recovered = _compose_timeout_recovered(
+                            process_runner=process_runner,
+                            compose_root=compose_root,
+                            compose_project_name=compose_project_name,
+                            compose_path=compose_path,
+                            env=env,
+                            service_name=db_service,
+                            probe_port=db_port,
+                            error=retry_up_db,
+                        )
                     if not db_handoff_recovered:
                         return ContainerStartResult(
                             success=False,
                             container_name=compose_project_name,
                             error=f"{retry_up_db} (retry db bring-up failed)",
+                            stage_events=stage_events,
                         )
 
         _record_db_probe_stage(
@@ -282,6 +296,10 @@ def start_supabase_stack(
             args=["up", "-d", *secondary_services],
         )
         if up_secondary is not None:
+            if _is_compose_network_recovery_marker(up_secondary):
+                _record_compose_network_recovery_stage(stage_events, up_secondary)
+                up_secondary = None
+        if up_secondary is not None:
             if not all(
                 _compose_timeout_recovered(
                     process_runner=process_runner,
@@ -295,7 +313,12 @@ def start_supabase_stack(
                 )
                 for service_name in secondary_services
             ):
-                return ContainerStartResult(success=False, container_name=compose_project_name, error=up_secondary)
+                return ContainerStartResult(
+                    success=False,
+                    container_name=compose_project_name,
+                    error=up_secondary,
+                    stage_events=stage_events,
+                )
 
     public_health_url = _supabase_auth_health_url(env, resolved_public_port)
     health_url = _supabase_local_auth_health_url(resolved_public_port)
@@ -1190,6 +1213,37 @@ def _compose_run(
             if cleanup_error:
                 return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
             return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
+        if up_error is not None and _is_docker_network_missing(up_error):
+            recovered, recovery_detail = _recover_missing_supabase_network_for_project(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+            )
+            retry_error = _compose_up_handoff(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                args=args,
+                timeout_seconds=timeout_seconds,
+                service_names=service_names,
+                probe_port=probe_port,
+            )
+            if retry_error is None:
+                return f"network_recovery={recovery_detail or 'retry_only'}"
+            action_detail = recovery_detail or "scoped Supabase network recovery"
+            if recovered:
+                return (
+                    f"docker compose {' '.join(args)} failed after scoped Supabase network recovery for "
+                    f"{compose_project_name}: {retry_error}; recovery_actions={action_detail}"
+                )
+            return (
+                f"docker compose {' '.join(args)} failed after attempted scoped Supabase network recovery for "
+                f"{compose_project_name}: {retry_error}; recovery_error={action_detail}"
+            )
         return up_error
     result, error = run_docker(
         process_runner,
@@ -1296,11 +1350,116 @@ def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
     return "all predefined address pools have been fully subnetted" in str(error or "").lower()
 
 
+def _is_docker_network_missing(error: str | None) -> bool:
+    normalized = " ".join(str(error or "").lower().split())
+    if not normalized:
+        return False
+    if (
+        "failed to set up container networking" in normalized
+        and "network" in normalized
+        and "not found" in normalized
+    ):
+        return True
+    return bool(re.search(r"\bnetwork\s+[0-9a-f]{12,64}\s+not\s+found\b", normalized))
+
+
+def _recover_missing_supabase_network_for_project(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+) -> tuple[bool, str | None]:
+    down_result, down_error = run_docker(
+        process_runner,
+        ["compose", "-p", compose_project_name, "-f", str(compose_path), "down", "--remove-orphans"],
+        cwd=compose_root,
+        env=env,
+        timeout=60.0,
+    )
+    if down_result is not None and getattr(down_result, "returncode", 1) == 0:
+        return True, "compose_down_remove_orphans"
+
+    down_detail = down_error
+    if down_result is not None and getattr(down_result, "returncode", 1) != 0:
+        down_detail = run_result_error(down_result, "docker compose down --remove-orphans failed")
+
+    removed_count, cleanup_error = _remove_empty_supabase_networks_for_project(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        env=env,
+    )
+    if removed_count > 0:
+        detail = f"current_project_empty_networks_removed={removed_count}"
+        if cleanup_error:
+            detail = f"{detail}; cleanup_error={cleanup_error}"
+        return True, detail
+
+    if cleanup_error:
+        return False, f"compose_down_error={down_detail}; network_cleanup_error={cleanup_error}"
+    if _global_empty_network_recovery_enabled(env):
+        global_count, global_error = _remove_empty_envctl_supabase_networks(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            env=env,
+        )
+        if global_count > 0:
+            detail = f"global_empty_networks_removed={global_count}"
+            if global_error:
+                detail = f"{detail}; cleanup_error={global_error}"
+            return True, detail
+        if global_error:
+            return False, f"compose_down_error={down_detail}; global_cleanup_error={global_error}"
+    return False, f"compose_down_error={down_detail or 'unknown'}; no current-project empty Supabase networks removed"
+
+
+def _remove_empty_supabase_networks_for_project(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    env: Mapping[str, str] | None,
+) -> tuple[int, str | None]:
+    def include_network(network_name: str) -> bool:
+        if not network_name.startswith(f"{compose_project_name}_"):
+            return False
+        suffix = network_name[len(compose_project_name) :]
+        return suffix in {"_default", "_supabase-net"}
+
+    return _remove_empty_docker_networks(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        env=env,
+        include_network=include_network,
+    )
+
+
+def _global_empty_network_recovery_enabled(env: Mapping[str, str] | None) -> bool:
+    return env_bool(env, "ENVCTL_SUPABASE_NETWORK_RECOVERY_ALLOW_GLOBAL_EMPTY_CLEANUP", False)
+
+
 def _remove_empty_envctl_supabase_networks(
     *,
     process_runner,
     compose_root: Path,
     env: Mapping[str, str] | None,
+) -> tuple[int, str | None]:
+    return _remove_empty_docker_networks(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        env=env,
+        include_network=lambda network_name: network_name.startswith("envctl-supabase-"),
+    )
+
+
+def _remove_empty_docker_networks(
+    *,
+    process_runner,
+    compose_root: Path,
+    env: Mapping[str, str] | None,
+    include_network,
 ) -> tuple[int, str | None]:
     result, run_error = run_docker(
         process_runner,
@@ -1318,7 +1477,7 @@ def _remove_empty_envctl_supabase_networks(
     cleanup_errors: list[str] = []
     removed_count = 0
     for network_name in names:
-        if not network_name.startswith("envctl-supabase-"):
+        if not bool(include_network(network_name)):
             continue
         inspect_result, inspect_error = run_docker(
             process_runner,
@@ -1489,6 +1648,25 @@ def _record_db_probe_stage(
     )
 
 
+def _record_compose_network_recovery_stage(stage_events: list[dict[str, object]], error: str | None) -> None:
+    if not _is_compose_network_recovery_marker(error):
+        return
+    detail = str(error).split("network_recovery=", 1)[1].strip()
+    if not detail:
+        return
+    stage_events.append(
+        {
+            "stage": "supabase.compose.network_recovery",
+            "reason": "recovered",
+            "detail": detail,
+        }
+    )
+
+
+def _is_compose_network_recovery_marker(error: str | None) -> bool:
+    return bool(error and str(error).startswith("network_recovery="))
+
+
 def _recreate_db_service(
     *,
     process_runner,
@@ -1633,14 +1811,16 @@ def _format_auth_service_states(service_states: list[dict[str, object]]) -> str:
 
 
 def _sanitize_service_state_text(value: str) -> str:
-    text = " ".join(str(value or "").split())
+    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+    lines = [line for line in lines if not _is_python_traceback_noise(line)]
+    text = " ".join(lines).strip()
     text = re.sub(
         r"\b[A-Z0-9_]*(?:KEY|SECRET|PASSWORD|TOKEN|AUTHORIZATION|APIKEY)[A-Z0-9_]*=[^\s;]+",
         "[redacted]",
         text,
         flags=re.IGNORECASE,
     )
-    return text[:240]
+    return (text or "unavailable")[:240]
 
 
 def _recreate_auth_gateway_services(
@@ -1914,11 +2094,18 @@ def _probe_supabase_auth_health_once(
         }
     )
     probe_code = (
-        "import sys, urllib.request; "
+        "import sys, urllib.error, urllib.request; "
         "url=sys.argv[1]; "
         "timeout=float(sys.argv[2]); "
         "req=urllib.request.Request(url, headers={'Accept':'application/json'}); "
-        "resp=urllib.request.urlopen(req, timeout=timeout); "
+        "\ntry:\n"
+        "    resp=urllib.request.urlopen(req, timeout=timeout)\n"
+        "except urllib.error.HTTPError as exc:\n"
+        "    print(f'HTTPError: {exc.code} {exc.reason}', file=sys.stderr)\n"
+        "    raise SystemExit(0 if 200 <= exc.code < 500 else 1)\n"
+        "except Exception as exc:\n"
+        "    print(f'HTTP health probe failed: {type(exc).__name__}: {exc}', file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
         "raise SystemExit(0 if 200 <= resp.status < 500 else 1)"
     )
     deadline = time.monotonic() + timeout_seconds
@@ -1989,13 +2176,23 @@ def _condense_probe_error(error: str) -> str:
             return match.group(0) if match else line
     for line in reversed(lines):
         lowered = line.lower()
+        if _is_python_traceback_noise(line):
+            continue
         if "connectionrefusederror" in lowered or "connection refused" in lowered:
             return line
         if "timed out" in lowered or "timeout" in lowered:
             return line
         if "httperror" in lowered or re.search(r"\b[45]\d\d\b", line):
             return line
-    return lines[-1]
+    for line in reversed(lines):
+        if not _is_python_traceback_noise(line):
+            return line
+    return "HTTP health probe failed"
+
+
+def _is_python_traceback_noise(line: str) -> bool:
+    text = str(line).strip()
+    return text == "Traceback (most recent call last):" or bool(re.match(r'^File ".+", line \d+, in .+$', text))
 
 
 def _supabase_auth_failure_detail(
@@ -2011,6 +2208,7 @@ def _supabase_auth_failure_detail(
         f"phase={probe.phase}",
         f"services={','.join(service_names) if service_names else 'none'}",
         f"public_port={public_port}",
+        f"probe_url={probe.health_url}",
         f"actions={','.join(actions)}",
         f"last_error={probe.last_error or 'unknown'}",
     ]
