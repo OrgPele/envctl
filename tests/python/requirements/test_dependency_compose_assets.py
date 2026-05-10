@@ -51,6 +51,42 @@ class DependencyComposeAssetsTests(unittest.TestCase):
             self.assertIn("SUPABASE_PUBLIC_URL=http://localhost:54321", env_text)
             self.assertIn('"${SUPABASE_PUBLIC_PORT:-54321}:8000"', compose_text)
 
+    def test_materialize_dependency_compose_repairs_stale_directories_at_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir)
+            stack_root = runtime_root / "dependency_compose" / "supabase" / "main"
+            (stack_root / "kong.yml").mkdir(parents=True)
+            (stack_root / "kong.yml" / "kong.yml").write_text("stale nested kong config\n", encoding="utf-8")
+            (stack_root / "init" / "01-create-n8n-db.sql").mkdir(parents=True)
+            (stack_root / "init" / "01-create-n8n-db.sql" / "01-create-n8n-db.sql").write_text(
+                "stale nested n8n bootstrap\n",
+                encoding="utf-8",
+            )
+            (stack_root / "init" / "02-bootstrap-gotrue-auth.sql").mkdir(parents=True)
+            (stack_root / "init" / "02-bootstrap-gotrue-auth.sql" / "02-bootstrap-gotrue-auth.sql").write_text(
+                "stale nested auth bootstrap\n",
+                encoding="utf-8",
+            )
+
+            materialized = materialize_dependency_compose(
+                runtime_root=runtime_root,
+                dependency_name="supabase",
+                project_name="Main",
+                compose_project_name="envctl-supabase-main",
+                env_values=supabase_managed_env(db_port=5432, public_port=54321, env={}),
+            )
+
+            self.assertTrue((materialized.stack_root / "kong.yml").is_file())
+            self.assertFalse((materialized.stack_root / "kong.yml" / "kong.yml").exists())
+            self.assertTrue((materialized.stack_root / "init" / "01-create-n8n-db.sql").is_file())
+            self.assertFalse(
+                (materialized.stack_root / "init" / "01-create-n8n-db.sql" / "01-create-n8n-db.sql").exists()
+            )
+            self.assertTrue((materialized.stack_root / "init" / "02-bootstrap-gotrue-auth.sql").is_file())
+            self.assertFalse(
+                (materialized.stack_root / "init" / "02-bootstrap-gotrue-auth.sql" / "02-bootstrap-gotrue-auth.sql").exists()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
