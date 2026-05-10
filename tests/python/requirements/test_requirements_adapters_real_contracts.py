@@ -14,6 +14,9 @@ from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container
 from envctl_engine.requirements.supabase import (
+    _auth_recreate_probe_attempts,
+    _auth_restart_probe_attempts,
+    _condense_probe_error,
     _probe_supabase_auth_health,
     build_supabase_project_name,
     start_supabase_stack,
@@ -461,6 +464,21 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertEqual(error, "HTTP health probe failed")
         self.assertNotIn("urllib/request.py", error or "")
         self.assertNotIn('File "', error or "")
+
+    def test_supabase_auth_probe_error_condensing_ignores_traceback_frame_line_numbers(self) -> None:
+        raw_error = (
+            "ConnectionRefusedError: [Errno 111] Connection refused\n"
+            '  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain\n'
+        )
+
+        self.assertEqual(
+            _condense_probe_error(raw_error),
+            "ConnectionRefusedError: [Errno 111] Connection refused",
+        )
+
+    def test_supabase_auth_recovery_defaults_allow_multiple_probe_windows(self) -> None:
+        self.assertEqual(_auth_restart_probe_attempts({}), 2)
+        self.assertEqual(_auth_recreate_probe_attempts({}), 3)
 
     def test_redis_adopts_existing_port_mapping_without_recreate_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

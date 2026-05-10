@@ -2182,7 +2182,9 @@ def _condense_probe_error(error: str) -> str:
             return line
         if "timed out" in lowered or "timeout" in lowered:
             return line
-        if "httperror" in lowered or re.search(r"\b[45]\d\d\b", line):
+        if "httperror" in lowered or "http error" in lowered:
+            return line
+        if re.search(r"\b(?:status(?: code)?|http status|response status)[= :]+[45]\d\d\b", lowered):
             return line
     for line in reversed(lines):
         if not _is_python_traceback_noise(line):
@@ -2192,7 +2194,11 @@ def _condense_probe_error(error: str) -> str:
 
 def _is_python_traceback_noise(line: str) -> bool:
     text = str(line).strip()
-    return text == "Traceback (most recent call last):" or bool(re.match(r'^File ".+", line \d+, in .+$', text))
+    return bool(
+        text == "Traceback (most recent call last):"
+        or text.startswith("During handling of the above exception")
+        or re.match(r'^File ".+", line \d+, in .+$', text)
+    )
 
 
 def _supabase_auth_failure_detail(
@@ -2225,11 +2231,11 @@ def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
 
 
 def _auth_restart_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 1, minimum=1)
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 2, minimum=1)
 
 
 def _auth_recreate_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 1, minimum=1)
+    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 3, minimum=1)
 
 
 def _auth_restart_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
