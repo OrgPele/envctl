@@ -170,6 +170,52 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
             [{"project": "Main", "component": "redis", "status": "unreachable", "port": 6390}],
         )
 
+    def test_reconcile_project_requirement_truth_repairs_stale_supabase_container_ports(self) -> None:
+        db_container = "envctl-supabase-main-deadbeef-supabase-db-1"
+        kong_container = "envctl-supabase-main-deadbeef-supabase-kong-1"
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    return SimpleNamespace(returncode=0, stdout=f"{db_container}\n", stderr="")
+                if args == ("docker", "port", db_container, "5432"):
+                    return SimpleNamespace(returncode=0, stdout="0.0.0.0:5574\n", stderr="")
+                if args == ("docker", "port", kong_container, "8000"):
+                    return SimpleNamespace(returncode=0, stdout="0.0.0.0:54463\n", stderr="")
+                return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port in {5574, 54463}
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "requested": 5662,
+                "resources": {"primary": 5662, "requested": 5662, "db": 5662, "api": 54551},
+                "container_name": db_container,
+            },
+        )
+
+        issues = reconcile_project_requirement_truth(runtime, "Main", requirements, project_root=Path("/tmp/repo"))
+
+        self.assertEqual(issues, [])
+        self.assertEqual(requirements.supabase["final"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["primary"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["db"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["api"], 54463)
+        self.assertEqual(requirements.supabase["runtime_status"], "healthy")
+
     def test_requirement_truth_issues_reconciles_when_runtime_status_missing(self) -> None:
         runtime = SimpleNamespace(
             process_runner=SimpleNamespace(wait_for_port=lambda port, timeout: True),
