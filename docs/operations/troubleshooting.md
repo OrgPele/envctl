@@ -83,6 +83,11 @@ Use `ENVCTL_DEBUG_REQUIREMENTS_TRACE=1` to capture the staged evidence. The rele
 
 The final failure line keeps the local probe URL, attempted recovery actions, the last health-probe error, and compact service-state summaries. If Auth/Kong recovery is exhausted, use the existing Supabase reinit/cleanup path only when preserving the local Supabase DB state is no longer required.
 
+## Supabase Docker network disappeared during startup
+If Docker reports `failed to set up container networking: network <id> not found` while envctl is starting managed Supabase, the usual cause is stale Compose network state for that envctl-owned Supabase project. Envctl first runs scoped recovery for the affected compose project with `docker compose ... down --remove-orphans` and retries the same `up -d` once, without `-v` and without deleting Supabase DB volumes.
+
+If scoped compose cleanup cannot run, envctl falls back to removing only empty current-project Supabase networks such as `<compose-project>_default` or `<compose-project>_supabase-net`. By default it does not prune Docker globally, does not run `docker system prune`, and does not remove networks belonging to other worktrees. The opt-in `ENVCTL_SUPABASE_NETWORK_RECOVERY_ALLOW_GLOBAL_EMPTY_CLEANUP=true` fallback can broaden cleanup to empty `envctl-supabase-*` networks only. For diagnostics, rerun with `ENVCTL_DEBUG_REQUIREMENTS_TRACE=1 ENVCTL_DEBUG_DOCKER_COMMAND_TIMING=1`.
+
 ## Slow startup latency (requirements dominate)
 Recommended capture:
 1. Run a deep startup sample:

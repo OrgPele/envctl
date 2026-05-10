@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -12,7 +13,7 @@ class RequirementsOrchestratorTests(unittest.TestCase):
     def test_uniform_retry_classification_for_bind_conflict(self) -> None:
         orchestrator = RequirementsOrchestrator()
 
-        def _starter_factory() -> tuple[list[int], object]:
+        def _starter_factory() -> tuple[list[int], Callable[[int], tuple[bool, str | None]]]:
             attempts: list[int] = []
 
             def start(port: int) -> tuple[bool, str | None]:
@@ -54,6 +55,42 @@ class RequirementsOrchestratorTests(unittest.TestCase):
             strict=False,
         )
         self.assertEqual(cls, FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE)
+
+    def test_supabase_missing_docker_network_is_transient_probe_failure(self) -> None:
+        orchestrator = RequirementsOrchestrator()
+        cls = orchestrator.classify_failure(
+            "supabase",
+            "failed to set up container networking: network 3b2e1a0f9d8c not found",
+            strict=True,
+        )
+        self.assertEqual(cls, FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE)
+
+    def test_non_supabase_missing_docker_network_stays_hard_failure(self) -> None:
+        orchestrator = RequirementsOrchestrator()
+        cls = orchestrator.classify_failure(
+            "redis",
+            "failed to set up container networking: network 3b2e1a0f9d8c not found",
+            strict=True,
+        )
+        self.assertEqual(cls, FailureClass.HARD_START_FAILURE)
+
+    def test_missing_supabase_compose_file_stays_hard_failure(self) -> None:
+        orchestrator = RequirementsOrchestrator()
+        cls = orchestrator.classify_failure(
+            "supabase",
+            "missing supabase compose file: /tmp/repo/supabase/docker-compose.yml",
+            strict=True,
+        )
+        self.assertEqual(cls, FailureClass.HARD_START_FAILURE)
+
+    def test_docker_daemon_unavailable_stays_hard_failure(self) -> None:
+        orchestrator = RequirementsOrchestrator()
+        cls = orchestrator.classify_failure(
+            "supabase",
+            "failed to connect to the docker API at unix:///var/run/docker.sock",
+            strict=True,
+        )
+        self.assertEqual(cls, FailureClass.HARD_START_FAILURE)
 
     def test_transient_probe_retry_keeps_same_port(self) -> None:
         orchestrator = RequirementsOrchestrator()
