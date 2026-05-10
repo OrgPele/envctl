@@ -219,6 +219,41 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["BACKEND_LOG_LEVEL_OVERRIDE"], "warn")
         self.assertEqual(env["FRONTEND_TEST_RUNNER"], "bun")
 
+    def test_project_service_env_prefers_resource_ports_when_legacy_final_is_stale(self) -> None:
+        runtime = SimpleNamespace(_command_override_value=lambda _key: None)
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
+                "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
+                "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": True, "success": True, "final": 5432, "resources": {"primary": 15432}},
+            redis={"enabled": True, "success": True, "final": 6380, "resources": {"primary": 16609}},
+            n8n={"enabled": True, "success": True, "final": 5678, "resources": {"primary": 15908}},
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "resources": {"db": 5574, "api": 54463, "primary": 5574},
+            },
+        )
+
+        env = project_service_env(runtime, context, requirements=requirements, route=None)
+
+        self.assertIn("@localhost:5574/postgres", env["DATABASE_URL"])
+        self.assertEqual(env["SUPABASE_DB_PORT"], "5574")
+        self.assertEqual(env["SUPABASE_PUBLIC_PORT"], "54463")
+        self.assertEqual(env["SUPABASE_URL"], "http://localhost:54463")
+        self.assertEqual(env["REDIS_URL"], "redis://localhost:16609/0")
+        self.assertEqual(env["N8N_URL"], "http://localhost:15908")
+
     def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: {"DB_HOST": "db.local", "DB_USER": "alice"}.get(key),
