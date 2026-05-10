@@ -84,7 +84,7 @@ class EndpointsCommandSupportTests(unittest.TestCase):
                     supabase={
                         "enabled": True,
                         "success": True,
-                        "resources": {"db": 5432, "api": 54321, "primary": 5432},
+                        "resources": {"db": 5432, "api": 54321, "primary": 5432, "requested": 5432},
                     },
                 ),
                 "feature-b-1": RequirementsResult(project="feature-b-1", redis={"enabled": True, "final": 6381}),
@@ -109,9 +109,34 @@ class EndpointsCommandSupportTests(unittest.TestCase):
         self.assertEqual(payload["backend"]["local_url"], "http://localhost:8100")
         self.assertEqual(payload["backend"]["public_url"], "http://public.example.test:8100")
         self.assertEqual(payload["dependencies"]["redis"]["port"], 6380)
+        self.assertEqual(payload["dependencies"]["supabase"]["port"], 54321)
+        self.assertEqual(payload["dependencies"]["supabase"]["resources"], {"api": 54321, "db": 5432, "primary": 5432})
         self.assertEqual(payload["dependencies"]["supabase_db"]["port"], 5432)
         self.assertEqual(payload["dependencies"]["supabase_api"]["port"], 54321)
         self.assertNotIn("feature-b-1", json.dumps(payload))
+
+    def test_supabase_api_endpoint_does_not_fallback_to_db_port_when_api_resource_is_missing(self) -> None:
+        state = RunState(
+            run_id="run-missing-api",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    supabase={
+                        "enabled": True,
+                        "success": True,
+                        "final": 5574,
+                        "resources": {"db": 5574, "primary": 5574, "requested": 5662},
+                    },
+                )
+            },
+        )
+
+        payload = build_endpoints_payload(state, project="Main", env={}, config=SimpleNamespace(raw={}))
+
+        self.assertEqual(payload["dependencies"]["supabase"]["resources"], {"db": 5574, "primary": 5574})
+        self.assertEqual(payload["dependencies"]["supabase_db"]["port"], 5574)
+        self.assertIsNone(payload["dependencies"]["supabase_api"]["port"])
 
     def test_command_uses_runtime_project_resolver_for_endpoint_services(self) -> None:
         state = RunState(

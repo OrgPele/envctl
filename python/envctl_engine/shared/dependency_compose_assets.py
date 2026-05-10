@@ -150,7 +150,23 @@ def _sync_asset_tree(source: Path, destination: Path) -> None:
         relative = path.relative_to(source)
         target = destination / relative
         if path.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
+            _ensure_directory_target(target)
             continue
+        _copy_asset_file(path, target)
+
+
+def _ensure_directory_target(target: Path) -> None:
+    if target.is_symlink() or (target.exists() and not target.is_dir()):
+        target.unlink()
+    target.mkdir(parents=True, exist_ok=True)
+
+
+def _copy_asset_file(source: Path, target: Path) -> None:
+    if target.is_symlink():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)

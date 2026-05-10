@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from envctl_engine.requirements.common import build_container_name
+from envctl_engine.requirements.component_ports import dependency_display_port
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.requirements.supabase_auth_users import (
@@ -234,7 +235,7 @@ def _shared_main_requirements(
 ) -> RequirementsResult:
     cached = getattr(orchestrator, "_shared_dependency_requirements", None)
     if isinstance(cached, RequirementsResult):
-        return cached
+        return _reconcile_shared_main_requirements(orchestrator, cached)
     lock = getattr(orchestrator, "_shared_dependency_lock", None)
     if lock is None:
         return _annotate_shared_main_requirements(
@@ -248,7 +249,7 @@ def _shared_main_requirements(
     with lock:
         cached = getattr(orchestrator, "_shared_dependency_requirements", None)
         if isinstance(cached, RequirementsResult):
-            return cached
+            return _reconcile_shared_main_requirements(orchestrator, cached)
         requirements = _load_or_start_shared_main_requirements(
             orchestrator,
             route=route,
@@ -323,7 +324,18 @@ def _annotate_shared_main_requirements(
             project_root=project_root,
             project_name="Main",
         ) + "-supabase-db-1"
-    return cloned
+    return _reconcile_shared_main_requirements(orchestrator, cloned)
+
+
+def _reconcile_shared_main_requirements(
+    orchestrator: StartupOrchestratorLike,
+    requirements: RequirementsResult,
+) -> RequirementsResult:
+    project_root = orchestrator.runtime.config.execution_root
+    reconcile = getattr(orchestrator.runtime, "_reconcile_project_requirement_truth", None)
+    if callable(reconcile):
+        reconcile("Main", requirements, project_root=project_root)
+    return requirements
 
 
 def startup_summary_payload(
@@ -398,13 +410,7 @@ def _float_ms(value: object) -> float:
 
 def _component_port_summary(requirements: RequirementsResult, dependency_id: str) -> int | None:
     component = requirements.component(dependency_id)
-    final_port = component.get("final")
-    if isinstance(final_port, int) and final_port > 0:
-        return final_port
-    requested_port = component.get("requested")
-    if isinstance(requested_port, int) and requested_port > 0:
-        return requested_port
-    return None
+    return dependency_display_port(dependency_id, component)
 
 
 def _service_ready_label(service: object | None) -> str:

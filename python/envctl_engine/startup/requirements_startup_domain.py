@@ -297,6 +297,7 @@ def _start_requirement_component(
         nonlocal command_source
         nonlocal native_effective_port
         nonlocal native_port_adopted
+        nonlocal native_container_name
         adapter_result = self._start_requirement_with_native_adapter(
             context=context,
             service_name=name,
@@ -309,6 +310,7 @@ def _start_requirement_component(
                 int(adapter_result.effective_port) if isinstance(adapter_result.effective_port, int) else None
             )
             native_port_adopted = bool(adapter_result.port_adopted)
+            native_container_name = adapter_result.container_name
             return adapter_result.success, adapter_result.error
 
         command, resolved_source = self._requirement_command_resolved(
