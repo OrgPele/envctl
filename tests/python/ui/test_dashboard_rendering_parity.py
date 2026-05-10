@@ -1000,6 +1000,117 @@ class DashboardRenderingParityTests(unittest.TestCase):
             )
             self.assertNotIn("○ Run AI:", output)
 
+    def test_dashboard_renders_envctl_plan_agent_session_by_generated_session_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "pele-monorepo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "features_interactive_onboarding_configuration_flow-1"
+            project_root = repo / "trees" / "features_interactive_onboarding_configuration_flow" / "1"
+            plan_path = repo / "todo" / "plans" / "features" / "interactive-onboarding-configuration-flow.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    f"{project} Backend": ServiceRecord(
+                        name=f"{project} Backend",
+                        type="backend",
+                        cwd=str(project_root / "backend"),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {project: str(project_root)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex",
+                            "windows": "zsh",
+                            "paths": str(repo),
+                            "attach": (
+                                "tmux attach-session -t "
+                                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex"
+                            ),
+                            "kill": (
+                                "tmux kill-session -t "
+                                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex"
+                            ),
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("", ""),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(
+                "AI session: tmux attach-session -t "
+                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex "
+                "(detached)",
+                output,
+            )
+            self.assertNotIn("○ Run AI:", output)
+
+    def test_dashboard_renders_worktree_ai_launcher_when_plan_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "pele-monorepo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "features_interactive_onboarding_configuration_flow-1"
+            project_root = repo / "trees" / "features_interactive_onboarding_configuration_flow" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            (project_root / "MAIN_TASK.md").write_text("# Task\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                json.dumps({"plan_file": "features/interactive-onboarding-configuration-flow.md"}),
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    f"{project} Backend": ServiceRecord(
+                        name=f"{project} Backend",
+                        type="backend",
+                        cwd=str(project_root / "backend"),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {project: str(project_root)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch("envctl_engine.runtime.session_management.list_tmux_sessions", return_value=[]),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(f"○ Run AI: envctl --repo {project_root} codex-tmux", output)
+            self.assertNotIn("AI session:", output)
+
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
