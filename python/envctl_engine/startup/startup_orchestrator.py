@@ -561,7 +561,7 @@ class StartupOrchestrator:
         self._validate_plan_agent_handoff(session, phase="post_launch")
         self._emit_plan_agent_launch_state(session, launch_result)
         if self._should_fail_for_plan_agent_launch_result(session, launch_result):
-            raise RuntimeError(self._plan_agent_launch_failure_message(launch_result))
+            raise RuntimeError(self._plan_agent_launch_failure_message(launch_result, launch_config))
         return None
 
     def _should_fail_for_plan_agent_launch_result(
@@ -576,8 +576,12 @@ class StartupOrchestrator:
         launch_failed = str(getattr(launch_result, "status", "")).strip().lower() == "failed"
         return launch_failed and not session.plan_agent_attach_target
 
-    @staticmethod
-    def _plan_agent_launch_failure_message(launch_result: PlanAgentLaunchResult) -> str:
+    @classmethod
+    def _plan_agent_launch_failure_message(
+        cls,
+        launch_result: PlanAgentLaunchResult,
+        launch_config: PlanAgentLaunchConfig,
+    ) -> str:
         details = []
         for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
             reason = str(getattr(outcome, "reason", "") or "").strip()
@@ -589,7 +593,8 @@ class StartupOrchestrator:
             if reason:
                 details.append(reason)
         suffix = f": {'; '.join(details[:3])}" if details else ""
-        return f"OpenCode AI session failed to start{suffix}"
+        label = cls._plan_agent_launch_spinner_label(launch_config)
+        return f"{label} AI session failed to start{suffix}"
 
     def _launch_plan_agent_terminals_with_spinner(
         self,

@@ -13,12 +13,14 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.planning.plan_agent_launch_support import (
     CreatedPlanWorktree,
     PlanAgentAttachTarget,
+    PlanAgentLaunchConfig,
     PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
     PlanSelectionResult,
 )
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
@@ -513,6 +515,42 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --tmux-new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
+
+    def test_headless_omx_launch_failure_reports_omx_codex_not_opencode(self) -> None:
+        launch_result = PlanAgentLaunchResult(
+            status="failed",
+            reason="failed",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/tmp/feature-a-1"),
+                    surface_id=None,
+                    status="failed",
+                    reason="omx_session_unavailable",
+                ),
+            ),
+        )
+        launch_config = PlanAgentLaunchConfig(
+            enabled=True,
+            transport="omx",
+            cli="codex",
+            cli_command="codex",
+            preset="implement_task",
+            codex_cycles=2,
+            codex_cycles_warning=None,
+            shell="zsh",
+            require_cmux_context=True,
+            cmux_workspace="",
+            direct_prompt_enabled=False,
+            ulw_loop_prefix=False,
+            ulw_suffix=False,
+        )
+
+        message = StartupOrchestrator._plan_agent_launch_failure_message(launch_result, launch_config)
+
+        self.assertIn("OMX-managed Codex AI session failed to start", message)
+        self.assertIn("feature-a-1: omx_session_unavailable", message)
+        self.assertNotIn("OpenCode", message)
 
     def test_resume_dashboard_exact_headless_plan_prints_attach_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1137,8 +1175,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("Startup failed: OpenCode AI session failed to start", rendered)
-            self.assertIn(f"{STATUS_FAILURE} Startup failed: OpenCode AI session failed to start", rendered)
+            self.assertIn("Startup failed: Codex AI session failed to start", rendered)
+            self.assertIn(f"{STATUS_FAILURE} Startup failed: Codex AI session failed to start", rendered)
             self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
 
     def test_headless_opencode_launch_failure_does_not_print_ready_attach_handoff(self) -> None:
