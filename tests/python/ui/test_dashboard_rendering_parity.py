@@ -11,11 +11,13 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
+from envctl_engine.requirements.common import build_container_name
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -451,7 +453,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("http://localhost:6380", output)
             self.assertNotIn("http://localhost:5678", output)
 
-            runtime_projection = build_runtime_map(state)["projection"]
+            runtime_projection = cast(dict[str, dict[str, object]], build_runtime_map(state)["projection"])
             self.assertEqual(runtime_projection["Main"]["backend_url"], "http://localhost:8000")
             self.assertIsNone(runtime_projection["Main"]["frontend_url"])
 
@@ -522,6 +524,96 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("supabase: http://192.0.2.42:54321 [Healthy]", output)
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertLess(output.index("feature-b-1"), output.index("Shared dependencies:"))
+
+    def test_dashboard_shared_dependencies_survive_truth_reconcile_after_app_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            worktree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            redis_container = build_container_name(prefix="envctl-redis", project_root=repo, project_name="Main")
+            n8n_container = build_container_name(prefix="envctl-n8n", project_root=repo, project_name="Main")
+
+            class _Runner:
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cwd, env, timeout
+                    args = tuple(cmd)
+                    if args[:4] == ("docker", "ps", "-a", "--filter"):
+                        name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                        container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                        if container_name in {redis_container, n8n_container}:
+                            return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    if args[:2] == ("docker", "port"):
+                        container = str(args[2])
+                        if container == redis_container:
+                            return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                        if container == n8n_container:
+                            return SimpleNamespace(returncode=0, stdout="5678/tcp -> 0.0.0.0:5784\n", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                def wait_for_port(self, port, timeout):  # noqa: ANN001
+                    _ = timeout
+                    return port in {6485, 5784}
+
+            engine = PythonEngineRuntime(
+                load_config(self._config(repo, runtime_dir)),
+                env={"NO_COLOR": "1", "ENVCTL_UI_VISUAL_HOST": "192.0.2.42"},
+            )
+            engine.process_runner = _Runner()  # type: ignore[assignment]
+            engine._service_truth_status = lambda service: service.status  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-shared-deps-after-restart",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(worktree / "backend"),
+                        requested_port=8101,
+                        actual_port=8101,
+                        pid=111,
+                        status="running",
+                    ),
+                    "feature-a-1 Frontend": ServiceRecord(
+                        name="feature-a-1 Frontend",
+                        type="frontend",
+                        cwd=str(worktree / "frontend"),
+                        requested_port=9101,
+                        actual_port=9101,
+                        pid=222,
+                        status="running",
+                    ),
+                },
+                requirements={
+                    "feature-a-1": RequirementsResult(
+                        project="Main",
+                        redis={"enabled": True, "success": True, "final": 6485},
+                        n8n={"enabled": True, "success": True, "final": 5784},
+                        supabase={"enabled": True, "success": False},
+                        failures=["supabase unavailable"],
+                    ),
+                },
+                metadata={
+                    "project_roots": {"feature-a-1": str(worktree), "Main": str(repo)},
+                    "dashboard_dependency_scope": "shared",
+                    "dashboard_shared_dependency_project": "Main",
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Shared dependencies:", output)
+            self.assertIn("redis: http://192.0.2.42:6485 [Healthy]", output)
+            self.assertIn("n8n: http://192.0.2.42:5784 [Healthy]", output)
+            self.assertIn("supabase: n/a [Unhealthy]", output)
+            self.assertNotIn("redis: n/a [Unreachable]", output)
+            self.assertNotIn("n8n: n/a [Unreachable]", output)
 
     def test_dashboard_infers_shared_tree_dependencies_for_legacy_run_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -676,10 +676,13 @@ def _read_commit_ledger_segment(path: Path) -> tuple[str, str | None]:
     text = _read_text(path)
     marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
     if marker_count == 0:
-        return "", (
-            f"Envctl commit log is malformed: {path} is missing the required pointer marker "
-            f"'{ENVCTL_COMMIT_POINTER_MARKER}'."
-        )
+        payload = _normalize_text_block(text)
+        if not payload:
+            return "", (
+                f"Envctl commit log is empty in {path}. Provide --commit-message, "
+                f"--commit-message-file, or append a new summary to {path}."
+            )
+        return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
     if marker_count > 1:
         return "", f"Envctl commit log is malformed: {path} contains multiple pointer markers."
 
@@ -700,7 +703,13 @@ def _advance_commit_ledger_pointer(path: Path) -> str | None:
     text = _read_text(path)
     marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
     if marker_count == 0:
-        return f"Envctl commit log is malformed during pointer advance: {path} is missing the required pointer marker."
+        archived = _normalize_text_block(text)
+        updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
+        try:
+            _atomic_write(path, updated)
+        except OSError as exc:
+            return f"Failed to advance envctl commit log pointer in {path}: {exc}"
+        return None
     if marker_count > 1:
         return f"Envctl commit log is malformed during pointer advance: {path} contains multiple pointer markers."
     before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)

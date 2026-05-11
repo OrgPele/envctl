@@ -1111,14 +1111,17 @@ class ActionsCliTests(unittest.TestCase):
                 "# Envctl Commit Log\n\n### Envctl pointer ###\nQueued default summary\n",
             )
 
-    def test_commit_action_fails_when_envctl_ledger_marker_is_missing(self) -> None:
+    def test_commit_action_uses_entire_envctl_ledger_when_marker_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir) / "repo"
             project_root.mkdir(parents=True, exist_ok=True)
             ledger = project_root / ".envctl-commit-message.md"
-            ledger.write_text("# Envctl Commit Log\n\nNo pointer marker here.\n", encoding="utf-8")
+            ledger.write_text("Ship the feature without a marker.\n", encoding="utf-8")
+            seen_git_args: list[list[str]] = []
+            captured_commit_message: list[str] = []
 
             def fake_run_git(_git_root: Path, args: list[str]):
+                seen_git_args.append(list(args))
                 if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="feature/demo\n", stderr="")
                 if args == ["status", "--porcelain", "--untracked-files=all"]:
@@ -1127,6 +1130,16 @@ class ActionsCliTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 if args == ["status", "--porcelain"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="M  app.py\n", stderr="")
+                if args[:2] == ["commit", "-F"]:
+                    captured_commit_message.append(Path(args[2]).read_text(encoding="utf-8"))
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="[feature/demo abc123] Ship it\n",
+                        stderr="",
+                    )
+                if args[:3] == ["push", "-u", "origin"]:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with (
@@ -1138,8 +1151,14 @@ class ActionsCliTests(unittest.TestCase):
                     code = actions_cli._run_commit_action(project_root, "Main")
             output = buffer.getvalue()
 
-            self.assertEqual(code, 1)
-            self.assertIn("missing the required pointer marker", output)
+            self.assertEqual(code, 0)
+            self.assertIn("Committed and pushed changes for Main (feature/demo).", output)
+            self.assertIn(["push", "-u", "origin", "feature/demo"], seen_git_args)
+            self.assertEqual(captured_commit_message, ["Ship the feature without a marker."])
+            self.assertEqual(
+                ledger.read_text(encoding="utf-8"),
+                "Ship the feature without a marker.\n\n### Envctl pointer ###\n",
+            )
 
     def test_commit_action_fails_when_envctl_ledger_has_duplicate_markers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
