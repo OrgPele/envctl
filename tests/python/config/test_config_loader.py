@@ -40,10 +40,37 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(worktree_config.base_dir, repo.resolve())
             self.assertEqual(worktree_config.default_mode, "trees")
             self.assertEqual(worktree_config.backend_port_base, 8100)
+            self.assertEqual(worktree_config.planning_dir, (repo / "todo" / "plans").resolve())
             self.assertEqual(worktree_config.runtime_scope_id, main_config.runtime_scope_id)
             self.assertEqual(worktree_config.runtime_scope_dir, main_config.runtime_scope_dir)
             self.assertEqual(local_state.config_file_path, (repo / ".envctl").resolve())
             self.assertTrue(local_state.config_file_exists)
+
+    def test_load_config_prefers_execution_root_plans_for_managed_linked_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+            (worktree / "todo" / "plans" / "features").mkdir(parents=True, exist_ok=True)
+            (worktree / "todo" / "plans" / "features" / "task.md").write_text("# task\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "ENVCTL_EXECUTION_ROOT": str(worktree),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_root),
+                }
+            )
+
+            self.assertEqual(config.base_dir, repo.resolve())
+            self.assertEqual(config.execution_root, worktree.resolve())
+            self.assertEqual(config.planning_dir, (worktree / "todo" / "plans").resolve())
 
     def test_load_config_from_unmanaged_linked_worktree_keeps_worktree_metadata_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

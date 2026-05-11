@@ -148,7 +148,7 @@ class ServiceManagerTests(unittest.TestCase):
                 parallel_start=True,
             )
 
-    def test_listener_detection_failure_retries_with_next_port(self) -> None:
+    def test_listener_detection_failure_is_not_retried_as_port_conflict(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []
         terminated: list[int] = []
@@ -167,18 +167,18 @@ class ServiceManagerTests(unittest.TestCase):
                 raise RuntimeError("backend listener not detected")
             return requested
 
-        service = manager.start_service_with_retry(
-            project="Tree Alpha",
-            service_type="backend",
-            cwd="/tmp/tree-alpha/backend",
-            requested_port=8000,
-            start=start_backend,
-            reserve_next=lambda port: port,
-            detect_actual=detect_actual,
-        )
+        with self.assertRaisesRegex(Exception, "backend listener not detected"):
+            manager.start_service_with_retry(
+                project="Tree Alpha",
+                service_type="backend",
+                cwd="/tmp/tree-alpha/backend",
+                requested_port=8000,
+                start=start_backend,
+                reserve_next=lambda port: port,
+                detect_actual=detect_actual,
+            )
 
-        self.assertEqual(attempts, [8000, 8001])
-        self.assertEqual(service.actual_port, 8001)
+        self.assertEqual(attempts, [8000])
         self.assertEqual(terminated, [23001])
 
     def test_retry_callback_receives_service_retry_metadata(self) -> None:

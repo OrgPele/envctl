@@ -28,7 +28,12 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
-from envctl_engine.shared.services import project_name_from_service_name, service_display_name, service_slug_from_record
+from envctl_engine.shared.services import (
+    project_name_from_service_name,
+    service_display_name,
+    service_project_name,
+    service_slug_from_record,
+)
 from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
@@ -689,7 +694,9 @@ class DashboardOrchestrator:
     def _stop_services_by_project(state: RunState, runtime: Any) -> dict[str, list[tuple[str, str]]]:
         services_by_project: dict[str, list[tuple[str, str]]] = {}
         for service_name, service in state.services.items():
-            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+            project_name = service_project_name(service)
+            if not project_name:
+                project_name = str(runtime._project_name_from_service(service_name) or "").strip()
             if not project_name:
                 project_name = str(project_name_from_service_name(str(service_name))).strip()
             if not project_name:
@@ -1985,13 +1992,14 @@ class DashboardOrchestrator:
         requested = {name.casefold() for name in project_names}
         ordered: list[str] = []
         seen: set[str] = set()
-        for service_name in state.services:
-            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+        for service_name, service in state.services.items():
+            project_name = service_project_name(service)
+            if not project_name:
+                project_name = str(runtime._project_name_from_service(service_name) or "").strip()
             if not project_name:
                 project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested and project_name.casefold() not in requested:
                 continue
-            service = state.services.get(service_name)
             service_type = service_slug_from_record(service) if service is not None else ""
             if service_type and service_type not in seen:
                 seen.add(service_type)
@@ -2025,22 +2033,23 @@ class DashboardOrchestrator:
         requested_types = {name.casefold() for name in service_types}
         selected: list[str] = []
         seen_names: set[str] = set()
-        for service_name in state.services:
-            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
+        for service_name, service in state.services.items():
+            project_name = service_project_name(service)
+            if not project_name:
+                project_name = str(runtime._project_name_from_service(service_name) or "").strip()
             if not project_name:
                 project_name = str(project_name_from_service_name(str(service_name))).strip()
             if requested_projects and project_name.casefold() not in requested_projects:
                 continue
-            service = state.services.get(service_name)
             service_type = service_slug_from_record(service) if service is not None else ""
             if service_type and service_type.casefold() in requested_types:
                 selected.append(service_name)
                 seen_names.add(str(service_name))
         configured_missing_services = DashboardOrchestrator._dashboard_configured_missing_services_by_project(state)
-        for project_name, service_types in configured_missing_services.items():
+        for project_name, missing_service_types in configured_missing_services.items():
             if requested_projects and project_name.casefold() not in requested_projects:
                 continue
-            for service_type in sorted(service_types):
+            for service_type in sorted(missing_service_types):
                 if service_type.casefold() not in requested_types:
                     continue
                 service_name = f"{project_name} {service_display_name(service_type)}"

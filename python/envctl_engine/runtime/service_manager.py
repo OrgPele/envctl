@@ -219,8 +219,6 @@ def _is_retryable_error(error: str | None) -> bool:
     if is_bind_conflict(error):
         return True
     normalized = (error or "").strip().lower()
-    if "listener not detected" in normalized:
-        return True
     if "address already in use" in normalized:
         return True
     return False

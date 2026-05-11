@@ -11,6 +11,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.engine_runtime_service_policy import (  # noqa: E402
     service_listener_timeout,
     service_rebound_max_delta,
+    service_startup_progress_timeout,
     service_startup_grace_seconds,
     service_truth_timeout,
     service_within_startup_grace,
@@ -39,6 +40,27 @@ class EngineRuntimeServicePolicyTests(unittest.TestCase):
 
         self.assertEqual(service_listener_timeout(strict_runtime), 10.0)
         self.assertEqual(service_listener_timeout(best_effort_runtime), 3.0)
+
+    def test_service_startup_progress_timeout_defaults_and_parses(self) -> None:
+        strict_runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+            _listener_truth_enforced=lambda: True,
+        )
+        best_effort_runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+            _listener_truth_enforced=lambda: False,
+        )
+        custom_runtime = SimpleNamespace(
+            env={"ENVCTL_SERVICE_STARTUP_PROGRESS_TIMEOUT": "42.5"},
+            config=SimpleNamespace(raw={}),
+            _listener_truth_enforced=lambda: True,
+        )
+
+        self.assertEqual(service_startup_progress_timeout(strict_runtime), 90.0)
+        self.assertEqual(service_startup_progress_timeout(best_effort_runtime), 0.0)
+        self.assertEqual(service_startup_progress_timeout(custom_runtime), 42.5)
 
     def test_service_truth_timeout_and_startup_grace_parse_overrides(self) -> None:
         runtime = SimpleNamespace(

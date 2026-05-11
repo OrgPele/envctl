@@ -1067,6 +1067,49 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Voice Runtime"])
         self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["voice-runtime"])
 
+    def test_restart_selector_uses_service_record_project_for_active_additional_service(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        project_name = "refactoring_app_bootstrap_performance_redesign-1"
+        state = RunState(
+            run_id="run-trees",
+            mode="trees",
+            services={
+                f"{project_name} Voice Runtime": ServiceRecord(
+                    name=f"{project_name} Voice Runtime",
+                    type="voice-runtime",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8117,
+                    actual_port=8117,
+                    status="running",
+                    project=project_name,
+                    service_slug="voice-runtime",
+                ),
+            },
+            requirements={
+                project_name: RequirementsResult(
+                    project=project_name,
+                    redis={"enabled": True, "success": True, "final": 6485},
+                ),
+            },
+            metadata={"project_roots": {project_name: "."}},
+        )
+        runtime._latest_state = state
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            return_value=[f"__RESTART__:service:{project_name} Voice Runtime"],
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, [project_name])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), [f"{project_name} Voice Runtime"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["voice-runtime"])
+
     def test_service_names_for_projects_and_types_filters_configured_missing_services(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = DashboardOrchestrator(runtime)

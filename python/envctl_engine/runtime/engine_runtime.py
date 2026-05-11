@@ -159,6 +159,7 @@ from envctl_engine.runtime.engine_runtime_service_truth import (
 )
 from envctl_engine.runtime.engine_runtime_service_policy import (
     service_listener_timeout as runtime_service_listener_timeout,
+    service_startup_progress_timeout as runtime_service_startup_progress_timeout,
     service_rebound_max_delta as runtime_service_rebound_max_delta,
     service_startup_grace_seconds as runtime_service_startup_grace_seconds,
     service_truth_timeout as runtime_service_truth_timeout,
@@ -1513,6 +1514,7 @@ class PythonEngineRuntime:
         service_name: str,
         debug_listener_group: str = "",
         debug_pid_wait_group: str = "",
+        log_path: str | None = None,
     ) -> int | None:
         return runtime_detect_service_actual_port(
             self,
@@ -1521,6 +1523,7 @@ class PythonEngineRuntime:
             service_name=service_name,
             debug_listener_group=debug_listener_group,
             debug_pid_wait_group=debug_pid_wait_group,
+            log_path=log_path,
         )
 
     def _service_rebound_max_delta(self) -> int:
@@ -1528,6 +1531,9 @@ class PythonEngineRuntime:
 
     def _service_listener_timeout(self) -> float:
         return runtime_service_listener_timeout(self)
+
+    def _service_startup_progress_timeout(self) -> float:
+        return runtime_service_startup_progress_timeout(self)
 
     def _dashboard_truth_refresh_seconds(self) -> float:
         return runtime_dashboard_truth_refresh_seconds(self)

@@ -6,6 +6,7 @@ import concurrent.futures
 from datetime import datetime
 import json
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -1039,16 +1040,19 @@ def _print_dashboard_ai_session_row(
     project_root = _dashboard_project_root(self, state=state, project=project)
     repo_root = _dashboard_repo_root_for_project(project_root=project_root)
     envctl_executable = "envctl"
-    launch_command = (
-        resolve_plan_agent_launch_command(
+    launch_command = None
+    if project_root is not None and repo_root is not None:
+        launch_command = resolve_plan_agent_launch_command(
             project_name=project,
             project_root=project_root,
             repo_root=repo_root,
             envctl_executable=envctl_executable,
         )
-        if project_root is not None and repo_root is not None
-        else None
-    )
+    if launch_command is None and project_root is not None:
+        launch_command = _dashboard_worktree_ai_launch_command(
+            project_root=project_root,
+            envctl_executable=envctl_executable,
+        )
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -1077,6 +1081,12 @@ def _print_dashboard_ai_session_row(
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:
     if project_root is not None and _dashboard_session_matches_project_root(project_root=project_root, session=session):
         return True
+    if project_root is not None and _dashboard_session_name_matches_envctl_plan_agent(
+        project_root=project_root,
+        project=project,
+        session_name=str(session.get("name", "") or ""),
+    ):
+        return True
     if _dashboard_session_name_matches_project(project=project, session_name=str(session.get("name", "") or "")):
         return True
     return _dashboard_window_matches_project(project=project, window_name=str(session.get("windows", "") or ""))
@@ -1104,6 +1114,29 @@ def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool
     normalized_expected = str(expected_window).strip().lower()
     normalized_windows = {part.strip().lower() for part in str(window_name).split(",") if part.strip()}
     return normalized_expected in normalized_windows
+
+
+def _dashboard_session_name_matches_envctl_plan_agent(*, project_root: Path, project: str, session_name: str) -> bool:
+    from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent_launch_support import _tmux_session_name_for_worktree  # noqa: PLC0415
+
+    normalized_session = str(session_name or "").strip().lower()
+    if not normalized_session:
+        return False
+    repo_root = _dashboard_repo_root_for_project(project_root=project_root)
+    if repo_root is None:
+        return False
+    try:
+        worktree = CreatedPlanWorktree(name=project, root=project_root.resolve(strict=False), plan_file="")
+        expected_names = {
+            _tmux_session_name_for_worktree(repo_root, worktree, cli=cli).lower()
+            for cli in ("codex", "opencode")
+        }
+    except (OSError, ValueError):
+        return False
+    return any(
+        normalized_session == expected or normalized_session.startswith(f"{expected}-") for expected in expected_names
+    )
 
 
 def _dashboard_session_name_matches_project(*, project: str, session_name: str) -> bool:
@@ -1197,6 +1230,20 @@ def _dashboard_repo_root_from_tree_layout(*, project_root: Path) -> Path | None:
         if (repo_root / ".git").exists() and (repo_root / "todo").is_dir():
             return repo_root
     return None
+
+
+def _dashboard_worktree_ai_launch_command(*, project_root: Path, envctl_executable: str) -> str | None:
+    root = project_root.expanduser().resolve(strict=False)
+    if not (root / "MAIN_TASK.md").is_file():
+        return None
+    return " ".join(
+        (
+            shlex.quote(envctl_executable),
+            "--repo",
+            shlex.quote(str(root)),
+            "codex-tmux",
+        )
+    )
 
 
 def _dashboard_session_matches_project_root(*, project_root: Path, session: dict[str, str]) -> bool:
