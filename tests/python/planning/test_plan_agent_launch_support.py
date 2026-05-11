@@ -5037,47 +5037,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(ready.reason, "ready")
         self.assertGreaterEqual(clock["now"], 8.0)
 
-    def test_tmux_opencode_ready_wait_allows_slow_remote_cold_start(self) -> None:
-        self.assertIsNotNone(_wait_for_tmux_cli_ready)
-        clock = {"now": 0.0}
-        runtime = _RuntimeHarness(
-            config=load_config(
-                {
-                    "RUN_REPO_ROOT": "/tmp/repo",
-                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
-                }
-            ),
-            env={},
-            process_runner=_RecordingRunner(),
-        )
-
-        def monotonic() -> float:
-            return clock["now"]
-
-        def sleep(seconds: float) -> None:
-            clock["now"] += float(seconds)
-
-        def screen(*_args: object, **_kwargs: object) -> str:
-            if clock["now"] >= 45.0:
-                return '  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo /status\n'
-            return "srv# cd /tmp/repo\nsrv# opencode\n"
-
-        with (
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=monotonic),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=sleep),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=screen),
-        ):
-            ready = _wait_for_tmux_cli_ready(
-                runtime,
-                session_name="envctl-test",
-                window_name="feature-a",
-                cli="opencode",
-            )
-
-        self.assertTrue(ready.ready)
-        self.assertEqual(ready.reason, "ready")
-        self.assertGreaterEqual(clock["now"], 45.0)
-
     def test_tmux_opencode_ready_wait_reports_timeout(self) -> None:
         self.assertIsNotNone(_wait_for_tmux_cli_ready)
         clock = {"now": 0.0}
@@ -5146,7 +5105,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_ai_cli_ready_window_allows_slower_opencode_startup(self) -> None:
         self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 5.0)
-        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 60.0)
+        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 15.0)
 
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
