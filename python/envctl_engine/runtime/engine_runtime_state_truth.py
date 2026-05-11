@@ -116,7 +116,8 @@ def _requirement_owner_mismatch(
         )
     except Exception:
         return False
-    if (port_error is not None or not isinstance(host_port, int) or host_port <= 0 or host_port != port) and _adopt_requirement_container(
+    stale_host_port = port_error is not None or not isinstance(host_port, int) or host_port <= 0 or host_port != port
+    if stale_host_port and _adopt_requirement_container(
         runtime,
         component_name=component_name,
         component_data=component_data,
