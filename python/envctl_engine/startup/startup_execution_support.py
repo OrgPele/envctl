@@ -271,8 +271,11 @@ def _load_or_start_shared_main_requirements(
     if existing is not None:
         requirements = existing.requirements.get("Main")
         if isinstance(requirements, RequirementsResult) and rt._requirements_ready(requirements):
-            rt._emit("requirements.shared.reuse", project="Main", source_run_id=existing.run_id)
-            return requirements
+            reconciled = _annotate_shared_main_requirements(orchestrator, requirements)
+            if _shared_requirements_runtime_ready(reconciled):
+                rt._emit("requirements.shared.reuse", project="Main", source_run_id=existing.run_id)
+                return reconciled
+            rt._emit("requirements.shared.reuse_stale", project="Main", source_run_id=existing.run_id)
     main_context = _SharedProjectContext(
         name="Main",
         root=rt.config.execution_root,
@@ -325,6 +328,20 @@ def _annotate_shared_main_requirements(
             project_name="Main",
         ) + "-supabase-db-1"
     return _reconcile_shared_main_requirements(orchestrator, cloned)
+
+
+def _shared_requirements_runtime_ready(requirements: RequirementsResult) -> bool:
+    not_ready = {"starting", "unhealthy", "unreachable"}
+    for definition in dependency_definitions():
+        component = requirements.component(definition.id)
+        if not bool(component.get("enabled", False)):
+            continue
+        if not bool(component.get("success", False)):
+            return False
+        runtime_status = str(component.get("runtime_status", "") or "").strip().lower()
+        if runtime_status in not_ready:
+            return False
+    return True
 
 
 def _reconcile_shared_main_requirements(
