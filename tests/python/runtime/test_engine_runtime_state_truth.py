@@ -354,6 +354,75 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
         )
         self.assertEqual(calls.count(("wait", 6485)), 1)
 
+    def test_reconcile_adopts_live_project_container_when_stored_container_is_stale(self) -> None:
+        repo_root = Path("/tmp/envctl-shared-repo")
+        worktree_root = repo_root / "trees" / "feature-a" / "1"
+        stale_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=repo_root,
+            project_name="Main",
+        )
+        live_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=worktree_root,
+            project_name="feature-a-1",
+        )
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                    container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                    if container_name == live_container:
+                        return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                    if container_name == stale_container:
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if args[:2] == ("docker", "port") and str(args[2]) == live_container:
+                    return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port == 6485
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            redis={
+                "enabled": True,
+                "success": True,
+                "final": 6496,
+                "container_name": stale_container,
+                "resources": {"primary": 6496, "requested": 6393},
+            },
+        )
+        state = RunState(
+            run_id="run-stale-shared-container",
+            mode="trees",
+            requirements={"feature-a-1": requirements},
+            metadata={
+                "dashboard_dependency_scope": "shared",
+                "dashboard_shared_dependency_project": "Main",
+                "project_roots": {"feature-a-1": str(worktree_root)},
+            },
+        )
+
+        issues = reconcile_requirements_truth(runtime, state)
+
+        redis = requirements.component("redis")
+        self.assertEqual(issues, [])
+        self.assertEqual(redis["runtime_status"], "healthy")
+        self.assertEqual(redis["container_name"], live_container)
+        self.assertEqual(redis["final"], 6485)
+        self.assertEqual(redis["resources"]["primary"], 6485)
+
     def test_isolated_tree_requirements_still_use_project_key_for_truth(self) -> None:
         repo_root = Path("/tmp/envctl-isolated-repo")
         worktree_root = repo_root / "trees" / "feature-a" / "1"
