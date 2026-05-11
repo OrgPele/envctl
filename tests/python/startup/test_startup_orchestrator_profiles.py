@@ -193,6 +193,30 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         self.assertEqual(selected, set())
 
+    def test_restart_explicit_empty_service_types_selects_no_app_services(self) -> None:
+        route = Route(
+            command="restart",
+            mode="trees",
+            raw_args=["restart"],
+            passthrough_args=[],
+            projects=["feature-a-1"],
+            flags={
+                "services": [],
+                "restart_service_types": [],
+                "restart_include_requirements": True,
+                "_restart_request": True,
+            },
+        )
+
+        selected = StartupOrchestrator._restart_service_types_for_project(
+            route=route,
+            project_name="feature-a-1",
+            default_service_types={"backend", "frontend", "voice-runtime"},
+            additional_services=(SimpleNamespace(name="voice-runtime", depends_on=("backend",), start_order=100),),
+        )
+
+        self.assertEqual(selected, set())
+
 
     def test_start_service_selector_expands_configured_service_dependencies_with_event(self) -> None:
         config = SimpleNamespace(

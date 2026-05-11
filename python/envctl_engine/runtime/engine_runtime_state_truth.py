@@ -154,6 +154,9 @@ def requirement_runtime_status(
         port=port,
     ):
         return "unreachable"
+    port = requirement_component_port(component_data)
+    if not isinstance(port, int) or port <= 0:
+        return "unreachable"
     if not runtime._listener_truth_enforced():
         return "healthy"
     try:
@@ -175,10 +178,14 @@ def _requirement_owner_mismatch(
     port: int,
 ) -> bool:
     expected_container = str(component_data.get("container_name") or "").strip()
+    fallback_container = ""
     if not expected_container and project and project_root is not None:
         expected_container = _expected_container_name(component_name, project_root=project_root, project_name=project)
+    elif expected_container and project and project_root is not None:
+        fallback_container = _expected_container_name(component_name, project_root=project_root, project_name=project)
     if not expected_container:
         return False
+    container_port = _container_port_for_component(component_name)
     try:
         exists, error = container_exists(
             runtime.process_runner,
@@ -188,21 +195,82 @@ def _requirement_owner_mismatch(
         )
     except Exception:
         return False
+    if (error is not None or not exists) and _adopt_requirement_container(
+        runtime,
+        component_name=component_name,
+        component_data=component_data,
+        container_name=fallback_container,
+        container_port=container_port,
+        cwd=project_root,
+    ):
+        return False
     if error is not None or not exists:
         return True
     try:
         host_port, port_error = container_host_port(
             runtime.process_runner,
             container_name=expected_container,
-            container_port=_container_port_for_component(component_name),
+            container_port=container_port,
             cwd=project_root,
             env=None,
         )
     except Exception:
         return False
+    stale_host_port = port_error is not None or not isinstance(host_port, int) or host_port <= 0 or host_port != port
+    if stale_host_port and _adopt_requirement_container(
+        runtime,
+        component_name=component_name,
+        component_data=component_data,
+        container_name=fallback_container,
+        container_port=container_port,
+        cwd=project_root,
+    ):
+        return False
     if port_error is not None:
         return True
     return not isinstance(host_port, int) or host_port <= 0 or host_port != port
+
+
+def _adopt_requirement_container(
+    runtime: Any,
+    *,
+    component_name: str,
+    component_data: dict[str, object],
+    container_name: str,
+    container_port: int,
+    cwd: Path | None,
+) -> bool:
+    container_name = str(container_name or "").strip()
+    if not container_name or container_name == str(component_data.get("container_name") or "").strip():
+        return False
+    try:
+        exists, error = container_exists(runtime.process_runner, container_name=container_name, cwd=cwd, env=None)
+    except Exception:
+        return False
+    if error is not None or not exists:
+        return False
+    try:
+        host_port, port_error = container_host_port(
+            runtime.process_runner,
+            container_name=container_name,
+            container_port=container_port,
+            cwd=cwd,
+            env=None,
+        )
+    except Exception:
+        return False
+    if port_error is not None or not isinstance(host_port, int) or host_port <= 0:
+        return False
+    component_data["container_name"] = container_name
+    component_data["final"] = host_port
+    resources = component_data.get("resources")
+    if not isinstance(resources, dict):
+        resources = {}
+        component_data["resources"] = resources
+    resources["primary"] = host_port
+    resource_key = "db" if str(component_name).strip().lower() == "supabase" else "primary"
+    resources[resource_key] = host_port
+    return True
 
 
 def _container_port_for_component(component_name: str) -> int:

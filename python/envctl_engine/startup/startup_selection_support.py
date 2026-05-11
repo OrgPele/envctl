@@ -470,11 +470,12 @@ def _restart_service_types_for_project(
     explicit_types = route.flags.get("restart_service_types")
     if isinstance(explicit_types, list):
         normalized = {str(value).strip().lower() for value in explicit_types if str(value).strip().lower()}
-        if normalized:
-            return _apply_startup_service_launch_flags(
-                normalized.intersection(configured_service_types or normalized),
-                route=route,
-            )
+        if not normalized:
+            return set()
+        return _apply_startup_service_launch_flags(
+            normalized.intersection(configured_service_types or normalized),
+            route=route,
+        )
     return _apply_startup_service_launch_flags(configured_service_types, route=route)
 
 def _apply_startup_service_launch_flags(service_types: set[str], *, route: Route) -> set[str]:
