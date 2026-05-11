@@ -171,12 +171,13 @@ def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str
     worker_count = min(8, len(items))
     if worker_count <= 1:
         for project, requirements in items:
+            truth_project, truth_root = _requirement_truth_identity(state, project, requirements)
             issues.extend(
                 reconcile_project_requirement_truth(
                     runtime,
-                    project,
+                    truth_project,
                     requirements,
-                    project_root=_project_root_for_state(state, project),
+                    project_root=truth_root,
                 )
             )
         return issues
@@ -185,11 +186,12 @@ def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str
             executor.submit(
                 reconcile_project_requirement_truth,
                 runtime,
-                project,
+                truth_project,
                 requirements,
-                project_root=_project_root_for_state(state, project),
+                project_root=truth_root,
             )
             for project, requirements in items
+            for truth_project, truth_root in (_requirement_truth_identity(state, project, requirements),)
         ]
         for future in concurrent.futures.as_completed(futures):
             issues.extend(future.result())
@@ -204,6 +206,25 @@ def _project_root_for_state(state: RunState, project: str) -> Path | None:
     if not isinstance(root_value, str) or not root_value.strip():
         return None
     return Path(root_value).expanduser()
+
+
+def _requirement_truth_identity(
+    state: RunState,
+    state_key: str,
+    requirements: RequirementsResult,
+) -> tuple[str, Path | None]:
+    truth_project = state_key
+    shared_scope = str(state.metadata.get("dashboard_dependency_scope", "")).strip().lower() == "shared"
+    requirement_project = str(getattr(requirements, "project", "") or "").strip()
+    shared_project = str(state.metadata.get("dashboard_shared_dependency_project", "") or "").strip()
+    if shared_scope and requirement_project:
+        truth_project = requirement_project
+    elif shared_scope and shared_project:
+        truth_project = shared_project
+    truth_root = _project_root_for_state(state, truth_project)
+    if truth_root is None and truth_project != state_key:
+        truth_root = _project_root_for_state(state, state_key)
+    return truth_project, truth_root
 
 
 def requirement_truth_issues(runtime: Any, state: RunState) -> list[dict[str, object]]:
