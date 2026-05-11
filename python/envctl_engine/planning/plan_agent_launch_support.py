@@ -4081,11 +4081,13 @@ def resolve_plan_agent_launch_command(
     envctl_executable: str = "envctl",
 ) -> str | None:
     plan_path = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
-    if plan_path is None:
-        return None
-    selector = _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
+    selector = (
+        _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
+        if plan_path is not None
+        else None
+    )
     if not selector:
-        return None
+        selector = f"{_feature_name_from_project_name(project_name)}.md"
     return " ".join(
         (
             shlex.quote(envctl_executable),
@@ -4093,7 +4095,10 @@ def resolve_plan_agent_launch_command(
             shlex.quote(str(repo_root)),
             "--plan",
             shlex.quote(selector),
+            "--tmux",
             "--opencode",
+            "--headless",
+            "--tmux-new-session",
         )
     )
 
