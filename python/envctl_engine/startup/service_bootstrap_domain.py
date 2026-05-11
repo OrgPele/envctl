@@ -998,6 +998,8 @@ def _service_env_from_file(
 ) -> dict[str, str]:
     merged = dict(base_env)
     if env_file is None or not env_file.is_file():
+        if include_app_env_file:
+            merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
         return merged
     loaded_env = self._read_env_file_safe(env_file)
     for key, value in loaded_env.items():

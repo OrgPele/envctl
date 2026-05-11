@@ -611,6 +611,18 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             self.assertEqual(env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
             self.assertEqual(env["CUSTOM"], "1")
 
+    def test_backend_launch_env_disables_app_internal_startup_migrations_without_env_file(self) -> None:
+        runtime = _FakeRuntime(repo_root=Path("/tmp/repo"))
+
+        env = _service_env_from_file(
+            runtime,
+            base_env={},
+            env_file=None,
+            include_app_env_file=True,
+        )
+
+        self.assertEqual(env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
+
     def test_backend_async_retry_rewrites_entire_db_url_family(self) -> None:
         retry_env = _backend_migration_retry_env_for_async_driver_mismatch(
             _FakeRuntime(repo_root=Path("/tmp")),
