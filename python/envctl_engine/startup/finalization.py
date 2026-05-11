@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from envctl_engine.dashboard_metadata import (
     APP_SERVICE_TYPES,
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
@@ -37,7 +39,7 @@ def build_planning_dashboard_state(
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=runtime_mode,
-        project_contexts=project_contexts,
+        project_contexts=cast(list[object], project_contexts),
         base_metadata=base_metadata,
     )
     metadata.update(
@@ -79,7 +81,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=session.runtime_mode,
-        project_contexts=session.selected_contexts,
+        project_contexts=cast(list[object], session.selected_contexts),
         base_metadata=session.base_metadata,
     )
     metadata.update(
@@ -107,6 +109,8 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         launch_result = session.plan_agent_launch_result
         metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()
         metadata["plan_agent_launch_reason"] = str(getattr(launch_result, "reason", "")).strip()
+        if metadata["plan_agent_launch_status"] == "failed":
+            metadata["plan_agent_launch_failed"] = True
         launch_outcomes: list[dict[str, object]] = []
         for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
             launch_outcomes.append(
