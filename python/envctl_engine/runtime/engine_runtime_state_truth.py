@@ -165,13 +165,12 @@ def reconcile_project_requirement_truth(
 
 def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str, object]]:
     issues: list[dict[str, object]] = []
-    items = list(state.requirements.items())
+    items = _requirement_truth_work_items(state)
     if not items:
         return issues
     worker_count = min(8, len(items))
     if worker_count <= 1:
-        for project, requirements in items:
-            truth_project, truth_root = _requirement_truth_identity(state, project, requirements)
+        for truth_project, truth_root, requirements in items:
             issues.extend(
                 reconcile_project_requirement_truth(
                     runtime,
@@ -190,8 +189,7 @@ def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str
                 requirements,
                 project_root=truth_root,
             )
-            for project, requirements in items
-            for truth_project, truth_root in (_requirement_truth_identity(state, project, requirements),)
+            for truth_project, truth_root, requirements in items
         ]
         for future in concurrent.futures.as_completed(futures):
             issues.extend(future.result())
@@ -206,6 +204,20 @@ def _project_root_for_state(state: RunState, project: str) -> Path | None:
     if not isinstance(root_value, str) or not root_value.strip():
         return None
     return Path(root_value).expanduser()
+
+
+def _requirement_truth_work_items(state: RunState) -> list[tuple[str, Path | None, RequirementsResult]]:
+    items: list[tuple[str, Path | None, RequirementsResult]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for state_key, requirements in state.requirements.items():
+        truth_project, truth_root = _requirement_truth_identity(state, state_key, requirements)
+        root_key = str(truth_root) if truth_root is not None else ""
+        item_key = (truth_project, root_key, id(requirements))
+        if item_key in seen:
+            continue
+        seen.add(item_key)
+        items.append((truth_project, truth_root, requirements))
+    return items
 
 
 def _requirement_truth_identity(
