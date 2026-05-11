@@ -478,8 +478,6 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "--headless",
                 ),
             )
-            written_states: list[RunState] = []
-
             captured_created_worktrees: list[list[str]] = []
 
             def _record_launch(_runtime: object, *, route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]):

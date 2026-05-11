@@ -573,7 +573,8 @@ class StartupOrchestrator:
             return False
         if not session.plan_agent_launch_requested:
             return False
-        return str(getattr(launch_result, "status", "")).strip().lower() == "failed" and not session.plan_agent_attach_target
+        launch_failed = str(getattr(launch_result, "status", "")).strip().lower() == "failed"
+        return launch_failed and not session.plan_agent_attach_target
 
     @staticmethod
     def _plan_agent_launch_failure_message(launch_result: PlanAgentLaunchResult) -> str:

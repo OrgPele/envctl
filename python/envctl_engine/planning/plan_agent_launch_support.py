@@ -1831,7 +1831,11 @@ def _find_existing_tmux_attach_target(
                         (
                             PlanAgentLaunchOutcome(
                                 worktree_name=next(
-                                    (worktree.name for worktree in created_worktrees if Path(worktree.root).expanduser().resolve(strict=False) == target),
+                                    (
+                                        worktree.name
+                                        for worktree in created_worktrees
+                                        if Path(worktree.root).expanduser().resolve(strict=False) == target
+                                    ),
                                     "",
                                 ),
                                 worktree_root=target,
@@ -1953,7 +1957,12 @@ def _run_tmux_existing_session_workflow(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    ready_result = _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    ready_result = _wait_for_tmux_cli_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+    )
     if ready_result is not None and not ready_result.ready:
         return _format_ai_cli_ready_failure(ready_result)
     goal_error = _maybe_submit_tmux_codex_goal(
@@ -1968,7 +1977,12 @@ def _run_tmux_existing_session_workflow(
     if goal_error is not None and goal_error != "codex_goal_ready_timeout":
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        ready_result = _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+        ready_result = _wait_for_tmux_cli_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+        )
         if ready_result is not None and not ready_result.ready:
             return _format_ai_cli_ready_failure(ready_result)
     prompt_text, resolution_error = _workflow_step_prompt_text(
@@ -2610,7 +2624,12 @@ def _run_tmux_worktree_bootstrap(
     for error in send_errors:
         if error is not None:
             return error
-    ready_result = _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    ready_result = _wait_for_tmux_cli_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+    )
     if ready_result is not None and not ready_result.ready:
         return _format_ai_cli_ready_failure(ready_result)
     goal_error = _maybe_submit_tmux_codex_goal(
@@ -2625,7 +2644,12 @@ def _run_tmux_worktree_bootstrap(
     if goal_error is not None and goal_error != "codex_goal_ready_timeout":
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        ready_result = _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+        ready_result = _wait_for_tmux_cli_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+        )
         if ready_result is not None and not ready_result.ready:
             return _format_ai_cli_ready_failure(ready_result)
     prompt_text, resolution_error = _workflow_step_prompt_text(
