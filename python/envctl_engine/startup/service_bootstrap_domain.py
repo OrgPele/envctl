@@ -409,7 +409,7 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
         raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
             "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
         )
-        return parse_bool(raw, False)
+        return parse_bool(raw, True)
     if bool(route.flags.get("_dependency_bootstrap_no_migrations")):
         return False
     if bool(route.flags.get("_resume_restore")):
@@ -417,7 +417,7 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
     raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
         "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
     )
-    return parse_bool(raw, False)
+    return parse_bool(raw, True)
 
 
 def _prepare_frontend_runtime(
@@ -1004,6 +1004,7 @@ def _service_env_from_file(
         merged.setdefault(key, value)
     if include_app_env_file:
         merged["APP_ENV_FILE"] = str(env_file)
+        merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
     return merged
 
 
@@ -1162,6 +1163,7 @@ def _resolve_backend_env_contract(
         for key, value in normalized_projected_env.items():
             if value.strip():
                 env[key] = value
+    env["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
     contract = _BackendEnvContract(
         env=env,
         env_file_path=env_resolution.path,

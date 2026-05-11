@@ -6,10 +6,13 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
+from envctl_engine.startup.protocols import ProjectContextLike
 from envctl_engine.startup.service_bootstrap_domain import (
     _backend_async_driver_mismatch_error,
     _backend_dependency_install_required,
+    _backend_migrations_enabled,
     _backend_runtime_prep_required,
     _prepare_backend_runtime,
     _backend_migration_retry_env_for_async_driver_mismatch,
@@ -20,6 +23,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_frontend_env_file,
     _run_backend_migration_step,
     _rewrite_database_url_to_asyncpg,
+    _service_env_from_file,
     _write_backend_bootstrap_state,
     _write_backend_runtime_prep_state,
 )
@@ -567,6 +571,45 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             )
             self.assertTrue(result.override_authoritative)
             self.assertEqual(result.env_file_source, "explicit_override")
+
+    def test_backend_migrations_default_to_pre_service_for_normal_startup(self) -> None:
+        runtime = _FakeRuntime(repo_root=Path("/tmp/repo"))
+
+        self.assertTrue(_backend_migrations_enabled(runtime, route=None))
+
+    def test_backend_env_contract_disables_app_internal_startup_migrations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend_dir = repo / "backend"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            runtime = _FakeRuntime(repo_root=repo)
+            context = cast(ProjectContextLike, SimpleNamespace(name="Main", root=repo))
+
+            result = _resolve_backend_env_contract(
+                runtime,
+                context=context,
+                backend_cwd=backend_dir,
+                base_env={},
+                projected_env={},
+            )
+
+            self.assertEqual(result.env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
+
+    def test_backend_launch_env_disables_app_internal_startup_migrations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "backend.env"
+            env_file.write_text("RUN_DB_MIGRATIONS_ON_STARTUP=true\nCUSTOM=1\n", encoding="utf-8")
+            runtime = _FakeRuntime(repo_root=Path(tmpdir))
+
+            env = _service_env_from_file(
+                runtime,
+                base_env={},
+                env_file=env_file,
+                include_app_env_file=True,
+            )
+
+            self.assertEqual(env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
+            self.assertEqual(env["CUSTOM"], "1")
 
     def test_backend_async_retry_rewrites_entire_db_url_family(self) -> None:
         retry_env = _backend_migration_retry_env_for_async_driver_mismatch(
