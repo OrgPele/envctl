@@ -15,6 +15,7 @@ from typing import Any, Literal, Mapping
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
+from envctl_engine.debug.debug_utils import scrub_sensitive_text
 from envctl_engine.runtime.codex_tmux_support import (
     _attach_interactive,
     _completed_process_error_text as _tmux_completed_process_error_text,
@@ -103,6 +104,12 @@ _OPENCODE_READY_MARKERS = (
     "ask anything",
     "ctrl+p commands",
     "/status",
+)
+_AI_CLI_SHELL_FAILURE_MARKERS = (
+    "command not found",
+    "not recognized",
+    "no such file",
+    "traceback",
 )
 
 
@@ -196,6 +203,13 @@ class AgentTerminalLaunchResult:
     status: str
     reason: str
     surface_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class AiCliReadyResult:
+    ready: bool
+    reason: str
+    screen_excerpt: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -865,17 +879,37 @@ def _launch_plan_agent_tmux_terminals(
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     route_flags = getattr(route, "flags", {}) or {}
     create_new_session = bool(route_flags.get("tmux_new_session"))
+    prompt_existing_possible = not create_new_session and _should_prompt_existing_tmux_session(
+        runtime,
+        prompt_on_existing=prompt_on_existing,
+    )
     existing_attach_target = _find_existing_tmux_attach_target(
         runtime,
         repo_root=repo_root,
         created_worktrees=created_worktrees,
         cli=launch_config.cli,
     )
+    unhealthy_existing_reason = str(getattr(runtime, "_last_unhealthy_existing_tmux_session_reason", "") or "")
+    unhealthy_existing_outcomes = tuple(getattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes", ()) or ())
+    if hasattr(runtime, "_last_unhealthy_existing_tmux_session_reason"):
+        try:
+            delattr(runtime, "_last_unhealthy_existing_tmux_session_reason")
+        except AttributeError:
+            pass
+    if hasattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes"):
+        try:
+            delattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes")
+        except AttributeError:
+            pass
+    if existing_attach_target is None and unhealthy_existing_reason:
+        return PlanAgentLaunchResult(
+            status="failed",
+            reason=unhealthy_existing_reason,
+            outcomes=unhealthy_existing_outcomes,
+            attach_target=None,
+        )
     if existing_attach_target is not None:
-        if not create_new_session and _should_prompt_existing_tmux_session(
-            runtime,
-            prompt_on_existing=prompt_on_existing,
-        ):
+        if prompt_existing_possible:
             action = _prompt_existing_tmux_session_action(runtime, attach_target=existing_attach_target)
             if action == "attach":
                 runtime._emit(
@@ -1779,6 +1813,46 @@ def _find_existing_tmux_attach_target(
                 continue
             candidate = Path(normalized_path).expanduser().resolve(strict=False)
             if candidate == target or target in candidate.parents:
+                health = _existing_tmux_session_health(
+                    runtime,
+                    session_name=session_name,
+                    window_name=window_name,
+                    cli=cli,
+                )
+                if not health.ready:
+                    reason = f"existing_{str(cli).strip().lower() or 'ai'}_session_unhealthy"
+                    detail = _format_ai_cli_ready_failure(
+                        AiCliReadyResult(ready=False, reason=reason, screen_excerpt=health.screen_excerpt)
+                    )
+                    setattr(runtime, "_last_unhealthy_existing_tmux_session_reason", reason)
+                    setattr(
+                        runtime,
+                        "_last_unhealthy_existing_tmux_session_outcomes",
+                        (
+                            PlanAgentLaunchOutcome(
+                                worktree_name=next(
+                                    (
+                                        worktree.name
+                                        for worktree in created_worktrees
+                                        if Path(worktree.root).expanduser().resolve(strict=False) == target
+                                    ),
+                                    "",
+                                ),
+                                worktree_root=target,
+                                surface_id=None,
+                                status="failed",
+                                reason=detail,
+                            ),
+                        ),
+                    )
+                    runtime._emit(
+                        "planning.agent_launch.existing_session_unhealthy",
+                        session_name=session_name,
+                        window_name=window_name,
+                        cli=cli,
+                        reason=detail,
+                    )
+                    continue
                 return PlanAgentAttachTarget(
                     repo_root=repo_root,
                     session_name=session_name,
@@ -1787,6 +1861,31 @@ def _find_existing_tmux_attach_target(
                     attach_command=_guidance_attach_command(session_name),
                 )
     return None
+
+
+def _existing_tmux_session_looks_healthy(runtime: Any, *, session_name: str, window_name: str, cli: str) -> bool:
+    return _existing_tmux_session_health(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=cli,
+    ).ready
+
+
+def _existing_tmux_session_health(runtime: Any, *, session_name: str, window_name: str, cli: str) -> AiCliReadyResult:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli not in {"opencode", "codex"}:
+        return AiCliReadyResult(ready=True, reason="health_check_not_required")
+    screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+    if not str(screen or "").strip():
+        return AiCliReadyResult(ready=False, reason=f"existing_{normalized_cli}_session_empty", screen_excerpt="")
+    if _screen_looks_ready(normalized_cli, screen) or _screen_looks_active(normalized_cli, screen):
+        return AiCliReadyResult(ready=True, reason="healthy", screen_excerpt=_screen_excerpt(screen))
+    return AiCliReadyResult(
+        ready=False,
+        reason=f"existing_{normalized_cli}_session_unhealthy",
+        screen_excerpt=_screen_excerpt(screen),
+    )
 
 
 def _run_tmux_command(
@@ -1858,7 +1957,14 @@ def _run_tmux_existing_session_workflow(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    ready_result = _wait_for_tmux_cli_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+    )
+    if ready_result is not None and not ready_result.ready:
+        return _format_ai_cli_ready_failure(ready_result)
     goal_error = _maybe_submit_tmux_codex_goal(
         runtime,
         session_name=session_name,
@@ -1871,7 +1977,14 @@ def _run_tmux_existing_session_workflow(
     if goal_error is not None and goal_error != "codex_goal_ready_timeout":
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+        ready_result = _wait_for_tmux_cli_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+        )
+        if ready_result is not None and not ready_result.ready:
+            return _format_ai_cli_ready_failure(ready_result)
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -2414,18 +2527,24 @@ def _launch_tmux_cli_bootstrap_commands(
     ]
 
 
-def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> None:
+def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> AiCliReadyResult:
     normalized_cli = str(cli).strip().lower()
     timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
-        return
+        return AiCliReadyResult(ready=True, reason="unsupported_cli_assumed_ready")
     deadline = time.monotonic() + timeout_seconds
+    last_screen = ""
     while time.monotonic() < deadline:
-        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-        if _screen_looks_ready(normalized_cli, screen):
-            return
+        last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _screen_looks_ready(normalized_cli, last_screen):
+            return AiCliReadyResult(ready=True, reason="ready", screen_excerpt=_screen_excerpt(last_screen))
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+    return AiCliReadyResult(
+        ready=False,
+        reason=f"{normalized_cli}_ready_timeout",
+        screen_excerpt=_screen_excerpt(last_screen),
+    )
 
 
 def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
@@ -2471,7 +2590,19 @@ def _submit_tmux_prompt_workflow_step(
         return paste_error
     if str(cli).strip().lower() == "opencode":
         time.sleep(1.0)
-    return _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter")
+    enter_error = _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter")
+    if enter_error is not None:
+        return enter_error
+    accepted = _wait_for_tmux_prompt_accepted(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=cli,
+        prompt_text=prompt_text,
+    )
+    if not accepted.ready:
+        return _format_ai_cli_ready_failure(accepted)
+    return None
 
 
 def _run_tmux_worktree_bootstrap(
@@ -2493,7 +2624,14 @@ def _run_tmux_worktree_bootstrap(
     for error in send_errors:
         if error is not None:
             return error
-    _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+    ready_result = _wait_for_tmux_cli_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=launch_config.cli,
+    )
+    if ready_result is not None and not ready_result.ready:
+        return _format_ai_cli_ready_failure(ready_result)
     goal_error = _maybe_submit_tmux_codex_goal(
         runtime,
         session_name=session_name,
@@ -2506,7 +2644,14 @@ def _run_tmux_worktree_bootstrap(
     if goal_error is not None and goal_error != "codex_goal_ready_timeout":
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        _wait_for_tmux_cli_ready(runtime, session_name=session_name, window_name=window_name, cli=launch_config.cli)
+        ready_result = _wait_for_tmux_cli_ready(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+        )
+        if ready_result is not None and not ready_result.ready:
+            return _format_ai_cli_ready_failure(ready_result)
     prompt_text, resolution_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
@@ -5038,6 +5183,58 @@ def _prompt_submit_screen_looks_ready(cli: str, screen: str, prompt_text: str) -
     return True
 
 
+def _post_submit_screen_looks_accepted(cli: str, screen: str, prompt_text: str) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli != "opencode":
+        return True
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if "no matching items" in lower_text or "unrecognized command" in lower_text:
+        return False
+    if "ask anything" in lower_text and "/status" in lower_text:
+        return True
+    if _screen_looks_active(normalized_cli, screen):
+        return True
+    prompt_lines = [line.strip().lower() for line in str(prompt_text).splitlines() if line.strip()]
+    if prompt_lines and all(line in lower_text for line in prompt_lines):
+        return False
+    return False
+
+
+def _screen_looks_active(cli: str, screen: str) -> bool:
+    normalized_cli = str(cli).strip().lower()
+    cleaned = _strip_ansi_sequences(screen)
+    lower_text = cleaned.lower()
+    if normalized_cli in {"opencode", "codex"}:
+        return "esc to interrupt" in lower_text and ("working" in lower_text or "ctrl+c" in lower_text)
+    return False
+
+
+def _wait_for_tmux_prompt_accepted(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    prompt_text: str,
+) -> AiCliReadyResult:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli != "opencode":
+        return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
+    while time.monotonic() < deadline:
+        last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
+            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return AiCliReadyResult(
+        ready=False,
+        reason="opencode_prompt_accept_timeout",
+        screen_excerpt=_screen_excerpt(last_screen),
+    )
+
+
 def _screen_looks_ready(cli: str, screen: str) -> bool:
     normalized_cli = str(cli).strip().lower()
     cleaned = _strip_ansi_sequences(screen)
@@ -5054,20 +5251,42 @@ def _screen_looks_ready(cli: str, screen: str) -> bool:
         return False
     if normalized_cli != "opencode":
         return False
-    lower_text = cleaned.lower()
+    lower_text = _screen_tail_text(cleaned).lower()
+    if any(marker in lower_text for marker in _AI_CLI_SHELL_FAILURE_MARKERS):
+        return False
     if any(marker in lower_text for marker in _OPENCODE_LOADING_MARKERS):
         return False
     if all(marker in lower_text for marker in _OPENCODE_READY_MARKERS):
         return True
-    lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
-    for line in lines[-6:]:
-        if _OPENCODE_READY_PROMPT_RE.match(line):
-            return True
     return False
 
 
 def _strip_ansi_sequences(raw: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", str(raw or "")).replace("\r", "")
+
+
+def _screen_tail_text(cleaned: str, *, line_count: int = 12) -> str:
+    lines = [line.rstrip() for line in str(cleaned or "").splitlines() if line.strip()]
+    return "\n".join(lines[-line_count:])
+
+
+def _screen_excerpt(raw: str, *, limit: int = 600) -> str:
+    cleaned = _strip_ansi_sequences(raw).strip()
+    if not cleaned:
+        return ""
+    lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
+    excerpt = scrub_sensitive_text("\n".join(lines[-8:]).strip())
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[-limit:]
+
+
+def _format_ai_cli_ready_failure(result: AiCliReadyResult) -> str:
+    reason = str(result.reason or "ai_cli_ready_timeout").strip() or "ai_cli_ready_timeout"
+    excerpt = str(result.screen_excerpt or "").strip()
+    if excerpt:
+        return f"{reason}: {excerpt}"
+    return reason
 
 
 def _normalized_screen_text(raw: str) -> str:

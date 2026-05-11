@@ -560,7 +560,36 @@ class StartupOrchestrator:
         session.plan_agent_attach_target = launch_result.attach_target
         self._validate_plan_agent_handoff(session, phase="post_launch")
         self._emit_plan_agent_launch_state(session, launch_result)
+        if self._should_fail_for_plan_agent_launch_result(session, launch_result):
+            raise RuntimeError(self._plan_agent_launch_failure_message(launch_result))
         return None
+
+    def _should_fail_for_plan_agent_launch_result(
+        self,
+        session: StartupSession,
+        launch_result: PlanAgentLaunchResult,
+    ) -> bool:
+        if session.effective_route.command != "plan":
+            return False
+        if not session.plan_agent_launch_requested:
+            return False
+        launch_failed = str(getattr(launch_result, "status", "")).strip().lower() == "failed"
+        return launch_failed and not session.plan_agent_attach_target
+
+    @staticmethod
+    def _plan_agent_launch_failure_message(launch_result: PlanAgentLaunchResult) -> str:
+        details = []
+        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+            reason = str(getattr(outcome, "reason", "") or "").strip()
+            worktree_name = str(getattr(outcome, "worktree_name", "") or "").strip()
+            if reason:
+                details.append(f"{worktree_name}: {reason}" if worktree_name else reason)
+        if not details:
+            reason = str(getattr(launch_result, "reason", "") or "").strip()
+            if reason:
+                details.append(reason)
+        suffix = f": {'; '.join(details[:3])}" if details else ""
+        return f"OpenCode AI session failed to start{suffix}"
 
     def _launch_plan_agent_terminals_with_spinner(
         self,
@@ -1262,7 +1291,7 @@ class StartupOrchestrator:
                             for future in concurrent.futures.as_completed(future_map):
                                 context = future_map[future]
                                 try:
-                                    result = future.result()
+                                    result = cast(ProjectStartupResult, future.result())
                                     completed[context.name] = result
                                     if use_single_spinner:
                                         done = len(session.resumed_context_names) + len(completed)
@@ -1317,12 +1346,12 @@ class StartupOrchestrator:
                     else:
                         for context in session.contexts_to_start:
                             try:
-                                result = rt._start_project_context(
+                                result = cast(ProjectStartupResult, rt._start_project_context(
                                     context=context,
                                     mode=session.runtime_mode,
                                     route=route_for_execution,
                                     run_id=self._resolved_run_id(session),
-                                )
+                                ))
                             except RuntimeError as exc:
                                 if self._should_degrade_to_plan_agent_handoff(session, error=str(exc)):
                                     self._record_plan_agent_handoff_local_startup_failure(

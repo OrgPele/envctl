@@ -2772,7 +2772,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             ):
                 code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
 
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
 
     def test_ai_plan_run_warns_and_continues_when_project_start_fails(self) -> None:

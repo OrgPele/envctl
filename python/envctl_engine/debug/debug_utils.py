@@ -16,7 +16,13 @@ except ImportError:
 
 _SENSITIVE_KEY_PATTERN = re.compile(r"(TOKEN|SECRET|PASSWORD|KEY|AUTH|COOKIE|SESSION|PRIVATE)", re.IGNORECASE)
 _SENSITIVE_PAIR_PATTERN = re.compile(
-    r"(?P<prefix>\b)(?P<key>[A-Za-z0-9_\-]*?(?:TOKEN|SECRET|PASSWORD|KEY|AUTH|COOKIE|SESSION|PRIVATE)[A-Za-z0-9_\-]*)\s*(?P<sep>[:=])\s*(?P<value>[^\s]+)",
+    r"(?P<prefix>\b)(?P<key>[A-Za-z0-9_\-]*?(?:TOKEN|SECRET|PASSWORD|KEY|AUTH|COOKIE|SESSION|PRIVATE)[A-Za-z0-9_\-]*)\s*(?P<sep>[:=])\s*(?P<value>[^\n]+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_SPACE_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:export\s+)?)"
+    r"(?P<key>[A-Za-z0-9_\-]*?(?:TOKEN|SECRET|PASSWORD|KEY|AUTH|COOKIE|SESSION|PRIVATE)[A-Za-z0-9_\-]*)"
+    r"\s+(?P<value>[^\s]+)",
     re.IGNORECASE,
 )
 _URL_CREDENTIALS_PATTERN = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<creds>[^@/\s]+)@")
@@ -42,7 +48,13 @@ def scrub_sensitive_text(text: str) -> str:
         sep = match.group("sep")
         return f"{key}{sep}<redacted>"
 
+    def replace_space(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        key = match.group("key")
+        return f"{prefix}{key} <redacted>"
+
     scrubbed = _SENSITIVE_PAIR_PATTERN.sub(replace_pair, scrubbed)
+    scrubbed = _SENSITIVE_SPACE_PATTERN.sub(replace_space, scrubbed)
     if _SENSITIVE_KEY_PATTERN.search(scrubbed):
         scrubbed = _SENSITIVE_KEY_PATTERN.sub("<redacted>", scrubbed)
     return scrubbed

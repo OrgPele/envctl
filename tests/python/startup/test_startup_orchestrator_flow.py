@@ -478,7 +478,6 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "--headless",
                 ),
             )
-
             captured_created_worktrees: list[list[str]] = []
 
             def _record_launch(_runtime: object, *, route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]):
@@ -1138,9 +1137,68 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
-            self.assertIn(f"{STATUS_FAILURE} Startup failed: missing_service_start_command", rendered)
+            self.assertIn("Startup failed: OpenCode AI session failed to start", rendered)
+            self.assertIn(f"{STATUS_FAILURE} Startup failed: OpenCode AI session failed to start", rendered)
             self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+
+    def test_headless_opencode_launch_failure_does_not_print_ready_attach_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8200, frontend_port=9200)
+            launch_result = PlanAgentLaunchResult(
+                status="failed",
+                reason="launch_failed",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="failed",
+                        reason="opencode_ready_timeout: zsh: command not found: opencode",
+                    ),
+                ),
+            )
+            written_states: list[RunState] = []
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    return_value=ProjectStartupResult(
+                        requirements=RequirementsResult(project=context.name, health="healthy"),
+                        services={},
+                        warnings=[],
+                    ),
+                ),
+                patch.object(engine, "_write_artifacts", side_effect=lambda state, *_args, **_kwargs: written_states.append(state)),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                    )
+
+            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertIn("OpenCode AI session failed to start", rendered)
+            self.assertIn("opencode_ready_timeout", rendered)
+            self.assertNotIn("OpenCode AI session ready", rendered)
+            self.assertNotIn("attach: tmux attach", rendered)
+            self.assertEqual(len(written_states), 1)
+            self.assertTrue(written_states[0].metadata["plan_agent_launch_failed"])
+            self.assertEqual(written_states[0].metadata["plan_agent_launch_status"], "failed")
 
     def test_startup_failure_final_status_colors_x_and_names_failed_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

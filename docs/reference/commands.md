@@ -468,6 +468,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
 - `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped count for its launch command; the global default remains `2`
 - OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
+- For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` queues the Codex/OMX `$browser-use` E2E follow-up; set it to `false` in `.envctl` to skip that prompt
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` queues the final Codex/OMX PR review-comments follow-up; set it to `false` in `.envctl` to skip that prompt
