@@ -185,7 +185,10 @@ def service_startup_progress_timeout(runtime: Any) -> float:
     if not callable(resolver):
         return 0.0
     try:
-        return max(float(resolver()), 0.0)
+        raw = resolver()
+        if isinstance(raw, int | float | str):
+            return max(float(raw), 0.0)
+        return 0.0
     except Exception:  # noqa: BLE001
         return 0.0
 
