@@ -140,6 +140,13 @@ def resolve_planning_files(
                 match = basename_matches[0]
             elif len(basename_matches) > 1:
                 raise ValueError(f"Planning file name '{token}' is ambiguous. Use folder/name.")
+            else:
+                feature = _slugify_underscore(normalized[:-3] if normalized.lower().endswith(".md") else normalized)
+                feature_matches = [plan for plan in planning_files if planning_feature_name(plan) == feature]
+                if len(feature_matches) == 1:
+                    match = feature_matches[0]
+                elif len(feature_matches) > 1:
+                    raise ValueError(f"Planning feature name '{token}' is ambiguous. Use folder/name.")
 
         if not match:
             raise ValueError(f"Planning file not found: {token}")
