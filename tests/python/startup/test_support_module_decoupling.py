@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 import tempfile
 import threading
 import unittest
@@ -12,11 +13,14 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
+from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import start_requirements_for_project as requirements_start_impl  # noqa: E402
 from envctl_engine.startup.service_execution import start_project_services as service_start_impl  # noqa: E402
 from envctl_engine.startup.startup_execution_support import (  # noqa: E402
+    _annotate_shared_main_requirements,
     _maybe_prewarm_docker,
     _requirements_failure_message,
+    _shared_main_requirements,
     start_requirements_for_project,
     start_project_services,
     start_project_context,
@@ -60,6 +64,139 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_annotate_shared_main_requirements_reconciles_container_ports_before_reuse(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "resources": {"primary": 5662, "db": 5662, "api": 54551},
+            },
+        )
+
+        def reconcile(project, req, *, project_root=None):  # noqa: ANN001, ANN202
+            self.assertEqual(project, "Main")
+            self.assertEqual(project_root, Path("/tmp/repo"))
+            req.component("supabase")["final"] = 5574
+            req.component("supabase")["resources"]["primary"] = 5574
+            req.component("supabase")["resources"]["db"] = 5574
+            req.component("supabase")["resources"]["api"] = 54463
+            return []
+
+        orchestrator = SimpleNamespace(
+            runtime=SimpleNamespace(
+                config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+                _reconcile_project_requirement_truth=reconcile,
+            )
+        )
+
+        cloned = _annotate_shared_main_requirements(orchestrator, requirements)
+
+        self.assertEqual(requirements.component("supabase")["final"], 5662)
+        self.assertEqual(cloned.component("supabase")["final"], 5574)
+        self.assertEqual(cloned.component("supabase")["resources"]["db"], 5574)
+        self.assertEqual(cloned.component("supabase")["resources"]["api"], 54463)
+
+    def test_shared_main_requirements_reconciles_cached_requirements_before_reuse(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "resources": {"primary": 5662, "db": 5662, "api": 54551},
+            },
+        )
+
+        def reconcile(project, req, *, project_root=None):  # noqa: ANN001, ANN202
+            self.assertEqual(project, "Main")
+            self.assertEqual(project_root, Path("/tmp/repo"))
+            req.component("supabase")["final"] = 5574
+            req.component("supabase")["resources"]["primary"] = 5574
+            req.component("supabase")["resources"]["db"] = 5574
+            req.component("supabase")["resources"]["api"] = 54463
+            return []
+
+        orchestrator = SimpleNamespace(
+            _shared_dependency_requirements=requirements,
+            runtime=SimpleNamespace(
+                config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+                _reconcile_project_requirement_truth=reconcile,
+            ),
+        )
+
+        reused = _shared_main_requirements(orchestrator, route=parse_route(["start"], env={}))
+
+        self.assertIs(reused, requirements)
+        self.assertEqual(reused.component("supabase")["final"], 5574)
+        self.assertEqual(reused.component("supabase")["resources"]["db"], 5574)
+        self.assertEqual(reused.component("supabase")["resources"]["api"], 54463)
+
+    def test_shared_main_requirements_starts_fresh_when_existing_state_reconciles_unreachable(self) -> None:
+        stale = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6496},
+            supabase={"enabled": True, "success": True, "final": 5446},
+            n8n={"enabled": True, "success": True, "final": 5795},
+        )
+        fresh = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6557, "runtime_status": "healthy"},
+            supabase={"enabled": True, "success": True, "final": 5610, "runtime_status": "healthy"},
+            n8n={"enabled": True, "success": True, "final": 5856, "runtime_status": "healthy"},
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        reserved: list[str] = []
+
+        def reconcile(project, req, *, project_root=None):  # noqa: ANN001, ANN202
+            self.assertEqual(project, "Main")
+            self.assertEqual(project_root, Path("/tmp/repo"))
+            for dependency_id in ("redis", "supabase", "n8n"):
+                component = req.component(dependency_id)
+                component["runtime_status"] = "healthy" if component.get("final") in {6557, 5610, 5856} else "unreachable"
+            return [
+                {"project": project, "component": dependency_id, "status": "unreachable"}
+                for dependency_id in ("redis", "supabase", "n8n")
+                if req.component(dependency_id).get("runtime_status") == "unreachable"
+            ]
+
+        orchestrator = cast(
+            StartupOrchestratorLike,
+            SimpleNamespace(
+                runtime=SimpleNamespace(
+                    config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+                    port_planner=SimpleNamespace(plan_project_stack=lambda project, index=0: {}),
+                    _try_load_existing_state=lambda mode, strict_mode_match: RunState(
+                        run_id="run-stale-main",
+                        mode="main",
+                        requirements={"Main": stale},
+                    ),
+                    _requirements_ready=lambda req: all(
+                        not bool(req.component(dependency_id).get("enabled", False))
+                        or bool(req.component(dependency_id).get("success", False))
+                        for dependency_id in ("redis", "supabase", "n8n")
+                    ),
+                    _reconcile_project_requirement_truth=reconcile,
+                    _reserve_project_ports=lambda context: reserved.append(context.name),
+                    _emit=lambda event, **payload: events.append((event, payload)),
+                )
+            )
+        )
+
+        with mock.patch(
+            "envctl_engine.startup.startup_execution_support.requirements_for_restart_context",
+            return_value=fresh,
+        ) as start_requirements:
+            reused = _shared_main_requirements(orchestrator, route=parse_route(["start"], env={}))
+
+        self.assertEqual(reused.component("redis")["final"], 6557)
+        self.assertEqual(reused.component("supabase")["final"], 5610)
+        self.assertEqual(reused.component("n8n")["final"], 5856)
+        self.assertEqual(reserved, ["Main"])
+        self.assertEqual(start_requirements.call_count, 1)
+        self.assertIn(("requirements.shared.reuse_stale", {"project": "Main", "source_run_id": "run-stale-main"}), events)
 
     def test_start_project_context_rejects_invalid_supabase_auth_user_config_before_services(self) -> None:
         order: list[str] = []

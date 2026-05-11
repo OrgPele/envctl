@@ -17,6 +17,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
+from envctl_engine.requirements.common import build_container_name
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -524,6 +525,96 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("n8n: http://192.0.2.42:5678 [Healthy]", output)
             self.assertLess(output.index("feature-b-1"), output.index("Shared dependencies:"))
 
+    def test_dashboard_shared_dependencies_survive_truth_reconcile_after_app_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            worktree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            redis_container = build_container_name(prefix="envctl-redis", project_root=repo, project_name="Main")
+            n8n_container = build_container_name(prefix="envctl-n8n", project_root=repo, project_name="Main")
+
+            class _Runner:
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    _ = cwd, env, timeout
+                    args = tuple(cmd)
+                    if args[:4] == ("docker", "ps", "-a", "--filter"):
+                        name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                        container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                        if container_name in {redis_container, n8n_container}:
+                            return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    if args[:2] == ("docker", "port"):
+                        container = str(args[2])
+                        if container == redis_container:
+                            return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                        if container == n8n_container:
+                            return SimpleNamespace(returncode=0, stdout="5678/tcp -> 0.0.0.0:5784\n", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                def wait_for_port(self, port, timeout):  # noqa: ANN001
+                    _ = timeout
+                    return port in {6485, 5784}
+
+            engine = PythonEngineRuntime(
+                load_config(self._config(repo, runtime_dir)),
+                env={"NO_COLOR": "1", "ENVCTL_UI_VISUAL_HOST": "192.0.2.42"},
+            )
+            engine.process_runner = _Runner()  # type: ignore[assignment]
+            engine._service_truth_status = lambda service: service.status  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-shared-deps-after-restart",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(worktree / "backend"),
+                        requested_port=8101,
+                        actual_port=8101,
+                        pid=111,
+                        status="running",
+                    ),
+                    "feature-a-1 Frontend": ServiceRecord(
+                        name="feature-a-1 Frontend",
+                        type="frontend",
+                        cwd=str(worktree / "frontend"),
+                        requested_port=9101,
+                        actual_port=9101,
+                        pid=222,
+                        status="running",
+                    ),
+                },
+                requirements={
+                    "feature-a-1": RequirementsResult(
+                        project="Main",
+                        redis={"enabled": True, "success": True, "final": 6485},
+                        n8n={"enabled": True, "success": True, "final": 5784},
+                        supabase={"enabled": True, "success": False},
+                        failures=["supabase unavailable"],
+                    ),
+                },
+                metadata={
+                    "project_roots": {"feature-a-1": str(worktree), "Main": str(repo)},
+                    "dashboard_dependency_scope": "shared",
+                    "dashboard_shared_dependency_project": "Main",
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn("Shared dependencies:", output)
+            self.assertIn("redis: http://192.0.2.42:6485 [Healthy]", output)
+            self.assertIn("n8n: http://192.0.2.42:5784 [Healthy]", output)
+            self.assertIn("supabase: n/a [Unhealthy]", output)
+            self.assertNotIn("redis: n/a [Unreachable]", output)
+            self.assertNotIn("n8n: n/a [Unreachable]", output)
+
     def test_dashboard_infers_shared_tree_dependencies_for_legacy_run_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1004,6 +1095,117 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 output,
             )
             self.assertNotIn("○ Run AI:", output)
+
+    def test_dashboard_renders_envctl_plan_agent_session_by_generated_session_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "pele-monorepo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "features_interactive_onboarding_configuration_flow-1"
+            project_root = repo / "trees" / "features_interactive_onboarding_configuration_flow" / "1"
+            plan_path = repo / "todo" / "plans" / "features" / "interactive-onboarding-configuration-flow.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    f"{project} Backend": ServiceRecord(
+                        name=f"{project} Backend",
+                        type="backend",
+                        cwd=str(project_root / "backend"),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {project: str(project_root)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch(
+                    "envctl_engine.runtime.session_management.list_tmux_sessions",
+                    return_value=[
+                        {
+                            "name": "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex",
+                            "windows": "zsh",
+                            "paths": str(repo),
+                            "attach": (
+                                "tmux attach-session -t "
+                                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex"
+                            ),
+                            "kill": (
+                                "tmux kill-session -t "
+                                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex"
+                            ),
+                        }
+                    ],
+                ),
+                patch(
+                    "envctl_engine.ui.dashboard.rendering._dashboard_current_tmux_target",
+                    return_value=("", ""),
+                ),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(
+                "AI session: tmux attach-session -t "
+                "envctl-pele-monorepo-trees-features_interactive_onboarding_configuration_flow-1-codex "
+                "(detached)",
+                output,
+            )
+            self.assertNotIn("○ Run AI:", output)
+
+    def test_dashboard_renders_worktree_ai_launcher_when_plan_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "pele-monorepo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "features_interactive_onboarding_configuration_flow-1"
+            project_root = repo / "trees" / "features_interactive_onboarding_configuration_flow" / "1"
+            provenance_dir = project_root / ".envctl-state"
+            provenance_dir.mkdir(parents=True, exist_ok=True)
+            (project_root / "MAIN_TASK.md").write_text("# Task\n", encoding="utf-8")
+            (provenance_dir / "worktree-provenance.json").write_text(
+                json.dumps({"plan_file": "features/interactive-onboarding-configuration-flow.md"}),
+                encoding="utf-8",
+            )
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    f"{project} Backend": ServiceRecord(
+                        name=f"{project} Backend",
+                        type="backend",
+                        cwd=str(project_root / "backend"),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={"project_roots": {project: str(project_root)}},
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch("envctl_engine.runtime.session_management.list_tmux_sessions", return_value=[]),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn(f"○ Run AI: envctl --repo {project_root} codex-tmux", output)
+            self.assertNotIn("AI session:", output)
 
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

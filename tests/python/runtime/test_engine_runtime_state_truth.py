@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
+from envctl_engine.requirements.common import build_container_name  # noqa: E402
 from envctl_engine.runtime.engine_runtime_state_truth import (  # noqa: E402
     reconcile_project_requirement_truth,
     reconcile_requirements_truth,
@@ -162,13 +163,59 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
 
         issues = reconcile_project_requirement_truth(runtime, "Main", requirements)
 
-        self.assertEqual(requirements.db["runtime_status"], "healthy")
-        self.assertEqual(requirements.redis["runtime_status"], "unreachable")
-        self.assertEqual(requirements.n8n["runtime_status"], "disabled")
+        self.assertEqual(requirements.component("postgres")["runtime_status"], "healthy")
+        self.assertEqual(requirements.component("redis")["runtime_status"], "unreachable")
+        self.assertEqual(requirements.component("n8n")["runtime_status"], "disabled")
         self.assertEqual(
             issues,
             [{"project": "Main", "component": "redis", "status": "unreachable", "port": 6390}],
         )
+
+    def test_reconcile_project_requirement_truth_repairs_stale_supabase_container_ports(self) -> None:
+        db_container = "envctl-supabase-main-deadbeef-supabase-db-1"
+        kong_container = "envctl-supabase-main-deadbeef-supabase-kong-1"
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    return SimpleNamespace(returncode=0, stdout=f"{db_container}\n", stderr="")
+                if args == ("docker", "port", db_container, "5432"):
+                    return SimpleNamespace(returncode=0, stdout="0.0.0.0:5574\n", stderr="")
+                if args == ("docker", "port", kong_container, "8000"):
+                    return SimpleNamespace(returncode=0, stdout="0.0.0.0:54463\n", stderr="")
+                return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port in {5574, 54463}
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5662,
+                "requested": 5662,
+                "resources": {"primary": 5662, "requested": 5662, "db": 5662, "api": 54551},
+                "container_name": db_container,
+            },
+        )
+
+        issues = reconcile_project_requirement_truth(runtime, "Main", requirements, project_root=Path("/tmp/repo"))
+
+        self.assertEqual(issues, [])
+        self.assertEqual(requirements.supabase["final"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["primary"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["db"], 5574)
+        self.assertEqual(requirements.supabase["resources"]["api"], 54463)
+        self.assertEqual(requirements.supabase["runtime_status"], "healthy")
 
     def test_requirement_truth_issues_reconciles_when_runtime_status_missing(self) -> None:
         runtime = SimpleNamespace(
@@ -190,7 +237,7 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
         issues = requirement_truth_issues(runtime, state)
 
         self.assertEqual(issues, [])
-        self.assertEqual(state.requirements["Main"].db["runtime_status"], "healthy")
+        self.assertEqual(state.requirements["Main"].component("postgres")["runtime_status"], "healthy")
 
     def test_reconcile_requirements_truth_accumulates_projects(self) -> None:
         runtime = SimpleNamespace(
@@ -217,6 +264,266 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
             ],
         )
 
+    def test_shared_tree_requirements_use_canonical_project_for_truth(self) -> None:
+        repo_root = Path("/tmp/envctl-shared-repo")
+        worktree_root = repo_root / "trees" / "feature-a" / "1"
+        redis_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=repo_root,
+            project_name="Main",
+        )
+        n8n_container = build_container_name(
+            prefix="envctl-n8n",
+            project_root=repo_root,
+            project_name="Main",
+        )
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                    container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                    if container_name in {redis_container, n8n_container}:
+                        return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if args[:2] == ("docker", "port"):
+                    container = str(args[2])
+                    if container == redis_container:
+                        return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                    if container == n8n_container:
+                        return SimpleNamespace(returncode=0, stdout="5678/tcp -> 0.0.0.0:5784\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port in {6485, 5784}
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6485},
+            n8n={"enabled": True, "success": True, "final": 5784},
+        )
+        state = RunState(
+            run_id="run-shared-truth",
+            mode="trees",
+            requirements={"feature-a-1": requirements},
+            metadata={
+                "dashboard_dependency_scope": "shared",
+                "dashboard_shared_dependency_project": "Main",
+                "project_roots": {
+                    "feature-a-1": str(worktree_root),
+                    "Main": str(repo_root),
+                },
+            },
+        )
+
+        issues = reconcile_requirements_truth(runtime, state)
+
+        self.assertEqual(requirements.component("redis")["runtime_status"], "healthy")
+        self.assertEqual(requirements.component("n8n")["runtime_status"], "healthy")
+        self.assertNotIn(
+            {"project": "Main", "component": "redis", "status": "unreachable", "port": 6485},
+            issues,
+        )
+        self.assertNotIn(
+            {"project": "Main", "component": "n8n", "status": "unreachable", "port": 5784},
+            issues,
+        )
+
+    def test_shared_tree_requirements_reconcile_shared_record_once(self) -> None:
+        repo_root = Path("/tmp/envctl-shared-repo")
+        redis_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=repo_root,
+            project_name="Main",
+        )
+        calls: list[tuple[str, int | None]] = []
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                    container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                    calls.append(("exists", None))
+                    if container_name == redis_container:
+                        return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if args[:2] == ("docker", "port") and str(args[2]) == redis_container:
+                    calls.append(("port", None))
+                    return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                calls.append(("wait", int(port)))
+                return False
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6485},
+        )
+        state = RunState(
+            run_id="run-shared-truth-dupes",
+            mode="trees",
+            requirements={"feature-a-1": requirements, "feature-b-1": requirements},
+            metadata={
+                "dashboard_dependency_scope": "shared",
+                "dashboard_shared_dependency_project": "Main",
+                "project_roots": {
+                    "feature-a-1": str(repo_root / "trees" / "feature-a" / "1"),
+                    "feature-b-1": str(repo_root / "trees" / "feature-b" / "1"),
+                    "Main": str(repo_root),
+                },
+            },
+        )
+
+        issues = reconcile_requirements_truth(runtime, state)
+
+        self.assertEqual(requirements.component("redis")["runtime_status"], "unreachable")
+        self.assertEqual(
+            issues,
+            [{"project": "Main", "component": "redis", "status": "unreachable", "port": 6485}],
+        )
+        self.assertEqual(calls.count(("wait", 6485)), 1)
+
+    def test_reconcile_adopts_live_project_container_when_stored_container_is_stale(self) -> None:
+        repo_root = Path("/tmp/envctl-shared-repo")
+        worktree_root = repo_root / "trees" / "feature-a" / "1"
+        stale_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=repo_root,
+            project_name="Main",
+        )
+        live_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=worktree_root,
+            project_name="feature-a-1",
+        )
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                    container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                    if container_name == live_container:
+                        return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                    if container_name == stale_container:
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if args[:2] == ("docker", "port") and str(args[2]) == live_container:
+                    return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6485\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port == 6485
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            redis={
+                "enabled": True,
+                "success": True,
+                "final": 6496,
+                "container_name": stale_container,
+                "resources": {"primary": 6496, "requested": 6393},
+            },
+        )
+        state = RunState(
+            run_id="run-stale-shared-container",
+            mode="trees",
+            requirements={"feature-a-1": requirements},
+            metadata={
+                "dashboard_dependency_scope": "shared",
+                "dashboard_shared_dependency_project": "Main",
+                "project_roots": {"feature-a-1": str(worktree_root)},
+            },
+        )
+
+        issues = reconcile_requirements_truth(runtime, state)
+
+        redis = requirements.component("redis")
+        self.assertEqual(issues, [])
+        self.assertEqual(redis["runtime_status"], "healthy")
+        self.assertEqual(redis["container_name"], live_container)
+        self.assertEqual(redis["final"], 6485)
+        self.assertEqual(redis["resources"]["primary"], 6485)
+
+    def test_isolated_tree_requirements_still_use_project_key_for_truth(self) -> None:
+        repo_root = Path("/tmp/envctl-isolated-repo")
+        worktree_root = repo_root / "trees" / "feature-a" / "1"
+        isolated_container = build_container_name(
+            prefix="envctl-redis",
+            project_root=worktree_root,
+            project_name="feature-a-1",
+        )
+
+        class _Runner:
+            def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                args = tuple(cmd)
+                if args[:4] == ("docker", "ps", "-a", "--filter"):
+                    name_filter = next((str(part) for part in args if str(part).startswith("name=")), "")
+                    container_name = name_filter.removeprefix("name=^/").removesuffix("$")
+                    if container_name == isolated_container:
+                        return SimpleNamespace(returncode=0, stdout=f"{container_name}\n", stderr="")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if args[:2] == ("docker", "port") and str(args[2]) == isolated_container:
+                    return SimpleNamespace(returncode=0, stdout="6379/tcp -> 0.0.0.0:6501\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            def wait_for_port(self, port, timeout):  # noqa: ANN001
+                _ = timeout
+                return port == 6501
+
+        runtime = SimpleNamespace(
+            process_runner=_Runner(),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            redis={"enabled": True, "success": True, "final": 6501},
+        )
+        state = RunState(
+            run_id="run-isolated-truth",
+            mode="trees",
+            requirements={"feature-a-1": requirements},
+            metadata={
+                "dashboard_dependency_scope": "isolated",
+                "dashboard_shared_dependency_project": "Main",
+                "project_roots": {
+                    "feature-a-1": str(worktree_root),
+                    "Main": str(repo_root),
+                },
+            },
+        )
+
+        issues = reconcile_requirements_truth(runtime, state)
+
+        self.assertEqual(issues, [])
+        self.assertEqual(requirements.component("redis")["runtime_status"], "healthy")
+
     def test_reconcile_state_truth_updates_services_and_emits_anomaly(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         anomalies: list[dict[str, object]] = []
@@ -241,7 +548,7 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
 
         self.assertEqual(failing, ["Main Backend"])
         self.assertEqual(service.status, "stale")
-        self.assertEqual(state.requirements["Main"].db["runtime_status"], "starting")
+        self.assertEqual(state.requirements["Main"].component("postgres")["runtime_status"], "starting")
         self.assertEqual(events[0][0], "state.fingerprint.before_reconcile")
         self.assertEqual(events[1][0], "state.fingerprint.after_reconcile")
         self.assertEqual(anomalies, [])
@@ -297,7 +604,7 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
 
         self.assertFalse(thread.is_alive())
         self.assertEqual(result_holder.get("failing"), [])
-        self.assertEqual(state.requirements["Main"].db["runtime_status"], "healthy")
+        self.assertEqual(state.requirements["Main"].component("postgres")["runtime_status"], "healthy")
 
 
 if __name__ == "__main__":

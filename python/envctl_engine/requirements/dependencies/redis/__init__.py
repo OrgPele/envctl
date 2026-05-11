@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from envctl_engine.config.profile_defaults import dependency_default_enabled
+from envctl_engine.requirements.component_ports import component_primary_port
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.redis import start_redis_container
 
 
 def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]:
     component = requirements.component("redis")
-    port = component.get("final") or component.get("requested") or int(context.ports["redis"].final)
+    port = component_primary_port(component) or int(context.ports["redis"].final)
     return {
         "REDIS_PORT": str(port),
         "REDIS_URL": f"redis://localhost:{port}/0",

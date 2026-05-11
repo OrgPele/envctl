@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from envctl_engine.config.profile_defaults import dependency_default_enabled
+from envctl_engine.requirements.component_ports import component_primary_port
 from envctl_engine.requirements.core.models import DependencyDefinition, DependencyResourceSpec
 from envctl_engine.requirements.postgres import start_postgres_container
 
 
 def project_env(*, runtime, context, requirements, route=None) -> dict[str, str]:
     component = requirements.component("postgres")
-    port = component.get("final") or component.get("requested") or int(context.ports["db"].final)
+    port = component_primary_port(component) or int(context.ports["db"].final)
     db_host = runtime._command_override_value("DB_HOST") or "localhost"
     db_user = runtime._command_override_value("DB_USER") or "postgres"
     db_password = runtime._command_override_value("DB_PASSWORD") or "postgres"

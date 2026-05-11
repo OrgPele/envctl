@@ -6,6 +6,7 @@ import concurrent.futures
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.requirements.component_ports import component_primary_port
 from envctl_engine.requirements.common import build_container_name, container_exists, container_host_port
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.state.models import RequirementsResult, RunState
@@ -20,7 +21,106 @@ def state_fingerprint(state: RunState) -> str:
 
 
 def requirement_component_port(component_data: dict[str, object]) -> object:
-    return component_data.get("final") or component_data.get("requested")
+    return component_primary_port(component_data)
+
+
+def reconcile_requirement_container_ports(
+    runtime: Any,
+    *,
+    project: str | None,
+    project_root: Path | None,
+    component_name: str,
+    component_data: dict[str, object],
+) -> None:
+    if not bool(component_data.get("enabled", False)):
+        return
+    if bool(component_data.get("simulated", False)):
+        return
+    if not bool(component_data.get("success", False)):
+        return
+    expected_container = str(component_data.get("container_name") or "").strip()
+    if not expected_container and project and project_root is not None:
+        expected_container = _expected_container_name(component_name, project_root=project_root, project_name=project)
+    if not expected_container:
+        return
+    host_port = _published_container_port(
+        runtime,
+        container_name=expected_container,
+        container_port=_container_port_for_component(component_name),
+        project_root=project_root,
+    )
+    if isinstance(host_port, int) and host_port > 0:
+        _set_component_primary_port(component_data, host_port, resource_name=_primary_resource_name(component_name))
+    if str(component_name).strip().lower() != "supabase":
+        return
+    api_port = _published_container_port(
+        runtime,
+        container_name=_supabase_kong_container_name(
+            db_container_name=expected_container,
+            project=project,
+            project_root=project_root,
+        ),
+        container_port=8000,
+        project_root=project_root,
+    )
+    if isinstance(api_port, int) and api_port > 0:
+        resources = _component_resources(component_data)
+        resources["api"] = api_port
+
+
+def _published_container_port(
+    runtime: Any,
+    *,
+    container_name: str,
+    container_port: int,
+    project_root: Path | None,
+) -> int | None:
+    if not container_name or container_port <= 0:
+        return None
+    try:
+        host_port, port_error = container_host_port(
+            runtime.process_runner,
+            container_name=container_name,
+            container_port=container_port,
+            cwd=project_root,
+            env=None,
+        )
+    except Exception:
+        return None
+    if port_error is not None:
+        return None
+    return host_port if isinstance(host_port, int) and host_port > 0 else None
+
+
+def _component_resources(component_data: dict[str, object]) -> dict[str, int]:
+    resources = component_data.get("resources")
+    if isinstance(resources, dict):
+        return resources
+    component_data["resources"] = {}
+    return component_data["resources"]  # type: ignore[return-value]
+
+
+def _set_component_primary_port(component_data: dict[str, object], host_port: int, *, resource_name: str) -> None:
+    component_data["final"] = host_port
+    resources = _component_resources(component_data)
+    resources["primary"] = host_port
+    if resource_name:
+        resources[resource_name] = host_port
+
+
+def _primary_resource_name(component_name: str) -> str:
+    normalized = str(component_name).strip().lower()
+    if normalized == "supabase":
+        return "db"
+    return "primary"
+
+
+def _supabase_kong_container_name(*, db_container_name: str, project: str | None, project_root: Path | None) -> str:
+    if db_container_name.endswith("-supabase-db-1"):
+        return db_container_name[: -len("-supabase-db-1")] + "-supabase-kong-1"
+    if project and project_root is not None:
+        return build_supabase_project_name(project_root=project_root, project_name=project) + "-supabase-kong-1"
+    return ""
 
 
 def requirement_runtime_status(
@@ -54,6 +154,9 @@ def requirement_runtime_status(
         port=port,
     ):
         return "unreachable"
+    port = requirement_component_port(component_data)
+    if not isinstance(port, int) or port <= 0:
+        return "unreachable"
     if not runtime._listener_truth_enforced():
         return "healthy"
     try:
@@ -75,10 +178,14 @@ def _requirement_owner_mismatch(
     port: int,
 ) -> bool:
     expected_container = str(component_data.get("container_name") or "").strip()
+    fallback_container = ""
     if not expected_container and project and project_root is not None:
         expected_container = _expected_container_name(component_name, project_root=project_root, project_name=project)
+    elif expected_container and project and project_root is not None:
+        fallback_container = _expected_container_name(component_name, project_root=project_root, project_name=project)
     if not expected_container:
         return False
+    container_port = _container_port_for_component(component_name)
     try:
         exists, error = container_exists(
             runtime.process_runner,
@@ -88,21 +195,82 @@ def _requirement_owner_mismatch(
         )
     except Exception:
         return False
+    if (error is not None or not exists) and _adopt_requirement_container(
+        runtime,
+        component_name=component_name,
+        component_data=component_data,
+        container_name=fallback_container,
+        container_port=container_port,
+        cwd=project_root,
+    ):
+        return False
     if error is not None or not exists:
         return True
     try:
         host_port, port_error = container_host_port(
             runtime.process_runner,
             container_name=expected_container,
-            container_port=_container_port_for_component(component_name),
+            container_port=container_port,
             cwd=project_root,
             env=None,
         )
     except Exception:
         return False
+    stale_host_port = port_error is not None or not isinstance(host_port, int) or host_port <= 0 or host_port != port
+    if stale_host_port and _adopt_requirement_container(
+        runtime,
+        component_name=component_name,
+        component_data=component_data,
+        container_name=fallback_container,
+        container_port=container_port,
+        cwd=project_root,
+    ):
+        return False
     if port_error is not None:
         return True
     return not isinstance(host_port, int) or host_port <= 0 or host_port != port
+
+
+def _adopt_requirement_container(
+    runtime: Any,
+    *,
+    component_name: str,
+    component_data: dict[str, object],
+    container_name: str,
+    container_port: int,
+    cwd: Path | None,
+) -> bool:
+    container_name = str(container_name or "").strip()
+    if not container_name or container_name == str(component_data.get("container_name") or "").strip():
+        return False
+    try:
+        exists, error = container_exists(runtime.process_runner, container_name=container_name, cwd=cwd, env=None)
+    except Exception:
+        return False
+    if error is not None or not exists:
+        return False
+    try:
+        host_port, port_error = container_host_port(
+            runtime.process_runner,
+            container_name=container_name,
+            container_port=container_port,
+            cwd=cwd,
+            env=None,
+        )
+    except Exception:
+        return False
+    if port_error is not None or not isinstance(host_port, int) or host_port <= 0:
+        return False
+    component_data["container_name"] = container_name
+    component_data["final"] = host_port
+    resources = component_data.get("resources")
+    if not isinstance(resources, dict):
+        resources = {}
+        component_data["resources"] = resources
+    resources["primary"] = host_port
+    resource_key = "db" if str(component_name).strip().lower() == "supabase" else "primary"
+    resources[resource_key] = host_port
+    return True
 
 
 def _container_port_for_component(component_name: str) -> int:
@@ -140,6 +308,13 @@ def reconcile_project_requirement_truth(
     for definition in dependency_definitions():
         component_name = definition.id
         component_data = requirements.component(component_name)
+        reconcile_requirement_container_ports(
+            runtime,
+            project=project,
+            project_root=project_root,
+            component_name=component_name,
+            component_data=component_data,
+        )
         runtime_status = requirement_runtime_status(
             runtime,
             project=project,
@@ -165,18 +340,18 @@ def reconcile_project_requirement_truth(
 
 def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str, object]]:
     issues: list[dict[str, object]] = []
-    items = list(state.requirements.items())
+    items = _requirement_truth_work_items(state)
     if not items:
         return issues
     worker_count = min(8, len(items))
     if worker_count <= 1:
-        for project, requirements in items:
+        for truth_project, truth_root, requirements in items:
             issues.extend(
                 reconcile_project_requirement_truth(
                     runtime,
-                    project,
+                    truth_project,
                     requirements,
-                    project_root=_project_root_for_state(state, project),
+                    project_root=truth_root,
                 )
             )
         return issues
@@ -185,11 +360,11 @@ def reconcile_requirements_truth(runtime: Any, state: RunState) -> list[dict[str
             executor.submit(
                 reconcile_project_requirement_truth,
                 runtime,
-                project,
+                truth_project,
                 requirements,
-                project_root=_project_root_for_state(state, project),
+                project_root=truth_root,
             )
-            for project, requirements in items
+            for truth_project, truth_root, requirements in items
         ]
         for future in concurrent.futures.as_completed(futures):
             issues.extend(future.result())
@@ -204,6 +379,39 @@ def _project_root_for_state(state: RunState, project: str) -> Path | None:
     if not isinstance(root_value, str) or not root_value.strip():
         return None
     return Path(root_value).expanduser()
+
+
+def _requirement_truth_work_items(state: RunState) -> list[tuple[str, Path | None, RequirementsResult]]:
+    items: list[tuple[str, Path | None, RequirementsResult]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for state_key, requirements in state.requirements.items():
+        truth_project, truth_root = _requirement_truth_identity(state, state_key, requirements)
+        root_key = str(truth_root) if truth_root is not None else ""
+        item_key = (truth_project, root_key, id(requirements))
+        if item_key in seen:
+            continue
+        seen.add(item_key)
+        items.append((truth_project, truth_root, requirements))
+    return items
+
+
+def _requirement_truth_identity(
+    state: RunState,
+    state_key: str,
+    requirements: RequirementsResult,
+) -> tuple[str, Path | None]:
+    truth_project = state_key
+    shared_scope = str(state.metadata.get("dashboard_dependency_scope", "")).strip().lower() == "shared"
+    requirement_project = str(getattr(requirements, "project", "") or "").strip()
+    shared_project = str(state.metadata.get("dashboard_shared_dependency_project", "") or "").strip()
+    if shared_scope and requirement_project:
+        truth_project = requirement_project
+    elif shared_scope and shared_project:
+        truth_project = shared_project
+    truth_root = _project_root_for_state(state, truth_project)
+    if truth_root is None and truth_project != state_key:
+        truth_root = _project_root_for_state(state, state_key)
+    return truth_project, truth_root
 
 
 def requirement_truth_issues(runtime: Any, state: RunState) -> list[dict[str, object]]:

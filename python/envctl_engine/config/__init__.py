@@ -597,7 +597,11 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         default_mode = "main"
 
     runtime_dir = _resolve_path(base_dir, resolved.get("RUN_SH_RUNTIME_DIR", DEFAULTS["RUN_SH_RUNTIME_DIR"]))
-    planning_dir = _resolve_path(base_dir, resolved.get("ENVCTL_PLANNING_DIR", DEFAULTS["ENVCTL_PLANNING_DIR"]))
+    planning_dir = _resolve_planning_dir(
+        base_dir=base_dir,
+        execution_root=execution_root,
+        raw=resolved.get("ENVCTL_PLANNING_DIR", DEFAULTS["ENVCTL_PLANNING_DIR"]),
+    )
     runtime_scope_id = _runtime_scope_id(base_dir=base_dir, env=env, resolved=resolved)
     runtime_scope_dir = runtime_dir / "python-engine" / runtime_scope_id
 
@@ -1883,6 +1887,17 @@ def _resolve_path(base_dir: Path, raw: str) -> Path:
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
+
+
+def _resolve_planning_dir(*, base_dir: Path, execution_root: Path, raw: str) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    base_candidate = (base_dir / path).resolve()
+    execution_candidate = (execution_root / path).resolve()
+    if execution_root.resolve() != base_dir.resolve() and execution_candidate.is_dir():
+        return execution_candidate
+    return base_candidate
 
 
 def _parse_port_availability_mode(value: str | None, default: str) -> str:

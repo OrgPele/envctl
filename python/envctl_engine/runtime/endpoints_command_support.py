@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port, positive_int
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.public_urls import resolve_public_host
@@ -168,26 +169,23 @@ def _dependency_endpoints(requirements: RequirementsResult | None) -> dict[str, 
         endpoints[definition.id] = {
             "enabled": enabled,
             "status": status,
-            "port": _positive_int(component.get("final") or component.get("requested")),
+            "port": dependency_display_port(definition.id, component),
+            "resources": component_resource_ports(component),
         }
     supabase = requirements.component("supabase")
-    resources = supabase.get("resources") if isinstance(supabase.get("resources"), dict) else {}
-    if isinstance(resources, dict):
+    resources = component_resource_ports(supabase)
+    if resources:
         endpoints["supabase_db"] = {
             "enabled": bool(supabase.get("enabled")),
             "status": str(supabase.get("runtime_status") or ("healthy" if supabase.get("success") else "unknown")),
-            "port": _positive_int(resources.get("db") or resources.get("primary") or supabase.get("final")),
+            "port": positive_int(resources.get("db")) or positive_int(resources.get("primary")),
         }
         endpoints["supabase_api"] = {
             "enabled": bool(supabase.get("enabled")),
             "status": str(supabase.get("runtime_status") or ("healthy" if supabase.get("success") else "unknown")),
-            "port": _positive_int(resources.get("api") or supabase.get("final")),
+            "port": positive_int(resources.get("api")),
         }
     return endpoints
-
-
-def _positive_int(value: object) -> int | None:
-    return value if isinstance(value, int) and value > 0 else None
 
 
 def _load_state(runtime: Any, route: Route) -> RunState | None:
@@ -198,7 +196,8 @@ def _load_state(runtime: Any, route: Route) -> RunState | None:
     strict_resolver = getattr(runtime, "_state_lookup_strict_mode_match", None)
     if callable(strict_resolver):
         strict = bool(strict_resolver(route))
-    return loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    state = loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    return state if isinstance(state, RunState) else None
 
 
 def _emit_payload(payload: dict[str, object], *, json_output: bool, ok: bool) -> int:
