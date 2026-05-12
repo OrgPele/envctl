@@ -6066,6 +6066,28 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertIsNone(original_plan_path)
 
+    def test_review_launch_does_not_infer_when_recorded_plan_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            project_root = repo / "trees" / "implementations_task" / "1"
+            inferred_plan = repo / "todo" / "done" / "implementations" / "task.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            inferred_plan.parent.mkdir(parents=True, exist_ok=True)
+            inferred_plan.write_text("# done plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/missing.md"}) + "\n",
+                encoding="utf-8",
+            )
+
+            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+                "implementations_task-1",
+                project_root,
+                repo_root=repo,
+            )
+
+            self.assertIsNone(original_plan_path)
+
     def test_review_launch_can_infer_original_plan_file_without_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

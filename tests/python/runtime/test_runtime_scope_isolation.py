@@ -157,6 +157,32 @@ class RuntimeScopeIsolationTests(unittest.TestCase):
             self.assertEqual(runtime.port_planner.lock_dir, runtime.runtime_root / "locks")
             self.assertTrue((runtime_dir / "python-engine" / "locks").exists())
 
+    def test_stale_legacy_lock_symlink_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            legacy_root = runtime_dir / "python-engine"
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            stale_target = runtime_dir / "python-engine" / "missing-scope" / "locks"
+            (legacy_root / "locks").symlink_to(stale_target, target_is_directory=True)
+            cfg = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                }
+            )
+
+            runtime = PythonEngineRuntime(cfg, env={})
+
+            legacy_locks = runtime_dir / "python-engine" / "locks"
+            self.assertTrue(legacy_locks.is_symlink())
+            self.assertEqual(
+                legacy_locks.resolve(strict=False),
+                (runtime.runtime_root / "locks").resolve(strict=False),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

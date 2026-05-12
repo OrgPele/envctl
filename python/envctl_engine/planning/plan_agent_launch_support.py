@@ -4002,17 +4002,24 @@ def _review_prompt_arguments(
 
 
 def _review_original_plan_path(project_name: str, project_root: Path, *, repo_root: Path) -> Path | None:
-    root = Path(project_root)
-    provenance_path = root / _WORKTREE_PROVENANCE_PATH
-    try:
-        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        provenance = {}
-    recorded_plan = str(provenance.get("plan_file", "")).strip()
+    recorded_plan = _recorded_plan_file_from_worktree(project_root)
     resolved = _resolve_recorded_plan_file(Path(repo_root), recorded_plan)
     if resolved is not None:
         return resolved
+    if recorded_plan:
+        return None
     return _infer_plan_file_from_feature(Path(repo_root), feature_name=_feature_name_from_project_name(project_name))
+
+
+def _recorded_plan_file_from_worktree(project_root: Path) -> str:
+    provenance_path = Path(project_root) / _WORKTREE_PROVENANCE_PATH
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(provenance, dict):
+        return ""
+    return str(provenance.get("plan_file", "")).strip()
 
 
 def _resolve_recorded_plan_file(repo_root: Path, recorded_plan: str) -> Path | None:
@@ -4086,6 +4093,8 @@ def resolve_plan_agent_launch_command(
         if plan_path is not None
         else None
     )
+    if not selector and _recorded_plan_file_from_worktree(project_root):
+        return None
     if not selector:
         selector = f"{_feature_name_from_project_name(project_name)}.md"
     return " ".join(
