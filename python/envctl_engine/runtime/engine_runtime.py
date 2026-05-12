@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os as _os
 import shutil as _shutil
 import sys as _sys
 import uuid
@@ -566,12 +567,28 @@ class PythonEngineRuntime:
         scoped_locks = self.runtime_root / "locks"
         scoped_locks.mkdir(parents=True, exist_ok=True)
         legacy_locks = self.runtime_legacy_root / "locks"
+        if legacy_locks.is_symlink():
+            if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
+                return
+            try:
+                legacy_locks.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return
         if legacy_locks.exists():
             return
         try:
             legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
+        except FileExistsError:
+            return
         except OSError:
-            legacy_locks.mkdir(parents=True, exist_ok=True)
+            if _os.path.lexists(legacy_locks):
+                return
+            try:
+                legacy_locks.mkdir(parents=True, exist_ok=True)
+            except FileExistsError:
+                return
 
     def add_emit_listener(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
         self._emit_listeners.append(listener)
