@@ -23,6 +23,7 @@ from envctl_engine.runtime.engine_runtime_env import (  # noqa: E402
     requirements_ready,
     resolve_dependency_env_templates,
     runtime_env_overrides,
+    service_env_overlays,
     service_enabled_for_mode,
     validate_mode_toggles,
 )
@@ -484,6 +485,40 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             backend_env["SUPABASE_JWKS_URL"],
             "http://localhost:54321/auth/v1/.well-known/jwks.json",
         )
+
+    def test_project_service_env_exposes_source_aliases_and_structured_overlays(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            env={"ENVCTL_FRONTEND_ENV__VITE_SUPABASE_URL": "${ENVCTL_SOURCE_SUPABASE_URL}"},
+            config=SimpleNamespace(raw={"ENVCTL_FRONTEND_ENV__VITE_API_URL": "${ENVCTL_SOURCE_BACKEND_URL}/api/v1"}),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "backend": PortPlan(project="Main", requested=8000, assigned=8000, final=8123, source="assigned"),
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54447, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54447, "primary": 5432},
+            },
+        )
+
+        env = project_service_env(runtime, context, requirements=requirements, route=None, service_name="frontend")
+        overlays = service_env_overlays(runtime, service_name="frontend", base_env=env)
+
+        self.assertEqual(env["ENVCTL_SOURCE_SUPABASE_URL"], "http://localhost:54447")
+        self.assertEqual(env["ENVCTL_SOURCE_BACKEND_URL"], "http://localhost:8123")
+        self.assertEqual(overlays["VITE_SUPABASE_URL"], "http://localhost:54447")
+        self.assertEqual(overlays["VITE_API_URL"], "http://localhost:8123/api/v1")
 
     def test_frontend_launch_env_rejects_supabase_service_role_source_template(self) -> None:
         runtime = SimpleNamespace(

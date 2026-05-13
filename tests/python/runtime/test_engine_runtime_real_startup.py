@@ -2670,7 +2670,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertNotIn("--model", " ".join(str(part) for part in cmd))
             child_env = cast(dict[str, str], popen_calls[0]["env"])
             expected_omx_root = repo / "trees" / "feature_task" / "1" / ".envctl-state" / "omx" / "feature-task-1"
-            self.assertEqual(child_env["OMX_ROOT"], str(expected_omx_root))
+            self.assertEqual(Path(child_env["OMX_ROOT"]).resolve(), expected_omx_root.resolve())
             self.assertTrue((expected_omx_root / ".omx" / "state" / "session.json").is_file())
             rendered = out.getvalue()
             self.assertIn("attach: tmux attach -t omx-feature-session", rendered)

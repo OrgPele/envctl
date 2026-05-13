@@ -131,6 +131,68 @@ def backend_listener_expected_for_mode(config: object, mode: str) -> bool:
 
 
 
+def _project_backend_cors_origin(
+    rt: object,
+    *,
+    project: str,
+    backend_env: dict[str, str],
+    frontend_port: int,
+) -> None:
+    if frontend_port <= 0:
+        return
+    runtime_env = getattr(rt, "env", {})
+    config_raw = getattr(getattr(rt, "config", None), "raw", {})
+    raw_enabled = str(
+        runtime_env.get(
+            "ENVCTL_BACKEND_CORS_PROJECTION_ENABLE",
+            config_raw.get("ENVCTL_BACKEND_CORS_PROJECTION_ENABLE", "true"),
+        )
+    ).strip().lower()
+    if raw_enabled in {"0", "false", "no", "off"}:
+        return
+    host = resolve_public_host(env=runtime_env, config=getattr(rt, "config", None))
+    frontend_url = f"http://{host}:{frontend_port}"
+    backend_env["FRONTEND_BASE_URL"] = frontend_url
+    backend_env["ENVCTL_SOURCE_FRONTEND_URL"] = frontend_url
+    cors_key = str(
+        runtime_env.get(
+            "ENVCTL_BACKEND_CORS_ENV_KEY",
+            config_raw.get("ENVCTL_BACKEND_CORS_ENV_KEY", "CORS_ORIGINS_RAW"),
+        )
+        or "CORS_ORIGINS_RAW"
+    ).strip()
+    if not cors_key:
+        return
+    origins = _merge_cors_origins(str(backend_env.get(cors_key, "") or ""), frontend_port=frontend_port, host=host)
+    backend_env[cors_key] = ",".join(origins)
+    emit = getattr(rt, "_emit", None)
+    if callable(emit):
+        emit(
+            "backend.cors.projected",
+            project=project,
+            env_key=cors_key,
+            frontend_origin=frontend_url,
+            origin_count=len(origins),
+        )
+
+
+def _merge_cors_origins(existing: str, *, frontend_port: int, host: str) -> list[str]:
+    origins: list[str] = []
+
+    def add(value: str) -> None:
+        normalized = value.strip()
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+
+    for token in existing.replace(";", ",").split(","):
+        add(token)
+    add(f"http://{host}:{frontend_port}")
+    if host in {"localhost", "127.0.0.1"}:
+        add(f"http://localhost:{frontend_port}")
+        add(f"http://127.0.0.1:{frontend_port}")
+    return origins
+
+
 def additional_service_enabled_for_context(service: object, *, mode: str, project_root: Path) -> bool:
     enabled_for_project = getattr(service, "enabled_for_project_root", None)
     if callable(enabled_for_project):
@@ -224,6 +286,16 @@ def start_project_services(
     backend_url = browser_backend_url(host=resolve_public_host(env=rt.env, config=rt.config), port=backend_plan.final)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
     frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
+    _project_backend_cors_origin(
+        rt,
+        project=context.name,
+        backend_env=backend_env_extra,
+        frontend_port=frontend_plan.final,
+    )
+    overlay_builder = getattr(rt, "_service_env_overlays", None)
+    if callable(overlay_builder):
+        backend_env_extra.update(overlay_builder(service_name="backend", base_env=backend_env_extra))
+        frontend_env_extra.update(overlay_builder(service_name="frontend", base_env=frontend_env_extra))
     all_service_names_for_mode = getattr(rt.config, "all_app_service_names_for_mode", None)
     if callable(all_service_names_for_mode):
         try:
@@ -411,6 +483,8 @@ def start_project_services(
         service_env_extra["ENVCTL_SERVICE_NAME"] = service.name
         service_env_extra["ENVCTL_SERVICE_TYPE"] = service.name
         service_env_extra["ENVCTL_PROJECT_NAME"] = context.name
+        if callable(overlay_builder):
+            service_env_extra.update(overlay_builder(service_name=service.name, base_env=service_env_extra))
         launch_port = requested_port if service.expect_listener else 0
         prepared_launches[service.name] = PreparedServiceLaunch(
             service_name=service.name,

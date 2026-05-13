@@ -209,6 +209,14 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             for entry in local_state.backend_dependency_env_templates
         ],
         "frontend_dependency_env_section_present": local_state.frontend_dependency_env_section_present,
+        "frontend_dependency_env_projection_active": bool(
+            local_state.dependency_env_section_present
+            or local_state.frontend_dependency_env_section_present
+            or local_state.main_frontend_dependency_env_section_present
+            or local_state.trees_frontend_dependency_env_section_present
+            or bool(local_state.service_dependency_env_section_present or {})
+            or bool(local_state.mode_service_dependency_env_section_present or {})
+        ),
         "frontend_dependency_env_templates": [
             {
                 "name": entry.name,

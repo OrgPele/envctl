@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
@@ -241,6 +241,7 @@ def project_service_env(
     env = {"ENVCTL_PROJECT_NAME": context.name}
     dependency_env = _dependency_projector_env(runtime, context, requirements=requirements, route=route)
     dependency_env.update(_app_service_projector_env(runtime, context))
+    dependency_env.update(_source_alias_env(dependency_env))
     config = getattr(runtime, "config", None)
     mode = str(getattr(route, "mode", "") or "").strip().lower() if route is not None else ""
     scoped_dependency_env = _resolve_scoped_dependency_env(
@@ -256,6 +257,71 @@ def project_service_env(
     env.update(runtime_env_overrides(route))
     _apply_route_log_overrides(env, route)
     return env
+
+
+def service_env_overlays(
+    runtime: Any,
+    *,
+    service_name: str,
+    base_env: Mapping[str, str],
+) -> dict[str, str]:
+    normalized_service = str(service_name or "").strip().upper().replace("-", "_")
+    if not normalized_service:
+        return {}
+    prefix = f"ENVCTL_{normalized_service}_ENV__"
+    raw_sources: list[Mapping[str, str]] = []
+    config_raw = getattr(getattr(runtime, "config", None), "raw", None)
+    if isinstance(config_raw, Mapping):
+        raw_sources.append(config_raw)
+    runtime_env = getattr(runtime, "env", None)
+    if isinstance(runtime_env, Mapping):
+        raw_sources.append(runtime_env)
+    source_env = dict(base_env)
+    source_env.update(_source_alias_env(source_env))
+    overlays: dict[str, str] = {}
+    for source in raw_sources:
+        for key, value in source.items():
+            name = str(key)
+            if not name.startswith(prefix):
+                continue
+            target = name[len(prefix) :].strip()
+            if not _ENV_VAR_NAME_RE.fullmatch(target):
+                raise RuntimeError(f"service env overlay {name} must target a valid env var name")
+            overlays[target] = _render_overlay_template(
+                str(value),
+                target=target,
+                source_env={**source_env, **overlays},
+            )
+    return overlays
+
+
+def _source_alias_env(env: Mapping[str, str]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for key, value in env.items():
+        name = str(key).strip()
+        if not _ENV_VAR_NAME_RE.fullmatch(name):
+            continue
+        if name.startswith("ENVCTL_SOURCE_"):
+            continue
+        text = str(value)
+        if text:
+            aliases[f"ENVCTL_SOURCE_{name}"] = text
+    return aliases
+
+
+def _render_overlay_template(template: str, *, target: str, source_env: Mapping[str, str]) -> str:
+    rendered = template
+    sanitized = _TEMPLATE_VAR_RE.sub("", rendered)
+    if "${" in sanitized:
+        raise RuntimeError(f"service env overlay {target} has malformed placeholder syntax")
+    for match in _TEMPLATE_VAR_RE.finditer(template):
+        placeholder = str(match.group(1)).strip()
+        if not _ENV_VAR_NAME_RE.fullmatch(placeholder):
+            raise RuntimeError(f"service env overlay {target} has invalid placeholder {match.group(0)!r}")
+        if placeholder not in source_env:
+            raise RuntimeError(f"service env overlay {target} references unknown variable {placeholder}")
+        rendered = rendered.replace(f"${{{placeholder}}}", str(source_env[placeholder]))
+    return rendered
 
 
 def _dependency_projector_env(

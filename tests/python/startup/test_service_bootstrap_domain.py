@@ -14,6 +14,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _backend_dependency_install_required,
     _backend_migrations_enabled,
     _backend_runtime_prep_required,
+    _frontend_missing_direct_dependency,
     _prepare_backend_runtime,
     _backend_migration_retry_env_for_async_driver_mismatch,
     _read_backend_bootstrap_state,
@@ -58,6 +59,29 @@ class _FakeRuntime:
 
 
 class ServiceBootstrapDomainTests(unittest.TestCase):
+    def test_frontend_missing_direct_dependency_detects_declared_package_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "vite").mkdir(parents=True)
+            payload = {
+                "dependencies": {"@paddle/paddle-js": "^1.0.0", "vite": "^5.0.0"},
+                "devDependencies": {"@types/node": "^20.0.0"},
+            }
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertEqual(missing, "@paddle/paddle-js")
+
+    def test_frontend_missing_direct_dependency_can_pass_scoped_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "@paddle" / "paddle-js").mkdir(parents=True)
+            payload = {"dependencies": {"@paddle/paddle-js": "^1.0.0"}}
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertIsNone(missing)
+
     def test_backend_dependency_install_required_when_state_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)

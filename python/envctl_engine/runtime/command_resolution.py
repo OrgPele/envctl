@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -489,6 +490,14 @@ def _split_and_validate(
     parsed = shlex.split(raw.replace("{port}", str(port)))
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
+    if _looks_like_env_assignment(parsed[0]):
+        raise CommandResolutionError(
+            "unsupported_command_env_prefix",
+            (
+                "Use service env overlays instead of shell-prefix env assignments, "
+                "or wrap explicitly in `sh -c`."
+            ),
+        )
     parsed = _normalize_configured_python_command(parsed, runner_prefix=python_runner_prefix)
     executable = parsed[0]
     if not _command_exists_for_roots(executable, command_exists=command_exists, search_roots=search_roots or []):
@@ -497,6 +506,13 @@ def _split_and_validate(
             f"Resolved command executable not found: {executable}",
         )
     return parsed
+
+
+def _looks_like_env_assignment(token: str) -> bool:
+    if "=" not in token or token.startswith("="):
+        return False
+    name, _value = token.split("=", 1)
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
 
 def _default_command_exists(executable: str) -> bool:

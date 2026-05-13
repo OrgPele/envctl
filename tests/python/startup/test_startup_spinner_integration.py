@@ -881,6 +881,12 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(run_state.services["Main Backend"].pid, 33333)
             self.assertEqual(run_state.services["Main Frontend"].pid, 22222)
             self.assertIn("Main", run_state.requirements)
+            merge_events = [
+                event for event in engine.events if event.get("event") == "runtime.state.merge_preserved_services"
+            ]
+            self.assertEqual(len(merge_events), 1)
+            self.assertEqual(merge_events[0]["preserved_services"], ["Main Frontend"])
+            self.assertEqual(merge_events[0]["replaced_services"], ["Main Backend"])
 
     def test_restart_stopped_service_starts_it_without_terminating_running_sibling(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

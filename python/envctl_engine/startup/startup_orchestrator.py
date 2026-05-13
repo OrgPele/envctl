@@ -1463,6 +1463,7 @@ class StartupOrchestrator:
         self._ensure_run_id(session)
         self._validate_plan_agent_handoff(session, phase="success_finalization")
         run_state = build_success_run_state(rt, session)
+        self._emit_preserved_service_merge(session)
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
@@ -1583,6 +1584,20 @@ class StartupOrchestrator:
         if attach_code is not None:
             return attach_code
         return 0
+
+    def _emit_preserved_service_merge(self, session: StartupSession) -> None:
+        if not session.preserved_services:
+            return
+        replaced = sorted(
+            name for project_services in session.services_by_project.values() for name in project_services
+        )
+        self.runtime._emit(
+            "runtime.state.merge_preserved_services",
+            preserved_services=sorted(session.preserved_services),
+            replaced_services=replaced,
+            preserved_requirements=sorted(session.preserved_requirements),
+            replaced_requirements=sorted(session.requirements_by_project),
+        )
 
     def _print_headless_plan_session_summary(
         self,

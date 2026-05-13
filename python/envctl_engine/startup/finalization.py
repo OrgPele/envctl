@@ -93,6 +93,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     dependency_mode = effective_dependency_scope(session.effective_route, session.runtime_mode)
     metadata["dependency_mode"] = dependency_mode
     metadata["shared_dependencies"] = dependency_mode == "shared"
+    metadata["frontend_dependency_env_projection_active"] = _frontend_dependency_env_projection_active(runtime)
     requested_dependency_scope = session.effective_route.flags.get("dependency_scope")
     if requested_dependency_scope is not None:
         metadata["dependency_scope_requested"] = str(requested_dependency_scope)
@@ -178,6 +179,18 @@ def _project_configured_services_metadata(
         if service_types:
             configured[str(context.name)] = service_types
     return serialize_dashboard_project_configured_services(configured)
+
+
+def _frontend_dependency_env_projection_active(runtime: StartupRuntime) -> bool:
+    config = runtime.config
+    return bool(
+        getattr(config, "dependency_env_section_present", False)
+        or getattr(config, "frontend_dependency_env_section_present", False)
+        or getattr(config, "main_frontend_dependency_env_section_present", False)
+        or getattr(config, "trees_frontend_dependency_env_section_present", False)
+        or bool(getattr(config, "service_dependency_env_section_present", {}) or {})
+        or bool(getattr(config, "mode_service_dependency_env_section_present", {}) or {})
+    )
 
 
 def _shared_dependency_dashboard_project(session: StartupSession) -> str | None:

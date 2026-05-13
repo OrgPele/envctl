@@ -62,6 +62,38 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.source, "configured")
             self.assertEqual(result.command, ["venv/bin/python", "app.py"])
 
+    def test_configured_command_rejects_env_assignment_prefix_with_targeted_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            with self.assertRaises(CommandResolutionError) as cm:
+                resolve_service_start_command(
+                    service_name="frontend",
+                    project_root=root,
+                    port=9000,
+                    env={"ENVCTL_FRONTEND_START_CMD": "VITE_API_URL=http://localhost:8000 npm run dev"},
+                    config_raw={},
+                    command_exists=lambda exe: exe == "npm",
+                )
+
+            self.assertEqual(cm.exception.code, "unsupported_command_env_prefix")
+            self.assertIn("Use service env overlays", str(cm.exception))
+
+    def test_configured_command_allows_explicit_shell_wrapper_for_env_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="frontend",
+                project_root=root,
+                port=9000,
+                env={"ENVCTL_FRONTEND_START_CMD": "sh -c 'VITE_API_URL=http://localhost:8000 npm run dev'"},
+                config_raw={},
+                command_exists=lambda exe: exe == "sh",
+            )
+
+            self.assertEqual(result.command[:2], ["sh", "-c"])
+
     def test_configured_backend_generic_python_uses_prepared_venv_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -83,7 +115,7 @@ class CommandResolutionTests(unittest.TestCase):
             )
 
             self.assertEqual(result.source, "configured")
-            self.assertEqual(result.command[0], str(backend_python))
+            self.assertEqual(Path(result.command[0]).resolve(), backend_python.resolve())
             self.assertEqual(result.command[1:4], ["-m", "uvicorn", "app.main:app"])
             self.assertIn("8000", result.command)
 
