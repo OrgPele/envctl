@@ -413,6 +413,29 @@ class EngineRuntimeEnvTests(unittest.TestCase):
             self.assertTrue(dependency_external_mode(runtime, "redis", mode="main"))
             self.assertFalse(dependency_external_mode(runtime, "supabase", mode="trees"))
 
+    def test_backend_env_override_file_does_not_drive_external_dependency_auto_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            override = repo / "config" / "backend.override.env"
+            override.parent.mkdir(parents=True, exist_ok=True)
+            override.write_text(
+                "DATABASE_URL=postgresql+asyncpg://app:secret@db.example.test:6543/app\n",
+                encoding="utf-8",
+            )
+            runtime = SimpleNamespace(
+                env={"BACKEND_ENV_FILE_OVERRIDE": str(override)},
+                config=SimpleNamespace(
+                    raw={},
+                    base_dir=repo,
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    startup_enabled_for_mode=lambda _mode: True,
+                    requirement_enabled_for_mode=lambda _mode, _name: False,
+                ),
+            )
+
+            self.assertFalse(dependency_external_mode(runtime, "postgres", mode="main"))
+
     def test_main_mode_auto_external_reads_repo_root_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

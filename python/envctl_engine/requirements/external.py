@@ -379,14 +379,10 @@ def _candidate_app_env_files(runtime: Any) -> tuple[Path, ...]:
         seen.add(resolved)
         candidates.append(resolved)
 
-    for key in ("BACKEND_ENV_FILE_OVERRIDE", "MAIN_ENV_FILE_PATH"):
-        add(_resolve_env_file_path(runtime, key, base_dir=base_dir))
     add(base_dir / ".env")
     backend_dir = str(getattr(config, "backend_dir_name", "backend") or "backend").strip() or "backend"
     add(base_dir / backend_dir / ".env")
 
-    for key in ("FRONTEND_ENV_FILE_OVERRIDE", "MAIN_FRONTEND_ENV_FILE_PATH"):
-        add(_resolve_env_file_path(runtime, key, base_dir=base_dir))
     frontend_dir = str(getattr(config, "frontend_dir_name", "frontend") or "frontend").strip() or "frontend"
     add(base_dir / frontend_dir / ".env")
     return tuple(path for path in candidates if path.is_file())
