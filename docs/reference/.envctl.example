@@ -153,6 +153,9 @@ ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 # ENVCTL_DEPENDENCY_N8N_MODE=external
 # External Supabase requires SUPABASE_URL or SUPABASE_PUBLIC_URL plus SUPABASE_ANON_KEY
 # or the frontend-safe VITE_SUPABASE_ANON_KEY alias.
+# External dependencies are actively probed at startup. Set
+# ENVCTL_EXTERNAL_DEPENDENCY_PROBE=false only when the dependency is reachable
+# from launched services but intentionally unreachable from the envctl host.
 # SUPABASE_URL=http://localhost:54321
 # SUPABASE_ANON_KEY=<external anon key>
 # SUPABASE_SERVICE_ROLE_KEY=<external service-role key; backend only>

@@ -137,7 +137,10 @@ def requirement_runtime_status(
     if bool(component_data.get("simulated", False)):
         return "simulated"
     if bool(component_data.get("external")):
-        return "external" if bool(component_data.get("success", False)) else "external_unavailable"
+        external_status = str(component_data.get("runtime_status") or "").strip().lower()
+        if external_status in {"healthy", "unreachable", "external_unavailable"}:
+            return external_status
+        return "healthy" if bool(component_data.get("success", False)) else "unreachable"
     if not bool(component_data.get("success", False)):
         if requirements.failures:
             return "unhealthy"

@@ -363,7 +363,7 @@ def start_requirements_for_project(
             components[definition.id].update(
                 {
                     "external": True,
-                    "runtime_status": "external" if outcome.success else "external_unavailable",
+                    "runtime_status": "healthy" if outcome.success else "unreachable",
                     "external_url": external_dependency_url(rt, definition.id),
                 }
             )

@@ -632,6 +632,43 @@ class RuntimeHealthTruthTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("n8n: n/a [Unreachable]", out.getvalue())
 
+    def test_dashboard_shows_external_dependency_url_and_health(self) -> None:
+        runner = _FakeTruthRunner(pid_running=True, listener_up=True)
+        engine = self._make_runtime_with_services(
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/backend",
+                    pid=9999,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    supabase={
+                        "enabled": True,
+                        "success": True,
+                        "external": True,
+                        "runtime_status": "healthy",
+                        "external_url": "https://supabase.example.test",
+                        "resources": {"api": 443},
+                    },
+                    health="healthy",
+                )
+            },
+            process_runner=runner,
+        )
+        out = StringIO()
+        with redirect_stdout(out):
+            code = engine.dispatch(parse_route(["--dashboard"], env={}))
+
+        self.assertEqual(code, 0)
+        self.assertIn("supabase: https://supabase.example.test [Healthy]", out.getvalue())
+
     def test_health_json_includes_additional_service_metadata(self) -> None:
         service = ServiceRecord(
             name="Main Voice Runtime",

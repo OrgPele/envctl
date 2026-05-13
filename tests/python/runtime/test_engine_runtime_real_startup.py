@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import socket
 import tempfile
+import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 from pathlib import Path
@@ -32,6 +35,65 @@ from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
 
 FAKE_WORKTREE_GITDIR_CONTENT = "gitdir: /tmp/fake-worktree\n"
+
+
+class _HealthyHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/auth/v1/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+@contextmanager
+def _healthy_http_server():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthyHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+
+@contextmanager
+def _tcp_listener():
+    stop = threading.Event()
+    ready = threading.Event()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    sock.settimeout(0.1)
+    port = int(sock.getsockname()[1])
+
+    def serve() -> None:
+        ready.set()
+        while not stop.is_set():
+            try:
+                conn, _addr = sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    ready.wait(timeout=1)
+    try:
+        yield port
+    finally:
+        stop.set()
+        sock.close()
+        thread.join(timeout=1)
 
 
 class _TtyStringIO(StringIO):
@@ -2285,7 +2347,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(engine._requirement_enabled("postgres", mode="main", route=route))
 
     def test_external_supabase_requirement_skips_managed_start_and_records_external_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
@@ -2305,7 +2367,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 config,
                 env={
                     "ENVCTL_DEPENDENCY_SUPABASE_MODE": "external",
-                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_URL": supabase_url,
                     "SUPABASE_ANON_KEY": "external-anon",
                 },
             )
@@ -2322,12 +2384,12 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["enabled"])
             self.assertTrue(supabase["success"])
             self.assertTrue(supabase["external"])
-            self.assertEqual(supabase["runtime_status"], "external")
-            self.assertEqual(supabase["external_url"], "https://supabase.example.test")
+            self.assertEqual(supabase["runtime_status"], "healthy")
+            self.assertEqual(supabase["external_url"], supabase_url)
             self.assertEqual(requirements.health, "healthy")
 
     def test_main_supabase_env_auto_uses_external_requirement_without_global_toggle(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
@@ -2345,7 +2407,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             engine = PythonEngineRuntime(
                 config,
                 env={
-                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_URL": supabase_url,
                     "SUPABASE_ANON_KEY": "external-anon",
                 },
             )
@@ -2362,17 +2424,17 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["enabled"])
             self.assertTrue(supabase["success"])
             self.assertTrue(supabase["external"])
-            self.assertEqual(supabase["runtime_status"], "external")
+            self.assertEqual(supabase["runtime_status"], "healthy")
 
     def test_main_supabase_backend_dotenv_auto_uses_external_requirement(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             backend = repo / "backend"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             backend.mkdir(parents=True, exist_ok=True)
             backend.joinpath(".env").write_text(
-                "SUPABASE_URL=https://supabase.example.test\nSUPABASE_ANON_KEY=external-anon\n",
+                f"SUPABASE_URL={supabase_url}\nSUPABASE_ANON_KEY=external-anon\n",
                 encoding="utf-8",
             )
 
@@ -2400,17 +2462,17 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["enabled"])
             self.assertTrue(supabase["success"])
             self.assertTrue(supabase["external"])
-            self.assertEqual(supabase["runtime_status"], "external")
+            self.assertEqual(supabase["runtime_status"], "healthy")
 
     def test_main_root_dotenv_auto_uses_external_requirements_with_vite_supabase_alias(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url, _tcp_listener() as db_port:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             repo.joinpath(".env").write_text(
-                "SUPABASE_URL=https://supabase.example.test\n"
+                f"SUPABASE_URL={supabase_url}\n"
                 "VITE_SUPABASE_ANON_KEY=external-anon\n"
-                "DATABASE_URL=postgresql+asyncpg://app:secret@db.example.test:6543/app\n",
+                f"DATABASE_URL=postgresql+asyncpg://app:secret@127.0.0.1:{db_port}/app\n",
                 encoding="utf-8",
             )
 
@@ -2439,11 +2501,11 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["enabled"])
             self.assertTrue(supabase["success"])
             self.assertTrue(supabase["external"])
-            self.assertEqual(supabase["runtime_status"], "external")
+            self.assertEqual(supabase["runtime_status"], "healthy")
             self.assertTrue(postgres["enabled"])
             self.assertTrue(postgres["success"])
             self.assertTrue(postgres["external"])
-            self.assertEqual(postgres["runtime_status"], "external")
+            self.assertEqual(postgres["runtime_status"], "healthy")
 
     def test_trees_supabase_env_defaults_to_managed_requirement_without_external_toggle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2499,7 +2561,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertNotEqual(supabase.get("runtime_status"), "external")
 
     def test_external_redis_requirement_skips_managed_start_and_records_external_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, _tcp_listener() as redis_port:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
@@ -2518,7 +2580,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 config,
                 env={
                     "ENVCTL_EXTERNAL_DEPENDENCIES": "redis",
-                    "REDIS_URL": "redis://cache.example.test:6382/0",
+                    "REDIS_URL": f"redis://127.0.0.1:{redis_port}/0",
                 },
             )
             context = engine._discover_projects(mode="main")[0]
@@ -2534,9 +2596,49 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(redis["enabled"])
             self.assertTrue(redis["success"])
             self.assertTrue(redis["external"])
-            self.assertEqual(redis["runtime_status"], "external")
-            self.assertEqual(redis["resources"]["primary"], 6382)
-            self.assertEqual(redis["external_url"], "redis://cache.example.test:6382/0")
+            self.assertEqual(redis["runtime_status"], "healthy")
+            self.assertEqual(redis["resources"]["primary"], redis_port)
+            self.assertEqual(redis["external_url"], f"redis://127.0.0.1:{redis_port}/0")
+
+    def test_external_redis_requirement_fails_when_probe_cannot_connect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            closed_port = int(sock.getsockname()[1])
+            sock.close()
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCIES": "redis",
+                    "ENVCTL_EXTERNAL_DEPENDENCY_PROBE_TIMEOUT": "0.1",
+                    "REDIS_URL": f"redis://127.0.0.1:{closed_port}/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertTrue(redis["enabled"])
+            self.assertFalse(redis["success"])
+            self.assertTrue(redis["external"])
+            self.assertEqual(redis["runtime_status"], "unreachable")
+            self.assertIn("external probe failed", str(redis["error"]))
+            self.assertEqual(requirements.health, "degraded")
 
     def test_external_supabase_requirement_reports_missing_required_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2563,7 +2665,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["enabled"])
             self.assertFalse(supabase["success"])
             self.assertTrue(supabase["external"])
-            self.assertEqual(supabase["runtime_status"], "external_unavailable")
+            self.assertEqual(supabase["runtime_status"], "unreachable")
             self.assertIn("SUPABASE_URL", str(supabase["error"]))
             self.assertIn("SUPABASE_ANON_KEY", str(supabase["error"]))
             self.assertEqual(requirements.health, "degraded")
