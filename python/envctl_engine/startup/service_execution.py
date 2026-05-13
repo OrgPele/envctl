@@ -482,7 +482,9 @@ def start_project_services(
                     or "CORS_ORIGINS_RAW"
                 ).strip()
                 origins = [
-                    token.strip() for token in str(backend_env_extra.get(cors_key, "") or "").split(",") if token.strip()
+                    token.strip()
+                    for token in str(backend_env_extra.get(cors_key, "") or "").split(",")
+                    if token.strip()
                 ]
                 service_payloads["backend"] = launch_diagnostics_payload(
                     project=context.name,
