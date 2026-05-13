@@ -532,7 +532,8 @@ def _dashboard_dependency_line(
         url = external_url
     else:
         url = _dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a"
-    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{badge.label}]"
+    label = f"External {badge.label}" if bool(component.get("external", False)) else badge.label
+    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{label}]"
 
 
 def _dashboard_dependency_scope(state: RunState) -> str:

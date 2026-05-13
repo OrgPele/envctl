@@ -667,7 +667,7 @@ class RuntimeHealthTruthTests(unittest.TestCase):
             code = engine.dispatch(parse_route(["--dashboard"], env={}))
 
         self.assertEqual(code, 0)
-        self.assertIn("supabase: https://supabase.example.test [Healthy]", out.getvalue())
+        self.assertIn("supabase: https://supabase.example.test [External Healthy]", out.getvalue())
 
     def test_health_json_includes_additional_service_metadata(self) -> None:
         service = ServiceRecord(
