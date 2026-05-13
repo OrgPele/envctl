@@ -187,6 +187,8 @@ def start_requirements_for_project(
     def emit_requirements_progress() -> None:
         if not enabled_definitions:
             return
+        if route is None:
+            return
         progress_project_flag = route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG) if route is not None else None
         progress_project = str(progress_project_flag).strip() if progress_project_flag is not None else context.name
         orchestrator._report_progress(

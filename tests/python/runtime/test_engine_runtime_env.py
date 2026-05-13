@@ -1081,6 +1081,26 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertFalse(requirements_ready(strict_runtime, result))
         self.assertTrue(requirements_ready(lenient_runtime, result))
 
+    def test_requirements_ready_does_not_block_on_unreachable_external_dependency(self) -> None:
+        result = RequirementsResult(
+            project="Main",
+            db={"enabled": False, "success": False},
+            redis={
+                "enabled": True,
+                "success": False,
+                "external": True,
+                "runtime_status": "unreachable",
+                "error": "redis external probe failed: cannot connect to localhost:6493",
+            },
+            n8n={"enabled": False, "success": False},
+            supabase={"enabled": False, "success": False},
+            health="degraded",
+            failures=["redis"],
+        )
+        strict_runtime = SimpleNamespace(config=SimpleNamespace(requirements_strict=True))
+
+        self.assertTrue(requirements_ready(strict_runtime, result))
+
     def test_service_and_requirement_enablement_follow_profiles(self) -> None:
         config = SimpleNamespace(
             startup_enabled_for_mode=lambda mode: mode != "main",

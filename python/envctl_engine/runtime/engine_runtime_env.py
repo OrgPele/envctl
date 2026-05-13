@@ -31,6 +31,10 @@ def requirements_ready(runtime: Any, result: RequirementsResult) -> bool:
         component = result.component(definition.id)
         enabled = bool(component.get("enabled"))
         success = bool(component.get("success"))
+        external = bool(component.get("external"))
+        runtime_status = str(component.get("runtime_status") or "").strip().lower()
+        if external and runtime_status == "unreachable":
+            continue
         if enabled and not success:
             return False
     return True
