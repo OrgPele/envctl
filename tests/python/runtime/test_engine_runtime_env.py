@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -341,6 +342,83 @@ class EngineRuntimeEnvTests(unittest.TestCase):
 
         self.assertFalse(dependency_external_mode(runtime, "supabase", mode="main"))
         self.assertFalse(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
+    def test_main_mode_auto_external_reads_application_env_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            backend = repo / "backend"
+            frontend = repo / "frontend"
+            backend.mkdir()
+            frontend.mkdir()
+            backend.joinpath(".env").write_text(
+                "SUPABASE_URL=https://backend-supabase.example.test\n"
+                "SUPABASE_ANON_KEY=backend-anon\n"
+                "DATABASE_URL=postgresql+asyncpg://app:secret@db.example.test:6543/app\n",
+                encoding="utf-8",
+            )
+            frontend.joinpath(".env").write_text("REDIS_URL=redis://cache.example.test:6382/0\n", encoding="utf-8")
+            runtime = SimpleNamespace(
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    base_dir=repo,
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    startup_enabled_for_mode=lambda _mode: True,
+                    requirement_enabled_for_mode=lambda _mode, _name: False,
+                ),
+            )
+
+            self.assertTrue(dependency_external_mode(runtime, "supabase", mode="main"))
+            self.assertTrue(dependency_external_mode(runtime, "postgres", mode="main"))
+            self.assertTrue(dependency_external_mode(runtime, "redis", mode="main"))
+            self.assertFalse(dependency_external_mode(runtime, "supabase", mode="trees"))
+
+    def test_envctl_values_take_precedence_over_application_env_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            backend = repo / "backend"
+            backend.mkdir()
+            backend.joinpath(".env").write_text(
+                "SUPABASE_URL=https://backend-supabase.example.test\n"
+                "SUPABASE_ANON_KEY=backend-anon\n",
+                encoding="utf-8",
+            )
+            runtime = SimpleNamespace(
+                env={},
+                config=SimpleNamespace(
+                    raw={
+                        "SUPABASE_URL": "https://envctl-supabase.example.test",
+                        "SUPABASE_ANON_KEY": "envctl-anon",
+                    },
+                    base_dir=repo,
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                ),
+            )
+
+            env = dependency_external_mode(runtime, "supabase", mode="main")
+            self.assertTrue(env)
+
+            requirements = RequirementsResult(
+                project="Main",
+                supabase={"enabled": True, "success": True, "external": True, "runtime_status": "external"},
+            )
+            context = SimpleNamespace(
+                name="Main",
+                ports={
+                    "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                    "supabase_api": PortPlan(
+                        project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                    ),
+                },
+            )
+            runtime._command_override_value = lambda _key: None
+
+            projected = project_service_env(runtime, context, requirements=requirements)
+
+            self.assertEqual(projected["SUPABASE_URL"], "https://envctl-supabase.example.test")
+            self.assertEqual(projected["SUPABASE_ANON_KEY"], "envctl-anon")
 
     def test_explicit_external_dependency_mode_still_applies_to_trees(self) -> None:
         runtime = SimpleNamespace(

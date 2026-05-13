@@ -2364,6 +2364,44 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["external"])
             self.assertEqual(supabase["runtime_status"], "external")
 
+    def test_main_supabase_backend_dotenv_auto_uses_external_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend = repo / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend.mkdir(parents=True, exist_ok=True)
+            backend.joinpath(".env").write_text(
+                "SUPABASE_URL=https://supabase.example.test\nSUPABASE_ANON_KEY=external-anon\n",
+                encoding="utf-8",
+            )
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete backend .env Supabase values must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "external")
+
     def test_trees_supabase_env_defaults_to_managed_requirement_without_external_toggle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

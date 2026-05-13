@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -209,8 +210,113 @@ def _raw(runtime: Any, key: str) -> str | None:
     override = getattr(runtime, "_command_override_value", None)
     if callable(override):
         value = override(key)
+        if value:
+            return str(value)
+    app_env_value = _app_env_value(runtime, key)
+    if app_env_value:
+        return app_env_value
+    return None
+
+
+def _app_env_value(runtime: Any, key: str) -> str | None:
+    for env_file in _candidate_app_env_files(runtime):
+        values = _read_app_env_file(runtime, env_file)
+        value = values.get(key)
+        if value:
+            return value
+    return None
+
+
+def _candidate_app_env_files(runtime: Any) -> tuple[Path, ...]:
+    config = getattr(runtime, "config", None)
+    base_dir = getattr(config, "base_dir", None)
+    if not isinstance(base_dir, Path):
+        return ()
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            resolved = path.expanduser()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        candidates.append(resolved)
+
+    for key in ("BACKEND_ENV_FILE_OVERRIDE", "MAIN_ENV_FILE_PATH"):
+        add(_resolve_env_file_path(runtime, key, base_dir=base_dir))
+    backend_dir = str(getattr(config, "backend_dir_name", "backend") or "backend").strip() or "backend"
+    add(base_dir / backend_dir / ".env")
+
+    for key in ("FRONTEND_ENV_FILE_OVERRIDE", "MAIN_FRONTEND_ENV_FILE_PATH"):
+        add(_resolve_env_file_path(runtime, key, base_dir=base_dir))
+    frontend_dir = str(getattr(config, "frontend_dir_name", "frontend") or "frontend").strip() or "frontend"
+    add(base_dir / frontend_dir / ".env")
+    return tuple(path for path in candidates if path.is_file())
+
+
+def _resolve_env_file_path(runtime: Any, key: str, *, base_dir: Path) -> Path | None:
+    raw = _raw_without_app_env(runtime, key)
+    if raw is None or not str(raw).strip():
+        return None
+    candidate = Path(str(raw).strip()).expanduser()
+    if candidate.is_absolute():
+        return candidate if candidate.is_file() else None
+    resolved = (base_dir / candidate).resolve()
+    return resolved if resolved.is_file() else None
+
+
+def _raw_without_app_env(runtime: Any, key: str) -> str | None:
+    runtime_env = getattr(runtime, "env", None)
+    if isinstance(runtime_env, dict) and key in runtime_env:
+        value = runtime_env.get(key)
+        return str(value) if value else None
+    config_raw = getattr(getattr(runtime, "config", None), "raw", None)
+    if isinstance(config_raw, dict) and key in config_raw:
+        value = config_raw.get(key)
         return str(value) if value else None
     return None
+
+
+def _read_app_env_file(runtime: Any, path: Path) -> dict[str, str]:
+    reader = getattr(runtime, "_read_env_file_safe", None)
+    if callable(reader):
+        try:
+            values = reader(path)
+        except Exception:  # noqa: BLE001
+            values = None
+        if isinstance(values, dict):
+            return {str(key): str(value) for key, value in values.items() if value}
+    return _read_env_file(path)
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        normalized_key = key.strip()
+        if not normalized_key:
+            continue
+        raw_value = value.strip()
+        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {"'", '"'}:
+            raw_value = raw_value[1:-1]
+        values[normalized_key] = raw_value
+    return values
 
 
 def _copy_present(runtime: Any, env: dict[str, str], keys: tuple[str, ...]) -> None:
