@@ -199,6 +199,9 @@ def _dependency_endpoints(requirements: RequirementsResult | None) -> dict[str, 
             "port": dependency_display_port(definition.id, component),
             "resources": component_resource_ports(component),
         }
+        external_url = str(component.get("external_url") or "").strip()
+        if external_url:
+            endpoints[definition.id]["url"] = external_url
     supabase = requirements.component("supabase")
     resources = component_resource_ports(supabase)
     if resources:

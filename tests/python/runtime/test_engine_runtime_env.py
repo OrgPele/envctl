@@ -255,6 +255,59 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["REDIS_URL"], "redis://localhost:16609/0")
         self.assertEqual(env["N8N_URL"], "http://localhost:15908")
 
+    def test_project_service_env_projects_external_supabase_contract_without_local_defaults(self) -> None:
+        overrides = {
+            "SUPABASE_URL": "https://supabase.example.test",
+            "SUPABASE_ANON_KEY": "external-anon",
+            "SUPABASE_SERVICE_ROLE_KEY": "external-service-role",
+            "DATABASE_URL": "postgresql+asyncpg://app:secret@db.example.test:6543/app",
+        }
+        runtime = SimpleNamespace(
+            env={"ENVCTL_DEPENDENCY_SUPABASE_MODE": "external", **overrides},
+            config=SimpleNamespace(raw={}),
+            _command_override_value=lambda key: overrides.get(key),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54321, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "runtime_status": "external",
+                "external": True,
+            },
+        )
+
+        env = project_service_env(runtime, context, requirements=requirements, route=None)
+
+        self.assertEqual(env["SUPABASE_URL"], "https://supabase.example.test")
+        self.assertEqual(env["SUPABASE_PUBLIC_URL"], "https://supabase.example.test")
+        self.assertEqual(env["SUPABASE_ANON_KEY"], "external-anon")
+        self.assertEqual(env["SUPABASE_SERVICE_ROLE_KEY"], "external-service-role")
+        self.assertEqual(env["DATABASE_URL"], "postgresql+asyncpg://app:secret@db.example.test:6543/app")
+        self.assertEqual(env["SUPABASE_API_PORT"], "443")
+        self.assertEqual(env["SUPABASE_DB_PORT"], "6543")
+        self.assertEqual(env["ENVCTL_SOURCE_SUPABASE_URL"], "https://supabase.example.test")
+
+    def test_external_dependency_mode_implies_requirement_enabled(self) -> None:
+        runtime = SimpleNamespace(
+            env={"ENVCTL_EXTERNAL_DEPENDENCIES": "supabase"},
+            config=SimpleNamespace(
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+
+        self.assertTrue(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
     def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: {"DB_HOST": "db.local", "DB_USER": "alice"}.get(key),

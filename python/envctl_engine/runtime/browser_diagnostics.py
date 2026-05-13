@@ -246,7 +246,8 @@ def _dependency_payload(
         }
         if definition.id == "supabase":
             api_port = positive_int(resources.get("api")) or dependency_display_port("supabase", component)
-            entry["api_url"] = f"http://localhost:{api_port}" if api_port else None
+            external_url = str(component.get("external_url") or "").strip()
+            entry["api_url"] = external_url or (f"http://localhost:{api_port}" if api_port else None)
             entry["anon_key_present"] = _anon_key_present(project_launch)
         payload[definition.id] = entry
     return payload

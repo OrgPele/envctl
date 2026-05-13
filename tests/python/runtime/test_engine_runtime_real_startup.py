@@ -2283,6 +2283,118 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertFalse(engine._requirement_enabled("n8n", mode="main", route=route))
             self.assertTrue(engine._requirement_enabled("postgres", mode="main", route=route))
 
+    def test_external_supabase_requirement_skips_managed_start_and_records_external_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                    "ENVCTL_REQUIREMENTS_STRICT": "true",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_DEPENDENCY_SUPABASE_MODE": "external",
+                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("external supabase must not invoke the managed requirement starter")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "external")
+            self.assertEqual(supabase["external_url"], "https://supabase.example.test")
+            self.assertEqual(requirements.health, "healthy")
+
+    def test_external_redis_requirement_skips_managed_start_and_records_external_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCIES": "redis",
+                    "REDIS_URL": "redis://cache.example.test:6382/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("external redis must not invoke the managed requirement starter")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertTrue(redis["enabled"])
+            self.assertTrue(redis["success"])
+            self.assertTrue(redis["external"])
+            self.assertEqual(redis["runtime_status"], "external")
+            self.assertEqual(redis["resources"]["primary"], 6382)
+            self.assertEqual(redis["external_url"], "redis://cache.example.test:6382/0")
+
+    def test_external_supabase_requirement_reports_missing_required_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_DEPENDENCY_SUPABASE_MODE": "external"})
+            context = engine._discover_projects(mode="main")[0]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertFalse(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "external_unavailable")
+            self.assertIn("SUPABASE_URL", str(supabase["error"]))
+            self.assertIn("SUPABASE_ANON_KEY", str(supabase["error"]))
+            self.assertEqual(requirements.health, "degraded")
+
     def test_conflicting_main_requirements_flags_fail_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

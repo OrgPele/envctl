@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from envctl_engine.requirements.external import dependency_external_mode, external_dependency_project_env
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import PortPlan, RequirementsResult
@@ -63,6 +64,9 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
             )
         )
         effective_main = effective_main_requirement_flags(runtime, route)
+        for dependency_id in ("postgres", "redis", "supabase", "n8n"):
+            if dependency_external_mode(runtime, dependency_id):
+                effective_main[dependency_id] = True
         postgres_enabled = effective_main["postgres"]
         supabase_enabled = effective_main["supabase"]
         enabled_count = sum(
@@ -93,21 +97,35 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         )
         postgres_enabled = profile.postgres_enable
         supabase_enabled = profile.supabase_enable
+        external_enabled = {
+            dependency_id
+            for dependency_id in ("postgres", "redis", "supabase", "n8n")
+            if dependency_external_mode(runtime, dependency_id)
+        }
+        if "postgres" in external_enabled:
+            postgres_enabled = True
+        if "supabase" in external_enabled:
+            supabase_enabled = True
         enabled_count = sum(
             1
             for enabled in (
                 profile.backend_enable,
                 profile.frontend_enable,
-                profile.postgres_enable,
-                profile.redis_enable,
-                profile.supabase_enable,
-                profile.n8n_enable,
+                postgres_enabled,
+                profile.redis_enable or "redis" in external_enabled,
+                supabase_enabled,
+                profile.n8n_enable or "n8n" in external_enabled,
             )
             if enabled
         )
     if enabled_count < 1:
         raise RuntimeError(f"Invalid {normalized_mode} startup configuration: at least one component must be enabled.")
-    if postgres_enabled and supabase_enabled:
+    if (
+        postgres_enabled
+        and supabase_enabled
+        and not dependency_external_mode(runtime, "postgres")
+        and not dependency_external_mode(runtime, "supabase")
+    ):
         raise RuntimeError(
             f"Invalid {normalized_mode} requirements configuration: postgres and supabase cannot both be enabled."
         )
@@ -172,6 +190,8 @@ def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str,
         normalized_mode
     ):
         return False
+    if dependency_external_mode(runtime, normalized_name):
+        return True
     if normalized_mode == "main":
         effective_main = effective_main_requirement_flags(runtime, route)
         if normalized_name in effective_main:
@@ -336,6 +356,9 @@ def _dependency_projector_env(
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)):
+            continue
+        if bool(component.get("external")) or str(component.get("runtime_status") or "").strip().lower() == "external":
+            env.update(external_dependency_project_env(runtime, definition.id))
             continue
         if callable(definition.env_projector):
             env.update(

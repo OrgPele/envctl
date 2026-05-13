@@ -6,6 +6,12 @@ import threading
 import time
 
 from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.requirements.external import (
+    dependency_external_mode,
+    external_dependency_outcome,
+    external_dependency_resources,
+    external_dependency_url,
+)
 from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
@@ -166,7 +172,13 @@ def start_requirements_for_project(
         definition.id: bool(rt._requirement_enabled(definition.id, mode=mode, route=route))
         for definition in definitions
     }
-    enabled_definitions = [definition for definition in definitions if enabled_lookup[definition.id]]
+    external_lookup = {
+        definition.id: bool(enabled_lookup[definition.id] and dependency_external_mode(rt, definition.id))
+        for definition in definitions
+    }
+    enabled_definitions = [
+        definition for definition in definitions if enabled_lookup[definition.id] and not external_lookup[definition.id]
+    ]
     pending_requirements = {definition.id for definition in enabled_definitions}
     active_requirements: set[str] = set()
 
@@ -221,6 +233,37 @@ def start_requirements_for_project(
     emit_requirements_progress()
     outcomes: dict[str, RequirementOutcome] = {}
     for definition in definitions:
+        if not external_lookup[definition.id]:
+            continue
+        outcome = external_dependency_outcome(
+            runtime=rt,
+            definition=definition,
+            plan=plan_for_dependency(definition.id),
+        )
+        component_timings_ms[definition.id] = 0.0
+        rt._emit(
+            "requirements.external",
+            project=context.name,
+            requirement=definition.id,
+            success=outcome.success,
+            url=external_dependency_url(rt, definition.id),
+            error=outcome.error,
+        )
+        rt._emit(
+            "requirements.timing.component",
+            project=context.name,
+            requirement=definition.id,
+            duration_ms=0.0,
+            enabled=True,
+            success=bool(getattr(outcome, "success", False)),
+            retries=0,
+            final_port=getattr(outcome, "final_port", None),
+            failure_class=str(getattr(outcome, "failure_class", "")),
+        )
+        outcomes[definition.id] = outcome
+    for definition in definitions:
+        if definition.id in outcomes:
+            continue
         if definition.id in pending_requirements:
             continue
         outcome = rt._skipped_requirement(definition.id, plan_for_dependency(definition.id))
@@ -298,10 +341,15 @@ def start_requirements_for_project(
     components: dict[str, dict[str, object]] = {}
     for definition in definitions:
         outcome = outcomes[definition.id]
+        resources = (
+            external_dependency_resources(rt, definition)
+            if external_lookup[definition.id]
+            else resources_for_definition(definition, outcome)
+        )
         components[definition.id] = {
             "requested": outcome.requested_port,
             "final": outcome.final_port,
-            "resources": resources_for_definition(definition, outcome),
+            "resources": resources,
             "retries": outcome.retries,
             "success": outcome.success,
             "simulated": outcome.simulated,
@@ -311,6 +359,14 @@ def start_requirements_for_project(
             "error": outcome.error,
             "container_name": outcome.container_name,
         }
+        if external_lookup[definition.id]:
+            components[definition.id].update(
+                {
+                    "external": True,
+                    "runtime_status": "external" if outcome.success else "external_unavailable",
+                    "external_url": external_dependency_url(rt, definition.id),
+                }
+            )
     return RequirementsResult(
         project=context.name,
         components=components,
