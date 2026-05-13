@@ -28,6 +28,17 @@ def test_release_workflow_opens_pr_instead_of_pushing_release_commit_to_main() -
     assert "--base main" in workflow
 
 
+def test_release_workflow_handles_restrictive_actions_pr_policy_after_branch_push() -> None:
+    workflow = _release_workflow()
+
+    assert "secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN" in workflow
+    push_index = workflow.index("git push --force-with-lease origin \"$branch\"")
+    policy_index = workflow.index("not permitted to create.*pull requests")
+    warning_index = workflow.index("release branch was pushed, but this repository does not permit")
+    assert push_index < policy_index < warning_index
+    assert "configure ENVCTL_RELEASE_PR_TOKEN" in workflow
+
+
 def test_release_workflow_publishes_only_after_release_pr_merge() -> None:
     workflow = _release_workflow()
 
