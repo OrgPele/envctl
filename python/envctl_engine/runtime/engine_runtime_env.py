@@ -252,6 +252,7 @@ def project_service_env(
     )
     if scoped_dependency_env is not None:
         env.update(scoped_dependency_env)
+        env.update({key: value for key, value in dependency_env.items() if key.startswith("ENVCTL_SOURCE_")})
     else:
         env.update(dependency_env)
     env.update(runtime_env_overrides(route))

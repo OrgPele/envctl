@@ -12,6 +12,7 @@ from typing import Any
 from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.browser_diagnostics import build_runtime_diagnostics
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
 from envctl_engine.ui.color_policy import colors_enabled
@@ -356,6 +357,13 @@ class StateActionOrchestrator:
                     requested_projects=route.projects,
                 )
                 self._emit_cwd_runtime_mismatch_warnings(command=command, state=current_state, warnings=warnings)
+                diagnostics = build_runtime_diagnostics(
+                    current_state,
+                    env=rt.env,
+                    config=rt.config,
+                    runtime=rt.raw_runtime,
+                )
+                combined_warnings = [*warnings, *list(diagnostics.get("warnings", []))]
                 print(
                     json.dumps(
                         self._health_payload(
@@ -369,7 +377,8 @@ class StateActionOrchestrator:
                             total_projects=total_projects,
                             strict=bool(route.flags.get("strict")),
                             cwd_project=cwd_project,
-                            warnings=warnings,
+                            warnings=combined_warnings,
+                            runtime_diagnostics=diagnostics,
                         ),
                         indent=2,
                         sort_keys=True,
@@ -552,6 +561,7 @@ class StateActionOrchestrator:
         strict: bool = False,
         cwd_project: str | None = None,
         warnings: list[dict[str, object]] | None = None,
+        runtime_diagnostics: dict[str, object] | None = None,
     ) -> dict[str, object]:
         health_status = self._health_status_summary(
             service_rows=service_rows,
@@ -580,6 +590,7 @@ class StateActionOrchestrator:
             "shared_dependencies": dependency_summary["shared_dependencies"],
             "cwd_project": cwd_project,
             "warnings": list(warnings or []),
+            "runtime_diagnostics": runtime_diagnostics or {"projects": {}, "warnings": []},
             "issues": {
                 "failing_services": list(failing_services),
                 "requirement_issues": requirement_issues,

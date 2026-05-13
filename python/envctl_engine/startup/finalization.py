@@ -94,6 +94,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     metadata["dependency_mode"] = dependency_mode
     metadata["shared_dependencies"] = dependency_mode == "shared"
     metadata["frontend_dependency_env_projection_active"] = _frontend_dependency_env_projection_active(runtime)
+    launch_diagnostics = session.effective_route.flags.get("_runtime_launch_diagnostics")
+    if isinstance(launch_diagnostics, dict) and launch_diagnostics:
+        metadata["runtime_launch_diagnostics"] = launch_diagnostics
     requested_dependency_scope = session.effective_route.flags.get("dependency_scope")
     if requested_dependency_scope is not None:
         metadata["dependency_scope_requested"] = str(requested_dependency_scope)

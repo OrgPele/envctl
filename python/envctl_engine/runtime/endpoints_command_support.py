@@ -100,6 +100,9 @@ def _service_endpoint(
 ) -> dict[str, object]:
     service = _service_for_project_type(state, project=project, service_type=service_type, runtime=runtime)
     if service is None:
+        stopped = _stopped_service_endpoint(state, project=project, service_type=service_type)
+        if stopped is not None:
+            return stopped
         return {"status": "missing", "port": None, "local_url": None, "public_url": None}
     port = service.actual_port if service.actual_port is not None else service.requested_port
     status = str(service.status or "unknown").strip().lower() or "unknown"
@@ -115,6 +118,30 @@ def _service_endpoint(
         "public_url": public_url,
         "health_url": getattr(service, "health_url", None),
     }
+
+
+def _stopped_service_endpoint(state: RunState, *, project: str, service_type: str) -> dict[str, object] | None:
+    raw = state.metadata.get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return None
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("project") or "").strip() != project:
+            continue
+        if str(item.get("type") or "").strip().lower() != service_type:
+            continue
+        return {
+            "name": str(item.get("name") or "") or None,
+            "status": "stopped",
+            "port": None,
+            "local_url": None,
+            "public_url": None,
+            "health_url": None,
+            "reason": item.get("reason"),
+            "stopped_at": item.get("stopped_at"),
+        }
+    return None
 
 
 def _service_for_project_type(

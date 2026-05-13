@@ -18,6 +18,7 @@ from envctl_engine.planning import (
 )
 from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
 from envctl_engine.runtime.command_router import list_supported_commands, parse_route
+from envctl_engine.runtime.browser_diagnostics import build_startup_env_projection
 from envctl_engine.runtime.engine_runtime_startup_support import (
     auto_resume_start_enabled,
     evaluate_run_reuse,
@@ -734,6 +735,12 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
         "plan_agent_launch": inspect_plan_agent_launch(runtime, route=startup_route),
     }
+    payload["env_projection"] = build_startup_env_projection(
+        runtime,
+        startup_route,
+        mode=runtime_mode,
+        contexts=selected_contexts,
+    )
     if not startup_enabled:
         payload["reason"] = "config_startup_disabled"
     return payload
