@@ -105,7 +105,7 @@ def external_dependency_validation_error(runtime: Any, dependency_id: str) -> st
         missing = []
         if not (_raw(runtime, "SUPABASE_URL") or _raw(runtime, "SUPABASE_PUBLIC_URL")):
             missing.append("SUPABASE_URL")
-        if not _raw(runtime, "SUPABASE_ANON_KEY"):
+        if not _supabase_anon_key(runtime):
             missing.append("SUPABASE_ANON_KEY")
         if missing:
             return _format_missing("supabase", tuple(missing))
@@ -165,6 +165,7 @@ def _external_supabase_env(runtime: Any) -> dict[str, str]:
     env: dict[str, str] = {}
     public_url = _raw(runtime, "SUPABASE_PUBLIC_URL") or _raw(runtime, "SUPABASE_URL")
     supabase_url = _raw(runtime, "SUPABASE_URL") or public_url
+    anon_key = _supabase_anon_key(runtime)
     if public_url:
         env["SUPABASE_PUBLIC_URL"] = public_url
         port = _url_port(public_url)
@@ -174,11 +175,12 @@ def _external_supabase_env(runtime: Any) -> dict[str, str]:
     if supabase_url:
         env["SUPABASE_URL"] = supabase_url
         env.setdefault("SUPABASE_JWKS_URL", f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json")
+    if anon_key:
+        env["SUPABASE_ANON_KEY"] = anon_key
     _copy_present(
         runtime,
         env,
         (
-            "SUPABASE_ANON_KEY",
             "SUPABASE_SERVICE_ROLE_KEY",
             "SUPABASE_JWT_SECRET",
             "SUPABASE_JWKS_URL",
@@ -196,6 +198,10 @@ def _external_supabase_env(runtime: Any) -> dict[str, str]:
             env["SUPABASE_DB_PORT"] = str(db_port)
             env.setdefault("DB_PORT", str(db_port))
     return env
+
+
+def _supabase_anon_key(runtime: Any) -> str | None:
+    return _raw(runtime, "SUPABASE_ANON_KEY") or _raw(runtime, "VITE_SUPABASE_ANON_KEY")
 
 
 def _raw(runtime: Any, key: str) -> str | None:
@@ -249,6 +255,7 @@ def _candidate_app_env_files(runtime: Any) -> tuple[Path, ...]:
 
     for key in ("BACKEND_ENV_FILE_OVERRIDE", "MAIN_ENV_FILE_PATH"):
         add(_resolve_env_file_path(runtime, key, base_dir=base_dir))
+    add(base_dir / ".env")
     backend_dir = str(getattr(config, "backend_dir_name", "backend") or "backend").strip() or "backend"
     add(base_dir / backend_dir / ".env")
 

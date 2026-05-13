@@ -2402,6 +2402,49 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertTrue(supabase["external"])
             self.assertEqual(supabase["runtime_status"], "external")
 
+    def test_main_root_dotenv_auto_uses_external_requirements_with_vite_supabase_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            repo.joinpath(".env").write_text(
+                "SUPABASE_URL=https://supabase.example.test\n"
+                "VITE_SUPABASE_ANON_KEY=external-anon\n"
+                "DATABASE_URL=postgresql+asyncpg://app:secret@db.example.test:6543/app\n",
+                encoding="utf-8",
+            )
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete root .env values must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            postgres = requirements.component("postgres")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "external")
+            self.assertTrue(postgres["enabled"])
+            self.assertTrue(postgres["success"])
+            self.assertTrue(postgres["external"])
+            self.assertEqual(postgres["runtime_status"], "external")
+
     def test_trees_supabase_env_defaults_to_managed_requirement_without_external_toggle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
