@@ -38,6 +38,7 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         backend_dir_name: str = "backend",
         frontend_dir_name: str = "frontend",
         enabled_dependencies: tuple[str, ...] = ("postgres", "redis"),
+        external_env: dict[str, str] | None = None,
     ) -> SimpleNamespace:
         config = SimpleNamespace(
             base_dir=Path("/repo"),
@@ -53,7 +54,7 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
             in enabled_dependencies,
         )
         return SimpleNamespace(
-            env={},
+            env=dict(external_env or {}),
             config=config,
             _try_load_existing_state=lambda **_kwargs: state,
             _project_name_from_service=lambda name: str(name)
@@ -191,6 +192,43 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         decision = startup_support.evaluate_run_reuse(
             runtime,
             runtime_mode="trees",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
+
+    def test_run_reuse_rejects_dependency_external_mode_mismatch(self) -> None:
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={})
+        route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})
+        state_runtime = self._reuse_runtime(
+            state=None,
+            enabled_dependencies=("redis",),
+            external_env={"REDIS_URL": "redis://127.0.0.1:6545/0"},
+        )
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="main",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-external-redis",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=str(context.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state, enabled_dependencies=("redis",), external_env={})
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="main",
             route=route,
             contexts=[context],
         )

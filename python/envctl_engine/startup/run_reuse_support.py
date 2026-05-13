@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from envctl_engine.requirements.core import dependency_ids
+from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 
@@ -322,12 +323,19 @@ def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contex
     ]
     if not startup_enabled:
         dependencies = []
+    dependency_modes = {
+        dependency_id: (
+            "external" if dependency_external_mode(runtime, dependency_id, mode=runtime_mode) else "managed"
+        )
+        for dependency_id in dependencies
+    }
     payload = {
         "mode": runtime_mode,
         "projects": identities_to_payload(project_identities_from_contexts(project_contexts)),
         "startup_enabled": startup_enabled,
         "services": services,
         "dependencies": dependencies,
+        "dependency_modes": dependency_modes,
         "directories": {
             "backend": str(getattr(runtime.config, "backend_dir_name", "backend")),
             "frontend": str(getattr(runtime.config, "frontend_dir_name", "frontend")),
