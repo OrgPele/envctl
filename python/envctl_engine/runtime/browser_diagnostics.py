@@ -132,7 +132,10 @@ def build_startup_env_projection(
                 backend_port = _context_port(context, "backend")
                 if backend_port:
                     backend_url = browser_backend_url(
-                        host=resolve_public_host(env=getattr(runtime, "env", None), config=getattr(runtime, "config", None)),
+                        host=resolve_public_host(
+                            env=getattr(runtime, "env", None),
+                            config=getattr(runtime, "config", None),
+                        ),
                         port=backend_port,
                     )
                     base_env["VITE_BACKEND_URL"] = backend_url
@@ -480,7 +483,12 @@ def _context_port(context: object, name: str) -> int | None:
     return int(value) if isinstance(value, int) and value > 0 else None
 
 
-def _cors_projection_preview(runtime: Any, *, frontend_port: int | None, backend_env: Mapping[str, str]) -> dict[str, object]:
+def _cors_projection_preview(
+    runtime: Any,
+    *,
+    frontend_port: int | None,
+    backend_env: Mapping[str, str],
+) -> dict[str, object]:
     env_key = _cors_env_key(config=getattr(runtime, "config", None), env=getattr(runtime, "env", None))
     if not frontend_port:
         return {"env": {}, "diagnostics": {"projected": False, "env_key": env_key, "origins": []}}
