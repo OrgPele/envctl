@@ -16,6 +16,10 @@ from envctl_engine.actions.actions_test import (
 )
 from envctl_engine.config.profile_defaults import default_profile_settings, managed_dependency_default_enabled
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from envctl_engine.shared.dependency_compose_assets import (
+    default_supabase_anon_key,
+    default_supabase_service_role_key,
+)
 from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
 from envctl_engine.shared.repo_roots import canonical_envctl_project_root
 
@@ -1472,6 +1476,30 @@ def render_default_frontend_dependency_env_section() -> str:
 
 def render_default_dependency_env_sections() -> str:
     prelude = (
+        "# External dependency mode can be configured in this same .envctl file.",
+        "# Default mode is managed: envctl starts enabled dependencies and projects localhost values.",
+        "# To use externally running services, enable one or more external dependencies:",
+        "# ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n",
+        "# Or use one dependency at a time:",
+        "# ENVCTL_DEPENDENCY_SUPABASE_MODE=external",
+        "# ENVCTL_DEPENDENCY_REDIS_MODE=external",
+        "# ENVCTL_DEPENDENCY_POSTGRES_MODE=external",
+        "# ENVCTL_DEPENDENCY_N8N_MODE=external",
+        "# External Supabase requires SUPABASE_URL or SUPABASE_PUBLIC_URL plus SUPABASE_ANON_KEY.",
+        "# SUPABASE_URL=http://localhost:54321",
+        "# SUPABASE_ANON_KEY=<external anon key>",
+        "# SUPABASE_SERVICE_ROLE_KEY=<external service-role key; backend only>",
+        "# SUPABASE_JWT_SECRET=<external JWT secret; backend only>",
+        "# SUPABASE_JWKS_URL=${SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+        "# DATABASE_URL=postgresql+asyncpg://postgres:<password>@localhost:5432/postgres",
+        "# REDIS_URL=redis://localhost:6379/0",
+        "# N8N_URL=http://localhost:5678",
+        "# Local managed Supabase defaults are local-only secrets:",
+        "# SUPABASE_DB_PASSWORD=supabase-db-password",
+        "# SUPABASE_JWT_SECRET=supabase-local-jwt-secret",
+        "# SUPABASE_ANON_KEY=" + default_supabase_anon_key(),
+        "# SUPABASE_SERVICE_ROLE_KEY=" + default_supabase_service_role_key(),
+        "",
         "# Launch env templates for services started by envctl.",
         "# Backend goes only to the backend process. Frontend goes only to the frontend process.",
     )
