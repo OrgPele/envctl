@@ -66,6 +66,8 @@ Releases are produced by `.github/workflows/release.yml`. From the Actions tab, 
 4. Opens a release PR so protected `main` receives the bump through repository rules.
 5. After that release PR is merged, tags the new version from `main`, builds wheel + sdist, and creates the GitHub Release.
 
+If repository policy blocks the default GitHub Actions token from creating pull requests, the workflow still pushes the `release/envctl-<version>` branch and prints a manual PR URL. Configure `ENVCTL_RELEASE_PR_TOKEN` with contents and pull-request write permissions to let the workflow open or update release PRs automatically under those policies.
+
 If you need to dry-run the version bump locally, `python scripts/prepare_release.py compute-version --bump patch` prints the next version without modifying any files.
 
 For Python runtime behavior changes, check whether these docs also need updates:
