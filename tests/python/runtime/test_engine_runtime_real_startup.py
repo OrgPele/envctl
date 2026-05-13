@@ -986,6 +986,20 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 "DATABASE_URL=postgresql+psycopg2://override_user:override_pass@db.internal/override_db",
                 override_file.read_text(encoding="utf-8"),
             )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL")
+                    == "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+                    for env in backend_start_envs
+                )
+            )
+            self.assertTrue(any(env.get("CUSTOM_BACKEND_FLAG") == "override-enabled" for env in backend_start_envs))
 
     def test_main_env_file_path_applies_backend_env_override_in_main_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1028,6 +1042,18 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     isinstance(env.get("APP_ENV_FILE"), str)
                     and Path(str(env.get("APP_ENV_FILE"))).resolve() == main_env_file.resolve()
                     for env in bootstrap_envs
+                )
+            )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL") == "postgresql+psycopg2://main_user:main_pass@main.db.internal/main_db"
+                    for env in backend_start_envs
                 )
             )
 

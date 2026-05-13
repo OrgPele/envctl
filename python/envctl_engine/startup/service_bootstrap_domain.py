@@ -1043,6 +1043,7 @@ def _service_env_from_file(
     base_env: Mapping[str, str],
     env_file: Path | None,
     include_app_env_file: bool,
+    env_file_authoritative: bool = False,
 ) -> dict[str, str]:
     merged = dict(base_env)
     if env_file is None or not env_file.is_file():
@@ -1050,8 +1051,11 @@ def _service_env_from_file(
             merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
         return merged
     loaded_env = self._read_env_file_safe(env_file)
-    for key, value in loaded_env.items():
-        merged.setdefault(key, value)
+    if env_file_authoritative:
+        merged.update(loaded_env)
+    else:
+        for key, value in loaded_env.items():
+            merged.setdefault(key, value)
     if include_app_env_file:
         merged["APP_ENV_FILE"] = str(env_file)
         merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"

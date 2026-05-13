@@ -277,6 +277,7 @@ def start_project_services(
         base_env=backend_project_env_base,
         env_file=backend_env_file,
         include_app_env_file=True,
+        env_file_authoritative=not backend_env_is_default,
     )
     frontend_env_extra = rt._service_env_from_file(
         base_env=frontend_project_env_base,
