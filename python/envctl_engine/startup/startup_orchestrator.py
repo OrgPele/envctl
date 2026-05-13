@@ -24,6 +24,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
+from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import (
@@ -1033,6 +1034,11 @@ class StartupOrchestrator:
                         command=route.command,
                         mismatch_details=decision.mismatch_details,
                     )
+                    self._replace_existing_project_services_for_fresh_start(
+                        session,
+                        candidate_state=candidate_state,
+                        reason=decision.reason,
+                    )
 
         if route.command == "plan" and bool(route.flags.get("planning_prs")):
             rt._emit("planning.projects.start", projects=[context.name for context in session.selected_contexts])
@@ -1052,6 +1058,73 @@ class StartupOrchestrator:
             orch_group=sorted(debug_orch_groups) or None,
         )
         return None
+
+    def _replace_existing_project_services_for_fresh_start(
+        self,
+        session: StartupSession,
+        *,
+        candidate_state,
+        reason: str,
+    ) -> None:
+        if reason != "startup_fingerprint_mismatch":
+            return
+        route = session.effective_route
+        if route.flags.get("runtime_scope") == "dependencies":
+            return
+        selected_services = self._fresh_start_replacement_services(
+            session,
+            candidate_state=candidate_state,
+        )
+        if not selected_services:
+            return
+        rt = self.runtime
+        rt._emit(
+            "state.run_reuse.replace_existing_services",
+            run_id=candidate_state.run_id,
+            mode=session.runtime_mode,
+            reason=reason,
+            selected_services=sorted(selected_services),
+        )
+        rt._terminate_services_from_state(
+            candidate_state,
+            selected_services=selected_services,
+            aggressive=False,
+            verify_ownership=True,
+        )
+        self._terminate_restart_orphan_listeners(
+            state=candidate_state,
+            selected_services=selected_services,
+            aggressive=True,
+        )
+
+    def _fresh_start_replacement_services(self, session: StartupSession, *, candidate_state) -> set[str]:
+        route = session.effective_route
+        target_projects = {str(context.name).strip().lower() for context in session.selected_contexts}
+        target_projects.discard("")
+        if not target_projects:
+            return set()
+        configured_types = set(self._configured_service_types_for_mode(session.runtime_mode))
+        additional_services = tuple(getattr(self.runtime.config, "additional_services", ()) or ())
+        selected_by_project = {
+            str(context.name).strip().lower(): _restart_service_types_for_project_impl(
+                route=route,
+                project_name=str(context.name),
+                default_service_types=configured_types,
+                additional_services=additional_services,
+            )
+            for context in session.selected_contexts
+            if str(context.name).strip()
+        }
+        selected: set[str] = set()
+        for service_name, service in candidate_state.services.items():
+            project = service_project_name(service) or self.runtime._project_name_from_service(service_name)
+            project_key = str(project).strip().lower()
+            if project_key not in target_projects:
+                continue
+            service_type = service_slug_from_record(service)
+            if service_type and service_type in selected_by_project.get(project_key, set()):
+                selected.add(service_name)
+        return selected
 
     def _prepare_dashboard_stopped_service_restore(
         self,
@@ -1463,6 +1536,7 @@ class StartupOrchestrator:
         self._ensure_run_id(session)
         self._validate_plan_agent_handoff(session, phase="success_finalization")
         run_state = build_success_run_state(rt, session)
+        self._emit_preserved_service_merge(session)
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
@@ -1583,6 +1657,20 @@ class StartupOrchestrator:
         if attach_code is not None:
             return attach_code
         return 0
+
+    def _emit_preserved_service_merge(self, session: StartupSession) -> None:
+        if not session.preserved_services:
+            return
+        replaced = sorted(
+            name for project_services in session.services_by_project.values() for name in project_services
+        )
+        self.runtime._emit(
+            "runtime.state.merge_preserved_services",
+            preserved_services=sorted(session.preserved_services),
+            replaced_services=replaced,
+            preserved_requirements=sorted(session.preserved_requirements),
+            replaced_requirements=sorted(session.requirements_by_project),
+        )
 
     def _print_headless_plan_session_summary(
         self,

@@ -665,7 +665,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=lambda mode, service: True,
                 _prepare_backend_runtime=prepare_backend_runtime,
                 _prepare_frontend_runtime=prepare_frontend_runtime,
@@ -815,7 +815,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=service_enabled_for_mode,
                 _service_command_source=lambda **kwargs: "configured",
                 _service_start_command_resolved=lambda service_name, **kwargs: ("python -c pass", "configured"),
@@ -930,7 +930,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
                 _split_command=lambda command, **kwargs: split_calls.append({"command": command, **kwargs}) or [
@@ -970,7 +970,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
 
         self.assertIn("Main Voice Runtime", records)
-        self.assertEqual(split_calls[0]["cwd"], service_root)
+        self.assertEqual(Path(split_calls[0]["cwd"]).resolve(), service_root.resolve())
 
     def test_start_project_services_reprojects_additional_service_urls_after_rebound(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1044,7 +1044,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],

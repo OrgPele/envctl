@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -14,6 +15,8 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _backend_dependency_install_required,
     _backend_migrations_enabled,
     _backend_runtime_prep_required,
+    _frontend_missing_direct_dependency,
+    _prepare_frontend_runtime,
     _prepare_backend_runtime,
     _backend_migration_retry_env_for_async_driver_mismatch,
     _read_backend_bootstrap_state,
@@ -58,6 +61,153 @@ class _FakeRuntime:
 
 
 class ServiceBootstrapDomainTests(unittest.TestCase):
+    def test_frontend_missing_direct_dependency_detects_declared_package_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "vite").mkdir(parents=True)
+            payload = {
+                "dependencies": {"@paddle/paddle-js": "^1.0.0", "vite": "^5.0.0"},
+                "devDependencies": {"@types/node": "^20.0.0"},
+            }
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertEqual(missing, "@paddle/paddle-js")
+
+    def test_frontend_missing_direct_dependency_can_pass_scoped_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "@paddle" / "paddle-js").mkdir(parents=True)
+            payload = {"dependencies": {"@paddle/paddle-js": "^1.0.0"}}
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertIsNone(missing)
+
+    def test_frontend_missing_direct_dependency_skips_absent_node_modules_for_bootstrap_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            payload = {"dependencies": {"@paddle/paddle-js": "^1.0.0"}}
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertIsNone(missing)
+
+    def test_frontend_missing_direct_dependency_checks_dev_dependencies_needed_by_vite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "vite").mkdir(parents=True)
+            payload = {"devDependencies": {"vite": "^5.0.0", "@vitejs/plugin-react": "^4.0.0"}}
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertEqual(missing, "@vitejs/plugin-react")
+
+    def test_frontend_missing_direct_dependency_ignores_types_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules").mkdir(parents=True)
+            payload = {"devDependencies": {"@types/react": "^18.0.0"}}
+
+            missing = _frontend_missing_direct_dependency(frontend_cwd=frontend, payload=payload)
+
+            self.assertIsNone(missing)
+
+    def test_prepare_frontend_runtime_bypasses_dependency_check_when_requested(self) -> None:
+        class _RuntimeStub:
+            def __init__(self) -> None:
+                self.config = SimpleNamespace(raw={})
+                self.env = {"ENVCTL_SKIP_FRONTEND_DEPENDENCY_CHECK": "true"}
+                self.events: list[dict[str, object]] = []
+                self.process_runner = SimpleNamespace()
+
+            def _command_exists(self, executable: str) -> bool:
+                return executable == "npm"
+
+            def _command_env(self, *, port: int, extra=None):  # noqa: ANN001
+                _ = port
+                env = {}
+                env.update(extra or {})
+                return env
+
+            def _emit(self, event: str, **payload: object) -> None:
+                self.events.append({"event": event, **payload})
+
+            def _read_env_file_safe(self, path: Path) -> dict[str, str]:
+                return _read_env_file_safe(path)
+
+            def _run_frontend_bootstrap_command(self, **kwargs) -> None:  # noqa: ANN003
+                self.events.append({"event": "bootstrap_command", "command": kwargs["command"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / ".bin").mkdir(parents=True)
+            (frontend / "package.json").write_text(
+                json.dumps(
+                    {
+                        "scripts": {"dev": "vite"},
+                        "dependencies": {"@paddle/paddle-js": "^1.0.0"},
+                        "devDependencies": {"vite": "^5.0.0"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            runtime = _RuntimeStub()
+
+            _prepare_frontend_runtime(
+                runtime,
+                context=SimpleNamespace(name="Main", root=frontend.parent),
+                frontend_cwd=frontend,
+                frontend_log_path="",
+                project_env_base={},
+                frontend_env_file=None,
+                backend_port=8000,
+            )
+
+            self.assertFalse(
+                any(event.get("event") == "service.bootstrap.dependency_check" for event in runtime.events)
+            )
+
+    def test_prepare_frontend_runtime_missing_dependency_error_is_actionable(self) -> None:
+        class _RuntimeStub:
+            def __init__(self) -> None:
+                self.config = SimpleNamespace(raw={})
+                self.env: dict[str, str] = {}
+                self.events: list[dict[str, object]] = []
+
+            def _command_exists(self, executable: str) -> bool:
+                return executable == "npm"
+
+            def _emit(self, event: str, **payload: object) -> None:
+                self.events.append({"event": event, **payload})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frontend = Path(tmpdir)
+            (frontend / "node_modules" / "vite").mkdir(parents=True)
+            (frontend / "node_modules" / ".bin").mkdir(parents=True)
+            (frontend / "package.json").write_text(
+                json.dumps(
+                    {
+                        "scripts": {"dev": "vite"},
+                        "dependencies": {"@paddle/paddle-js": "^1.0.0"},
+                        "devDependencies": {"vite": "^5.0.0"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            runtime = _RuntimeStub()
+
+            with self.assertRaisesRegex(RuntimeError, "@paddle/paddle-js.*npm install --include=dev"):
+                _prepare_frontend_runtime(
+                    runtime,
+                    context=SimpleNamespace(name="Main", root=frontend.parent),
+                    frontend_cwd=frontend,
+                    frontend_log_path="",
+                    project_env_base={},
+                    frontend_env_file=None,
+                    backend_port=8000,
+                )
+
     def test_backend_dependency_install_required_when_state_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)
@@ -610,6 +760,26 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
 
             self.assertEqual(env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
             self.assertEqual(env["CUSTOM"], "1")
+
+    def test_backend_launch_env_explicit_file_can_override_projected_database_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "backend.override.env"
+            env_file.write_text(
+                "DATABASE_URL=postgresql+asyncpg://remote_user:remote_pass@remote.db/prod\n",
+                encoding="utf-8",
+            )
+            runtime = _FakeRuntime(repo_root=Path(tmpdir))
+
+            env = _service_env_from_file(
+                runtime,
+                base_env={"DATABASE_URL": "postgresql+asyncpg://local_user:local_pass@localhost/local"},
+                env_file=env_file,
+                include_app_env_file=True,
+                env_file_authoritative=True,
+            )
+
+            self.assertEqual(env["DATABASE_URL"], "postgresql+asyncpg://remote_user:remote_pass@remote.db/prod")
+            self.assertEqual(env["RUN_DB_MIGRATIONS_ON_STARTUP"], "false")
 
     def test_backend_launch_env_disables_app_internal_startup_migrations_without_env_file(self) -> None:
         runtime = _FakeRuntime(repo_root=Path("/tmp/repo"))

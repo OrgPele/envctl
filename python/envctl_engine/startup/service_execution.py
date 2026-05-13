@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.browser_diagnostics import launch_diagnostics_payload
 from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
@@ -131,6 +132,68 @@ def backend_listener_expected_for_mode(config: object, mode: str) -> bool:
 
 
 
+def _project_backend_cors_origin(
+    rt: object,
+    *,
+    project: str,
+    backend_env: dict[str, str],
+    frontend_port: int,
+) -> None:
+    if frontend_port <= 0:
+        return
+    runtime_env = getattr(rt, "env", {})
+    config_raw = getattr(getattr(rt, "config", None), "raw", {})
+    raw_enabled = str(
+        runtime_env.get(
+            "ENVCTL_BACKEND_CORS_PROJECTION_ENABLE",
+            config_raw.get("ENVCTL_BACKEND_CORS_PROJECTION_ENABLE", "true"),
+        )
+    ).strip().lower()
+    if raw_enabled in {"0", "false", "no", "off"}:
+        return
+    host = resolve_public_host(env=runtime_env, config=getattr(rt, "config", None))
+    frontend_url = f"http://{host}:{frontend_port}"
+    backend_env["FRONTEND_BASE_URL"] = frontend_url
+    backend_env["ENVCTL_SOURCE_FRONTEND_URL"] = frontend_url
+    cors_key = str(
+        runtime_env.get(
+            "ENVCTL_BACKEND_CORS_ENV_KEY",
+            config_raw.get("ENVCTL_BACKEND_CORS_ENV_KEY", "CORS_ORIGINS_RAW"),
+        )
+        or "CORS_ORIGINS_RAW"
+    ).strip()
+    if not cors_key:
+        return
+    origins = _merge_cors_origins(str(backend_env.get(cors_key, "") or ""), frontend_port=frontend_port, host=host)
+    backend_env[cors_key] = ",".join(origins)
+    emit = getattr(rt, "_emit", None)
+    if callable(emit):
+        emit(
+            "backend.cors.projected",
+            project=project,
+            env_key=cors_key,
+            frontend_origin=frontend_url,
+            origin_count=len(origins),
+        )
+
+
+def _merge_cors_origins(existing: str, *, frontend_port: int, host: str) -> list[str]:
+    origins: list[str] = []
+
+    def add(value: str) -> None:
+        normalized = value.strip()
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+
+    for token in existing.replace(";", ",").split(","):
+        add(token)
+    add(f"http://{host}:{frontend_port}")
+    if host in {"localhost", "127.0.0.1"}:
+        add(f"http://localhost:{frontend_port}")
+        add(f"http://127.0.0.1:{frontend_port}")
+    return origins
+
+
 def additional_service_enabled_for_context(service: object, *, mode: str, project_root: Path) -> bool:
     enabled_for_project = getattr(service, "enabled_for_project_root", None)
     if callable(enabled_for_project):
@@ -215,6 +278,7 @@ def start_project_services(
         base_env=backend_project_env_base,
         env_file=backend_env_file,
         include_app_env_file=True,
+        env_file_authoritative=not backend_env_is_default,
     )
     frontend_env_extra = rt._service_env_from_file(
         base_env=frontend_project_env_base,
@@ -224,6 +288,20 @@ def start_project_services(
     backend_url = browser_backend_url(host=resolve_public_host(env=rt.env, config=rt.config), port=backend_plan.final)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
     frontend_env_extra["VITE_API_URL"] = f"{backend_url}/api/v1"
+    _project_backend_cors_origin(
+        rt,
+        project=context.name,
+        backend_env=backend_env_extra,
+        frontend_port=frontend_plan.final,
+    )
+    overlay_builder = getattr(rt, "_service_env_overlays", None)
+    if callable(overlay_builder):
+        backend_env_extra.update(
+            overlay_builder(service_name="backend", base_env={**project_env_internal, **backend_env_extra})
+        )
+        frontend_env_extra.update(
+            overlay_builder(service_name="frontend", base_env={**project_env_internal, **frontend_env_extra})
+        )
     all_service_names_for_mode = getattr(rt.config, "all_app_service_names_for_mode", None)
     if callable(all_service_names_for_mode):
         try:
@@ -391,6 +469,46 @@ def start_project_services(
             env=command_env_builder(port=launch_port, extra=frontend_env_extra),
             command_source=frontend_command_source,
         )
+    if route is not None and prepared_launches:
+        project_diagnostics = route.flags.setdefault("_runtime_launch_diagnostics", {})
+        if isinstance(project_diagnostics, dict):
+            service_payloads: dict[str, object] = {}
+            if "backend" in prepared_launches:
+                cors_key = str(
+                    rt.env.get(
+                        "ENVCTL_BACKEND_CORS_ENV_KEY",
+                        getattr(rt.config, "raw", {}).get("ENVCTL_BACKEND_CORS_ENV_KEY", "CORS_ORIGINS_RAW"),
+                    )
+                    or "CORS_ORIGINS_RAW"
+                ).strip()
+                origins = [
+                    token.strip()
+                    for token in str(backend_env_extra.get(cors_key, "") or "").split(",")
+                    if token.strip()
+                ]
+                service_payloads["backend"] = launch_diagnostics_payload(
+                    project=context.name,
+                    service_name="backend",
+                    env=prepared_launches["backend"].env,
+                    command_source=backend_command_source,
+                    argv=[],
+                    cors={
+                        "projected": bool(frontend_plan.final > 0 and origins),
+                        "env_key": cors_key,
+                        "frontend_origin": backend_env_extra.get("FRONTEND_BASE_URL"),
+                        "origins": origins,
+                        "effective_input": backend_env_extra.get(cors_key),
+                    },
+                )
+            if "frontend" in prepared_launches:
+                service_payloads["frontend"] = launch_diagnostics_payload(
+                    project=context.name,
+                    service_name="frontend",
+                    env=prepared_launches["frontend"].env,
+                    command_source=frontend_command_source,
+                    argv=[],
+                )
+            project_diagnostics[context.name] = service_payloads
     additional_services = [
         service for service in configured_additional_services if service.name in selected_service_types
     ]
@@ -411,6 +529,8 @@ def start_project_services(
         service_env_extra["ENVCTL_SERVICE_NAME"] = service.name
         service_env_extra["ENVCTL_SERVICE_TYPE"] = service.name
         service_env_extra["ENVCTL_PROJECT_NAME"] = context.name
+        if callable(overlay_builder):
+            service_env_extra.update(overlay_builder(service_name=service.name, base_env=service_env_extra))
         launch_port = requested_port if service.expect_listener else 0
         prepared_launches[service.name] = PreparedServiceLaunch(
             service_name=service.name,

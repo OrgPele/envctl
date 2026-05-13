@@ -136,6 +136,11 @@ def requirement_runtime_status(
         return "disabled"
     if bool(component_data.get("simulated", False)):
         return "simulated"
+    if bool(component_data.get("external")):
+        external_status = str(component_data.get("runtime_status") or "").strip().lower()
+        if external_status in {"healthy", "unreachable", "external_unavailable"}:
+            return external_status
+        return "healthy" if bool(component_data.get("success", False)) else "unreachable"
     if not bool(component_data.get("success", False)):
         if requirements.failures:
             return "unhealthy"
@@ -324,7 +329,7 @@ def reconcile_project_requirement_truth(
             requirements=requirements,
         )
         component_data["runtime_status"] = runtime_status
-        if runtime_status in {"healthy", "disabled"}:
+        if runtime_status in {"healthy", "disabled", "external"}:
             continue
         port = requirement_component_port(component_data)
         issues.append(

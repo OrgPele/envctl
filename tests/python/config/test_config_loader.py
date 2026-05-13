@@ -10,7 +10,12 @@ from envctl_engine.config import (
     discover_local_config_state,
     load_config,
     render_default_backend_dependency_env_section,
+    render_default_dependency_env_sections,
     render_default_frontend_dependency_env_section,
+)
+from envctl_engine.shared.dependency_compose_assets import (
+    default_supabase_anon_key,
+    default_supabase_service_role_key,
 )
 
 
@@ -189,6 +194,30 @@ class ConfigLoaderTests(unittest.TestCase):
         self.assertIn("SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}", backend)
         self.assertIn("VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}", frontend)
         self.assertNotIn("SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}", frontend)
+
+    def test_default_envctl_example_documents_external_dependency_contract(self) -> None:
+        example = (REPO_ROOT / "docs" / "reference" / ".envctl.example").read_text(encoding="utf-8")
+
+        self.assertIn("ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n", example)
+        self.assertIn("Main mode auto-uses an external dependency", example)
+        self.assertIn("backend .env, or frontend .env", example)
+        self.assertIn("Trees mode defaults to managed/internal dependencies", example)
+        self.assertIn("ENVCTL_DEPENDENCY_SUPABASE_MODE=external", example)
+        self.assertIn("SUPABASE_URL=http://localhost:54321", example)
+        self.assertIn("SUPABASE_DB_PASSWORD=supabase-db-password", example)
+        self.assertIn("SUPABASE_JWT_SECRET=supabase-local-jwt-secret", example)
+        self.assertIn(f"SUPABASE_ANON_KEY={default_supabase_anon_key()}", example)
+        self.assertIn(f"SUPABASE_SERVICE_ROLE_KEY={default_supabase_service_role_key()}", example)
+        self.assertIn("DATABASE_URL=postgresql+asyncpg://postgres:<password>@localhost:5432/postgres", example)
+        self.assertIn("REDIS_URL=redis://localhost:6379/0", example)
+        self.assertIn("N8N_URL=http://localhost:5678", example)
+
+        generated = render_default_dependency_env_sections()
+        self.assertIn("Main mode auto-uses an external dependency", generated)
+        self.assertIn("backend .env, or frontend .env", generated)
+        self.assertIn("Trees mode defaults to managed/internal dependencies", generated)
+        self.assertIn(f"SUPABASE_ANON_KEY={default_supabase_anon_key()}", generated)
+        self.assertIn(f"SUPABASE_SERVICE_ROLE_KEY={default_supabase_service_role_key()}", generated)
 
     def test_envctl_sh_is_parsed_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

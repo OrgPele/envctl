@@ -395,7 +395,8 @@ class LifecycleCleanupOrchestrator:
                 component = requirements.component(dependency_id)
                 if not bool(component.get("enabled", False)):
                     continue
-                self._release_requirement_component_ports(component)
+                if not bool(component.get("external")):
+                    self._release_requirement_component_ports(component)
                 requirements.components[dependency_id] = {}
             if not self._requirements_have_enabled_components(requirements):
                 state.requirements.pop(project_name, None)

@@ -456,6 +456,26 @@ def _prepare_frontend_runtime(
     manager = detect_package_manager(frontend_cwd, command_exists=self._command_exists)
     if manager is None:
         return
+    missing_dependency = _frontend_missing_direct_dependency(frontend_cwd=frontend_cwd, payload=payload)
+    if missing_dependency is not None and not parse_bool(
+        self.env.get("ENVCTL_SKIP_FRONTEND_DEPENDENCY_CHECK"),
+        False,
+    ):
+        install_command, _fallback_command = _frontend_install_commands(frontend_cwd=frontend_cwd, manager=manager)
+        command_text = " ".join(install_command)
+        self._emit(
+            "service.bootstrap.dependency_check",
+            project=context.name,
+            service="frontend",
+            status="failed",
+            package=missing_dependency,
+            install_command=command_text,
+        )
+        raise RuntimeError(
+            "frontend dependency check failed for "
+            f"{context.name}: missing direct dependency {missing_dependency!r} in {frontend_cwd}. "
+            f"Run `{command_text}` in {frontend_cwd}."
+        )
     env = self._command_env(port=0, extra=project_env_base)
     if frontend_env_file is not None and frontend_env_file.is_file():
         loaded_env = self._read_env_file_safe(frontend_env_file)
@@ -622,6 +642,34 @@ def _frontend_dependency_install_required(*, frontend_cwd: Path, dev_script: str
         if not vite_bin.is_file():
             return True, "vite_binary_missing"
     return False, "up_to_date"
+
+
+def _frontend_missing_direct_dependency(*, frontend_cwd: Path, payload: Mapping[str, object]) -> str | None:
+    node_modules_dir = frontend_cwd / "node_modules"
+    if not node_modules_dir.is_dir():
+        return None
+    declared: list[str] = []
+    for section_name in ("dependencies", "devDependencies"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for package_name in section:
+            name = str(package_name).strip()
+            if name and not name.startswith("@types/"):
+                declared.append(name)
+    for package_name in sorted(set(declared)):
+        if not _frontend_dependency_installed(node_modules_dir=node_modules_dir, package_name=package_name):
+            return package_name
+    return None
+
+
+def _frontend_dependency_installed(*, node_modules_dir: Path, package_name: str) -> bool:
+    package_path = node_modules_dir
+    for part in package_name.split("/"):
+        if not part:
+            return False
+        package_path = package_path / part
+    return package_path.exists()
 
 
 def _frontend_install_commands(*, frontend_cwd: Path, manager: str) -> tuple[list[str], list[str] | None]:
@@ -995,6 +1043,7 @@ def _service_env_from_file(
     base_env: Mapping[str, str],
     env_file: Path | None,
     include_app_env_file: bool,
+    env_file_authoritative: bool = False,
 ) -> dict[str, str]:
     merged = dict(base_env)
     if env_file is None or not env_file.is_file():
@@ -1002,8 +1051,11 @@ def _service_env_from_file(
             merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
         return merged
     loaded_env = self._read_env_file_safe(env_file)
-    for key, value in loaded_env.items():
-        merged.setdefault(key, value)
+    if env_file_authoritative:
+        merged.update(loaded_env)
+    else:
+        for key, value in loaded_env.items():
+            merged.setdefault(key, value)
     if include_app_env_file:
         merged["APP_ENV_FILE"] = str(env_file)
         merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"

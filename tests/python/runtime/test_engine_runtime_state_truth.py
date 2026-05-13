@@ -171,6 +171,29 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
             [{"project": "Main", "component": "redis", "status": "unreachable", "port": 6390}],
         )
 
+    def test_reconcile_project_requirement_truth_preserves_external_dependency_health_status(self) -> None:
+        runtime = SimpleNamespace(
+            process_runner=SimpleNamespace(wait_for_port=lambda _port, timeout: False),
+            _listener_truth_enforced=lambda: True,
+            _service_truth_timeout=lambda: 1.0,
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            redis={
+                "enabled": True,
+                "success": True,
+                "external": True,
+                "runtime_status": "healthy",
+                "final": 6382,
+                "resources": {"primary": 6382},
+            },
+        )
+
+        issues = reconcile_project_requirement_truth(runtime, "Main", requirements)
+
+        self.assertEqual(issues, [])
+        self.assertEqual(requirements.component("redis")["runtime_status"], "healthy")
+
     def test_reconcile_project_requirement_truth_repairs_stale_supabase_container_ports(self) -> None:
         db_container = "envctl-supabase-main-deadbeef-supabase-db-1"
         kong_container = "envctl-supabase-main-deadbeef-supabase-kong-1"

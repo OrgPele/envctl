@@ -525,12 +525,15 @@ def _dashboard_dependency_line(
         warn_color=warn_color,
         bad_color=bad_color,
     )
-    url = (
-        "n/a"
-        if badge.severity == "failure"
-        else (_dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a")
-    )
-    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{badge.label}]"
+    external_url = str(component.get("external_url") or "").strip()
+    if badge.severity == "failure":
+        url = external_url or "n/a"
+    elif external_url:
+        url = external_url
+    else:
+        url = _dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a"
+    label = f"External {badge.label}" if bool(component.get("external", False)) else badge.label
+    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{label}]"
 
 
 def _dashboard_dependency_scope(state: RunState) -> str:

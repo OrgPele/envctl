@@ -43,6 +43,24 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
 
         self.assertEqual(released, [5432, 5678])
 
+    def test_release_requirement_ports_skips_external_dependency_ports(self) -> None:
+        released: list[int] = []
+        runtime = SimpleNamespace(port_planner=SimpleNamespace(release=lambda port: released.append(port)))
+        requirements = RequirementsResult(
+            project="Main",
+            redis={
+                "enabled": True,
+                "success": True,
+                "external": True,
+                "final": 6382,
+                "resources": {"primary": 6382},
+            },
+        )
+
+        release_requirement_ports(runtime, requirements)
+
+        self.assertEqual(released, [])
+
     def test_requirement_key_for_project_matches_case_insensitive(self) -> None:
         state = RunState(run_id="run-1", mode="main", requirements={"Main": RequirementsResult(project="Main")})
         self.assertEqual(requirement_key_for_project(state, "main"), "Main")

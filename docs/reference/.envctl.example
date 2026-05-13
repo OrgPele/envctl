@@ -139,6 +139,39 @@ ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 # Service launch env templates
 # ==========================================
 
+# External dependency mode can be configured in this same .envctl file.
+# Default mode is managed: envctl starts enabled dependencies and projects localhost values.
+# Main mode auto-uses an external dependency when that dependency's own env vars exist
+# in shell env, .envctl, project root .env, backend .env, or frontend .env.
+# Trees mode defaults to managed/internal dependencies unless external mode is explicit.
+# For one-off main runs that should ignore external env auto-detection, use
+# `envctl --main --managed-deps` or the alias `envctl --main --no-external-deps`.
+# To use externally running services, enable one or more external dependencies:
+# ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n
+# Or use one dependency at a time:
+# ENVCTL_DEPENDENCY_SUPABASE_MODE=external
+# ENVCTL_DEPENDENCY_REDIS_MODE=external
+# ENVCTL_DEPENDENCY_POSTGRES_MODE=external
+# ENVCTL_DEPENDENCY_N8N_MODE=external
+# External Supabase requires SUPABASE_URL or SUPABASE_PUBLIC_URL plus SUPABASE_ANON_KEY
+# or the frontend-safe VITE_SUPABASE_ANON_KEY alias.
+# External dependencies are actively probed at startup. Set
+# ENVCTL_EXTERNAL_DEPENDENCY_PROBE=false only when the dependency is reachable
+# from launched services but intentionally unreachable from the envctl host.
+# SUPABASE_URL=http://localhost:54321
+# SUPABASE_ANON_KEY=<external anon key>
+# SUPABASE_SERVICE_ROLE_KEY=<external service-role key; backend only>
+# SUPABASE_JWT_SECRET=<external JWT secret; backend only>
+# SUPABASE_JWKS_URL=${SUPABASE_URL}/auth/v1/.well-known/jwks.json
+# DATABASE_URL=postgresql+asyncpg://postgres:<password>@localhost:5432/postgres
+# REDIS_URL=redis://localhost:6379/0
+# N8N_URL=http://localhost:5678
+# Local managed Supabase defaults are local-only secrets:
+# SUPABASE_DB_PASSWORD=supabase-db-password
+# SUPABASE_JWT_SECRET=supabase-local-jwt-secret
+# SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsaG9zdCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjE5NTczNDUyMDB9.Oi-sX984UQkmFwiDY2_7Qy4Qb33dH9e45FMDT9NgqE0
+# SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsaG9zdCIsInJvbGUiOiJzZXJ2aWNlX3JvbGUiLCJpYXQiOjE2NDE3NjkyMDAsImV4cCI6MTk1NzM0NTIwMH0.Hx36U1Vm86vGaBd-my6npKZLHfpSFnmHrZ0v43eXVnA
+
 # Launch env templates for services started by envctl.
 # Backend goes only to the backend process. Frontend goes only to the frontend process.
 # `${ENVCTL_SOURCE_*}` values come from envctl-managed dependencies.

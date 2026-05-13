@@ -50,6 +50,8 @@ def dependency_status_badge(
         return StatusBadge(STATUS_SUCCESS, "success", "Healthy")
     if lowered == "running":
         return StatusBadge(STATUS_SUCCESS, "success", "Running")
+    if lowered == "external" and success:
+        return StatusBadge(STATUS_SUCCESS, "success", "External")
     if lowered == "simulated":
         return StatusBadge(STATUS_SIMULATED, "warning", "Simulated")
     if lowered in {"starting", "unknown"}:

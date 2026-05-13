@@ -18,6 +18,7 @@ from envctl_engine.planning import (
 )
 from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
 from envctl_engine.runtime.command_router import list_supported_commands, parse_route
+from envctl_engine.runtime.browser_diagnostics import build_startup_env_projection
 from envctl_engine.runtime.engine_runtime_startup_support import (
     auto_resume_start_enabled,
     evaluate_run_reuse,
@@ -209,6 +210,14 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             for entry in local_state.backend_dependency_env_templates
         ],
         "frontend_dependency_env_section_present": local_state.frontend_dependency_env_section_present,
+        "frontend_dependency_env_projection_active": bool(
+            local_state.dependency_env_section_present
+            or local_state.frontend_dependency_env_section_present
+            or local_state.main_frontend_dependency_env_section_present
+            or local_state.trees_frontend_dependency_env_section_present
+            or bool(local_state.service_dependency_env_section_present or {})
+            or bool(local_state.mode_service_dependency_env_section_present or {})
+        ),
         "frontend_dependency_env_templates": [
             {
                 "name": entry.name,
@@ -726,6 +735,12 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         "parallel_trees": {"enabled": parallel_trees_enabled, "workers": parallel_trees_workers},
         "plan_agent_launch": inspect_plan_agent_launch(runtime, route=startup_route),
     }
+    payload["env_projection"] = build_startup_env_projection(
+        runtime,
+        startup_route,
+        mode=runtime_mode,
+        contexts=selected_contexts,
+    )
     if not startup_enabled:
         payload["reason"] = "config_startup_disabled"
     return payload

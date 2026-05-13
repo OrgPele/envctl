@@ -133,6 +133,8 @@ def release_requirement_ports(runtime: Any, requirements: RequirementsResult) ->
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)):
             continue
+        if bool(component.get("external")):
+            continue
         port = component.get("final")
         if isinstance(port, int) and port > 0:
             runtime.port_planner.release(port)
@@ -153,6 +155,8 @@ def _collect_requirement_ports(requirements: RequirementsResult) -> set[int]:
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)):
+            continue
+        if bool(component.get("external")):
             continue
         port = component.get("final")
         if isinstance(port, int) and port > 0:

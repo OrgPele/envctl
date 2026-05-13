@@ -89,6 +89,18 @@ class CliRouterParityTests(unittest.TestCase):
                 route = parse_route(["--trees", token], env={})
                 self.assertEqual(route.flags.get("dependency_scope"), "isolated")
 
+    def test_managed_dependency_flags_disable_external_dependencies_for_route(self) -> None:
+        for token in (
+            "--managed-deps",
+            "--managed-dependencies",
+            "--no-external-deps",
+            "--no-external-dependencies",
+        ):
+            with self.subTest(token=token):
+                route = parse_route(["--main", token], env={})
+                self.assertEqual(route.mode, "main")
+                self.assertEqual(route.flags.get("external_dependencies_mode"), "managed")
+
     def test_playwright_preserves_passthrough_after_separator(self) -> None:
         route = parse_route(
             [
