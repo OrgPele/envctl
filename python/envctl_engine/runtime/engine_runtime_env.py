@@ -65,7 +65,7 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         )
         effective_main = effective_main_requirement_flags(runtime, route)
         for dependency_id in ("postgres", "redis", "supabase", "n8n"):
-            if dependency_external_mode(runtime, dependency_id, mode="main"):
+            if dependency_external_mode(runtime, dependency_id, mode="main", route=route):
                 effective_main[dependency_id] = True
         postgres_enabled = effective_main["postgres"]
         supabase_enabled = effective_main["supabase"]
@@ -100,7 +100,7 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         external_enabled = {
             dependency_id
             for dependency_id in ("postgres", "redis", "supabase", "n8n")
-            if dependency_external_mode(runtime, dependency_id, mode=normalized_mode)
+            if dependency_external_mode(runtime, dependency_id, mode=normalized_mode, route=route)
         }
         if "postgres" in external_enabled:
             postgres_enabled = True
@@ -123,8 +123,8 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
     if (
         postgres_enabled
         and supabase_enabled
-        and not dependency_external_mode(runtime, "postgres", mode=normalized_mode)
-        and not dependency_external_mode(runtime, "supabase", mode=normalized_mode)
+        and not dependency_external_mode(runtime, "postgres", mode=normalized_mode, route=route)
+        and not dependency_external_mode(runtime, "supabase", mode=normalized_mode, route=route)
     ):
         raise RuntimeError(
             f"Invalid {normalized_mode} requirements configuration: postgres and supabase cannot both be enabled."
@@ -191,7 +191,7 @@ def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str,
         normalized_mode
     ):
         return False
-    if dependency_external_mode(runtime, normalized_name, mode=requested_mode):
+    if dependency_external_mode(runtime, normalized_name, mode=requested_mode, route=route):
         return True
     if normalized_mode == "main":
         effective_main = effective_main_requirement_flags(runtime, route)
@@ -759,6 +759,8 @@ def runtime_env_overrides(route: Route | None) -> dict[str, str]:
         env["RUN_SH_DEBUG_TRACE_INTERACTIVE"] = "false"
     if bool(route.flags.get("key_debug")):
         env["KEY_DEBUG"] = "true"
+    if str(route.flags.get("external_dependencies_mode") or "").strip().lower() == "managed":
+        env["ENVCTL_EXTERNAL_DEPENDENCIES_MODE"] = "managed"
     if bool(route.flags.get("setup_worktree_existing")):
         env["SETUP_WORKTREE_EXISTING"] = "true"
     if bool(route.flags.get("setup_worktree_recreate")):

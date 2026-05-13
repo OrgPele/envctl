@@ -173,7 +173,9 @@ def start_requirements_for_project(
         for definition in definitions
     }
     external_lookup = {
-        definition.id: bool(enabled_lookup[definition.id] and dependency_external_mode(rt, definition.id, mode=mode))
+        definition.id: bool(
+            enabled_lookup[definition.id] and dependency_external_mode(rt, definition.id, mode=mode, route=route)
+        )
         for definition in definitions
     }
     enabled_definitions = [

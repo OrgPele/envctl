@@ -41,6 +41,7 @@ def build_planning_dashboard_state(
         runtime_mode=runtime_mode,
         project_contexts=cast(list[object], project_contexts),
         base_metadata=base_metadata,
+        route=route,
     )
     metadata.update(
         {
@@ -83,6 +84,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         runtime_mode=session.runtime_mode,
         project_contexts=cast(list[object], session.selected_contexts),
         base_metadata=session.base_metadata,
+        route=session.effective_route,
     )
     metadata.update(
         {

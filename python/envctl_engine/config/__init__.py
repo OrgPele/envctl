@@ -1481,6 +1481,8 @@ def render_default_dependency_env_sections() -> str:
         "# Main mode auto-uses an external dependency when that dependency's own env vars exist",
         "# in shell env, .envctl, project root .env, backend .env, or frontend .env.",
         "# Trees mode defaults to managed/internal dependencies unless external mode is explicit.",
+        "# For one-off main runs that should ignore external env auto-detection, use",
+        "# `envctl --main --managed-deps` or the alias `envctl --main --no-external-deps`.",
         "# To use externally running services, enable one or more external dependencies:",
         "# ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n",
         "# Or use one dependency at a time:",

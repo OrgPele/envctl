@@ -160,6 +160,7 @@ def _render_general_help() -> str:
             "  --shared-deps           tree runs use the main/shared managed dependency stack (default)",
             "  --isolated-deps         tree runs use isolated managed dependencies",
             "  --separate-deps         alias for --isolated-deps",
+            "  --managed-deps          disable external dependency auto-detection for this run",
             "  --only-frontend         launch only frontend; skip backend and dependencies/prep",
             "  --only-backend          launch only backend; skip frontend and dependencies/prep",
             "  --no-deps               skip managed dependencies and plan-agent dependency prep",

@@ -45,6 +45,7 @@ class EngineRuntimeEnvTests(unittest.TestCase):
                 "feature-a-1,feature-a-2",
                 "--seed-requirements-from-base",
                 "--stop-all-remove-volumes",
+                "--managed-deps",
             ],
             env={},
         )
@@ -57,6 +58,7 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env.get("SETUP_INCLUDE_WORKTREES_RAW"), "feature-a-1,feature-a-2")
         self.assertEqual(env.get("SEED_REQUIREMENTS_FROM_BASE"), "true")
         self.assertEqual(env.get("RUN_SH_COMMAND_STOP_ALL_REMOVE_VOLUMES"), "true")
+        self.assertEqual(env.get("ENVCTL_EXTERNAL_DEPENDENCIES_MODE"), "managed")
 
     def test_main_requirements_mode_rejects_conflicting_flags(self) -> None:
         route = parse_route(
@@ -329,6 +331,43 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertFalse(dependency_external_mode(runtime, "supabase", mode="trees"))
         self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "supabase"))
         self.assertTrue(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
+    def test_managed_deps_route_flag_disables_main_auto_external_dependency_detection(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "SUPABASE_URL": "https://supabase.example.test",
+                "SUPABASE_ANON_KEY": "external-anon",
+                "REDIS_URL": "redis://cache.example.test:6382/0",
+            },
+            config=SimpleNamespace(
+                raw={},
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+        route = parse_route(["--main", "--managed-deps"], env={})
+
+        self.assertFalse(dependency_external_mode(runtime, "supabase", mode="main", route=route))
+        self.assertFalse(dependency_external_mode(runtime, "redis", mode="main", route=route))
+        self.assertFalse(requirement_enabled_for_mode(runtime, "main", "supabase", route=route))
+
+    def test_global_managed_dependency_env_disables_main_auto_external_dependency_detection(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "ENVCTL_EXTERNAL_DEPENDENCIES_MODE": "managed",
+                "SUPABASE_URL": "https://supabase.example.test",
+                "SUPABASE_ANON_KEY": "external-anon",
+                "REDIS_URL": "redis://cache.example.test:6382/0",
+            },
+            config=SimpleNamespace(
+                raw={},
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+
+        self.assertFalse(dependency_external_mode(runtime, "supabase", mode="main"))
+        self.assertFalse(dependency_external_mode(runtime, "redis", mode="main"))
 
     def test_main_mode_does_not_auto_external_supabase_for_partial_env(self) -> None:
         runtime = SimpleNamespace(

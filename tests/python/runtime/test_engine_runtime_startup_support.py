@@ -236,6 +236,54 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         self.assertEqual(decision.decision_kind, "fresh_run")
         self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
 
+    def test_run_reuse_rejects_external_state_when_route_forces_managed_dependencies(self) -> None:
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={})
+        state_runtime = self._reuse_runtime(
+            state=None,
+            enabled_dependencies=("redis",),
+            external_env={"REDIS_URL": "redis://127.0.0.1:6545/0"},
+        )
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="main",
+            project_contexts=[context],
+        )
+        state = RunState(
+            run_id="run-external-redis",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=str(context.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(
+            state=state,
+            enabled_dependencies=("redis",),
+            external_env={"REDIS_URL": "redis://127.0.0.1:6545/0"},
+        )
+        route = Route(
+            command="start",
+            mode="main",
+            raw_args=["--main", "--managed-deps"],
+            passthrough_args=[],
+            projects=[],
+            flags={"external_dependencies_mode": "managed"},
+        )
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="main",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
+
     def test_run_reuse_accepts_dashboard_only_state_for_exact_dashboard_resume(self) -> None:
         context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
         route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=["feature-a"], flags={})

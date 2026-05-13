@@ -45,6 +45,7 @@ def build_startup_identity_metadata(
     runtime_mode: str,
     project_contexts: list[object],
     base_metadata: Mapping[str, object] | None = None,
+    route: Route | None = None,
 ) -> dict[str, object]:
     metadata = dict(base_metadata or {})
     project_roots = {
@@ -55,7 +56,12 @@ def build_startup_identity_metadata(
         )
         if str(getattr(context, "name", "")).strip() and root
     }
-    identity_payload = _startup_identity_payload(runtime, runtime_mode=runtime_mode, project_contexts=project_contexts)
+    identity_payload = _startup_identity_payload(
+        runtime,
+        runtime_mode=runtime_mode,
+        project_contexts=project_contexts,
+        route=route,
+    )
     metadata["project_roots"] = project_roots
     metadata["startup_identity"] = identity_payload
     return metadata
@@ -157,7 +163,12 @@ def evaluate_run_reuse(
             startup_enabled=startup_enabled,
         )
 
-    current_identity = _startup_identity_payload(runtime, runtime_mode=runtime_mode, project_contexts=contexts)
+    current_identity = _startup_identity_payload(
+        runtime,
+        runtime_mode=runtime_mode,
+        project_contexts=contexts,
+        route=route,
+    )
     previous_identity = candidate.metadata.get("startup_identity")
     if isinstance(previous_identity, dict):
         previous_fingerprint = str(previous_identity.get("fingerprint", "")).strip()
@@ -313,7 +324,13 @@ def _startup_service_payload(runtime: Any, runtime_mode: str, project_contexts: 
     return services
 
 
-def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contexts: list[object]) -> dict[str, object]:
+def _startup_identity_payload(
+    runtime: Any,
+    *,
+    runtime_mode: str,
+    project_contexts: list[object],
+    route: Route | None = None,
+) -> dict[str, object]:
     startup_enabled = _startup_enabled(runtime, runtime_mode)
     services = _startup_service_payload(runtime, runtime_mode, project_contexts)
     dependencies = [
@@ -325,7 +342,9 @@ def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contex
         dependencies = []
     dependency_modes = {
         dependency_id: (
-            "external" if dependency_external_mode(runtime, dependency_id, mode=runtime_mode) else "managed"
+            "external"
+            if dependency_external_mode(runtime, dependency_id, mode=runtime_mode, route=route)
+            else "managed"
         )
         for dependency_id in dependencies
     }

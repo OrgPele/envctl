@@ -222,6 +222,14 @@ SPECIAL_FLAGS = {
     "--shared-deps",
     "--shared-dependency",
     "--shared-dependencies",
+    "--managed-dep",
+    "--managed-deps",
+    "--managed-dependency",
+    "--managed-dependencies",
+    "--no-external-dep",
+    "--no-external-deps",
+    "--no-external-dependency",
+    "--no-external-dependencies",
     "--isolated-dep",
     "--isolated-deps",
     "--isolated-dependency",
@@ -860,6 +868,17 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["launch_dependencies"] = False
     elif token in {"--shared-dep", "--shared-deps", "--shared-dependency", "--shared-dependencies"}:
         _set_dependency_scope(flags, "shared")
+    elif token in {
+        "--managed-dep",
+        "--managed-deps",
+        "--managed-dependency",
+        "--managed-dependencies",
+        "--no-external-dep",
+        "--no-external-deps",
+        "--no-external-dependency",
+        "--no-external-dependencies",
+    }:
+        flags["external_dependencies_mode"] = "managed"
     elif token in {
         "--isolated-dep",
         "--isolated-deps",

@@ -38,12 +38,14 @@ def build_startup_identity_metadata(
     runtime_mode: str,
     project_contexts: list[object],
     base_metadata: Mapping[str, object] | None = None,
+    route: object | None = None,
 ) -> dict[str, object]:
     return build_startup_identity_metadata_impl(
         runtime,
         runtime_mode=runtime_mode,
         project_contexts=project_contexts,
         base_metadata=base_metadata,
+        route=route,
     )
 
 

@@ -16,9 +16,14 @@ _DEPENDENCY_IDS = {"postgres", "redis", "supabase", "n8n"}
 _MODE_EXTERNAL_VALUES = {"external", "externally-managed", "remote", "native-external"}
 
 
-def dependency_external_mode(runtime: Any, dependency_id: str, *, mode: str | None = None) -> bool:
+def dependency_external_mode(runtime: Any, dependency_id: str, *, mode: str | None = None, route: Any = None) -> bool:
     dependency = _normalize_dependency_id(dependency_id)
     if not dependency:
+        return False
+    if _route_forces_managed_dependencies(route):
+        return False
+    global_mode = _raw(runtime, "ENVCTL_EXTERNAL_DEPENDENCIES_MODE") or _raw(runtime, "ENVCTL_DEPENDENCIES_MODE")
+    if global_mode is not None and str(global_mode).strip().lower() == "managed":
         return False
     explicit_mode = _raw(runtime, f"ENVCTL_DEPENDENCY_{dependency.upper()}_MODE")
     if explicit_mode is None:
@@ -38,6 +43,13 @@ def _dependency_auto_external_mode(runtime: Any, dependency_id: str, *, mode: st
     if str(mode or "").strip().lower() != "main":
         return False
     return external_dependency_validation_error(runtime, dependency_id) is None
+
+
+def _route_forces_managed_dependencies(route: Any) -> bool:
+    flags = getattr(route, "flags", None)
+    if not isinstance(flags, dict):
+        return False
+    return str(flags.get("external_dependencies_mode") or "").strip().lower() == "managed"
 
 
 def external_dependency_outcome(
@@ -139,7 +151,12 @@ def external_dependency_probe_error(runtime: Any, dependency_id: str) -> str | N
         anon_key = _supabase_anon_key(runtime)
         if anon_key:
             headers = {"apikey": anon_key, "Authorization": f"Bearer {anon_key}"}
-        return _http_probe_error("supabase", _external_health_url(url, "auth/v1/health"), timeout=timeout, headers=headers)
+        return _http_probe_error(
+            "supabase",
+            _external_health_url(url, "auth/v1/health"),
+            timeout=timeout,
+            headers=headers,
+        )
     return None
 
 
