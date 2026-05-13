@@ -7,8 +7,9 @@ import time
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.external import (
-    dependency_external_mode,
+    dependency_external_mode_source,
     external_dependency_outcome,
+    external_dependency_probe_error,
     external_dependency_resources,
     external_dependency_url,
 )
@@ -172,12 +173,31 @@ def start_requirements_for_project(
         definition.id: bool(rt._requirement_enabled(definition.id, mode=mode, route=route))
         for definition in definitions
     }
-    external_lookup = {
-        definition.id: bool(
-            enabled_lookup[definition.id] and dependency_external_mode(rt, definition.id, mode=mode, route=route)
+    external_sources = {
+        definition.id: (
+            dependency_external_mode_source(rt, definition.id, mode=mode, route=route)
+            if enabled_lookup[definition.id]
+            else None
         )
         for definition in definitions
     }
+    external_lookup = {definition.id: external_sources[definition.id] is not None for definition in definitions}
+    auto_external_probe_errors: dict[str, str] = {}
+    for definition in definitions:
+        if external_sources[definition.id] != "auto":
+            continue
+        probe_error = external_dependency_probe_error(rt, definition.id)
+        if probe_error is None:
+            continue
+        external_lookup[definition.id] = False
+        auto_external_probe_errors[definition.id] = probe_error
+        rt._emit(
+            "requirements.external.auto_fallback",
+            project=context.name,
+            requirement=definition.id,
+            url=external_dependency_url(rt, definition.id),
+            error=probe_error,
+        )
     enabled_definitions = [
         definition for definition in definitions if enabled_lookup[definition.id] and not external_lookup[definition.id]
     ]
@@ -186,6 +206,8 @@ def start_requirements_for_project(
 
     def emit_requirements_progress() -> None:
         if not enabled_definitions:
+            return
+        if route is None:
             return
         progress_project_flag = route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG) if route is not None else None
         progress_project = str(progress_project_flag).strip() if progress_project_flag is not None else context.name
@@ -367,6 +389,14 @@ def start_requirements_for_project(
                     "external": True,
                     "runtime_status": "healthy" if outcome.success else "unreachable",
                     "external_url": external_dependency_url(rt, definition.id),
+                }
+            )
+        elif definition.id in auto_external_probe_errors:
+            components[definition.id].update(
+                {
+                    "external_auto_fallback": True,
+                    "external_auto_fallback_url": external_dependency_url(rt, definition.id),
+                    "external_auto_fallback_error": auto_external_probe_errors[definition.id],
                 }
             )
     return RequirementsResult(

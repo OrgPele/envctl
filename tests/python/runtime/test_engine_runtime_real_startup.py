@@ -2640,6 +2640,58 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIn("external probe failed", str(redis["error"]))
             self.assertEqual(requirements.health, "degraded")
 
+    def test_main_auto_external_redis_probe_failure_falls_back_to_managed_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            closed_port = int(sock.getsockname()[1])
+            sock.close()
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCY_PROBE_TIMEOUT": "0.1",
+                    "REDIS_URL": f"redis://127.0.0.1:{closed_port}/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+            managed_starts: list[str] = []
+
+            def fake_managed_start(context, component, plan, reserve_next, **_kwargs):  # noqa: ANN001
+                managed_starts.append(component)
+                return RequirementOutcome(
+                    service_name=component,
+                    success=True,
+                    requested_port=plan.requested,
+                    final_port=reserve_next(plan.final),
+                    retries=0,
+                )
+
+            engine._start_requirement_component = fake_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertEqual(managed_starts, ["redis"])
+            self.assertTrue(redis["enabled"])
+            self.assertTrue(redis["success"])
+            self.assertFalse(bool(redis.get("external")))
+            self.assertNotEqual(redis.get("runtime_status"), "unreachable")
+            self.assertEqual(requirements.health, "healthy")
+
     def test_external_supabase_requirement_reports_missing_required_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

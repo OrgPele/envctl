@@ -17,26 +17,36 @@ _MODE_EXTERNAL_VALUES = {"external", "externally-managed", "remote", "native-ext
 
 
 def dependency_external_mode(runtime: Any, dependency_id: str, *, mode: str | None = None, route: Any = None) -> bool:
+    return dependency_external_mode_source(runtime, dependency_id, mode=mode, route=route) is not None
+
+
+def dependency_external_mode_source(
+    runtime: Any,
+    dependency_id: str,
+    *,
+    mode: str | None = None,
+    route: Any = None,
+) -> str | None:
     dependency = _normalize_dependency_id(dependency_id)
     if not dependency:
-        return False
+        return None
     if _route_forces_managed_dependencies(route):
-        return False
+        return None
     global_mode = _raw(runtime, "ENVCTL_EXTERNAL_DEPENDENCIES_MODE") or _raw(runtime, "ENVCTL_DEPENDENCIES_MODE")
     if global_mode is not None and str(global_mode).strip().lower() == "managed":
-        return False
+        return None
     explicit_mode = _raw(runtime, f"ENVCTL_DEPENDENCY_{dependency.upper()}_MODE")
     if explicit_mode is None:
         explicit_mode = _raw(runtime, f"ENVCTL_{dependency.upper()}_MODE")
     if explicit_mode is not None:
-        return str(explicit_mode).strip().lower() in _MODE_EXTERNAL_VALUES
+        return "explicit" if str(explicit_mode).strip().lower() in _MODE_EXTERNAL_VALUES else None
     explicit_bool = _raw(runtime, f"ENVCTL_{dependency.upper()}_EXTERNAL")
     if explicit_bool is not None:
-        return parse_bool(explicit_bool, False)
+        return "explicit" if parse_bool(explicit_bool, False) else None
     external_list = _raw(runtime, "ENVCTL_EXTERNAL_DEPENDENCIES")
     if dependency in _parse_dependency_list(external_list):
-        return True
-    return _dependency_auto_external_mode(runtime, dependency, mode=mode)
+        return "explicit"
+    return "auto" if _dependency_auto_external_mode(runtime, dependency, mode=mode) else None
 
 
 def _dependency_auto_external_mode(runtime: Any, dependency_id: str, *, mode: str | None) -> bool:
