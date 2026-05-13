@@ -39,6 +39,18 @@ def test_release_workflow_handles_restrictive_actions_pr_policy_after_branch_pus
     assert "configure ENVCTL_RELEASE_PR_TOKEN" in workflow
 
 
+def test_release_workflow_prefers_checked_in_release_notes_file_before_generated_notes() -> None:
+    workflow = _release_workflow()
+
+    release_notes_index = workflow.index('release_notes="docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"')
+    copy_index = workflow.index('cp "$release_notes" .release-tmp/notes-body.md')
+    api_index = workflow.index("releases/generate-notes")
+    assert release_notes_index < copy_index < api_index
+    assert 'if [ -s "$release_notes" ]; then' in workflow
+    assert "--- checked-in release notes preview ---" in workflow
+    assert "--- generated notes preview ---" in workflow
+
+
 def test_release_workflow_publishes_only_after_release_pr_merge() -> None:
     workflow = _release_workflow()
 
