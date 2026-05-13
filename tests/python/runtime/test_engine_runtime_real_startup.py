@@ -23,6 +23,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
     PlanAgentLaunchResult,
 )
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.test_output.parser_base import strip_ansi
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
@@ -2324,6 +2325,97 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(supabase["runtime_status"], "external")
             self.assertEqual(supabase["external_url"], "https://supabase.example.test")
             self.assertEqual(requirements.health, "healthy")
+
+    def test_main_supabase_env_auto_uses_external_requirement_without_global_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete external supabase env must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "external")
+
+    def test_trees_supabase_env_defaults_to_managed_requirement_without_external_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "TREES_POSTGRES_ENABLE": "false",
+                    "TREES_REDIS_ENABLE": "false",
+                    "TREES_N8N_ENABLE": "false",
+                    "TREES_SUPABASE_ENABLE": "true",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = SimpleNamespace(
+                name="feature-a-1",
+                root=repo / "trees" / "feature-a" / "1",
+                ports=engine.port_planner.plan_project_stack("feature-a-1", index=0),
+            )
+            context.root.mkdir(parents=True, exist_ok=True)
+            managed_starts: list[str] = []
+
+            def fake_managed_start(context, component, plan, reserve_next, **_kwargs):  # noqa: ANN001
+                managed_starts.append(component)
+                return RequirementOutcome(
+                    service_name=component,
+                    success=True,
+                    requested_port=plan.requested,
+                    final_port=reserve_next(plan.final),
+                    retries=0,
+                )
+
+            engine._start_requirement_component = fake_managed_start  # type: ignore[method-assign]
+
+            route = parse_route(["--tree", "--isolated-deps"], env={})
+            requirements = engine._start_requirements_for_project(context, mode="trees", route=route)
+
+            supabase = requirements.component("supabase")
+            self.assertEqual(managed_starts, ["supabase"])
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertFalse(bool(supabase.get("external")))
+            self.assertNotEqual(supabase.get("runtime_status"), "external")
 
     def test_external_redis_requirement_skips_managed_start_and_records_external_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -12,7 +12,7 @@ _DEPENDENCY_IDS = {"postgres", "redis", "supabase", "n8n"}
 _MODE_EXTERNAL_VALUES = {"external", "externally-managed", "remote", "native-external"}
 
 
-def dependency_external_mode(runtime: Any, dependency_id: str) -> bool:
+def dependency_external_mode(runtime: Any, dependency_id: str, *, mode: str | None = None) -> bool:
     dependency = _normalize_dependency_id(dependency_id)
     if not dependency:
         return False
@@ -25,7 +25,15 @@ def dependency_external_mode(runtime: Any, dependency_id: str) -> bool:
     if explicit_bool is not None:
         return parse_bool(explicit_bool, False)
     external_list = _raw(runtime, "ENVCTL_EXTERNAL_DEPENDENCIES")
-    return dependency in _parse_dependency_list(external_list)
+    if dependency in _parse_dependency_list(external_list):
+        return True
+    return _dependency_auto_external_mode(runtime, dependency, mode=mode)
+
+
+def _dependency_auto_external_mode(runtime: Any, dependency_id: str, *, mode: str | None) -> bool:
+    if str(mode or "").strip().lower() != "main":
+        return False
+    return external_dependency_validation_error(runtime, dependency_id) is None
 
 
 def external_dependency_outcome(

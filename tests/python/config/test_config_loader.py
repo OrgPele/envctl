@@ -199,6 +199,8 @@ class ConfigLoaderTests(unittest.TestCase):
         example = (REPO_ROOT / "docs" / "reference" / ".envctl.example").read_text(encoding="utf-8")
 
         self.assertIn("ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n", example)
+        self.assertIn("Main mode auto-uses an external dependency", example)
+        self.assertIn("Trees mode defaults to managed/internal dependencies", example)
         self.assertIn("ENVCTL_DEPENDENCY_SUPABASE_MODE=external", example)
         self.assertIn("SUPABASE_URL=http://localhost:54321", example)
         self.assertIn("SUPABASE_DB_PASSWORD=supabase-db-password", example)
@@ -210,6 +212,8 @@ class ConfigLoaderTests(unittest.TestCase):
         self.assertIn("N8N_URL=http://localhost:5678", example)
 
         generated = render_default_dependency_env_sections()
+        self.assertIn("Main mode auto-uses an external dependency", generated)
+        self.assertIn("Trees mode defaults to managed/internal dependencies", generated)
         self.assertIn(f"SUPABASE_ANON_KEY={default_supabase_anon_key()}", generated)
         self.assertIn(f"SUPABASE_SERVICE_ROLE_KEY={default_supabase_service_role_key()}", generated)
 

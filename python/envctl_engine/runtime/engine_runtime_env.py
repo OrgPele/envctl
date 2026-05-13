@@ -65,7 +65,7 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         )
         effective_main = effective_main_requirement_flags(runtime, route)
         for dependency_id in ("postgres", "redis", "supabase", "n8n"):
-            if dependency_external_mode(runtime, dependency_id):
+            if dependency_external_mode(runtime, dependency_id, mode="main"):
                 effective_main[dependency_id] = True
         postgres_enabled = effective_main["postgres"]
         supabase_enabled = effective_main["supabase"]
@@ -100,7 +100,7 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
         external_enabled = {
             dependency_id
             for dependency_id in ("postgres", "redis", "supabase", "n8n")
-            if dependency_external_mode(runtime, dependency_id)
+            if dependency_external_mode(runtime, dependency_id, mode=normalized_mode)
         }
         if "postgres" in external_enabled:
             postgres_enabled = True
@@ -123,8 +123,8 @@ def validate_mode_toggles(runtime: Any, mode: str, *, route: Route | None = None
     if (
         postgres_enabled
         and supabase_enabled
-        and not dependency_external_mode(runtime, "postgres")
-        and not dependency_external_mode(runtime, "supabase")
+        and not dependency_external_mode(runtime, "postgres", mode=normalized_mode)
+        and not dependency_external_mode(runtime, "supabase", mode=normalized_mode)
     ):
         raise RuntimeError(
             f"Invalid {normalized_mode} requirements configuration: postgres and supabase cannot both be enabled."
@@ -181,6 +181,7 @@ def service_enabled_for_mode(runtime: Any, mode: str, service_name: str) -> bool
 
 def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
     normalized_mode = str(mode).strip().lower()
+    requested_mode = normalized_mode
     normalized_name = str(requirement_name).strip().lower()
     if route is not None and route.flags.get("launch_dependencies") is False:
         return False
@@ -190,7 +191,7 @@ def requirement_enabled_for_mode(runtime: Any, mode: str, requirement_name: str,
         normalized_mode
     ):
         return False
-    if dependency_external_mode(runtime, normalized_name):
+    if dependency_external_mode(runtime, normalized_name, mode=requested_mode):
         return True
     if normalized_mode == "main":
         effective_main = effective_main_requirement_flags(runtime, route)

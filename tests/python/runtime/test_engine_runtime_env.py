@@ -8,6 +8,7 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
+from envctl_engine.requirements.external import dependency_external_mode  # noqa: E402
 from envctl_engine.shared.dependency_compose_assets import (  # noqa: E402
     DEFAULT_SUPABASE_JWT_SECRET,
     default_supabase_anon_key,
@@ -307,6 +308,52 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         )
 
         self.assertTrue(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
+    def test_main_mode_auto_external_dependency_when_complete_local_env_exists(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "SUPABASE_URL": "https://supabase.example.test",
+                "SUPABASE_ANON_KEY": "external-anon",
+                "REDIS_URL": "redis://cache.example.test:6382/0",
+            },
+            config=SimpleNamespace(
+                raw={},
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+
+        self.assertTrue(dependency_external_mode(runtime, "supabase", mode="main"))
+        self.assertTrue(dependency_external_mode(runtime, "redis", mode="main"))
+        self.assertFalse(dependency_external_mode(runtime, "supabase", mode="trees"))
+        self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "supabase"))
+        self.assertTrue(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
+    def test_main_mode_does_not_auto_external_supabase_for_partial_env(self) -> None:
+        runtime = SimpleNamespace(
+            env={"SUPABASE_URL": "https://supabase.example.test"},
+            config=SimpleNamespace(
+                raw={},
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+
+        self.assertFalse(dependency_external_mode(runtime, "supabase", mode="main"))
+        self.assertFalse(requirement_enabled_for_mode(runtime, "main", "supabase"))
+
+    def test_explicit_external_dependency_mode_still_applies_to_trees(self) -> None:
+        runtime = SimpleNamespace(
+            env={"ENVCTL_DEPENDENCY_REDIS_MODE": "external"},
+            config=SimpleNamespace(
+                raw={},
+                startup_enabled_for_mode=lambda _mode: True,
+                requirement_enabled_for_mode=lambda _mode, _name: False,
+            ),
+        )
+
+        self.assertTrue(dependency_external_mode(runtime, "redis", mode="trees"))
+        self.assertTrue(requirement_enabled_for_mode(runtime, "trees", "redis"))
 
     def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
         runtime = SimpleNamespace(
