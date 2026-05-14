@@ -461,11 +461,18 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `MAIN_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Main mode. Compatibility alias: `SUPABASE_MAIN_ENABLE`. |
 | `TREES_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Trees mode. |
 | `SUPABASE_PUBLIC_PORT` | `54321` | Public Supabase API/Kong port used for `ENVCTL_SOURCE_SUPABASE_URL`. |
+| `ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS` | `120.0` | Timeout for managed Supabase `docker compose up -d` handoff before timeout recovery checks service/container state. |
+| `ENVCTL_SUPABASE_DB_PROBE_ATTEMPTS` | `2` | Initial managed Supabase DB listener probe attempts after DB compose startup. |
+| `ENVCTL_SUPABASE_DB_PROBE_TIMEOUT_SECONDS` | `10.0` | Per-attempt managed Supabase DB listener probe timeout; non-positive values fall back to 30 seconds. |
+| `ENVCTL_SUPABASE_DB_RESTART_ON_PROBE_FAILURE` | `true` | Restart only the Supabase DB service when the initial DB listener probe exhausts. |
+| `ENVCTL_SUPABASE_DB_RESTART_PROBE_ATTEMPTS` | same as `ENVCTL_SUPABASE_DB_PROBE_ATTEMPTS` | DB listener probe attempts after scoped DB restart. |
+| `ENVCTL_SUPABASE_DB_RECREATE_ON_PROBE_FAILURE` | `true` | Stop/remove/recreate only the Supabase DB service when restart recovery exhausts. |
+| `ENVCTL_SUPABASE_DB_RECREATE_PROBE_ATTEMPTS` | same as restart probe attempts | DB listener probe attempts after scoped DB recreate. |
 | `ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS` | `5.0` | Per-phase timeout for managed Supabase Auth/Kong `/auth/v1/health` readiness probes. |
 | `ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE` | `true` | Restart only Auth/Kong after DB is healthy but the public API health probe fails. |
-| `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped restart; clamped to at least 1. |
+| `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS` | `2` | Number of Auth/Kong health probe windows after scoped restart; clamped to at least 1. |
 | `ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE` | `true` | Stop/remove/recreate only Auth/Kong after restart recovery is exhausted. Does not remove the Supabase DB service or volumes. |
-| `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped recreate; clamped to at least 1. |
+| `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS` | `3` | Number of Auth/Kong health probe windows after scoped recreate; clamped to at least 1. |
 | `ENVCTL_SUPABASE_NETWORK_RECOVERY_ALLOW_GLOBAL_EMPTY_CLEANUP` | `false` | Allow stale missing-network recovery to fall back from current-project cleanup to broader empty `envctl-supabase-*` network cleanup. Address-pool exhaustion recovery still uses the existing empty envctl Supabase network cleanup path. |
 | `ENVCTL_SUPABASE_AUTH_USERS` | unset | Comma-separated managed Supabase Auth user slugs for local/E2E provisioning. |
 | `ENVCTL_SUPABASE_USER_<SUFFIX>_EMAIL` | unset | Required email for an enabled managed Auth user. |
