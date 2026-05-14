@@ -125,7 +125,9 @@ def _text_contains_path_fragment(text: str, candidate: str) -> bool:
         before = text[index - 1] if index > 0 else ""
         after_index = index + len(candidate)
         after = text[after_index] if after_index < len(text) else ""
-        if _is_path_boundary(before) and (_is_path_boundary(after) or after == "." or text.startswith("...", after_index)):
+        has_start_boundary = _is_path_boundary(before)
+        has_end_boundary = _is_path_boundary(after) or after == "." or text.startswith("...", after_index)
+        if has_start_boundary and has_end_boundary:
             return True
         start = index + 1
 
