@@ -72,7 +72,11 @@ def _spawn_omx_session_for_worktree(
             stdout, stderr = process.communicate()
         except Exception:
             stdout, stderr = "", ""
-        error = _launch._omx_spawn_failure_text(returncode=getattr(process, "returncode", None), stdout=stdout, stderr=stderr)
+        error = _launch._omx_spawn_failure_text(
+            returncode=getattr(process, "returncode", None),
+            stdout=stdout,
+            stderr=stderr,
+        )
         runtime._emit(
             "planning.agent_launch.omx_spawn.failed",
             **spawn_payload,

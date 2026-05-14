@@ -8,14 +8,12 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
-from envctl_engine.debug.debug_utils import scrub_sensitive_text
 from envctl_engine.runtime.codex_tmux_support import (
     _attach_interactive,
     _completed_process_error_text as _tmux_completed_process_error_text,
@@ -29,6 +27,76 @@ from envctl_engine.runtime.prompt_install_support import (
 )
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
+from envctl_engine.planning.plan_agent.models import (
+    AgentTerminalLaunchResult,
+    AiCliReadyResult,
+    CreatedPlanWorktree,
+    PlanAgentAttachTarget,
+    PlanAgentAttachValidation,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+    PlanSelectionResult,
+    PlanWorktreeSyncResult,
+    ReviewAgentLaunchReadiness,
+    _OmxSessionRecord,
+    _OmxSpawnProcessRecord,
+    _PlanAgentWorkflow,
+    _PlanAgentWorkflowStep,
+    _QueueFailure,
+    _WorkspaceLaunchTarget,
+)
+from envctl_engine.planning.plan_agent.workflow import _build_plan_agent_workflow
+from envctl_engine.planning.plan_agent.terminal_screen import (
+    _format_ai_cli_ready_failure,
+    _normalized_screen_text,
+    _post_submit_screen_looks_accepted,
+    _prompt_picker_screen_looks_ready,
+    _prompt_submit_screen_looks_ready,
+    _screen_excerpt,
+    _screen_looks_active,
+    _screen_looks_ready,
+    _screen_tail_text,
+    _strip_ansi_sequences,
+)
+from envctl_engine.planning.plan_agent.tmux_transport import _ensure_tmux_window
+from envctl_engine.planning.plan_agent.cmux_transport import _prepare_surface
+from envctl_engine.planning.plan_agent.omx_transport import _spawn_omx_session_for_worktree
+
+__all__ = [
+    "AgentTerminalLaunchResult",
+    "AiCliReadyResult",
+    "CreatedPlanWorktree",
+    "PlanAgentAttachTarget",
+    "PlanAgentAttachValidation",
+    "PlanAgentLaunchConfig",
+    "PlanAgentLaunchOutcome",
+    "PlanAgentLaunchResult",
+    "PlanSelectionResult",
+    "PlanWorktreeSyncResult",
+    "ReviewAgentLaunchReadiness",
+    "_OmxSessionRecord",
+    "_OmxSpawnProcessRecord",
+    "_PlanAgentWorkflow",
+    "_PlanAgentWorkflowStep",
+    "_QueueFailure",
+    "_WorkspaceLaunchTarget",
+    "_build_plan_agent_workflow",
+    "_ensure_tmux_window",
+    "_format_ai_cli_ready_failure",
+    "_normalized_screen_text",
+    "_post_submit_screen_looks_accepted",
+    "_prepare_surface",
+    "_prompt_picker_screen_looks_ready",
+    "_prompt_submit_screen_looks_ready",
+    "_screen_excerpt",
+    "_screen_looks_active",
+    "_screen_looks_ready",
+    "_screen_tail_text",
+    "_spawn_omx_session_for_worktree",
+    "_strip_ansi_sequences",
+]
+
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
 _CODEX_BYPASS_FLAGS = "--dangerously-bypass-approvals-and-sandbox"
@@ -113,41 +181,6 @@ _AI_CLI_SHELL_FAILURE_MARKERS = (
 )
 
 
-from envctl_engine.planning.plan_agent.models import (
-    AgentTerminalLaunchResult,
-    AiCliReadyResult,
-    CreatedPlanWorktree,
-    PlanAgentAttachTarget,
-    PlanAgentAttachValidation,
-    PlanAgentLaunchConfig,
-    PlanAgentLaunchOutcome,
-    PlanAgentLaunchResult,
-    PlanSelectionResult,
-    PlanWorktreeSyncResult,
-    ReviewAgentLaunchReadiness,
-    _OmxSessionRecord,
-    _OmxSpawnProcessRecord,
-    _PlanAgentWorkflow,
-    _PlanAgentWorkflowStep,
-    _QueueFailure,
-    _WorkspaceLaunchTarget,
-)
-from envctl_engine.planning.plan_agent.workflow import _build_plan_agent_workflow
-from envctl_engine.planning.plan_agent.terminal_screen import (
-    _format_ai_cli_ready_failure,
-    _normalized_screen_text,
-    _post_submit_screen_looks_accepted,
-    _prompt_picker_screen_looks_ready,
-    _prompt_submit_screen_looks_ready,
-    _screen_excerpt,
-    _screen_looks_active,
-    _screen_looks_ready,
-    _screen_tail_text,
-    _strip_ansi_sequences,
-)
-from envctl_engine.planning.plan_agent.tmux_transport import _ensure_tmux_window
-from envctl_engine.planning.plan_agent.cmux_transport import _prepare_surface
-from envctl_engine.planning.plan_agent.omx_transport import _spawn_omx_session_for_worktree
 def _finalization_instruction_text() -> str:
     return _load_plan_agent_followup_prompt(_FINALIZATION_INSTRUCTION_TEMPLATE)
 
@@ -1784,7 +1817,11 @@ def _run_tmux_existing_session_workflow(
     if submit_error is not None:
         return submit_error
     queued_steps = workflow.steps[1:]
-    if queued_steps and launch_config.cli == "codex" and (launch_config.transport != "omx" or workflow.codex_cycles > 0):
+    if (
+        queued_steps
+        and launch_config.cli == "codex"
+        and (launch_config.transport != "omx" or workflow.codex_cycles > 0)
+    ):
         queue_error_reason = _queue_tmux_codex_workflow_steps(
             runtime,
             session_name=session_name,
@@ -2389,6 +2426,31 @@ def _submit_tmux_prompt_workflow_step(
     if not accepted.ready:
         return _format_ai_cli_ready_failure(accepted)
     return None
+
+
+def _wait_for_tmux_prompt_accepted(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    prompt_text: str,
+) -> AiCliReadyResult:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli != "opencode":
+        return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
+    while time.monotonic() < deadline:
+        last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
+            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return AiCliReadyResult(
+        ready=False,
+        reason="opencode_prompt_accept_timeout",
+        screen_excerpt=_screen_excerpt(last_screen),
+    )
 
 
 def _run_tmux_worktree_bootstrap(
