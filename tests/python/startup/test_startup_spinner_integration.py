@@ -21,6 +21,7 @@ from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state.models import PortPlan
+from envctl_engine.state.runtime_map import build_runtime_map
 
 
 class _TtyStringIO(StringIO):
@@ -834,7 +835,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
-            engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
+            engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
                 lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
             )
@@ -887,6 +888,506 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(len(merge_events), 1)
             self.assertEqual(merge_events[0]["preserved_services"], ["Main Frontend"])
             self.assertEqual(merge_events[0]["replaced_services"], ["Main Backend"])
+
+    def test_interactive_main_restart_reuses_previous_backend_and_frontend_ports_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                    "ENVCTL_PORT_AVAILABILITY_MODE": "lock_only",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_BACKEND_START_CMD": "echo backend",
+                    "ENVCTL_FRONTEND_START_CMD": "echo frontend",
+                    "ENVCTL_UI_SPINNER_MODE": "off",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8000, owner="Main:backend"), 8000)
+            self.assertEqual(engine.port_planner.reserve_next(9000, owner="Main:frontend"), 9000)
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo / "backend"),
+                        requested_port=8000,
+                        actual_port=8000,
+                        pid=11111,
+                        status="running",
+                    ),
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo / "frontend"),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=22222,
+                        status="running",
+                        listener_pids=[22223],
+                    ),
+                },
+                requirements={
+                    "Main": RequirementsResult(
+                        project="Main",
+                        db={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False},
+                        redis={"requested": 6379, "final": 6379, "retries": 0, "success": True, "enabled": False},
+                        n8n={"requested": 5678, "final": 5678, "retries": 0, "success": True, "enabled": False},
+                        supabase={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False},
+                        health="healthy",
+                    )
+                },
+            )
+            captured_state: dict[str, RunState] = {}
+            captured_env: dict[str, str] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or
+                    captured_env.update(
+                        engine._project_service_env(
+                            context,
+                            requirements=previous_state.requirements["Main"],
+                            route=route,
+                            service_name="frontend",
+                        )
+                    )
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Backend": ServiceRecord(
+                                name="Main Backend",
+                                type="backend",
+                                cwd=str(repo / "backend"),
+                                requested_port=context.ports["backend"].requested,
+                                actual_port=context.ports["backend"].final,
+                                pid=33333,
+                                status="running",
+                            ),
+                            "Main Frontend": ServiceRecord(
+                                name="Main Frontend",
+                                type="frontend",
+                                cwd=str(repo / "frontend"),
+                                requested_port=context.ports["frontend"].requested,
+                                actual_port=context.ports["frontend"].final,
+                                pid=44444,
+                                status="running",
+                            ),
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Backend", "Main Frontend"],
+                    "restart_service_types": ["backend", "frontend"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Backend"].actual_port, 8000)
+            self.assertEqual(run_state.services["Main Frontend"].actual_port, 9000)
+            self.assertEqual(captured_env.get("BACKEND_URL"), "http://localhost:8000")
+            runtime_map = build_runtime_map(run_state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8000")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            rebounds = [
+                event
+                for event in engine.events
+                if event.get("event") == "port.rebound" and event.get("service") in {"backend", "frontend"}
+            ]
+            self.assertEqual(rebounds, [])
+
+    def test_interactive_main_restart_rebounds_only_when_previous_port_still_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_BACKEND_START_CMD": "echo backend",
+                    "ENVCTL_FRONTEND_START_CMD": "echo frontend",
+                    "ENVCTL_UI_SPINNER_MODE": "off",
+                },
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8000, owner="Main:backend"), 8000)
+            self.assertEqual(engine.port_planner.reserve_next(9000, owner="Main:frontend"), 9000)
+            engine.port_planner.availability_checker = lambda port: port != 8000
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo / "backend"),
+                        requested_port=8000,
+                        actual_port=8000,
+                        pid=11111,
+                        status="running",
+                    ),
+                    "Main Frontend": ServiceRecord(
+                        name="Main Frontend",
+                        type="frontend",
+                        cwd=str(repo / "frontend"),
+                        requested_port=9000,
+                        actual_port=9000,
+                        pid=22222,
+                        status="running",
+                    ),
+                },
+                requirements={
+                    "Main": RequirementsResult(
+                        project="Main",
+                        db={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False},
+                        redis={"requested": 6379, "final": 6379, "retries": 0, "success": True, "enabled": False},
+                        n8n={"requested": 5678, "final": 5678, "retries": 0, "success": True, "enabled": False},
+                        supabase={"requested": 5432, "final": 5432, "retries": 0, "success": True, "enabled": False},
+                        health="healthy",
+                    )
+                },
+            )
+            captured_state: dict[str, RunState] = {}
+            captured_env: dict[str, str] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or
+                    captured_env.update(
+                        engine._project_service_env(
+                            context,
+                            requirements=previous_state.requirements["Main"],
+                            route=route,
+                            service_name="frontend",
+                        )
+                    )
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Backend": ServiceRecord(
+                                name="Main Backend",
+                                type="backend",
+                                cwd=str(repo / "backend"),
+                                requested_port=context.ports["backend"].requested,
+                                actual_port=context.ports["backend"].final,
+                                pid=33333,
+                                status="running",
+                            ),
+                            "Main Frontend": ServiceRecord(
+                                name="Main Frontend",
+                                type="frontend",
+                                cwd=str(repo / "frontend"),
+                                requested_port=context.ports["frontend"].requested,
+                                actual_port=context.ports["frontend"].final,
+                                pid=44444,
+                                status="running",
+                            ),
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Backend", "Main Frontend"],
+                    "restart_service_types": ["backend", "frontend"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            with patch("sys.stdout", new_callable=StringIO) as stdout:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0, [event for event in engine.events if event.get("event") == "startup.failed"])
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Backend"].actual_port, 8001)
+            self.assertEqual(run_state.services["Main Frontend"].actual_port, 9000)
+            self.assertEqual(captured_env.get("BACKEND_URL"), "http://localhost:8001")
+            runtime_map = build_runtime_map(run_state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8001")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            backend_rebounds = [
+                event
+                for event in engine.events
+                if event.get("event") == "port.rebound" and event.get("service") == "backend"
+            ]
+            self.assertEqual(len(backend_rebounds), 1)
+            self.assertEqual(backend_rebounds[0].get("project"), "Main")
+            self.assertEqual(backend_rebounds[0].get("restart_preferred_port"), 8000)
+            self.assertEqual(backend_rebounds[0].get("port"), 8001)
+            self.assertEqual(backend_rebounds[0].get("rebound_reason"), "restart_preferred_port_unavailable")
+            self.assertTrue(backend_rebounds[0].get("interactive_command"))
+            frontend_rebounds = [
+                event
+                for event in engine.events
+                if event.get("event") == "port.rebound" and event.get("service") == "frontend"
+            ]
+            self.assertEqual(frontend_rebounds, [])
+            self.assertIn(
+                "Port changed: Main Backend 8000 -> 8001 (previous port still in use)",
+                strip_ansi(stdout.getvalue()),
+            )
+
+    def test_interactive_main_restart_reuses_selected_additional_service_port_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "voice-runtime").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                    "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_MAIN": "true",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "python -m voice --port {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_SPINNER_MODE": "off"})
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8010, owner="Main:voice-runtime"), 8010)
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Voice Runtime": ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(repo / "voice-runtime"),
+                        requested_port=8010,
+                        actual_port=8010,
+                        pid=22222,
+                        status="running",
+                        project="Main",
+                        service_slug="voice-runtime",
+                    ),
+                },
+                requirements={"Main": RequirementsResult(project="Main", health="healthy")},
+            )
+            captured_state: dict[str, RunState] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Voice Runtime": ServiceRecord(
+                                name="Main Voice Runtime",
+                                type="voice-runtime",
+                                cwd=str(repo / "voice-runtime"),
+                                requested_port=context.ports["voice-runtime"].requested,
+                                actual_port=context.ports["voice-runtime"].final,
+                                pid=33333,
+                                status="running",
+                                project="Main",
+                                service_slug="voice-runtime",
+                            )
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Voice Runtime"],
+                    "restart_service_types": ["voice-runtime"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Voice Runtime"].actual_port, 8010)
+            self.assertEqual(run_state.services["Main Voice Runtime"].requested_port, 8010)
+            self.assertEqual(run_state.services["Main Voice Runtime"].service_slug, "voice-runtime")
+            self.assertEqual(
+                [event for event in engine.events if event.get("event") == "port.rebound"],
+                [],
+            )
+
+    def test_interactive_main_restart_rebounds_selected_additional_service_when_prior_port_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "voice-runtime").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                    "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_MAIN": "true",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "python -m voice --port {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_SPINNER_MODE": "off"})
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8010, owner="Main:voice-runtime"), 8010)
+            engine.port_planner.availability_checker = lambda port: port != 8010
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Voice Runtime": ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(repo / "voice-runtime"),
+                        requested_port=8010,
+                        actual_port=8010,
+                        pid=22222,
+                        status="running",
+                        project="Main",
+                        service_slug="voice-runtime",
+                    ),
+                },
+                requirements={"Main": RequirementsResult(project="Main", health="healthy")},
+            )
+            captured_state: dict[str, RunState] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Voice Runtime": ServiceRecord(
+                                name="Main Voice Runtime",
+                                type="voice-runtime",
+                                cwd=str(repo / "voice-runtime"),
+                                requested_port=context.ports["voice-runtime"].requested,
+                                actual_port=context.ports["voice-runtime"].final,
+                                pid=33333,
+                                status="running",
+                                project="Main",
+                                service_slug="voice-runtime",
+                            )
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Voice Runtime"],
+                    "restart_service_types": ["voice-runtime"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            with patch("sys.stdout", new_callable=StringIO) as stdout:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Voice Runtime"].actual_port, 8011)
+            rebound_events = [event for event in engine.events if event.get("event") == "port.rebound"]
+            self.assertEqual(len(rebound_events), 1)
+            self.assertEqual(rebound_events[0].get("service"), "voice-runtime")
+            self.assertEqual(rebound_events[0].get("restart_preferred_port"), 8010)
+            self.assertEqual(rebound_events[0].get("restart_conflict_detail"), "listener")
+            self.assertIn(
+                "Port changed: Main Voice Runtime 8010 -> 8011 (previous port still in use)",
+                strip_ansi(stdout.getvalue()),
+            )
 
     def test_start_fingerprint_mismatch_replaces_existing_project_services_before_new_ports_are_reserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1076,7 +1577,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
-            engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
+            engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
                 lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
             )
@@ -1213,7 +1714,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
-            engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
+            engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
                 lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
             )
@@ -1340,7 +1841,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
-            engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
+            engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
 
             def start_project_context(
                 *,
@@ -1467,7 +1968,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
-            engine._reserve_project_ports = lambda _context: None  # type: ignore[method-assign]
+            engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._resume = lambda route: self.fail("startup should start stopped services, not auto-resume")  # type: ignore[method-assign]
 
             def start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
