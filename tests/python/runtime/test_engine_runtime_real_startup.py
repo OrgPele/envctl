@@ -1342,7 +1342,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertNotIn("N8N_URL", backend_start_env)
             self.assertEqual(backend_start_env.get("SUPABASE_URL"), "http://localhost:54321")
 
-    def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
+    def test_backend_env_file_does_not_persist_projected_managed_dependency_urls(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1377,13 +1377,32 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             content = env_file.read_text(encoding="utf-8")
             self.assertIn("KEEP_ME=1", content)
-            self.assertIn(
-                f"DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db",
-                content,
-            )
-            self.assertIn(
+            self.assertIn("DATABASE_URL=postgresql://legacy", content)
+            self.assertIn("REDIS_URL=redis://legacy", content)
+            self.assertNotIn(f"@localhost:{planned_db_port}/svc_db", content)
+            self.assertNotIn(
                 f"REDIS_URL=redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0",
                 content,
+            )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL")
+                    == f"postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db"
+                    for env in backend_start_envs
+                )
+            )
+            self.assertTrue(
+                any(
+                    env.get("REDIS_URL")
+                    == f"redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0"
+                    for env in backend_start_envs
+                )
             )
 
     def test_backend_env_file_writeback_removes_stale_db_alias_urls(self) -> None:
@@ -1415,9 +1434,64 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             content = env_file.read_text(encoding="utf-8")
-            self.assertIn("DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:", content)
+            self.assertIn("DATABASE_URL=postgresql://legacy", content)
             self.assertNotIn("SQLALCHEMY_DATABASE_URL=postgresql://legacy", content)
             self.assertNotIn("ASYNC_DATABASE_URL=postgresql://legacy", content)
+
+    def test_main_stale_backend_redis_env_does_not_override_managed_runtime_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text("REDIS_URL=redis://localhost:6518/0\nCUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "MAIN_FRONTEND_ENABLE": "false",
+                        "MAIN_POSTGRES_ENABLE": "false",
+                        "MAIN_REDIS_ENABLE": "true",
+                        "REDIS_PORT": "6603",
+                    },
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="main")
+            self.assertIsNotNone(state)
+            assert state is not None
+            requirements = state.requirements.get("Main")
+            self.assertIsNotNone(requirements)
+            assert requirements is not None
+            redis_component = requirements.component("redis")
+            self.assertFalse(bool(redis_component.get("external")))
+            self.assertEqual(redis_component.get("final"), 6603)
+            self.assertNotEqual(redis_component.get("external_url"), "redis://localhost:6518/0")
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(any(env.get("REDIS_URL") == "redis://localhost:6603/0" for env in backend_start_envs))
+            content = env_file.read_text(encoding="utf-8")
+            self.assertIn("REDIS_URL=redis://localhost:6518/0", content)
+            self.assertNotIn("REDIS_URL=redis://localhost:6603/0", content)
 
     def test_backend_service_start_env_includes_backend_env_file_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -206,7 +206,10 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         state_runtime = self._reuse_runtime(
             state=None,
             enabled_dependencies=("redis",),
-            external_env={"REDIS_URL": "redis://127.0.0.1:6545/0"},
+            external_env={
+                "ENVCTL_DEPENDENCY_REDIS_MODE": "external",
+                "REDIS_URL": "redis://127.0.0.1:6545/0",
+            },
         )
         metadata = startup_support.build_startup_identity_metadata(
             state_runtime,
@@ -242,7 +245,10 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         state_runtime = self._reuse_runtime(
             state=None,
             enabled_dependencies=("redis",),
-            external_env={"REDIS_URL": "redis://127.0.0.1:6545/0"},
+            external_env={
+                "ENVCTL_DEPENDENCY_REDIS_MODE": "external",
+                "REDIS_URL": "redis://127.0.0.1:6545/0",
+            },
         )
         metadata = startup_support.build_startup_identity_metadata(
             state_runtime,
