@@ -445,6 +445,105 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         reserve_project_ports(runtime, context)
         self.assertEqual(events[-1][0], "port.reserved")
 
+    def test_reserve_project_ports_releases_matching_restart_lock_before_reuse(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        released: list[tuple[int, str | None]] = []
+        reserve_calls: list[tuple[int, str]] = []
+        port_plan = PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="restart")
+
+        def release(port: int, owner: str | None = None) -> None:
+            released.append((port, owner))
+
+        def reserve_next(assigned: int, owner: str) -> int:
+            reserve_calls.append((assigned, owner))
+            return assigned
+
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=reserve_next,
+                release=release,
+                max_port=9999,
+                availability_mode="lock",
+                update_final_port=lambda plan, reserved, source: None,
+            ),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _lock_inventory=lambda: [],
+        )
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
+
+        reserve_project_ports(runtime, context)
+
+        self.assertEqual(released, [(8000, "Main:backend")])
+        self.assertEqual(reserve_calls, [(8000, "Main:backend")])
+        self.assertEqual(port_plan.final, 8000)
+        self.assertFalse([event for event, _payload in events if event == "port.rebound"])
+
+    def test_reserve_project_ports_explains_restart_rebound_when_preferred_port_unavailable(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        port_plan = PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="restart")
+
+        def update_final_port(plan: PortPlan, reserved: int, source: str) -> None:
+            plan.final = reserved
+            plan.assigned = reserved
+            plan.source = source
+            plan.retries += 1
+
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=lambda assigned, owner: 8001,
+                release=lambda port, owner=None: None,
+                max_port=9999,
+                availability_mode="socket_bind",
+                update_final_port=update_final_port,
+            ),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _lock_inventory=lambda: ["8000.lock"],
+        )
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
+
+        reserve_project_ports(runtime, context, route=Route(command="start", mode="main", flags={"interactive_command": True}))
+
+        rebound_payloads = [payload for event, payload in events if event == "port.rebound"]
+        self.assertEqual(len(rebound_payloads), 1)
+        self.assertEqual(rebound_payloads[0]["project"], "Main")
+        self.assertEqual(rebound_payloads[0]["service"], "backend")
+        self.assertEqual(rebound_payloads[0]["port"], 8001)
+        self.assertEqual(rebound_payloads[0]["restart_preferred_port"], 8000)
+        self.assertEqual(rebound_payloads[0]["rebound_reason"], "restart_preferred_port_unavailable")
+        self.assertTrue(rebound_payloads[0]["interactive_command"])
+
+    def test_reserve_project_ports_keeps_non_restart_rebound_behavior(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        released: list[int] = []
+        port_plan = PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="env")
+
+        def update_final_port(plan: PortPlan, reserved: int, source: str) -> None:
+            plan.final = reserved
+            plan.assigned = reserved
+            plan.source = source
+            plan.retries += 1
+
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=lambda assigned, owner: 8001,
+                release=lambda port, owner=None: released.append(port),
+                max_port=9999,
+                availability_mode="socket_bind",
+                update_final_port=update_final_port,
+            ),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _lock_inventory=lambda: [],
+        )
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
+
+        reserve_project_ports(runtime, context)
+
+        self.assertEqual(released, [])
+        rebound_payloads = [payload for event, payload in events if event == "port.rebound"]
+        self.assertEqual(len(rebound_payloads), 1)
+        self.assertNotIn("restart_preferred_port", rebound_payloads[0])
+        self.assertEqual(port_plan.final, 8001)
+
 
 if __name__ == "__main__":
     unittest.main()

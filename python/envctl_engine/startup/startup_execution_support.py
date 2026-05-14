@@ -50,7 +50,7 @@ def start_project_context(
 ) -> ProjectStartupResult:
     rt = orchestrator.runtime
     orchestrator._report_progress(route, f"Starting project {context.name}...", project=context.name)
-    rt._reserve_project_ports(context)
+    _reserve_project_ports(rt, context, route=route)
     requirements = _requirements_for_project_context(orchestrator, context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):
         raise RuntimeError(_requirements_failure_message(context.name, requirements))
@@ -96,6 +96,15 @@ def start_project_context(
         services=project_services,
         warnings=list(rt._consume_project_startup_warnings(context.name)),
     )
+
+
+def _reserve_project_ports(rt: Any, context: ProjectContextLike, *, route: Route | None) -> None:
+    try:
+        rt._reserve_project_ports(context, route=route)
+    except TypeError as exc:
+        if "route" not in str(exc):
+            raise
+        rt._reserve_project_ports(context)
 
 
 def _sync_supabase_auth_users_before_services(
@@ -281,7 +290,6 @@ def _load_or_start_shared_main_requirements(
         root=rt.config.execution_root,
         ports=cast(dict[str, PortPlan], cast(Any, rt.port_planner).plan_project_stack("Main", index=0)),
     )
-    rt._reserve_project_ports(main_context)
     shared_route = Route(
         command=route.command,
         mode="main",
@@ -290,6 +298,7 @@ def _load_or_start_shared_main_requirements(
         projects=route.projects,
         flags={key: value for key, value in route.flags.items() if key != "dependency_scope"},
     )
+    _reserve_project_ports(rt, main_context, route=shared_route)
     progress_project_name = str(progress_project or "").strip()
     if progress_project_name:
         shared_route.flags[REQUIREMENTS_PROGRESS_PROJECT_FLAG] = progress_project_name

@@ -183,9 +183,12 @@ def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[...,
     return contexts
 
 
-def reserve_project_ports(runtime: Any, context: object) -> None:
+def reserve_project_ports(runtime: Any, context: object, route: object | None = None) -> None:
     for service_name, plan in context.ports.items():
         owner = f"{context.name}:{service_name}"
+        restart_preferred_port = plan.assigned if getattr(plan, "source", "") == "restart" else None
+        if isinstance(restart_preferred_port, int) and restart_preferred_port > 0:
+            _release_restart_preferred_lock(runtime.port_planner, restart_preferred_port, owner=owner)
         try:
             reserved = runtime.port_planner.reserve_next(plan.assigned, owner=owner)
         except RuntimeError as exc:
@@ -202,8 +205,36 @@ def reserve_project_ports(runtime: Any, context: object) -> None:
             raise
         if reserved != plan.final:
             runtime.port_planner.update_final_port(plan, reserved, source="retry")
-            runtime._emit("port.rebound", project=context.name, service=service_name, port=reserved)
+            payload: dict[str, object] = {
+                "project": context.name,
+                "service": service_name,
+                "port": reserved,
+            }
+            if isinstance(restart_preferred_port, int) and restart_preferred_port > 0:
+                payload.update(
+                    {
+                        "restart_preferred_port": restart_preferred_port,
+                        "rebound_reason": "restart_preferred_port_unavailable",
+                        "availability_mode": runtime.port_planner.availability_mode,
+                        "interactive_command": bool(
+                            getattr(route, "flags", {}).get("interactive_command", False)
+                            if route is not None
+                            else False
+                        ),
+                    }
+                )
+            runtime._emit("port.rebound", **payload)
         else:
             plan.assigned = reserved
             plan.final = reserved
         runtime._emit("port.reserved", project=context.name, service=service_name, port=reserved)
+
+
+def _release_restart_preferred_lock(port_planner: Any, port: int, *, owner: str) -> None:
+    release = getattr(port_planner, "release", None)
+    if not callable(release):
+        return
+    try:
+        release(port, owner=owner)
+    except TypeError:
+        release(port)

@@ -711,8 +711,8 @@ class PythonEngineRuntime:
     def _discover_projects(self, *, mode: str) -> list[ProjectContext]:
         return runtime_discover_projects(self, mode=mode, context_factory=ProjectContext)  # type: ignore[return-value]
 
-    def _reserve_project_ports(self, context: ProjectContext) -> None:
-        runtime_reserve_project_ports(self, context)
+    def _reserve_project_ports(self, context: ProjectContext, route: Route | None = None) -> None:
+        runtime_reserve_project_ports(self, context, route=route)
 
     def _start_requirements_for_project(
         self,

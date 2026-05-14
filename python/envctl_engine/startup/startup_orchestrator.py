@@ -24,7 +24,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
-from envctl_engine.shared.services import service_project_name, service_slug_from_record
+from envctl_engine.shared.services import service_display_name, service_project_name, service_slug_from_record
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import (
@@ -411,6 +411,7 @@ class StartupOrchestrator:
                 if plan is None:
                     continue
                 self.runtime._set_plan_port(plan, port)
+                plan.source = "restart"
 
     def _terminate_restart_orphan_listeners(
         self,
@@ -1587,8 +1588,10 @@ class StartupOrchestrator:
             if session.used_project_spinner_group:
                 pass
             else:
+                self._print_restart_port_rebound_summary(session)
                 rt._print_summary(run_state, session.selected_contexts)
         else:
+            self._print_restart_port_rebound_summary(session)
             rt._emit("ui.status", message="Startup complete; refreshing dashboard...")
         self._emit_snapshot(
             session,
@@ -1608,6 +1611,33 @@ class StartupOrchestrator:
         if rt._should_enter_post_start_interactive(session.effective_route):
             return rt._run_interactive_dashboard_loop(run_state)
         return 0
+
+    def _print_restart_port_rebound_summary(self, session: StartupSession) -> None:
+        route = session.effective_route
+        if session.requested_command != "restart" or not bool(route.flags.get("interactive_command")):
+            return
+        seen: set[tuple[str, str, int, int]] = set()
+        for event in self.runtime.events[session.startup_event_index :]:
+            if event.get("event") != "port.rebound":
+                continue
+            previous = event.get("restart_preferred_port")
+            current = event.get("port")
+            project = str(event.get("project") or "").strip()
+            service = str(event.get("service") or "").strip()
+            if not project or service not in {"backend", "frontend"}:
+                continue
+            if not isinstance(previous, int) or previous <= 0:
+                continue
+            if not isinstance(current, int) or current <= 0 or current == previous:
+                continue
+            key = (project, service, previous, current)
+            if key in seen:
+                continue
+            seen.add(key)
+            print(
+                f"Port changed: {project} {service_display_name(service)} "
+                f"{previous} -> {current} (previous port still in use)"
+            )
 
     def _headless_plan_output_only(self, session: StartupSession) -> bool:
         route = session.effective_route
