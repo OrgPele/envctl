@@ -10,7 +10,7 @@ from typing import Callable
 
 from envctl_engine.runtime.command_router import Route, RouteError, parse_route
 from envctl_engine.config import EngineConfig, discover_local_config_state, load_config
-from envctl_engine.planning.plan_agent_launch_support import plan_agent_launch_prereq_commands
+from envctl_engine.planning.plan_agent.config import plan_agent_launch_prereq_commands
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options

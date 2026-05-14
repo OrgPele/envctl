@@ -16,27 +16,37 @@ from unittest.mock import patch
 
 from envctl_engine.config import load_config
 from envctl_engine.planning import plan_agent_launch_support as launch_support
+from envctl_engine.planning.plan_agent import (
+    cmux_transport,
+    config,
+    omx_transport,
+    recovery,
+    terminal_screen,
+    tmux_session,
+    tmux_transport,
+    workflow,
+)
+from envctl_engine.planning.plan_agent.models import _WorkspaceLaunchTarget
 from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
-_screen_looks_ready = getattr(launch_support, "_screen_looks_ready")
-_prompt_submit_screen_looks_ready = getattr(launch_support, "_prompt_submit_screen_looks_ready")
-_tab_title_for_worktree = getattr(launch_support, "_tab_title_for_worktree")
-_build_plan_agent_workflow = cast(Any, getattr(launch_support, "_build_plan_agent_workflow", None))
-_finalization_instruction_text = cast(Any, getattr(launch_support, "_finalization_instruction_text", None))
-_first_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_first_cycle_completion_instruction_text", None))
-_intermediate_cycle_completion_instruction_text = cast(Any, getattr(launch_support, "_intermediate_cycle_completion_instruction_text", None))
-_browser_e2e_instruction_text = cast(Any, getattr(launch_support, "_browser_e2e_instruction_text", None))
-_pr_review_comments_instruction_text = cast(Any, getattr(launch_support, "_pr_review_comments_instruction_text", None))
-_wait_for_codex_queue_ready = cast(Any, getattr(launch_support, "_wait_for_codex_queue_ready", None))
-_workflow_step_prompt_text = cast(Any, getattr(launch_support, "_workflow_step_prompt_text", None))
-_WorkspaceLaunchTarget = cast(Any, getattr(launch_support, "_WorkspaceLaunchTarget", None))
-_ensure_tmux_window = cast(Any, getattr(launch_support, "_ensure_tmux_window", None))
-_tmux_session_name_for_worktree = cast(Any, getattr(launch_support, "_tmux_session_name_for_worktree", None))
-_run_tmux_worktree_bootstrap = cast(Any, getattr(launch_support, "_run_tmux_worktree_bootstrap", None))
-_wait_for_tmux_cli_ready = cast(Any, getattr(launch_support, "_wait_for_tmux_cli_ready", None))
-_screen_looks_active = cast(Any, getattr(launch_support, "_screen_looks_active", None))
+_screen_looks_ready = terminal_screen._screen_looks_ready
+_prompt_submit_screen_looks_ready = terminal_screen._prompt_submit_screen_looks_ready
+_tab_title_for_worktree = workflow._tab_title_for_worktree
+_build_plan_agent_workflow = cast(Any, workflow._build_plan_agent_workflow)
+_finalization_instruction_text = cast(Any, workflow._finalization_instruction_text)
+_first_cycle_completion_instruction_text = cast(Any, workflow._first_cycle_completion_instruction_text)
+_intermediate_cycle_completion_instruction_text = cast(Any, workflow._intermediate_cycle_completion_instruction_text)
+_browser_e2e_instruction_text = cast(Any, workflow._browser_e2e_instruction_text)
+_pr_review_comments_instruction_text = cast(Any, workflow._pr_review_comments_instruction_text)
+_wait_for_codex_queue_ready = cast(Any, cmux_transport._wait_for_codex_queue_ready)
+_workflow_step_prompt_text = cast(Any, workflow._workflow_step_prompt_text)
+_ensure_tmux_window = cast(Any, tmux_transport._ensure_tmux_window)
+_tmux_session_name_for_worktree = cast(Any, tmux_transport._tmux_session_name_for_worktree)
+_run_tmux_worktree_bootstrap = cast(Any, tmux_transport._run_tmux_worktree_bootstrap)
+_wait_for_tmux_cli_ready = cast(Any, tmux_transport._wait_for_tmux_cli_ready)
+_screen_looks_active = cast(Any, terminal_screen._screen_looks_active)
 
 
 def _launch_config_for_tests(
@@ -152,7 +162,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         return harness
 
     def _expected_omx_root(self, worktree: CreatedPlanWorktree) -> Path:
-        token = launch_support._sanitize_omx_tmux_token(worktree.name)
+        token = omx_transport._sanitize_omx_tmux_token(worktree.name)
         return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
 
     def test_disabled_feature_returns_skipped_without_running_commands(self) -> None:
@@ -335,9 +345,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None) as sleep_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None) as sleep_mock,
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -474,7 +484,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
 
-            prompt_text, error = launch_support._resolve_preset_submission_text(
+            prompt_text, error = workflow._resolve_preset_submission_text(
                 rt,
                 launch_config=launch_config,
                 cli="opencode",
@@ -646,13 +656,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         return None
 
                     with (
-                        patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value=None),
-                        patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
-                        patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
-                        patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_codex_goal", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
                     ):
-                        error = launch_support._run_tmux_existing_session_workflow(
+                        error = tmux_transport._run_tmux_existing_session_workflow(
                             rt,
                             session_name="session",
                             window_name="window",
@@ -694,13 +704,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             submitted: list[str] = []
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_codex_goal", return_value="codex_goal_ready_timeout"),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", side_effect=lambda *_args, prompt_text, **_kwargs: submitted.append(prompt_text) or None),
-                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_workflow_steps", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_codex_goal", return_value="codex_goal_ready_timeout"),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", side_effect=lambda *_args, prompt_text, **_kwargs: submitted.append(prompt_text) or None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._queue_tmux_codex_workflow_steps", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
             ):
-                error = launch_support._run_tmux_existing_session_workflow(
+                error = tmux_transport._run_tmux_existing_session_workflow(
                     rt,
                     session_name="session",
                     window_name="window",
@@ -1033,10 +1043,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._resolve_tmux_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._resolve_tmux_attach_target", return_value=attach_target),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1089,14 +1099,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             with (
                 redirect_stdout(StringIO()) as buffer,
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    "envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready",
                     return_value=launch_support.AiCliReadyResult(
                         ready=False,
                         reason="opencode_ready_timeout",
                         screen_excerpt="zsh: command not found: opencode",
                     ),
                 ),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None) as submit_mock,
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", return_value=None) as submit_mock,
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1144,13 +1154,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 return (f"resolved::{step.kind}::{step.text}", None)
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=resolve_step),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None) as send_prompt_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_text", return_value=None) as send_text_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_message", return_value=True) as queue_mock,
+                patch("envctl_engine.planning.plan_agent.tmux_transport._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", side_effect=resolve_step),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_prompt", return_value=None) as send_prompt_mock,
+                patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_text", return_value=None) as send_text_mock,
+                patch("envctl_engine.planning.plan_agent.tmux_transport._queue_tmux_codex_message", return_value=True) as queue_mock,
             ):
                 error = _run_tmux_worktree_bootstrap(
                     rt,
@@ -1212,12 +1222,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 return (f"resolved::{step.kind}::{step.text}", None)
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", side_effect=resolve_step),
-                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._queue_tmux_codex_message", return_value=False),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", side_effect=resolve_step),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_prompt", return_value=None),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._queue_tmux_codex_message", return_value=False),
             ):
                 error = _run_tmux_worktree_bootstrap(
                     rt,
@@ -1286,10 +1296,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None) as spawn_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target) as wait_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None) as workflow_mock,
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None) as spawn_mock,
+                patch("envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target", return_value=attach_target) as wait_mock,
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None) as workflow_mock,
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1327,11 +1337,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=False),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1365,11 +1375,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=False),
             ):
                 out = StringIO()
                 with redirect_stdout(out):
@@ -1415,12 +1425,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 return None
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", side_effect=_queue_then_remove_worktree),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", side_effect=_queue_then_remove_worktree),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1457,12 +1467,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             rt._omx_spawn_processes = [_ExitedProcess()]  # type: ignore[attr-defined]
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target", return_value=attach_target),
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target", return_value=attach_target),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1510,8 +1520,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
             ):
                 validation = launch_support.validate_plan_agent_attach_target(
                     rt,
@@ -1554,8 +1564,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
             ):
                 validation = launch_support.validate_plan_agent_attach_target(
                     rt,
@@ -1605,8 +1615,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
             ):
                 validation = launch_support.validate_plan_agent_attach_target(
                     rt,
@@ -1635,8 +1645,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
             ):
                 validation = launch_support.validate_plan_agent_attach_target(
                     rt,
@@ -1679,14 +1689,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     submitted_prompts: list[str] = []
 
                     with (
-                        patch("envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready", return_value=None),
-                        patch("envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", return_value=("IMPLEMENT TASK BODY", None)),
                         patch(
-                            "envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step",
+                            "envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step",
                             side_effect=lambda *_args, prompt_text, **_kwargs: submitted_prompts.append(prompt_text) or None,
                         ),
                     ):
-                        error = launch_support._run_tmux_existing_session_workflow(
+                        error = tmux_transport._run_tmux_existing_session_workflow(
                             rt,
                             session_name="omx-feature-session",
                             window_name="%42",
@@ -1703,7 +1713,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             with self.subTest(workflow_name=workflow_name):
                 prompt = f"${workflow_name}\n\nIMPLEMENT TASK BODY"
                 self.assertEqual(
-                    launch_support._wrap_omx_initial_prompt_for_workflow(prompt, workflow=workflow_name),
+                    workflow._wrap_omx_initial_prompt_for_workflow(prompt, workflow=workflow_name),
                     prompt,
                 )
 
@@ -1740,13 +1750,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 return attach_target
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._wait_for_omx_attach_target",
+                    "envctl_engine.planning.plan_agent.omx_transport._wait_for_omx_attach_target",
                     side_effect=_discover_new_session,
                 ) as wait_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -1770,7 +1780,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with patch.object(rt, "_command_exists", side_effect=lambda command: command != "script"):
-                missing = launch_support._missing_launch_commands(rt, launch_config)
+                missing = config._missing_launch_commands(rt, launch_config)
 
             self.assertEqual(missing, ["script"])
 
@@ -1809,8 +1819,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 def poll(self):
                     return None
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _RunningPopen):
-                error = launch_support._spawn_omx_session_for_worktree(
+            with patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _RunningPopen):
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -1869,8 +1879,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     _ = timeout
                     return long_stdout, long_stderr
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _ExitedPopen):
-                error = launch_support._spawn_omx_session_for_worktree(
+            with patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _ExitedPopen):
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -1932,8 +1942,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 def poll(self):
                     return None
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _RunningPopen):
-                error = launch_support._spawn_omx_session_for_worktree(
+            with patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _RunningPopen):
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -1982,10 +1992,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2022,12 +2032,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2059,10 +2069,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
-                attach_target = launch_support._find_existing_omx_attach_target(
+                attach_target = omx_transport._find_existing_omx_attach_target(
                     rt,
                     repo_root=repo,
                     created_worktrees=(worktree,),
@@ -2107,13 +2117,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=_write_new_session),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%42"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport.time.sleep", side_effect=_write_new_session),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2147,10 +2157,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_active_pane_id", return_value="%43"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%43"),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2194,11 +2204,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=False),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2231,10 +2241,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2279,11 +2289,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=False),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=False),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2314,10 +2324,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
             ):
-                attach_target = launch_support._wait_for_omx_attach_target(
+                attach_target = omx_transport._wait_for_omx_attach_target(
                     rt,
                     repo_root=repo,
                     worktree=worktree,
@@ -2343,10 +2353,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             with (
                 redirect_stdout(StringIO()),
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
-                patch("envctl_engine.planning.plan_agent_launch_support._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.02),
+                patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -2400,8 +2410,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 def poll(self):
                     return 0
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen):
-                error = launch_support._spawn_omx_session_for_worktree(
+            with patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _DummyPopen):
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -2458,8 +2468,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 def poll(self):
                     return None
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _RunningPopen):
-                error = launch_support._spawn_omx_session_for_worktree(
+            with patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _RunningPopen):
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -2523,9 +2533,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             with (
                 patch.dict(os.environ, {"HOME": str(home)}, clear=True),
-                patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen),
+                patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _DummyPopen),
             ):
-                error = launch_support._spawn_omx_session_for_worktree(
+                error = omx_transport._spawn_omx_session_for_worktree(
                     rt,
                     launch_config=launch_config,
                     worktree=worktree,
@@ -2557,7 +2567,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ]
             )
 
-            attach_target = launch_support._find_existing_omx_attach_target(
+            attach_target = omx_transport._find_existing_omx_attach_target(
                 rt,
                 repo_root=repo,
                 created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
@@ -2565,11 +2575,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertIsNotNone(attach_target)
             assert attach_target is not None
-            self.assertEqual(attach_target.session_name, launch_support._omx_tmux_session_name(worktree_root, "omx-abc123"))
+            self.assertEqual(attach_target.session_name, omx_transport._omx_tmux_session_name(worktree_root, "omx-abc123"))
             self.assertEqual(attach_target.window_name, "%42")
 
     def test_tmux_target_accepts_pane_id_directly(self) -> None:
-        self.assertEqual(launch_support._tmux_target("omx-feature-session", "%42"), "%42")
+        self.assertEqual(tmux_transport._tmux_target("omx-feature-session", "%42"), "%42")
 
     def test_cleanup_stale_omx_tmux_locks_ignores_fresh_lock_and_removes_old_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2581,14 +2591,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             stale_lock.mkdir(parents=True, exist_ok=True)
 
             now = time.time()
-            stale_time = now - (launch_support._OMX_TMUX_LOCK_STALE_SECONDS + 10.0)
+            stale_time = now - (omx_transport._OMX_TMUX_LOCK_STALE_SECONDS + 10.0)
             fresh_time = now - 1.0
             os.utime(stale_lock, (stale_time, stale_time))
             os.utime(fresh_lock, (fresh_time, fresh_time))
 
             runtime = self._runtime(Path(tmpdir) / "repo", Path(tmpdir) / "runtime")
 
-            launch_support._cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree_root)
+            omx_transport._cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree_root)
 
             self.assertFalse(stale_lock.exists())
             self.assertTrue(fresh_lock.exists())
@@ -2619,8 +2629,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             buffer = StringIO()
             with (
                 redirect_stdout(buffer),
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_omx_attach_target", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._spawn_omx_session_for_worktree", return_value="omx exited before creating a managed session"),
+                patch("envctl_engine.planning.plan_agent.omx_transport._find_existing_omx_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport._spawn_omx_session_for_worktree", return_value="omx exited before creating a managed session"),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -2711,7 +2721,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with patch(
-                "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                "envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen",
                 return_value="$ cd repo\n$ opencode\nzsh: command not found: opencode\n$ ",
             ):
                 result = launch_plan_agent_terminals(
@@ -2825,7 +2835,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         runtime._read_interactive_command_line = fake_read  # type: ignore[assignment]
 
-        action = launch_support._prompt_existing_tmux_session_action(runtime, attach_target=prompt_target)
+        action = tmux_session._prompt_existing_tmux_session_action(runtime, attach_target=prompt_target)
 
         self.assertEqual(action, "new")
         self.assertEqual(len(captured), 1)
@@ -2861,9 +2871,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=existing_attach_target),
-                patch("envctl_engine.planning.plan_agent_launch_support._next_available_tmux_session_name", return_value=new_session) as next_session_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support._launch_single_tmux_worktree", side_effect=launch_single),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._find_existing_tmux_attach_target", return_value=existing_attach_target),
+                patch("envctl_engine.planning.plan_agent.tmux_transport._next_available_tmux_session_name", return_value=new_session) as next_session_mock,
+                patch("envctl_engine.planning.plan_agent.tmux_transport._launch_single_tmux_worktree", side_effect=launch_single),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -2886,7 +2896,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             rt = self._runtime(repo, runtime)
             worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
-            command = launch_support._new_session_command_for_route(
+            command = recovery._new_session_command_for_route(
                 rt,
                 route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw", "--headless"], env={}),
                 launch_config=launch_support.PlanAgentLaunchConfig(
@@ -2931,7 +2941,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
             for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
                 with self.subTest(token=token):
-                    command = launch_support._new_session_command_for_route(
+                    command = recovery._new_session_command_for_route(
                         rt,
                         route=parse_route(["--plan", "feature-a", "--omx", token, "--headless"], env={}),
                         launch_config=launch_support.PlanAgentLaunchConfig(
@@ -2981,7 +2991,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ]
             )
 
-            attach_target = launch_support._find_existing_tmux_attach_target(
+            attach_target = tmux_transport._find_existing_tmux_attach_target(
                 rt,
                 repo_root=repo,
                 created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md"),),
@@ -3057,7 +3067,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
             ):
                 error = _ensure_tmux_window(
                     rt,
@@ -3403,7 +3413,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={"HOME": tmpdir},
                 process_runner=_RecordingRunner(),
             )
-            step = launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
+            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
 
             prompt_text, error = _workflow_step_prompt_text(
                 runtime,
@@ -3434,7 +3444,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={"HOME": tmpdir},
                 process_runner=_RecordingRunner(),
             )
-            prompt_text, error = launch_support._resolve_preset_submission_text(
+            prompt_text, error = workflow._resolve_preset_submission_text(
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
@@ -3478,7 +3488,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ulw_suffix=False,
             )
 
-            prompt_text, error = launch_support._resolve_preset_submission_text(
+            prompt_text, error = workflow._resolve_preset_submission_text(
                 runtime,
                 launch_config=launch_config,
                 cli="opencode",
@@ -3515,7 +3525,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ulw_suffix=False,
         )
 
-        prompt_text, error = launch_support._resolve_preset_submission_text(
+        prompt_text, error = workflow._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -3566,7 +3576,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
         )
 
-        prompt_text, error = launch_support._resolve_preset_submission_text(
+        prompt_text, error = workflow._resolve_preset_submission_text(
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
@@ -3619,7 +3629,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-                step=launch_support._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task"),
+                step=workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task"),
                 worktree=CreatedPlanWorktree(name="feature-b-1", root=target_root, plan_file="features/feature-b.md"),
             )
 
@@ -3669,7 +3679,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-                step=launch_support._PlanAgentWorkflowStep(
+                step=workflow._PlanAgentWorkflowStep(
                     kind="queue_message",
                     text=_browser_e2e_instruction_text(),
                 ),
@@ -3725,7 +3735,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-                step=launch_support._PlanAgentWorkflowStep(
+                step=workflow._PlanAgentWorkflowStep(
                     kind="queue_message",
                     text=_browser_e2e_instruction_text(),
                 ),
@@ -3780,7 +3790,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 runtime,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-                step=launch_support._PlanAgentWorkflowStep(
+                step=workflow._PlanAgentWorkflowStep(
                     kind="queue_message",
                     text=_browser_e2e_instruction_text(),
                 ),
@@ -3819,7 +3829,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
         )
 
-        prompt_text, error = launch_support._resolve_preset_submission_text(
+        prompt_text, error = workflow._resolve_preset_submission_text(
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
@@ -3861,7 +3871,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ulw_suffix=False,
             )
 
-            prompt_text, error = launch_support._resolve_preset_submission_text(
+            prompt_text, error = workflow._resolve_preset_submission_text(
                 runtime,
                 launch_config=launch_config,
                 cli="opencode",
@@ -3899,7 +3909,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ulw_suffix=True,
         )
 
-        prompt_text, error = launch_support._resolve_preset_submission_text(
+        prompt_text, error = workflow._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -3936,7 +3946,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ulw_suffix=False,
         )
 
-        prompt_text, error = launch_support._resolve_preset_submission_text(
+        prompt_text, error = workflow._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -3947,7 +3957,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(error, "prompt_resolution_failed: ulw_loop_prefix_requires_direct_prompt")
 
     def test_shape_prompt_text_rejects_multiple_slash_commands_for_direct_prompts(self) -> None:
-        shaped, error = launch_support._shape_prompt_text(
+        shaped, error = workflow._shape_prompt_text(
             "/implement_task",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -3958,7 +3968,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
 
     def test_shape_prompt_text_rejects_embedded_second_slash_command_for_direct_prompts(self) -> None:
-        shaped, error = launch_support._shape_prompt_text(
+        shaped, error = workflow._shape_prompt_text(
             "Implement this directly.\n/implement_task",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -3969,7 +3979,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
 
     def test_shape_prompt_text_preserves_existing_ulw_loop_prefix_and_allows_suffix(self) -> None:
-        shaped, error = launch_support._shape_prompt_text(
+        shaped, error = workflow._shape_prompt_text(
             "/ulw-loop Implement this directly.",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -3980,7 +3990,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(shaped, "/ulw-loop Implement this directly. ulw")
 
     def test_shape_prompt_text_allows_absolute_path_literals_in_direct_prompts(self) -> None:
-        shaped, error = launch_support._shape_prompt_text(
+        shaped, error = workflow._shape_prompt_text(
             'Review bundle: "/tmp/review.md"\nWorktree directory: "/tmp/tree"',
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -4100,10 +4110,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._queue_codex_message", return_value=True),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._queue_codex_message", return_value=True),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -4167,11 +4177,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         with (
             patch(
-                "envctl_engine.planning.plan_agent_launch_support._read_surface_screen",
+                "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
                 side_effect=lambda *_args, **_kwargs: next(screens, ready_screen),
             ),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
             ready = _wait_for_codex_queue_ready(runtime, workspace_id="workspace:7", surface_id="surface:9")
 
@@ -4224,16 +4234,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._paste_surface_text", side_effect=fake_paste_text),
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste_text),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
             patch(
-                "envctl_engine.planning.plan_agent_launch_support._read_surface_screen",
+                "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
                 side_effect=lambda *_args, **_kwargs: typed_screen if state["typed"] else busy_screen,
             ),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            reason = launch_support._queue_codex_workflow_steps(
+            reason = cmux_transport._queue_codex_workflow_steps(
                 runtime,
                 workspace_id="workspace:7",
                 surface_id="surface:9",
@@ -4293,12 +4303,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", side_effect=fake_read_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", side_effect=fake_read_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_codex_message(
+            queued = cmux_transport._queue_codex_message(
                 runtime,
                 workspace_id="workspace:7",
                 surface_id="surface:9",
@@ -4336,12 +4346,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=queue_hint_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", return_value=queue_hint_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_codex_message(
+            queued = cmux_transport._queue_codex_message(
                 runtime,
                 workspace_id="workspace:7",
                 surface_id="surface:9",
@@ -4395,12 +4405,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", side_effect=fake_read_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", side_effect=fake_read_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_codex_message(
+            queued = cmux_transport._queue_codex_message(
                 runtime,
                 workspace_id="workspace:7",
                 surface_id="surface:9",
@@ -4433,12 +4443,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return None
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_surface_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=stuck_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", return_value=stuck_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_codex_message(
+            queued = cmux_transport._queue_codex_message(
                 runtime, workspace_id="workspace:7", surface_id="surface:9", text=queued_text, require_text_match=False
             )
 
@@ -4474,12 +4484,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return queue_hint_screen if state["stage"] == "typed" else committed_screen
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=fake_read_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen", side_effect=fake_read_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_tmux_codex_message(
+            queued = tmux_transport._queue_tmux_codex_message(
                 runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
             )
 
@@ -4508,12 +4518,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return None
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=stuck_screen),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen", return_value=stuck_screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_tmux_codex_message(
+            queued = tmux_transport._queue_tmux_codex_message(
                 runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
             )
 
@@ -4546,15 +4556,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return None
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", side_effect=fake_send_key),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._send_tmux_key", side_effect=fake_send_key),
             patch(
-                "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                "envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen",
                 side_effect=lambda *_args, **_kwargs: queue_hint_screen if state["stage"] == "typed" else committed_screen,
             ),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
-            queued = launch_support._queue_tmux_codex_message(
+            queued = tmux_transport._queue_tmux_codex_message(
                 runtime, session_name="envctl-test", window_name="feature-a-1", text=queued_text, require_text_match=False
             )
 
@@ -4562,7 +4572,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(sent_keys, ["tab"])
 
     def test_review_prompt_arguments_preserve_newlines_for_direct_codex_submission(self) -> None:
-        rendered = launch_support._review_prompt_arguments(
+        rendered = workflow._review_prompt_arguments(
             project_name="feature-a-1",
             project_root=Path("/tmp/worktree path"),
             review_bundle_path=Path("/tmp/review bundle.md"),
@@ -4653,12 +4663,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_codex_queue_ready", return_value=True),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_codex_queue_ready", return_value=True),
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._paste_surface_text",
+                    "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
                     side_effect=[None, "queue failed"],
                 ),
             ):
@@ -4737,11 +4747,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             with (
                 redirect_stdout(buffer),
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._ensure_workspace_id",
+                    "envctl_engine.planning.plan_agent.launch._ensure_workspace_id",
                     return_value=_WorkspaceLaunchTarget(workspace_id="workspace:7", created=False),
                 ),
                 patch(
-                    "envctl_engine.planning.plan_agent_launch_support._launch_single_worktree",
+                    "envctl_engine.planning.plan_agent.launch._launch_single_worktree",
                     side_effect=_fake_launch_single_worktree,
                 ),
             ):
@@ -4857,9 +4867,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None) as sleep_mock,
-                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter()),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None) as sleep_mock,
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -4935,11 +4945,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_picker_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_submit_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -4994,7 +5004,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
     def test_opencode_ready_screen_accepts_loaded_composer_layout(self) -> None:
         screen = '  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo  ⊙ 3 MCP /status    1.2.27\n'
-        self.assertTrue(launch_support._screen_looks_ready("opencode", screen))
+        self.assertTrue(terminal_screen._screen_looks_ready("opencode", screen))
 
     def test_tmux_opencode_ready_wait_allows_slow_cold_start(self) -> None:
         self.assertIsNotNone(_wait_for_tmux_cli_ready)
@@ -5022,9 +5032,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return "Loading workspace...\n"
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=monotonic),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=sleep),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=monotonic),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", side_effect=sleep),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen", side_effect=screen),
         ):
             ready = _wait_for_tmux_cli_ready(
                 runtime,
@@ -5061,9 +5071,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             return "Loading workspace...\n"
 
         with (
-            patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=monotonic),
-            patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", side_effect=sleep),
-            patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", side_effect=screen),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=monotonic),
+            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", side_effect=sleep),
+            patch("envctl_engine.planning.plan_agent.tmux_transport._read_tmux_screen", side_effect=screen),
         ):
             ready = _wait_for_tmux_cli_ready(
                 runtime,
@@ -5104,8 +5114,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(_screen_looks_ready("codex", ready))
 
     def test_ai_cli_ready_window_allows_slower_opencode_startup(self) -> None:
-        self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 5.0)
-        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 15.0)
+        self.assertEqual(config._cli_ready_delay_seconds("codex"), 5.0)
+        self.assertEqual(config._cli_ready_delay_seconds("opencode"), 15.0)
 
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
@@ -5114,7 +5124,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
           workspace:3  supportopia
         """
         self.assertEqual(
-            launch_support._workspace_entries_from_list_output(payload),
+            cmux_transport._workspace_entries_from_list_output(payload),
             (
                 ("workspace:1", "envctl"),
                 ("workspace:2", "envctl implementation"),
@@ -5129,7 +5139,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
           surface:21 [terminal] "feature-a-1" [selected]
         """
         self.assertEqual(
-            launch_support._surface_ids_from_list_output(payload),
+            cmux_transport._surface_ids_from_list_output(payload),
             ("surface:20", "surface:21"),
         )
 
@@ -5141,7 +5151,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
           surface:20 [terminal] "~/repo" [selected]
         """
         self.assertEqual(
-            launch_support._surface_ids_from_list_output(payload),
+            cmux_transport._surface_ids_from_list_output(payload),
             ("surface:20",),
         )
 
@@ -5152,7 +5162,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
           surface:21 [terminal] "feature-a-1" [selected]
         """
         self.assertEqual(
-            launch_support._surface_ids_from_list_output(payload),
+            cmux_transport._surface_ids_from_list_output(payload),
             ("surface:21",),
         )
 
@@ -5167,7 +5177,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
           }
         }
         """
-        self.assertEqual(launch_support._workspace_ref_from_identify_output(payload), "workspace:4")
+        self.assertEqual(cmux_transport._workspace_ref_from_identify_output(payload), "workspace:4")
 
     def test_opencode_ready_screen_rejects_loading_text_even_with_prompt_glyphs(self) -> None:
         screen = "Loading workspace...\n  ›\n"
@@ -5209,23 +5219,23 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_opencode_post_submit_rejects_unchanged_composer(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         unchanged = "  ┃  /ulw-loop\n  ┃\n  ┃  Implement task\n  ctrl+p commands\n  ~/repo /status\n"
-        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", unchanged, prompt))
+        self.assertFalse(terminal_screen._post_submit_screen_looks_accepted("opencode", unchanged, prompt))
 
     def test_opencode_post_submit_rejects_unknown_screen(self) -> None:
-        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", "shell prompt\n$ ", "/ulw-loop"))
+        self.assertFalse(terminal_screen._post_submit_screen_looks_accepted("opencode", "shell prompt\n$ ", "/ulw-loop"))
 
     def test_opencode_post_submit_accepts_busy_or_cleared_screen(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         busy = "Sisyphus is working...\nEsc to interrupt\n"
         cleared = '  ┃  Ask anything... "Follow up"\n  ctrl+p commands\n  ~/repo /status\n'
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", busy, prompt))
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
+        self.assertTrue(terminal_screen._post_submit_screen_looks_accepted("opencode", busy, prompt))
+        self.assertTrue(terminal_screen._post_submit_screen_looks_accepted("opencode", cleared, prompt))
 
     def test_opencode_post_submit_accepts_busy_screen_with_prompt_history(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         busy_with_history = "  ┃  /ulw-loop\n  ┃\n  ┃  Implement task\nSisyphus is working...\nEsc to interrupt\n"
 
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", busy_with_history, prompt))
+        self.assertTrue(terminal_screen._post_submit_screen_looks_accepted("opencode", busy_with_history, prompt))
 
     def test_opencode_active_screen_rejects_generic_shell_output(self) -> None:
         shell_ctrl_c = "Run this command and press Ctrl+C to stop it.\n$ "
@@ -5243,7 +5253,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         result = launch_support.AiCliReadyResult(
             ready=False,
             reason="opencode_ready_timeout",
-            screen_excerpt=launch_support._screen_excerpt(
+            screen_excerpt=terminal_screen._screen_excerpt(
                 "API_KEY=super-secret\n"
                 "https://user:password@example.test/path\n"
                 "SESSION_TOKEN=abc123\n"
@@ -5253,7 +5263,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ),
         )
 
-        rendered = launch_support._format_ai_cli_ready_failure(result)
+        rendered = terminal_screen._format_ai_cli_ready_failure(result)
 
         self.assertIn("<redacted>", rendered)
         self.assertNotIn("super-secret", rendered)
@@ -5289,7 +5299,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None):
+            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -5332,7 +5342,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None):
+            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -5373,8 +5383,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5434,8 +5444,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5484,7 +5494,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None):
+            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -5523,8 +5533,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5571,8 +5581,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5637,8 +5647,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5679,8 +5689,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5749,8 +5759,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5788,8 +5798,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
             ):
                 result = launch_plan_agent_terminals(
                     rt,
@@ -5853,11 +5863,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_picker_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_submit_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_support.launch_review_agent_terminal(
@@ -5929,11 +5939,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_picker_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_submit_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_support.launch_review_agent_terminal(
@@ -6002,9 +6012,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
-                patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
-                patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_support.launch_review_agent_terminal(
@@ -6044,7 +6054,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
                 encoding="utf-8",
             )
-            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+            original_plan_path = workflow._review_original_plan_path(
                 "feature-a-1",
                 project_root,
                 repo_root=repo,
@@ -6058,7 +6068,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             project_root = repo / "trees" / "feature-a" / "1"
             project_root.mkdir(parents=True, exist_ok=True)
 
-            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+            original_plan_path = workflow._review_original_plan_path(
                 "feature-a-1",
                 project_root,
                 repo_root=repo,
@@ -6080,7 +6090,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+            original_plan_path = workflow._review_original_plan_path(
                 "implementations_task-1",
                 project_root,
                 repo_root=repo,
@@ -6097,7 +6107,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             original_plan.parent.mkdir(parents=True, exist_ok=True)
             original_plan.write_text("# done plan\n", encoding="utf-8")
 
-            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+            original_plan_path = workflow._review_original_plan_path(
                 "implementations_task-1",
                 project_root,
                 repo_root=repo,
@@ -6117,7 +6127,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             active_plan.write_text("# active plan\n", encoding="utf-8")
             archived_plan.write_text("# archived plan\n", encoding="utf-8")
 
-            original_plan_path = getattr(launch_support, "_review_original_plan_path")(
+            original_plan_path = workflow._review_original_plan_path(
                 "features_task",
                 project_root,
                 repo_root=repo,

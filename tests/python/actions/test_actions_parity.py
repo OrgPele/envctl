@@ -1024,7 +1024,7 @@ class ActionsParityTests(unittest.TestCase):
 
             route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+            with patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock:
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -1051,7 +1051,7 @@ class ActionsParityTests(unittest.TestCase):
 
             route = parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"})
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+            with patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock:
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)

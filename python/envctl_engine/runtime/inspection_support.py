@@ -16,7 +16,7 @@ from envctl_engine.planning import (
     predict_plan_projects,
     resolve_planning_files,
 )
-from envctl_engine.planning.plan_agent_launch_support import inspect_plan_agent_launch
+from envctl_engine.planning.plan_agent.launch import inspect_plan_agent_launch
 from envctl_engine.runtime.command_router import list_supported_commands, parse_route
 from envctl_engine.runtime.browser_diagnostics import build_startup_env_projection
 from envctl_engine.runtime.engine_runtime_startup_support import (
