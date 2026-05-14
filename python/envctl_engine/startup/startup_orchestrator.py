@@ -393,9 +393,9 @@ class StartupOrchestrator:
         for service_name, service in state.services.items():
             if service_name not in selected_services:
                 continue
-            project_name = self.runtime._project_name_from_service(service_name)
-            service_type = str(getattr(service, "type", "") or "").strip().lower()
-            if not project_name or service_type not in {"backend", "frontend"}:
+            project_name = service_project_name(service) or self.runtime._project_name_from_service(service_name)
+            service_type = service_slug_from_record(service)
+            if not project_name or not service_type:
                 continue
             port = getattr(service, "actual_port", None)
             if not isinstance(port, int) or port <= 0:
@@ -1624,7 +1624,7 @@ class StartupOrchestrator:
             current = event.get("port")
             project = str(event.get("project") or "").strip()
             service = str(event.get("service") or "").strip()
-            if not project or service not in {"backend", "frontend"}:
+            if not project or not service:
                 continue
             if not isinstance(previous, int) or previous <= 0:
                 continue

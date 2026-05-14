@@ -33,6 +33,7 @@ from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
+from envctl_engine.state.runtime_map import build_runtime_map
 
 FAKE_WORKTREE_GITDIR_CONTENT = "gitdir: /tmp/fake-worktree\n"
 
@@ -356,6 +357,49 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
     def _planned_ports(engine: PythonEngineRuntime, project_name: str, *, index: int = 0) -> dict[str, PortPlan]:
         return engine.port_planner.plan_project_stack(project_name, index=index)
 
+    @staticmethod
+    def _frontend_envs(fake_runner: _FakeProcessRunner, frontend_dir: Path) -> list[dict[str, str]]:
+        frontend_root = str(frontend_dir.resolve())
+        return [
+            env
+            for call, env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs, strict=True)
+            if str(Path(call[1]).resolve()) == frontend_root and isinstance(env, dict)
+        ]
+
+    @staticmethod
+    def _restart_route() -> object:
+        route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags.update(
+            {
+                "services": ["Main Backend", "Main Frontend"],
+                "restart_service_types": ["backend", "frontend"],
+                "restart_include_requirements": False,
+                "interactive_command": True,
+            }
+        )
+        return route
+
+    def _backend_frontend_only_config(self, repo: Path, runtime: Path):
+        return self._config(
+            repo,
+            runtime,
+            extra={
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "N8N_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "MAIN_POSTGRES_ENABLE": "false",
+                "MAIN_REDIS_ENABLE": "false",
+                "MAIN_N8N_ENABLE": "false",
+                "MAIN_SUPABASE_ENABLE": "false",
+                "TREES_POSTGRES_ENABLE": "false",
+                "TREES_REDIS_ENABLE": "false",
+                "TREES_N8N_ENABLE": "false",
+                "TREES_SUPABASE_ENABLE": "false",
+                "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+            },
+        )
+
     def test_debug_session_materialized_when_debug_mode_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -413,6 +457,113 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+
+    def test_main_restart_real_startup_path_preserves_ports_and_frontend_vite_backend_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._backend_frontend_only_config(repo, runtime),
+                env={"ENVCTL_UI_SPINNER_MODE": "off"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(engine.dispatch(parse_route(["--main", "--batch"], env={})), 0)
+            fake_runner.start_background_calls.clear()
+            fake_runner.start_background_envs.clear()
+
+            with redirect_stdout(StringIO()):
+                code = engine.dispatch(self._restart_route())
+
+            self.assertEqual(code, 0, [event for event in engine.events if event.get("event") == "startup.failed"])
+            state = engine._try_load_existing_state(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual(state.services["Main Backend"].actual_port, 8000)
+            self.assertEqual(state.services["Main Frontend"].actual_port, 9000)
+            frontend_envs = self._frontend_envs(fake_runner, repo / "frontend")
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[-1].get("VITE_BACKEND_URL"), "http://localhost:8000")
+            self.assertEqual(frontend_envs[-1].get("VITE_API_URL"), "http://localhost:8000/api/v1")
+            runtime_map = build_runtime_map(state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8000")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            with redirect_stdout(StringIO()) as dashboard_stdout:
+                engine._print_dashboard_snapshot(state)
+            dashboard_text = strip_ansi(dashboard_stdout.getvalue())
+            self.assertIn("http://localhost:8000", dashboard_text)
+            self.assertIn("http://localhost:9000", dashboard_text)
+            self.assertFalse(
+                [
+                    event
+                    for event in engine.events
+                    if event.get("event") == "port.rebound" and event.get("service") in {"backend", "frontend"}
+                ]
+            )
+
+    def test_main_restart_real_startup_path_rebounds_backend_and_updates_frontend_vite_backend_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._backend_frontend_only_config(repo, runtime),
+                env={"ENVCTL_UI_SPINNER_MODE": "off"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(engine.dispatch(parse_route(["--main", "--batch"], env={})), 0)
+            fake_runner.start_background_calls.clear()
+            fake_runner.start_background_envs.clear()
+            engine.port_planner.availability_checker = lambda port: port != 8000
+
+            with redirect_stdout(StringIO()):
+                code = engine.dispatch(self._restart_route())
+
+            self.assertEqual(code, 0, [event for event in engine.events if event.get("event") == "startup.failed"])
+            state = engine._try_load_existing_state(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual(state.services["Main Backend"].actual_port, 8001)
+            self.assertEqual(state.services["Main Frontend"].actual_port, 9000)
+            frontend_envs = self._frontend_envs(fake_runner, repo / "frontend")
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[-1].get("VITE_BACKEND_URL"), "http://localhost:8001")
+            self.assertEqual(frontend_envs[-1].get("VITE_API_URL"), "http://localhost:8001/api/v1")
+            runtime_map = build_runtime_map(state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8001")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            with redirect_stdout(StringIO()) as dashboard_stdout:
+                engine._print_dashboard_snapshot(state)
+            dashboard_text = strip_ansi(dashboard_stdout.getvalue())
+            self.assertIn("http://localhost:8001", dashboard_text)
+            self.assertIn("http://localhost:9000", dashboard_text)
+            backend_rebounds = [
+                event
+                for event in engine.events
+                if event.get("event") == "port.rebound" and event.get("service") == "backend"
+            ]
+            self.assertEqual(len(backend_rebounds), 1)
+            self.assertEqual(backend_rebounds[0].get("restart_preferred_port"), 8000)
+            self.assertEqual(backend_rebounds[0].get("port"), 8001)
+            self.assertEqual(backend_rebounds[0].get("restart_conflict_detail"), "listener")
 
     def test_backend_long_running_task_can_skip_listener_wait_and_start_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

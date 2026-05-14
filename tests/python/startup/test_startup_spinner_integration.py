@@ -21,6 +21,7 @@ from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state.models import PortPlan
+from envctl_engine.state.runtime_map import build_runtime_map
 
 
 class _TtyStringIO(StringIO):
@@ -1020,6 +1021,9 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(run_state.services["Main Backend"].actual_port, 8000)
             self.assertEqual(run_state.services["Main Frontend"].actual_port, 9000)
             self.assertEqual(captured_env.get("BACKEND_URL"), "http://localhost:8000")
+            runtime_map = build_runtime_map(run_state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8000")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
             rebounds = [
                 event
                 for event in engine.events
@@ -1159,6 +1163,9 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(run_state.services["Main Backend"].actual_port, 8001)
             self.assertEqual(run_state.services["Main Frontend"].actual_port, 9000)
             self.assertEqual(captured_env.get("BACKEND_URL"), "http://localhost:8001")
+            runtime_map = build_runtime_map(run_state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8001")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
             backend_rebounds = [
                 event
                 for event in engine.events
@@ -1178,6 +1185,207 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(frontend_rebounds, [])
             self.assertIn(
                 "Port changed: Main Backend 8000 -> 8001 (previous port still in use)",
+                strip_ansi(stdout.getvalue()),
+            )
+
+    def test_interactive_main_restart_reuses_selected_additional_service_port_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "voice-runtime").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                    "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_MAIN": "true",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "python -m voice --port {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_SPINNER_MODE": "off"})
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8010, owner="Main:voice-runtime"), 8010)
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Voice Runtime": ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(repo / "voice-runtime"),
+                        requested_port=8010,
+                        actual_port=8010,
+                        pid=22222,
+                        status="running",
+                        project="Main",
+                        service_slug="voice-runtime",
+                    ),
+                },
+                requirements={"Main": RequirementsResult(project="Main", health="healthy")},
+            )
+            captured_state: dict[str, RunState] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Voice Runtime": ServiceRecord(
+                                name="Main Voice Runtime",
+                                type="voice-runtime",
+                                cwd=str(repo / "voice-runtime"),
+                                requested_port=context.ports["voice-runtime"].requested,
+                                actual_port=context.ports["voice-runtime"].final,
+                                pid=33333,
+                                status="running",
+                                project="Main",
+                                service_slug="voice-runtime",
+                            )
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Voice Runtime"],
+                    "restart_service_types": ["voice-runtime"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Voice Runtime"].actual_port, 8010)
+            self.assertEqual(run_state.services["Main Voice Runtime"].requested_port, 8010)
+            self.assertEqual(run_state.services["Main Voice Runtime"].service_slug, "voice-runtime")
+            self.assertEqual(
+                [event for event in engine.events if event.get("event") == "port.rebound"],
+                [],
+            )
+
+    def test_interactive_main_restart_rebounds_selected_additional_service_when_prior_port_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "voice-runtime").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                    "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_MAIN": "true",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "python -m voice --port {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_UI_SPINNER_MODE": "off"})
+            engine.port_planner.availability_checker = lambda _port: True
+            self.assertEqual(engine.port_planner.reserve_next(8010, owner="Main:voice-runtime"), 8010)
+            engine.port_planner.availability_checker = lambda port: port != 8010
+
+            previous_state = RunState(
+                run_id="run-old",
+                mode="main",
+                services={
+                    "Main Voice Runtime": ServiceRecord(
+                        name="Main Voice Runtime",
+                        type="voice-runtime",
+                        cwd=str(repo / "voice-runtime"),
+                        requested_port=8010,
+                        actual_port=8010,
+                        pid=22222,
+                        status="running",
+                        project="Main",
+                        service_slug="voice-runtime",
+                    ),
+                },
+                requirements={"Main": RequirementsResult(project="Main", health="healthy")},
+            )
+            captured_state: dict[str, RunState] = {}
+
+            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
+            engine._start_project_context = (  # type: ignore[method-assign]
+                lambda context, mode, route, run_id: (
+                    engine._reserve_project_ports(context, route=route)
+                    or ProjectStartupResult(
+                        requirements=previous_state.requirements["Main"],
+                        services={
+                            "Main Voice Runtime": ServiceRecord(
+                                name="Main Voice Runtime",
+                                type="voice-runtime",
+                                cwd=str(repo / "voice-runtime"),
+                                requested_port=context.ports["voice-runtime"].requested,
+                                actual_port=context.ports["voice-runtime"].final,
+                                pid=33333,
+                                status="running",
+                                project="Main",
+                                service_slug="voice-runtime",
+                            )
+                        },
+                        warnings=[],
+                    )
+                )
+            )
+            engine._write_artifacts = (  # type: ignore[method-assign]
+                lambda run_state, contexts, errors=None: captured_state.setdefault("state", run_state)
+            )
+
+            route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+            route.flags.update(
+                {
+                    "services": ["Main Voice Runtime"],
+                    "restart_service_types": ["voice-runtime"],
+                    "restart_include_requirements": False,
+                    "interactive_command": True,
+                }
+            )
+            with patch("sys.stdout", new_callable=StringIO) as stdout:
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            run_state = captured_state["state"]
+            self.assertEqual(run_state.services["Main Voice Runtime"].actual_port, 8011)
+            rebound_events = [event for event in engine.events if event.get("event") == "port.rebound"]
+            self.assertEqual(len(rebound_events), 1)
+            self.assertEqual(rebound_events[0].get("service"), "voice-runtime")
+            self.assertEqual(rebound_events[0].get("restart_preferred_port"), 8010)
+            self.assertEqual(rebound_events[0].get("restart_conflict_detail"), "listener")
+            self.assertIn(
+                "Port changed: Main Voice Runtime 8010 -> 8011 (previous port still in use)",
                 strip_ansi(stdout.getvalue()),
             )
 

@@ -24,6 +24,7 @@ from envctl_engine.runtime.engine_runtime_startup_support import (  # noqa: E402
     state_has_resumable_services,
     tree_parallel_startup_config,
 )
+from envctl_engine.shared.ports import PortPlanner  # noqa: E402
 from envctl_engine.state.models import PortPlan, RunState, ServiceRecord  # noqa: E402
 
 
@@ -511,6 +512,42 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         self.assertEqual(rebound_payloads[0]["restart_preferred_port"], 8000)
         self.assertEqual(rebound_payloads[0]["rebound_reason"], "restart_preferred_port_unavailable")
         self.assertTrue(rebound_payloads[0]["interactive_command"])
+
+    def test_reserve_project_ports_does_not_release_unrelated_restart_lock_owner(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        with self.subTest("unrelated owner remains locked and triggers rebound"):
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                planner = PortPlanner(
+                    lock_dir=tmpdir,
+                    availability_checker=lambda _port: True,
+                    event_handler=lambda event, payload: events.append((event, payload)),
+                )
+                self.assertEqual(planner.reserve_next(8000, owner="External:backend"), 8000)
+                port_plan = PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="restart")
+                runtime = SimpleNamespace(
+                    port_planner=planner,
+                    _emit=lambda event, **payload: events.append((event, payload)),
+                    _lock_inventory=lambda: sorted(path.name for path in planner.lock_dir.glob("*.lock")),
+                )
+                context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
+
+                reserve_project_ports(
+                    runtime,
+                    context,
+                    route=Route(command="start", mode="main", flags={"interactive_command": True}),
+                )
+
+                lock_text = (planner.lock_dir / "8000.lock").read_text(encoding="utf-8")
+                self.assertIn("External:backend", lock_text)
+                self.assertEqual(port_plan.final, 8001)
+                rebound_payloads = [payload for event, payload in events if event == "port.rebound"]
+                self.assertEqual(len(rebound_payloads), 1)
+                self.assertEqual(rebound_payloads[0]["restart_preferred_port"], 8000)
+                self.assertEqual(rebound_payloads[0]["restart_conflict_detail"], "lock")
+                self.assertEqual(rebound_payloads[0]["port"], 8001)
 
     def test_reserve_project_ports_keeps_non_restart_rebound_behavior(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
