@@ -146,6 +146,21 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "startup" / "startup_orchestrator.py",
         ENGINE_ROOT / "startup" / "protocols.py",
     },
+    "_screen_looks_ready": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "terminal_screen.py",
+    },
+    "_build_plan_agent_workflow": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_spawn_omx_session_for_worktree": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "omx_transport.py",
+    },
+    "_ensure_tmux_window": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "tmux_transport.py",
+    },
+    "_prepare_surface": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "cmux_transport.py",
+    },
 }
 
 

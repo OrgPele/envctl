@@ -1243,10 +1243,17 @@ def _dashboard_worktree_ai_launch_command(*, project_root: Path, envctl_executab
         (
             shlex.quote(envctl_executable),
             "--repo",
-            shlex.quote(str(root)),
+            shlex.quote(_dashboard_cli_display_path(root)),
             "codex-tmux",
         )
     )
+
+
+def _dashboard_cli_display_path(path: Path) -> str:
+    raw = str(path)
+    if raw.startswith("/private/var/"):
+        return raw.removeprefix("/private")
+    return raw
 
 
 def _dashboard_session_matches_project_root(*, project_root: Path, session: dict[str, str]) -> bool:

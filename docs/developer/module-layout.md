@@ -7,7 +7,7 @@
 - `actions/`: action execution, git/test/worktree action support
 - `config/`: local config loading, persistence, wizard support
 - `debug/`: debug bundle, diagnostics, doctor helpers
-- `planning/`: planning discovery, planning menu, worktree planning
+- `planning/`: planning discovery, planning menu, worktree planning, and plan-agent launch orchestration
 - `runtime/`: runtime facade, dispatch, lifecycle, startup support bridges
 - `shared/`: cross-domain primitives such as parsing, process/port helpers, tooling
 - `startup/`: startup/resume/bootstrap orchestration
@@ -25,6 +25,7 @@
 - Reusable selector target resolution belongs in `python/envctl_engine/ui/selection_support.py`.
 - Shared Textual list navigation belongs in `python/envctl_engine/ui/textual/list_controller.py`.
 - Shared prompt-toolkit list execution belongs in `python/envctl_engine/ui/prompt_toolkit_list.py`.
+- Plan-agent launch internals belong in `python/envctl_engine/planning/plan_agent/`; keep `planning/plan_agent_launch_support.py` as the compatibility facade for old imports and private patch paths.
 - New shared helpers should be imported from their owning module, not redefined locally.
 
 ## Orchestrator ownership
