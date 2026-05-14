@@ -205,11 +205,14 @@ def _sanitize_name(value: str, *, fallback: str) -> str:
 
 
 def _tmux_session_exists(runtime: Any, session_name: str) -> bool:
-    result = _run_probe(
-        runtime,
-        ("tmux", "has-session", "-t", session_name),
-        cwd=Path(runtime.config.base_dir).resolve(),
-    )
+    try:
+        result = _run_probe(
+            runtime,
+            ("tmux", "has-session", "-t", session_name),
+            cwd=Path(runtime.config.base_dir).resolve(),
+        )
+    except OSError:
+        return False
     return result.returncode == 0
 
 

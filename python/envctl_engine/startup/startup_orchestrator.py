@@ -1967,6 +1967,7 @@ class StartupOrchestrator:
         session.plan_agent_stale_session_name = stale_session_name
         session.plan_agent_stale_attach_command = stale_attach_command
         session.plan_agent_handoff_validation_reason = validation_reason
+        session.plan_agent_handoff_degraded = True
         launch_config = resolve_plan_agent_launch_config(
             self.runtime.config,
             getattr(self.runtime, "env", {}),
