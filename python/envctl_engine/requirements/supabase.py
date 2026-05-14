@@ -39,6 +39,168 @@ from ..shared.dependency_compose_assets import (
 )
 
 
+@dataclass(slots=True)
+class SupabaseServices:
+    db: str
+    auth: str | None
+    gateway: str | None
+
+    @property
+    def secondary_services(self) -> list[str]:
+        return [service for service in (self.auth, self.gateway) if isinstance(service, str) and service]
+
+    @property
+    def all_compose_services(self) -> list[str]:
+        return [self.db, *self.secondary_services]
+
+
+@dataclass(slots=True)
+class SupabaseComposeContext:
+    compose_root: Path
+    compose_path: Path
+    compose_project_name: str
+    env: Mapping[str, str] | None
+    resolved_public_port: int
+    services: SupabaseServices
+
+
+@dataclass(slots=True)
+class SupabaseStartupOptions:
+    db_probe_attempts: int
+    db_probe_timeout_seconds: float
+    auth_restart_probe_attempts: int
+    auth_recreate_probe_attempts: int
+    db_restart_on_probe_failure: bool
+    db_recreate_on_probe_failure: bool
+    auth_restart_on_probe_failure: bool
+    auth_recreate_on_probe_failure: bool
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None) -> "SupabaseStartupOptions":
+        db_probe_attempts = _db_probe_attempts(env)
+        auth_restart_probe_attempts = _auth_restart_probe_attempts(env)
+        return cls(
+            db_probe_attempts=db_probe_attempts,
+            db_probe_timeout_seconds=_db_probe_timeout_seconds(env),
+            auth_restart_probe_attempts=auth_restart_probe_attempts,
+            auth_recreate_probe_attempts=_auth_recreate_probe_attempts(env),
+            db_restart_on_probe_failure=_db_restart_on_probe_failure_enabled(env),
+            db_recreate_on_probe_failure=_db_recreate_on_probe_failure_enabled(env),
+            auth_restart_on_probe_failure=_auth_restart_on_probe_failure_enabled(env),
+            auth_recreate_on_probe_failure=_auth_recreate_on_probe_failure_enabled(env),
+        )
+
+
+@dataclass(slots=True)
+class SupabaseStartupState:
+    stage_events: list[dict[str, object]]
+    probe_attempts: list[dict[str, object]]
+    container_recreated: bool = False
+    service_state_summaries: list[dict[str, object]] | None = None
+
+    def record_stage(self, stage: str, *, reason: str | None = None, detail: object | None = None, **fields) -> None:
+        event: dict[str, object] = {"stage": stage}
+        if reason is not None:
+            event["reason"] = reason
+        if detail is not None:
+            event["detail"] = detail
+        event.update({key: value for key, value in fields.items() if value is not None})
+        self.stage_events.append(event)
+
+    def extend_probe_attempts(self, probe: "SupabaseAuthHealthProbeResult") -> None:
+        self.probe_attempts.extend(probe.attempts)
+
+    def record_db_probe(
+        self,
+        *,
+        db_port: int,
+        attempts: int,
+        action: str,
+        ready: bool,
+        timeout_seconds: float,
+    ) -> None:
+        self.record_stage(
+            "supabase.db.probe",
+            reason="ready" if ready else "failed",
+            detail=(
+                f"action={action} port={db_port} attempts={max(1, attempts)} "
+                f"timeout_s={timeout_seconds:g}"
+            ),
+        )
+
+    def record_auth_inspection(self, *, reason: str, service_states: list[dict[str, object]]) -> None:
+        self.service_state_summaries = service_states
+        for service_state in service_states:
+            self.record_stage("supabase.auth.inspect", reason=reason, detail=_format_auth_service_state(service_state))
+
+
+@dataclass(slots=True)
+class SupabasePhaseResult:
+    ok: bool
+    error: str | None = None
+    failure_phase: str | None = None
+    handoff_recovered: bool = False
+    ready: bool = False
+    auth_probe: "SupabaseAuthHealthProbeResult | None" = None
+
+
+@dataclass(slots=True)
+class ComposeServiceState:
+    service: str
+    container_id: str | None = None
+    status: str | None = None
+    health: str | None = None
+    exit_code: str | None = None
+    state_error: str | None = None
+    error: str | None = None
+    published_ports: list[str] | None = None
+
+    @property
+    def exists(self) -> bool:
+        return bool(self.container_id)
+
+    @property
+    def is_running(self) -> bool:
+        return str(self.status or "").lower() == "running"
+
+    @property
+    def is_healthy(self) -> bool:
+        if self.health is None:
+            return self.is_running
+        return str(self.health).lower() == "healthy"
+
+    @property
+    def is_created(self) -> bool:
+        return str(self.status or "").lower() == "created"
+
+    @property
+    def is_terminal_failure(self) -> bool:
+        status = str(self.status or "").lower()
+        if status in {"exited", "dead", "removing"}:
+            return True
+        if self.exit_code not in (None, "", "0"):
+            return status in {"exited", "dead"} or not self.is_running
+        return False
+
+    def to_summary(self) -> dict[str, object]:
+        summary: dict[str, object] = {"service": self.service}
+        if self.container_id:
+            summary["container"] = self.container_id
+        if self.status:
+            summary["status"] = self.status
+        if self.health:
+            summary["health"] = self.health
+        if self.exit_code not in (None, ""):
+            summary["exit_code"] = str(self.exit_code)
+        if self.state_error:
+            summary["state_error"] = _sanitize_service_state_text(self.state_error)
+        if self.error:
+            summary["inspect_error"] = _sanitize_service_state_text(self.error)
+        if self.published_ports:
+            summary["published_ports"] = ",".join(self.published_ports)
+        return summary
+
+
 def start_supabase_with_retry(
     start,
     reserve_next,
@@ -58,410 +220,545 @@ def start_supabase_stack(
     runtime_root: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ContainerStartResult:
-    stage_events: list[dict[str, object]] = []
-    probe_attempts: list[dict[str, object]] = []
-    compose_project_name = build_supabase_project_name(
-        project_root=project_root,
-        project_name=project_name,
-    )
-    resolved_public_port = int(
-        public_port or (env or {}).get("SUPABASE_PUBLIC_PORT") or (env or {}).get("SUPABASE_API_PORT") or 54321
-    )
-    compose_root, compose_path = _resolve_supabase_compose_workspace(
+    context = _resolve_supabase_compose_context(
+        process_runner=process_runner,
         project_root=project_root,
         project_name=project_name,
         db_port=db_port,
-        public_port=resolved_public_port,
+        public_port=public_port,
         runtime_root=runtime_root,
         env=env,
     )
     if _native_db_start_enabled(env):
         return _start_supabase_db_native(
             process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
             project_root=project_root,
             db_port=db_port,
             env=env,
         )
-    if not compose_path.is_file():
+    if not context.compose_path.is_file():
         return ContainerStartResult(
             success=False,
-            container_name=compose_project_name,
-            error=f"missing supabase compose file: {compose_path}",
+            container_name=context.compose_project_name,
+            error=f"missing supabase compose file: {context.compose_path}",
+        )
+    return _start_supabase_managed_compose_stack(
+        process_runner=process_runner,
+        context=context,
+        db_port=db_port,
+    )
+
+
+def _start_supabase_managed_compose_stack(
+    *,
+    process_runner: ProcessRuntime,
+    context: SupabaseComposeContext,
+    db_port: int,
+) -> ContainerStartResult:
+    state = SupabaseStartupState(stage_events=[], probe_attempts=[])
+    options = SupabaseStartupOptions.from_env(context.env)
+    db_phase = _start_supabase_db_phase(
+        process_runner=process_runner,
+        context=context,
+        state=state,
+        db_port=db_port,
+    )
+    if not db_phase.ok:
+        return _supabase_failure_result(context=context, state=state, error=db_phase.error)
+
+    db_wait = _wait_for_supabase_db_phase(
+        process_runner=process_runner,
+        context=context,
+        state=state,
+        options=options,
+        db_port=db_port,
+        handoff_recovered=db_phase.handoff_recovered,
+    )
+    if not db_wait.ok:
+        return _supabase_failure_result(context=context, state=state, error=db_wait.error)
+
+    secondary_phase = _start_supabase_secondary_phase(
+        process_runner=process_runner,
+        context=context,
+        state=state,
+    )
+    if not secondary_phase.ok:
+        return _supabase_failure_result(context=context, state=state, error=secondary_phase.error)
+
+    health_url = _supabase_local_auth_health_url(context.resolved_public_port)
+    public_health_url = _supabase_auth_health_url(context.env, context.resolved_public_port)
+    actions_attempted: list[str] = ["initial_probe"]
+    auth_phase = _probe_supabase_auth_phase(
+        process_runner=process_runner,
+        context=context,
+        state=state,
+        health_url=health_url,
+    )
+    auth_probe = auth_phase.auth_probe
+    if auth_probe is None:
+        return _supabase_failure_result(context=context, state=state, error=auth_phase.error)
+
+    if not auth_probe.ready:
+        recovery_phase = _recover_supabase_auth_gateway_phase(
+            process_runner=process_runner,
+            context=context,
+            state=state,
+            options=options,
+            health_url=health_url,
+            auth_probe=auth_probe,
+            actions_attempted=actions_attempted,
+        )
+        if not recovery_phase.ok:
+            return _supabase_failure_result(
+                context=context,
+                state=state,
+                error=recovery_phase.error,
+                include_probe_attempts=True,
+            )
+        if recovery_phase.auth_probe is not None:
+            auth_probe = recovery_phase.auth_probe
+
+    if not auth_probe.ready:
+        state.record_stage("supabase.auth.probe.final", reason="failed", detail=auth_probe.last_error)
+        detail = _supabase_auth_failure_detail(
+            probe=auth_probe,
+            actions=actions_attempted,
+            service_names=context.services.secondary_services,
+            public_port=context.resolved_public_port,
+            public_health_url=public_health_url,
+            service_states=state.service_state_summaries,
+        )
+        return _supabase_failure_result(
+            context=context,
+            state=state,
+            error=f"Supabase DB is healthy but Supabase Auth/Kong is not reachable at {health_url}: {detail}",
+            include_probe_attempts=True,
         )
 
-    available_services = _compose_service_list(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        compose_project_name=compose_project_name,
-        compose_path=compose_path,
-        env=env,
-    )
-    db_service = _resolve_service_name(available_services, ("supabase-db", "db")) or "supabase-db"
-    auth_service = _resolve_service_name(available_services, ("supabase-auth", "auth", "gotrue"))
-    gateway_service = _resolve_service_name(available_services, ("supabase-kong", "kong", "gateway"))
+    state.record_stage("supabase.auth.probe.final", reason="ready", detail=health_url)
+    return _supabase_success_result(context=context, state=state)
 
-    db_handoff_recovered = False
-    stage_events.append({"stage": "supabase.db.up"})
+
+def _start_supabase_db_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    db_port: int,
+) -> SupabasePhaseResult:
+    db_service = context.services.db
+    state.record_stage("supabase.db.up")
     up_db = _compose_run(
         process_runner=process_runner,
-        compose_root=compose_root,
-        compose_project_name=compose_project_name,
-        compose_path=compose_path,
-        env=env,
+        compose_root=context.compose_root,
+        compose_project_name=context.compose_project_name,
+        compose_path=context.compose_path,
+        env=context.env,
         args=["up", "-d", db_service],
     )
-    if up_db is not None:
-        if _is_compose_network_recovery_marker(up_db):
-            _record_compose_network_recovery_stage(stage_events, up_db)
-            db_handoff_recovered = True
-        else:
-            db_handoff_recovered = _compose_timeout_recovered(
+    if up_db is None:
+        return SupabasePhaseResult(ok=True)
+    if _is_compose_network_recovery_marker(up_db):
+        _record_compose_network_recovery_stage(state.stage_events, up_db)
+        return SupabasePhaseResult(ok=True, handoff_recovered=True)
+    handoff_recovered = _compose_timeout_recovered(
+        process_runner=process_runner,
+        compose_root=context.compose_root,
+        compose_project_name=context.compose_project_name,
+        compose_path=context.compose_path,
+        env=context.env,
+        service_name=db_service,
+        probe_port=db_port,
+        error=up_db,
+    )
+    if handoff_recovered:
+        return SupabasePhaseResult(ok=True, handoff_recovered=True)
+    return SupabasePhaseResult(ok=False, error=up_db, failure_phase="db_up")
+
+
+def _wait_for_supabase_db_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    options: SupabaseStartupOptions,
+    db_port: int,
+    handoff_recovered: bool,
+) -> SupabasePhaseResult:
+    if db_port <= 0:
+        return SupabasePhaseResult(ok=True, ready=True, handoff_recovered=handoff_recovered)
+
+    db_ready = False
+    attempts_used = 0
+    recovered = handoff_recovered
+    for attempt in range(options.db_probe_attempts):
+        attempts_used = attempt + 1
+        if bool(process_runner.wait_for_port(db_port, timeout=options.db_probe_timeout_seconds)):
+            db_ready = True
+            break
+        if attempt < options.db_probe_attempts - 1 and not recovered:
+            retry_up_db = _compose_run(
                 process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                service_name=db_service,
-                probe_port=db_port,
-                error=up_db,
+                compose_root=context.compose_root,
+                compose_project_name=context.compose_project_name,
+                compose_path=context.compose_path,
+                env=context.env,
+                args=["up", "-d", context.services.db],
             )
-        if not db_handoff_recovered:
-            return ContainerStartResult(
-                success=False,
-                container_name=compose_project_name,
-                error=up_db,
-                stage_events=stage_events,
-            )
-
-    if db_port > 0:
-        db_probe_attempts = _db_probe_attempts(env)
-        db_probe_timeout = _db_probe_timeout_seconds(env)
-        db_ready = False
-        db_initial_attempts_used = 0
-        for attempt in range(db_probe_attempts):
-            db_initial_attempts_used = attempt + 1
-            if bool(process_runner.wait_for_port(db_port, timeout=db_probe_timeout)):
-                db_ready = True
-                break
-            if attempt < db_probe_attempts - 1 and not db_handoff_recovered:
-                retry_up_db = _compose_run(
-                    process_runner=process_runner,
-                    compose_root=compose_root,
-                    compose_project_name=compose_project_name,
-                    compose_path=compose_path,
-                    env=env,
-                    args=["up", "-d", db_service],
-                )
-                if retry_up_db is not None:
-                    if _is_compose_network_recovery_marker(retry_up_db):
-                        _record_compose_network_recovery_stage(stage_events, retry_up_db)
-                        db_handoff_recovered = True
-                    else:
-                        db_handoff_recovered = _compose_timeout_recovered(
-                            process_runner=process_runner,
-                            compose_root=compose_root,
-                            compose_project_name=compose_project_name,
-                            compose_path=compose_path,
-                            env=env,
-                            service_name=db_service,
-                            probe_port=db_port,
-                            error=retry_up_db,
-                        )
-                    if not db_handoff_recovered:
-                        return ContainerStartResult(
-                            success=False,
-                            container_name=compose_project_name,
-                            error=f"{retry_up_db} (retry db bring-up failed)",
-                            stage_events=stage_events,
-                        )
-
-        _record_db_probe_stage(
-            stage_events,
-            db_port=db_port,
-            attempts=db_initial_attempts_used,
-            action="initial",
-            ready=db_ready,
-            timeout_seconds=db_probe_timeout,
-        )
-
-        if not db_ready and _db_restart_on_probe_failure_enabled(env):
-            restart_error = _compose_run(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                args=["restart", db_service],
-            )
-            if restart_error is not None:
-                return ContainerStartResult(
-                    success=False,
-                    container_name=compose_project_name,
-                    error=(
-                        f"failed restarting supabase db service: {restart_error}"
-                        if restart_error.strip()
-                        else "failed restarting supabase db service"
-                    ),
-                    stage_events=stage_events,
-                )
-            restart_probe_attempts = _db_restart_probe_attempts(env, default=db_probe_attempts)
-            db_ready = _probe_db_listener(
-                process_runner=process_runner,
-                db_port=db_port,
-                timeout_seconds=db_probe_timeout,
-                attempts=restart_probe_attempts,
-            )
-            _record_db_probe_stage(
-                stage_events,
-                db_port=db_port,
-                attempts=restart_probe_attempts,
-                action="restart",
-                ready=db_ready,
-                timeout_seconds=db_probe_timeout,
-            )
-
-            if not db_ready and _db_recreate_on_probe_failure_enabled(env):
-                recreate_error = _recreate_db_service(
-                    process_runner=process_runner,
-                    compose_root=compose_root,
-                    compose_project_name=compose_project_name,
-                    compose_path=compose_path,
-                    env=env,
-                    db_service=db_service,
-                )
-                if recreate_error is not None:
-                    return ContainerStartResult(
-                        success=False,
-                        container_name=compose_project_name,
-                        error=(
-                            f"failed recreating supabase db service: {recreate_error}"
-                            if recreate_error.strip()
-                            else "failed recreating supabase db service"
-                        ),
-                        stage_events=stage_events,
+            if retry_up_db is not None:
+                if _is_compose_network_recovery_marker(retry_up_db):
+                    _record_compose_network_recovery_stage(state.stage_events, retry_up_db)
+                    recovered = True
+                else:
+                    recovered = _compose_timeout_recovered(
+                        process_runner=process_runner,
+                        compose_root=context.compose_root,
+                        compose_project_name=context.compose_project_name,
+                        compose_path=context.compose_path,
+                        env=context.env,
+                        service_name=context.services.db,
+                        probe_port=db_port,
+                        error=retry_up_db,
                     )
-                recreate_probe_attempts = _db_recreate_probe_attempts(env, default=restart_probe_attempts)
-                db_ready = _probe_db_listener(
-                    process_runner=process_runner,
-                    db_port=db_port,
-                    timeout_seconds=db_probe_timeout,
-                    attempts=recreate_probe_attempts,
-                )
-                _record_db_probe_stage(
-                    stage_events,
-                    db_port=db_port,
-                    attempts=recreate_probe_attempts,
-                    action="recreate",
-                    ready=db_ready,
-                    timeout_seconds=db_probe_timeout,
-                )
-                if not db_ready:
-                    return ContainerStartResult(
-                        success=False,
-                        container_name=compose_project_name,
-                        error=f"probe timeout waiting for readiness on port {db_port} after recreate",
-                        stage_events=stage_events,
+                if not recovered:
+                    return SupabasePhaseResult(
+                        ok=False,
+                        error=f"{retry_up_db} (retry db bring-up failed)",
+                        failure_phase="db_retry_up",
                     )
 
-            if not db_ready:
-                return ContainerStartResult(
-                    success=False,
-                    container_name=compose_project_name,
-                    error=f"probe timeout waiting for readiness on port {db_port} after restart",
-                    stage_events=stage_events,
-                )
+    state.record_db_probe(
+        db_port=db_port,
+        attempts=attempts_used,
+        action="initial",
+        ready=db_ready,
+        timeout_seconds=options.db_probe_timeout_seconds,
+    )
 
-        if not db_ready:
-            suffix = " after retry" if db_probe_attempts > 1 else ""
-            return ContainerStartResult(
-                success=False,
-                container_name=compose_project_name,
-                error=f"probe timeout waiting for readiness on port {db_port}{suffix}",
-                stage_events=stage_events,
-            )
-
-    secondary_services = [
-        service for service in (auth_service, gateway_service) if isinstance(service, str) and service
-    ]
-    if secondary_services:
-        stage_events.append({"stage": "supabase.secondary.up", "detail": ",".join(secondary_services)})
-        up_secondary = _compose_run(
+    if db_ready:
+        return SupabasePhaseResult(ok=True, ready=True, handoff_recovered=recovered)
+    if options.db_restart_on_probe_failure:
+        return _recover_supabase_db_phase(
             process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
-            args=["up", "-d", *secondary_services],
+            context=context,
+            state=state,
+            options=options,
+            db_port=db_port,
         )
-        if up_secondary is not None:
-            if _is_compose_network_recovery_marker(up_secondary):
-                _record_compose_network_recovery_stage(stage_events, up_secondary)
-                up_secondary = None
-        if up_secondary is not None:
-            if not all(
-                _compose_timeout_recovered(
-                    process_runner=process_runner,
-                    compose_root=compose_root,
-                    compose_project_name=compose_project_name,
-                    compose_path=compose_path,
-                    env=env,
-                    service_name=service_name,
-                    probe_port=None,
-                    error=up_secondary,
-                )
-                for service_name in secondary_services
-            ):
-                return ContainerStartResult(
-                    success=False,
-                    container_name=compose_project_name,
-                    error=up_secondary,
-                    stage_events=stage_events,
-                )
 
-    public_health_url = _supabase_auth_health_url(env, resolved_public_port)
-    health_url = _supabase_local_auth_health_url(resolved_public_port)
-    actions_attempted: list[str] = ["initial_probe"]
-    stage_events.append({"stage": "supabase.auth.probe", "detail": health_url})
+    suffix = " after retry" if options.db_probe_attempts > 1 else ""
+    return SupabasePhaseResult(
+        ok=False,
+        error=f"probe timeout waiting for readiness on port {db_port}{suffix}",
+        failure_phase="db_probe",
+    )
+
+
+def _recover_supabase_db_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    options: SupabaseStartupOptions,
+    db_port: int,
+) -> SupabasePhaseResult:
+    restart_error = _compose_run(
+        process_runner=process_runner,
+        compose_root=context.compose_root,
+        compose_project_name=context.compose_project_name,
+        compose_path=context.compose_path,
+        env=context.env,
+        args=["restart", context.services.db],
+    )
+    if restart_error is not None:
+        return SupabasePhaseResult(
+            ok=False,
+            error=(
+                f"failed restarting supabase db service: {restart_error}"
+                if restart_error.strip()
+                else "failed restarting supabase db service"
+            ),
+            failure_phase="db_restart",
+        )
+
+    restart_probe_attempts = _db_restart_probe_attempts(context.env, default=options.db_probe_attempts)
+    db_ready = _probe_db_listener(
+        process_runner=process_runner,
+        db_port=db_port,
+        timeout_seconds=options.db_probe_timeout_seconds,
+        attempts=restart_probe_attempts,
+    )
+    state.record_db_probe(
+        db_port=db_port,
+        attempts=restart_probe_attempts,
+        action="restart",
+        ready=db_ready,
+        timeout_seconds=options.db_probe_timeout_seconds,
+    )
+    if db_ready:
+        return SupabasePhaseResult(ok=True, ready=True)
+    if options.db_recreate_on_probe_failure:
+        recreate_error = _recreate_db_service(
+            process_runner=process_runner,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
+            compose_path=context.compose_path,
+            env=context.env,
+            db_service=context.services.db,
+        )
+        if recreate_error is not None:
+            return SupabasePhaseResult(
+                ok=False,
+                error=(
+                    f"failed recreating supabase db service: {recreate_error}"
+                    if recreate_error.strip()
+                    else "failed recreating supabase db service"
+                ),
+                failure_phase="db_recreate",
+            )
+        recreate_probe_attempts = _db_recreate_probe_attempts(context.env, default=restart_probe_attempts)
+        db_ready = _probe_db_listener(
+            process_runner=process_runner,
+            db_port=db_port,
+            timeout_seconds=options.db_probe_timeout_seconds,
+            attempts=recreate_probe_attempts,
+        )
+        state.record_db_probe(
+            db_port=db_port,
+            attempts=recreate_probe_attempts,
+            action="recreate",
+            ready=db_ready,
+            timeout_seconds=options.db_probe_timeout_seconds,
+        )
+        if db_ready:
+            return SupabasePhaseResult(ok=True, ready=True)
+        return SupabasePhaseResult(
+            ok=False,
+            error=f"probe timeout waiting for readiness on port {db_port} after recreate",
+            failure_phase="db_recreate_probe",
+        )
+    return SupabasePhaseResult(
+        ok=False,
+        error=f"probe timeout waiting for readiness on port {db_port} after restart",
+        failure_phase="db_restart_probe",
+    )
+
+
+def _start_supabase_secondary_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+) -> SupabasePhaseResult:
+    secondary_services = context.services.secondary_services
+    if not secondary_services:
+        return SupabasePhaseResult(ok=True)
+    state.record_stage("supabase.secondary.up", detail=",".join(secondary_services))
+    up_secondary = _compose_run(
+        process_runner=process_runner,
+        compose_root=context.compose_root,
+        compose_project_name=context.compose_project_name,
+        compose_path=context.compose_path,
+        env=context.env,
+        args=["up", "-d", *secondary_services],
+    )
+    if up_secondary is not None and _is_compose_network_recovery_marker(up_secondary):
+        _record_compose_network_recovery_stage(state.stage_events, up_secondary)
+        up_secondary = None
+    if up_secondary is not None and not all(
+        _compose_timeout_recovered(
+            process_runner=process_runner,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
+            compose_path=context.compose_path,
+            env=context.env,
+            service_name=service_name,
+            probe_port=None,
+            error=up_secondary,
+        )
+        for service_name in secondary_services
+    ):
+        return SupabasePhaseResult(ok=False, error=up_secondary, failure_phase="secondary_up")
+    return SupabasePhaseResult(ok=True)
+
+
+def _probe_supabase_auth_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    health_url: str,
+) -> SupabasePhaseResult:
+    state.record_stage("supabase.auth.probe", detail=health_url)
     auth_probe = _probe_supabase_auth_health_with_attempts(
         process_runner=process_runner,
-        public_port=resolved_public_port,
+        public_port=context.resolved_public_port,
         health_url=health_url,
-        env=env,
+        env=context.env,
         attempts=1,
         action="initial_probe",
     )
-    probe_attempts.extend(auth_probe.attempts)
-
-    service_state_summaries: list[dict[str, object]] = []
-
-    def record_auth_service_state(reason: str) -> None:
-        nonlocal service_state_summaries
-        service_state_summaries = _inspect_auth_gateway_services(
+    state.extend_probe_attempts(auth_probe)
+    state.service_state_summaries = []
+    if not auth_probe.ready and context.services.secondary_services:
+        _record_supabase_auth_service_state(
             process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
-            service_names=secondary_services,
+            context=context,
+            state=state,
+            reason="initial_probe_failed",
         )
-        for service_state in service_state_summaries:
-            stage_events.append(
-                {
-                    "stage": "supabase.auth.inspect",
-                    "reason": reason,
-                    "detail": _format_auth_service_state(service_state),
-                }
-            )
+    return SupabasePhaseResult(ok=True, ready=auth_probe.ready, auth_probe=auth_probe)
 
-    container_recreated = False
-    if not auth_probe.ready and secondary_services:
-        record_auth_service_state("initial_probe_failed")
 
-    if not auth_probe.ready and secondary_services and _auth_restart_on_probe_failure_enabled(env):
+def _recover_supabase_auth_gateway_phase(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    options: SupabaseStartupOptions,
+    health_url: str,
+    auth_probe: "SupabaseAuthHealthProbeResult",
+    actions_attempted: list[str],
+) -> SupabasePhaseResult:
+    secondary_services = context.services.secondary_services
+    if not secondary_services:
+        return SupabasePhaseResult(ok=True, ready=auth_probe.ready, auth_probe=auth_probe)
+
+    if not auth_probe.ready and options.auth_restart_on_probe_failure:
         actions_attempted.append("restart")
-        stage_events.append({"stage": "supabase.auth.restart", "detail": ",".join(secondary_services)})
+        state.record_stage("supabase.auth.restart", detail=",".join(secondary_services))
         restart_error = _compose_run(
             process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
+            compose_path=context.compose_path,
+            env=context.env,
             args=["restart", *secondary_services],
         )
         if restart_error is not None:
             detail = restart_error.strip()
-            return ContainerStartResult(
-                success=False,
-                container_name=compose_project_name,
+            return SupabasePhaseResult(
+                ok=False,
                 error=(
                     f"failed restarting supabase auth/kong services: {detail}"
                     if detail
                     else "failed restarting supabase auth/kong services"
                 ),
-                stage_events=stage_events,
-                probe_attempts=probe_attempts,
-                probe_attempt_count=len(probe_attempts),
+                failure_phase="auth_restart",
+                auth_probe=auth_probe,
             )
         auth_probe = _probe_supabase_auth_health_with_attempts(
             process_runner=process_runner,
-            public_port=resolved_public_port,
+            public_port=context.resolved_public_port,
             health_url=health_url,
-            env=env,
-            attempts=_auth_restart_probe_attempts(env),
+            env=context.env,
+            attempts=options.auth_restart_probe_attempts,
             action="restart",
         )
-        probe_attempts.extend(auth_probe.attempts)
+        state.extend_probe_attempts(auth_probe)
         if not auth_probe.ready:
-            record_auth_service_state("restart_probe_failed")
+            _record_supabase_auth_service_state(
+                process_runner=process_runner,
+                context=context,
+                state=state,
+                reason="restart_probe_failed",
+            )
 
-    if not auth_probe.ready and secondary_services and _auth_recreate_on_probe_failure_enabled(env):
+    if not auth_probe.ready and options.auth_recreate_on_probe_failure:
         actions_attempted.append("recreate")
-        stage_events.append({"stage": "supabase.auth.recreate", "detail": ",".join(secondary_services)})
+        state.record_stage("supabase.auth.recreate", detail=",".join(secondary_services))
         recreate_error = _recreate_auth_gateway_services(
             process_runner=process_runner,
-            compose_root=compose_root,
-            compose_project_name=compose_project_name,
-            compose_path=compose_path,
-            env=env,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
+            compose_path=context.compose_path,
+            env=context.env,
             service_names=secondary_services,
         )
         if recreate_error is not None:
             detail = recreate_error.strip()
-            return ContainerStartResult(
-                success=False,
-                container_name=compose_project_name,
+            return SupabasePhaseResult(
+                ok=False,
                 error=(
                     f"failed recreating supabase auth/kong services: {detail}"
                     if detail
                     else "failed recreating supabase auth/kong services"
                 ),
-                stage_events=stage_events,
-                probe_attempts=probe_attempts,
-                probe_attempt_count=len(probe_attempts),
+                failure_phase="auth_recreate",
+                auth_probe=auth_probe,
             )
-        container_recreated = True
+        state.container_recreated = True
         auth_probe = _probe_supabase_auth_health_with_attempts(
             process_runner=process_runner,
-            public_port=resolved_public_port,
+            public_port=context.resolved_public_port,
             health_url=health_url,
-            env=env,
-            attempts=_auth_recreate_probe_attempts(env),
+            env=context.env,
+            attempts=options.auth_recreate_probe_attempts,
             action="recreate",
         )
-        probe_attempts.extend(auth_probe.attempts)
+        state.extend_probe_attempts(auth_probe)
         if not auth_probe.ready:
-            record_auth_service_state("recreate_probe_failed")
+            _record_supabase_auth_service_state(
+                process_runner=process_runner,
+                context=context,
+                state=state,
+                reason="recreate_probe_failed",
+            )
+    return SupabasePhaseResult(ok=True, ready=auth_probe.ready, auth_probe=auth_probe)
 
-    if not auth_probe.ready:
-        stage_events.append({"stage": "supabase.auth.probe.final", "reason": "failed", "detail": auth_probe.last_error})
-        detail = _supabase_auth_failure_detail(
-            probe=auth_probe,
-            actions=actions_attempted,
-            service_names=secondary_services,
-            public_port=resolved_public_port,
-            public_health_url=public_health_url,
-            service_states=service_state_summaries,
-        )
-        return ContainerStartResult(
-            success=False,
-            container_name=compose_project_name,
-            error=f"Supabase DB is healthy but Supabase Auth/Kong is not reachable at {health_url}: {detail}",
-            stage_events=stage_events,
-            probe_attempts=probe_attempts,
-            probe_attempt_count=len(probe_attempts),
-            container_recreated=container_recreated,
-        )
 
-    stage_events.append({"stage": "supabase.auth.probe.final", "reason": "ready", "detail": health_url})
+def _record_supabase_auth_service_state(
+    *,
+    process_runner,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    reason: str,
+) -> None:
+    state.record_auth_inspection(
+        reason=reason,
+        service_states=_inspect_auth_gateway_services(
+            process_runner=process_runner,
+            compose_root=context.compose_root,
+            compose_project_name=context.compose_project_name,
+            compose_path=context.compose_path,
+            env=context.env,
+            service_names=context.services.secondary_services,
+        ),
+    )
+
+
+def _supabase_failure_result(
+    *,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+    error: str | None,
+    include_probe_attempts: bool = False,
+) -> ContainerStartResult:
+    return ContainerStartResult(
+        success=False,
+        container_name=context.compose_project_name,
+        error=error,
+        stage_events=state.stage_events,
+        probe_attempts=state.probe_attempts if include_probe_attempts else None,
+        probe_attempt_count=len(state.probe_attempts) if include_probe_attempts else 0,
+        container_recreated=state.container_recreated if include_probe_attempts else False,
+    )
+
+
+def _supabase_success_result(
+    *,
+    context: SupabaseComposeContext,
+    state: SupabaseStartupState,
+) -> ContainerStartResult:
     return ContainerStartResult(
         success=True,
-        container_name=compose_project_name,
-        stage_events=stage_events,
-        probe_attempts=probe_attempts,
-        probe_attempt_count=len(probe_attempts),
-        container_recreated=container_recreated,
+        container_name=context.compose_project_name,
+        stage_events=state.stage_events,
+        probe_attempts=state.probe_attempts,
+        probe_attempt_count=len(state.probe_attempts),
+        container_recreated=state.container_recreated,
     )
 
 
@@ -1161,90 +1458,80 @@ def _compose_run(
     env: Mapping[str, str] | None,
     args: list[str],
 ) -> str | None:
-    timeout_seconds = 180.0
     if args[:2] == ["up", "-d"]:
-        timeout_seconds = env_float(
-            env,
-            "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS",
-            120.0,
-            minimum=5.0,
-        )
-        service_names = [value for value in args[2:] if value]
-        probe_port = None
-        if len(service_names) == 1 and service_names[0] in {"supabase-db", "db"}:
-            probe_port = _compose_db_port(compose_root=compose_root)
-        up_error = _compose_up_handoff(
+        return _run_compose_up_with_recovery(
             process_runner=process_runner,
             compose_root=compose_root,
             compose_project_name=compose_project_name,
             compose_path=compose_path,
             env=env,
             args=args,
-            timeout_seconds=timeout_seconds,
-            service_names=service_names,
-            probe_port=probe_port,
         )
-        if up_error is not None and _is_docker_address_pool_exhaustion(up_error):
-            cleaned_count, cleanup_error = _remove_empty_envctl_supabase_networks(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                env=env,
-            )
-            if cleaned_count > 0:
-                retry_error = _compose_up_handoff(
-                    process_runner=process_runner,
-                    compose_root=compose_root,
-                    compose_project_name=compose_project_name,
-                    compose_path=compose_path,
-                    env=env,
-                    args=args,
-                    timeout_seconds=timeout_seconds,
-                    service_names=service_names,
-                    probe_port=probe_port,
-                )
-                if retry_error is None:
-                    return None
-                if cleanup_error:
-                    return (
-                        f"{retry_error}; after removing {cleaned_count} empty envctl Supabase network(s): "
-                        f"{cleanup_error}"
-                    )
-                return retry_error
-            if cleanup_error:
-                return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
-            return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
-        if up_error is not None and _is_docker_network_missing(up_error):
-            recovered, recovery_detail = _recover_missing_supabase_network_for_project(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-            )
-            retry_error = _compose_up_handoff(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                args=args,
-                timeout_seconds=timeout_seconds,
-                service_names=service_names,
-                probe_port=probe_port,
-            )
-            if retry_error is None:
-                return f"network_recovery={recovery_detail or 'retry_only'}"
-            action_detail = recovery_detail or "scoped Supabase network recovery"
-            if recovered:
-                return (
-                    f"docker compose {' '.join(args)} failed after scoped Supabase network recovery for "
-                    f"{compose_project_name}: {retry_error}; recovery_actions={action_detail}"
-                )
-            return (
-                f"docker compose {' '.join(args)} failed after attempted scoped Supabase network recovery for "
-                f"{compose_project_name}: {retry_error}; recovery_error={action_detail}"
-            )
-        return up_error
+    return _run_compose_command(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=args,
+        timeout_seconds=180.0,
+    )
+
+
+def _run_compose_up_with_recovery(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    args: list[str],
+) -> str | None:
+    timeout_seconds = env_float(
+        env,
+        "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS",
+        120.0,
+        minimum=5.0,
+    )
+    service_names = [value for value in args[2:] if value]
+    probe_port = None
+    if len(service_names) == 1 and service_names[0] in {"supabase-db", "db"}:
+        probe_port = _compose_db_port(compose_root=compose_root)
+    up_error = _run_compose_up_with_handoff(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=args,
+        timeout_seconds=timeout_seconds,
+        service_names=service_names,
+        probe_port=probe_port,
+    )
+    return _recover_compose_up_error(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=args,
+        timeout_seconds=timeout_seconds,
+        service_names=service_names,
+        probe_port=probe_port,
+        up_error=up_error,
+    )
+
+
+def _run_compose_command(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    args: list[str],
+    timeout_seconds: float,
+) -> str | None:
     result, error = run_docker(
         process_runner,
         ["compose", "-p", compose_project_name, "-f", str(compose_path), *args],
@@ -1260,6 +1547,107 @@ def _compose_run(
             compose_project_name=compose_project_name,
         )
     return None
+
+
+def _run_compose_up_with_handoff(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    args: list[str],
+    timeout_seconds: float,
+    service_names: list[str],
+    probe_port: int | None,
+) -> str | None:
+    return _compose_up_handoff(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=args,
+        timeout_seconds=timeout_seconds,
+        service_names=service_names,
+        probe_port=probe_port,
+    )
+
+
+def _recover_compose_up_error(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    args: list[str],
+    timeout_seconds: float,
+    service_names: list[str],
+    probe_port: int | None,
+    up_error: str | None,
+) -> str | None:
+    if up_error is not None and _is_docker_address_pool_exhaustion(up_error):
+        cleaned_count, cleanup_error = _remove_empty_envctl_supabase_networks(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            env=env,
+        )
+        if cleaned_count > 0:
+            retry_error = _run_compose_up_with_handoff(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                args=args,
+                timeout_seconds=timeout_seconds,
+                service_names=service_names,
+                probe_port=probe_port,
+            )
+            if retry_error is None:
+                return None
+            if cleanup_error:
+                return (
+                    f"{retry_error}; after removing {cleaned_count} empty envctl Supabase network(s): "
+                    f"{cleanup_error}"
+                )
+            return retry_error
+        if cleanup_error:
+            return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
+        return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
+    if up_error is not None and _is_docker_network_missing(up_error):
+        recovered, recovery_detail = _recover_missing_supabase_network_for_project(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+        )
+        retry_error = _run_compose_up_with_handoff(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            service_names=service_names,
+            probe_port=probe_port,
+        )
+        if retry_error is None:
+            return f"network_recovery={recovery_detail or 'retry_only'}"
+        action_detail = recovery_detail or "scoped Supabase network recovery"
+        if recovered:
+            return (
+                f"docker compose {' '.join(args)} failed after scoped Supabase network recovery for "
+                f"{compose_project_name}: {retry_error}; recovery_actions={action_detail}"
+            )
+        return (
+            f"docker compose {' '.join(args)} failed after attempted scoped Supabase network recovery for "
+            f"{compose_project_name}: {retry_error}; recovery_error={action_detail}"
+        )
+    return up_error
 
 
 def _compose_up_handoff(
@@ -1309,7 +1697,7 @@ def _compose_up_handoff(
                 compose_project_name=compose_project_name,
             )
 
-        if service_names and _compose_services_started(
+        if service_names and _compose_services_ready_for_handoff(
             process_runner=process_runner,
             compose_root=compose_root,
             compose_project_name=compose_project_name,
@@ -1326,7 +1714,7 @@ def _compose_up_handoff(
             timed_out_error = f"Command timed out after {timeout_seconds:.1f}s: docker compose {' '.join(args)}"
             if (
                 service_names
-                and _compose_services_started(
+                and _compose_services_ready_for_handoff(
                     process_runner=process_runner,
                     compose_root=compose_root,
                     compose_project_name=compose_project_name,
@@ -1526,19 +1914,272 @@ def _compose_services_started(
     env: Mapping[str, str] | None,
     service_names: list[str],
 ) -> bool:
-    for service_name in service_names:
-        result, run_error = run_docker(
-            process_runner,
-            ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "-q", service_name],
-            cwd=compose_root,
+    return _compose_services_ready_for_handoff(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_names=service_names,
+    )
+
+
+def _compose_services_ready_for_handoff(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+) -> bool:
+    states = _compose_service_states(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_names=service_names,
+    )
+    return bool(states) and all(state.exists for state in states)
+
+
+def _compose_service_states(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+) -> list[ComposeServiceState]:
+    return [
+        _compose_service_state(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
             env=env,
-            timeout=10.0,
+            service_name=service_name,
         )
-        if result is None or run_error is not None or getattr(result, "returncode", 1) != 0:
-            return False
-        if not str(getattr(result, "stdout", "") or "").strip():
-            return False
-    return True
+        for service_name in service_names
+    ]
+
+
+def _compose_service_state(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_name: str,
+) -> ComposeServiceState:
+    json_state = _compose_service_state_from_json_ps(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_name=service_name,
+    )
+    if json_state is not None:
+        return json_state
+    return _compose_service_state_from_ps_q_inspect(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_name=service_name,
+    )
+
+
+def _compose_service_state_from_json_ps(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_name: str,
+) -> ComposeServiceState | None:
+    result, run_error = run_docker(
+        process_runner,
+        ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "--format", "json", service_name],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    if result is None or run_error is not None or getattr(result, "returncode", 1) != 0:
+        return None
+    stdout = str(getattr(result, "stdout", "") or "").strip()
+    if not stdout:
+        return None
+    rows = _parse_compose_ps_json(stdout)
+    if rows is None:
+        return None
+    matching = [row for row in rows if str(row.get("Service") or row.get("Name") or service_name) == service_name]
+    if not matching and len(rows) == 1:
+        matching = rows
+    if not matching:
+        return ComposeServiceState(service=service_name, status="missing")
+    return _compose_state_from_ps_row(service_name, matching[0])
+
+
+def _parse_compose_ps_json(stdout: str) -> list[dict[str, object]] | None:
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        rows: list[dict[str, object]] = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(item, dict):
+                rows.append(item)
+            else:
+                return None
+        return rows
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    if isinstance(parsed, dict):
+        return [parsed]
+    return None
+
+
+def _compose_state_from_ps_row(service_name: str, row: Mapping[str, object]) -> ComposeServiceState:
+    container_id = _first_string_value(row, "ID", "Id", "ContainerID", "Container", "Name")
+    status = _first_string_value(row, "State", "Status")
+    health = _first_string_value(row, "Health")
+    exit_code = _first_string_value(row, "ExitCode", "Exit")
+    return ComposeServiceState(
+        service=service_name,
+        container_id=container_id,
+        status=status or ("running" if container_id else "missing"),
+        health=health,
+        exit_code=exit_code,
+        published_ports=_compose_published_ports(row.get("Publishers")),
+    )
+
+
+def _first_string_value(row: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _compose_published_ports(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    ports: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        published = item.get("PublishedPort")
+        target = item.get("TargetPort")
+        if published in (None, "") or target in (None, ""):
+            continue
+        host = str(item.get("URL") or item.get("HostIP") or "").strip()
+        prefix = f"{host}:" if host else ""
+        ports.append(f"{prefix}{published}->{target}")
+    return ports or None
+
+
+def _compose_service_state_from_ps_q_inspect(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_name: str,
+) -> ComposeServiceState:
+    result, run_error = run_docker(
+        process_runner,
+        ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "-q", service_name],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    if result is None:
+        return ComposeServiceState(
+            service=service_name,
+            status="missing",
+            error=run_error or "docker compose ps failed",
+        )
+    if getattr(result, "returncode", 1) != 0:
+        return ComposeServiceState(
+            service=service_name,
+            status="missing",
+            error=run_result_error(result, "docker compose ps failed"),
+        )
+    container_id = str(getattr(result, "stdout", "") or "").strip().splitlines()[0:1]
+    if not container_id:
+        return ComposeServiceState(service=service_name, status="missing")
+    state_result, state_error = run_docker(
+        process_runner,
+        ["inspect", "-f", "{{json .State}}", container_id[0]],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    if state_result is None:
+        return ComposeServiceState(
+            service=service_name,
+            container_id=container_id[0],
+            status="unknown",
+            error=state_error or "docker inspect failed",
+        )
+    if getattr(state_result, "returncode", 1) != 0:
+        return ComposeServiceState(
+            service=service_name,
+            container_id=container_id[0],
+            status="unknown",
+            error=run_result_error(state_result, "docker inspect failed"),
+        )
+    return _compose_state_from_inspect_state(
+        service_name=service_name,
+        container_id=container_id[0],
+        state_text=str(getattr(state_result, "stdout", "") or "").strip(),
+    )
+
+
+def _compose_state_from_inspect_state(
+    *,
+    service_name: str,
+    container_id: str,
+    state_text: str,
+) -> ComposeServiceState:
+    try:
+        state = json.loads(state_text) if state_text else {}
+    except json.JSONDecodeError:
+        state = {"Status": state_text}
+    if not isinstance(state, dict):
+        state = {}
+    health = state.get("Health")
+    health_status = str(health.get("Status")).strip() if isinstance(health, dict) and health.get("Status") else None
+    status = str(state.get("Status")).strip() if state.get("Status") else "unknown"
+    exit_code_value = state.get("ExitCode")
+    exit_code = str(exit_code_value).strip() if exit_code_value not in (None, "") else None
+    state_error = str(state.get("Error")).strip() if state.get("Error") else None
+    return ComposeServiceState(
+        service=service_name,
+        container_id=container_id,
+        status=status,
+        health=health_status,
+        exit_code=exit_code,
+        state_error=state_error,
+    )
 
 
 def _terminate_compose_process(process: subprocess.Popen[str]) -> tuple[str, str]:
@@ -1599,17 +2240,17 @@ def _compose_timeout_recovered(
     if not timeout_error(error):
         return False
     for _ in range(3):
-        result, run_error = run_docker(
-            process_runner,
-            ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "-q", service_name],
-            cwd=compose_root,
+        state = _compose_service_state(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
             env=env,
-            timeout=60.0,
+            service_name=service_name,
         )
-        if result is not None and run_error is None and getattr(result, "returncode", 1) == 0:
-            if str(getattr(result, "stdout", "") or "").strip():
-                return True
-        elif probe_port and probe_port > 0 and bool(process_runner.wait_for_port(probe_port, timeout=5.0)):
+        if state.exists and not state.error:
+            return True
+        if probe_port and probe_port > 0 and bool(process_runner.wait_for_port(probe_port, timeout=5.0)):
             return True
     return False
 
@@ -1738,59 +2379,15 @@ def _inspect_auth_gateway_service(
     env: Mapping[str, str] | None,
     service_name: str,
 ) -> dict[str, object]:
-    result, run_error = run_docker(
-        process_runner,
-        ["compose", "-p", compose_project_name, "-f", str(compose_path), "ps", "-q", service_name],
-        cwd=compose_root,
+    state = _compose_service_state(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
         env=env,
-        timeout=10.0,
+        service_name=service_name,
     )
-    summary: dict[str, object] = {"service": service_name}
-    if result is None:
-        summary["inspect_error"] = _sanitize_service_state_text(run_error or "docker compose ps failed")
-        return summary
-    if getattr(result, "returncode", 1) != 0:
-        summary["inspect_error"] = _sanitize_service_state_text(run_result_error(result, "docker compose ps failed"))
-        return summary
-    container_id = str(getattr(result, "stdout", "") or "").strip().splitlines()[0:1]
-    if not container_id:
-        summary["status"] = "missing"
-        return summary
-    summary["container"] = container_id[0]
-    state_result, state_error = run_docker(
-        process_runner,
-        ["inspect", "-f", "{{json .State}}", container_id[0]],
-        cwd=compose_root,
-        env=env,
-        timeout=10.0,
-    )
-    if state_result is None:
-        summary["inspect_error"] = _sanitize_service_state_text(state_error or "docker inspect failed")
-        return summary
-    if getattr(state_result, "returncode", 1) != 0:
-        summary["inspect_error"] = _sanitize_service_state_text(run_result_error(state_result, "docker inspect failed"))
-        return summary
-    state_text = str(getattr(state_result, "stdout", "") or "").strip()
-    try:
-        state = json.loads(state_text) if state_text else {}
-    except json.JSONDecodeError:
-        state = {"Status": state_text}
-    if isinstance(state, dict):
-        status = state.get("Status")
-        if status:
-            summary["status"] = str(status)
-        health = state.get("Health")
-        if isinstance(health, dict) and health.get("Status"):
-            summary["health"] = str(health.get("Status"))
-        exit_code = state.get("ExitCode")
-        if isinstance(exit_code, int) or (isinstance(exit_code, str) and exit_code.strip()):
-            summary["exit_code"] = str(exit_code)
-        state_error_value = state.get("Error")
-        if state_error_value:
-            summary["state_error"] = _sanitize_service_state_text(str(state_error_value))
-    if len(summary) == 2 and "container" in summary:
-        summary["status"] = "unknown"
-    return summary
+    return state.to_summary()
 
 
 def _format_auth_service_state(service_state: Mapping[str, object]) -> str:
@@ -1923,6 +2520,53 @@ def _resolve_supabase_compose_workspace(
         env_values=supabase_managed_env(db_port=db_port, public_port=public_port, env=env),
     )
     return materialized.stack_root, materialized.compose_file
+
+
+def _resolve_supabase_compose_context(
+    *,
+    process_runner,
+    project_root: Path,
+    project_name: str,
+    db_port: int,
+    public_port: int | None,
+    runtime_root: Path | None,
+    env: Mapping[str, str] | None,
+) -> SupabaseComposeContext:
+    compose_project_name = build_supabase_project_name(
+        project_root=project_root,
+        project_name=project_name,
+    )
+    resolved_public_port = int(
+        public_port or (env or {}).get("SUPABASE_PUBLIC_PORT") or (env or {}).get("SUPABASE_API_PORT") or 54321
+    )
+    compose_root, compose_path = _resolve_supabase_compose_workspace(
+        project_root=project_root,
+        project_name=project_name,
+        db_port=db_port,
+        public_port=resolved_public_port,
+        runtime_root=runtime_root,
+        env=env,
+    )
+    available_services = _compose_service_list(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+    )
+    services = SupabaseServices(
+        db=_resolve_service_name(available_services, ("supabase-db", "db")) or "supabase-db",
+        auth=_resolve_service_name(available_services, ("supabase-auth", "auth", "gotrue")),
+        gateway=_resolve_service_name(available_services, ("supabase-kong", "kong", "gateway")),
+    )
+    return SupabaseComposeContext(
+        compose_root=compose_root,
+        compose_path=compose_path,
+        compose_project_name=compose_project_name,
+        env=env,
+        resolved_public_port=resolved_public_port,
+        services=services,
+    )
 
 
 def _contains_search_path_contract(compose_text: str) -> bool:
