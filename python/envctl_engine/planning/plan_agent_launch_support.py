@@ -29,6 +29,7 @@ from envctl_engine.runtime.prompt_install_support import (
 )
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
+from envctl_engine.ui.path_links import normalize_local_path_text
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
 _CODEX_BYPASS_FLAGS = "--dangerously-bypass-approvals-and-sandbox"
@@ -4101,7 +4102,7 @@ def resolve_plan_agent_launch_command(
         (
             shlex.quote(envctl_executable),
             "--repo",
-            shlex.quote(str(repo_root)),
+            shlex.quote(normalize_local_path_text(str(repo_root))),
             "--plan",
             shlex.quote(selector),
             "--tmux",

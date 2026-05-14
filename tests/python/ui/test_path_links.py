@@ -65,6 +65,16 @@ class PathLinksTests(unittest.TestCase):
         self.assertEqual(link.display_text, "/tmp/example.txt")
         self.assertEqual(link.uri, "file:///tmp/example.txt")
 
+    def test_private_var_paths_normalize_in_display_and_uri(self) -> None:
+        link = resolve_path_link(
+            "/private/var/folders/example/backend.log",
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertEqual(link.display_text, "/var/folders/example/backend.log")
+        self.assertEqual(link.uri, "file:///var/folders/example/backend.log")
+
     def test_strip_ansi_preserves_visible_path_text(self) -> None:
         rendered = render_path_for_terminal(
             "/tmp/example.txt",

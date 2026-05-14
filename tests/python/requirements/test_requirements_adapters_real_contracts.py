@@ -81,6 +81,7 @@ class _FakeRunner:
         self.health_stderr_by_phase: dict[str, list[str]] = {}
         self.health_phase = "initial"
         self.health_urls: list[str] = []
+        self._time = 0.0
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
         _ = cwd, env, timeout, process_started_callback
@@ -393,7 +394,12 @@ class _FakeRunner:
         return False
 
     def sleep(self, seconds: float) -> None:
-        self.sleep_calls.append(float(seconds))
+        elapsed = float(seconds)
+        self.sleep_calls.append(elapsed)
+        self._time += max(0.0, elapsed)
+
+    def monotonic(self) -> float:
+        return self._time
 
     def compose_up_process(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
         _ = cwd, env
@@ -1293,7 +1299,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 )
             )
 
-    def test_supabase_auth_kong_restart_recovers_when_listener_appears_late(self) -> None:
+    def test_supabase_auth_kong_restart_recovers_when_service_state_is_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             supabase_dir = root / "supabase"
@@ -1303,6 +1309,10 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner = _FakeRunner()
             runner.wait_for_port_sequences[5432] = [True]
             runner.wait_for_port_sequences[54321] = [False, True]
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "exited"
+            runner.status["kong-container-id"] = "running"
 
             result = start_supabase_stack(
                 process_runner=runner,
@@ -1633,6 +1643,164 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertIn("supabase-kong", result.error or "")
             self.assertIn("status=created", result.error or "")
             self.assertIn("last_error=Container supabase-kong-1 Starting", result.error or "")
+            self.assertIn("startup_budget_s=120", result.error or "")
+            self.assertIn("elapsed_ms=", result.error or "")
+
+    def test_supabase_compose_timeout_override_does_not_exceed_overall_startup_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [True]
+            runner.health_returncode_sequence = [0]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={
+                    "ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "1",
+                    "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "45",
+                },
+            )
+
+            self.assertTrue(result.success)
+            graph_event = next(
+                item for item in result.stage_events or [] if item.get("stage") == "supabase.graph.up"
+            )
+            self.assertEqual(graph_event.get("timeout_s"), 1.0)
+            self.assertEqual(graph_event.get("startup_budget_s"), 1.0)
+
+    def test_supabase_auth_progress_waits_without_restart_when_public_health_appears_late(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [False, True]
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "running"
+            runner.health_status["auth-container-id"] = "starting"
+            runner.health_status["kong-container-id"] = "starting"
+            runner.health_returncode_sequence = [0]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={
+                    "ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "5",
+                    "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS": "0.5",
+                },
+            )
+
+            self.assertTrue(result.success)
+            self.assertFalse(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-3:] == ["restart", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+            self.assertFalse(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+            self.assertTrue(
+                any(item.get("stage") == "supabase.auth.wait_progress" for item in result.stage_events or [])
+            )
+
+    def test_supabase_db_probe_failure_reports_phase_budget_elapsed_and_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [False, False]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={
+                    "ENVCTL_SUPABASE_DB_RESTART_ON_PROBE_FAILURE": "false",
+                    "ENVCTL_SUPABASE_DB_PROBE_TIMEOUT_SECONDS": "0.5",
+                    "ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "5",
+                },
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("phase=db_probe", result.error or "")
+            self.assertIn("db_port=5432", result.error or "")
+            self.assertIn("db_probe_timeout_s=0.5", result.error or "")
+            self.assertIn("attempts=2", result.error or "")
+            self.assertIn("startup_budget_s=5", result.error or "")
+            self.assertIn("elapsed_ms=", result.error or "")
+            self.assertIn("last_error=probe timeout waiting for readiness on port 5432 after retry", result.error or "")
+
+    def test_supabase_auth_health_failure_reports_auth_phase_budget_elapsed_and_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_overrides[54321] = False
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "running"
+            runner.health_status["auth-container-id"] = "starting"
+            runner.health_status["kong-container-id"] = "starting"
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={
+                    "ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "1",
+                    "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS": "0.5",
+                    "ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE": "false",
+                    "ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE": "false",
+                },
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("phase=auth_health", result.error or "")
+            self.assertIn("public_port=54321", result.error or "")
+            self.assertIn("probe_url=http://127.0.0.1:54321/auth/v1/health", result.error or "")
+            self.assertIn("auth_probe_timeout_s=0.5", result.error or "")
+            self.assertIn("startup_budget_s=1", result.error or "")
+            self.assertIn("elapsed_ms=", result.error or "")
+            self.assertIn("service_state=", result.error or "")
+            self.assertIn("health=starting", result.error or "")
+            self.assertIn("last_error=listener probe failed on port 54321", result.error or "")
 
     def test_supabase_recovers_when_initial_up_times_out_but_service_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

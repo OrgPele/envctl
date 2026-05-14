@@ -27,6 +27,10 @@ def normalize_local_path_text(path: object) -> str:
         return "/tmp"
     if text.startswith("/private/tmp/"):
         return "/tmp/" + text[len("/private/tmp/") :]
+    if text == "/private/var":
+        return "/var"
+    if text.startswith("/private/var/"):
+        return "/var/" + text[len("/private/var/") :]
     return text
 
 
