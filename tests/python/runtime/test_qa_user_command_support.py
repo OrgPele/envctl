@@ -270,7 +270,10 @@ class QaUserCommandSupportTests(unittest.TestCase):
             self.assertIn("feature-a-1", result["stdout"])
             self.assertIn("http://127.0.0.1:54321", result["stdout"])
             self.assertNotIn("service-secret", json.dumps(payload))
-            self.assertEqual((project_root / "seed.cwd").read_text(encoding="utf-8"), str(project_root))
+            self.assertEqual(
+                Path((project_root / "seed.cwd").read_text(encoding="utf-8")).resolve(),
+                project_root.resolve(),
+            )
 
     def test_seed_hook_runs_with_timeout_and_reports_timeout_failure(self) -> None:
         route = Route(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -214,15 +215,17 @@ def _tmux_session_exists(runtime: Any, session_name: str) -> bool:
 
 
 def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env.update(dict(getattr(runtime, "env", {}) or {}))
     process_runner = getattr(runtime, "process_runner", None)
     if process_runner is not None and hasattr(process_runner, "run_probe"):
-        return process_runner.run_probe(command, cwd=cwd, env=getattr(runtime, "env", {}), timeout=10.0)
+        return process_runner.run_probe(command, cwd=cwd, env=env, timeout=10.0)
     if process_runner is not None and hasattr(process_runner, "run"):
-        return process_runner.run(command, cwd=cwd, env=getattr(runtime, "env", {}), timeout=10.0)
+        return process_runner.run(command, cwd=cwd, env=env, timeout=10.0)
     return subprocess.run(
         list(command),
         cwd=str(cwd),
-        env=dict(getattr(runtime, "env", {})),
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

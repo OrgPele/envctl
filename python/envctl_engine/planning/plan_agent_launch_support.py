@@ -29,7 +29,7 @@ from envctl_engine.runtime.prompt_install_support import (
 )
 from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
-from envctl_engine.ui.path_links import normalize_local_path_text
+from envctl_engine.ui.path_links import normalize_macos_private_var_path_text
 
 _SUPPORTED_PLAN_AGENT_CLIS = frozenset({"codex", "opencode"})
 _CODEX_BYPASS_FLAGS = "--dangerously-bypass-approvals-and-sandbox"
@@ -1393,6 +1393,7 @@ def _launch_single_worktree(
 
 
 def _tmux_session_name_for_worktree(repo_root: Path, worktree: CreatedPlanWorktree, *, cli: str) -> str:
+    repo_root = Path(repo_root).resolve()
     worktree_root = Path(worktree.root).resolve()
     relative = worktree_root.relative_to(repo_root)
     relative_slug = _sanitize_tmux_name(str(relative), fallback=worktree.name)
@@ -1486,7 +1487,7 @@ def plan_agent_native_recovery_command(
     command.extend(
         [
             "ENVCTL_USE_REPO_WRAPPER=1",
-            str(Path(runtime.config.base_dir).resolve() / "bin" / "envctl"),
+            normalize_macos_private_var_path_text(str(Path(runtime.config.base_dir).resolve() / "bin" / "envctl")),
             "--plan",
             selector,
             "--tmux",
@@ -2550,13 +2551,15 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
 
 def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
     target = _tmux_target(session_name, window_name)
+    tmux_env = dict(os.environ)
+    tmux_env.update(dict(getattr(runtime, "env", {}) or {}))
     load_result = subprocess.run(
         ["tmux", "load-buffer", "-t", target, "-"],
         input=text,
         capture_output=True,
         text=True,
         cwd=Path(runtime.config.base_dir).resolve(),
-        env=dict(getattr(runtime, "env", {})),
+        env=tmux_env,
         timeout=10.0,
     )
     if load_result.returncode != 0:
@@ -2568,7 +2571,7 @@ def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text
         capture_output=True,
         text=True,
         cwd=Path(runtime.config.base_dir).resolve(),
-        env=dict(getattr(runtime, "env", {})),
+        env=tmux_env,
         timeout=10.0,
     )
     if paste_result.returncode != 0:
@@ -4102,7 +4105,7 @@ def resolve_plan_agent_launch_command(
         (
             shlex.quote(envctl_executable),
             "--repo",
-            shlex.quote(normalize_local_path_text(str(repo_root))),
+            shlex.quote(normalize_macos_private_var_path_text(str(repo_root))),
             "--plan",
             shlex.quote(selector),
             "--tmux",

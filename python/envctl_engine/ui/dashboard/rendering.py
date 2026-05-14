@@ -24,7 +24,7 @@ from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.shared.services import service_display_name
 from envctl_engine.ui.color_policy import colors_enabled
-from envctl_engine.ui.path_links import normalize_local_path_text, render_path_for_terminal
+from envctl_engine.ui.path_links import normalize_macos_private_var_path_text, render_path_for_terminal
 from envctl_engine.ui.status_symbols import (
     STATUS_NEUTRAL,
     dependency_status_badge,
@@ -1243,7 +1243,7 @@ def _dashboard_worktree_ai_launch_command(*, project_root: Path, envctl_executab
         (
             shlex.quote(envctl_executable),
             "--repo",
-            shlex.quote(normalize_local_path_text(str(root))),
+            shlex.quote(normalize_macos_private_var_path_text(str(root))),
             "codex-tmux",
         )
     )

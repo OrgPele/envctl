@@ -27,6 +27,11 @@ def normalize_local_path_text(path: object) -> str:
         return "/tmp"
     if text.startswith("/private/tmp/"):
         return "/tmp/" + text[len("/private/tmp/") :]
+    return text
+
+
+def normalize_macos_private_var_path_text(path: object) -> str:
+    text = str(path or "")
     if text == "/private/var":
         return "/var"
     if text.startswith("/private/var/"):
@@ -93,6 +98,8 @@ def render_paths_in_terminal_text(
         for candidate in _path_display_candidates(raw_text):
             if not candidate or candidate in seen:
                 continue
+            if not _text_contains_path_fragment(rendered, candidate):
+                continue
             seen.add(candidate)
             fragment = render_path_fragment_for_terminal(
                 candidate,
@@ -107,6 +114,24 @@ def render_paths_in_terminal_text(
     for raw_text, fragment in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
         rendered = rendered.replace(raw_text, fragment)
     return rendered
+
+
+def _text_contains_path_fragment(text: str, candidate: str) -> bool:
+    start = 0
+    while True:
+        index = text.find(candidate, start)
+        if index < 0:
+            return False
+        before = text[index - 1] if index > 0 else ""
+        after_index = index + len(candidate)
+        after = text[after_index] if after_index < len(text) else ""
+        if _is_path_boundary(before) and (_is_path_boundary(after) or after == "." or text.startswith("...", after_index)):
+            return True
+        start = index + 1
+
+
+def _is_path_boundary(char: str) -> bool:
+    return not char or char.isspace() or char in ";,):]'\"<>"
 
 
 _TextT = TypeVar("_TextT")
