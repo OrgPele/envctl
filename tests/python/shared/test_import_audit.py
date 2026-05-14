@@ -200,6 +200,18 @@ OWNERSHIP_RULES = {
     "_new_session_command_for_route": {
         ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
     },
+    "_codex_goal_text_for_worktree": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_emit_codex_goal_event": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_wrap_omx_initial_prompt_for_workflow": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_queue_failure_event_context": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
+    },
 }
 
 

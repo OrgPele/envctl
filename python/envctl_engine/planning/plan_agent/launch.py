@@ -181,6 +181,7 @@ def launch_plan_agent_terminals(
             created_worktrees=created_worktrees,
             base_payload=base_payload,
             prompt_on_existing=not bool(getattr(route, "flags", {}).get("batch")),
+            run_tmux_existing_session_workflow=_run_tmux_existing_session_workflow,
         )
     if launch_config.transport == "tmux":
         return _launch_plan_agent_tmux_terminals(

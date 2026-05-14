@@ -36,6 +36,7 @@ from envctl_engine.planning.plan_agent.config import *
 from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
+from envctl_engine.planning.plan_agent.tmux_session import *
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -208,47 +209,6 @@ def _next_available_tmux_session_name(runtime: Any, session_name: str) -> str:
         if not _tmux_session_exists(runtime, candidate):
             return candidate
         index += 1
-
-
-def _should_prompt_existing_tmux_session(runtime: Any, *, prompt_on_existing: bool) -> bool:
-    if not prompt_on_existing:
-        return False
-    can_interactive_tty = getattr(runtime, "_can_interactive_tty", None)
-    if callable(can_interactive_tty):
-        try:
-            return bool(can_interactive_tty())
-        except Exception:
-            return False
-    return False
-
-
-def _prompt_existing_tmux_session_action(
-    runtime: Any,
-    *,
-    attach_target: PlanAgentAttachTarget,
-) -> Literal["attach", "new"]:
-    prompt = (
-        f"An envctl tmux session already exists for this plan/workspace ({attach_target.session_name}). "
-        f"Attach to it? (Y=attach / n=create new session): "
-    )
-    read_interactive = getattr(runtime, "_read_interactive_command_line", None)
-    if callable(read_interactive):
-        try:
-            response = str(read_interactive(prompt)).strip().lower()
-        except Exception:
-            return "attach"
-        if response in {"", "y", "yes"}:
-            return "attach"
-        if response in {"n", "no"}:
-            return "new"
-        return "attach"
-    confirm = getattr(runtime, "_prompt_yes_no", None)
-    if callable(confirm):
-        try:
-            return "attach" if bool(confirm(prompt)) else "new"
-        except TypeError:
-            return "attach" if bool(confirm(title="Attach existing session?", prompt=prompt)) else "new"
-    return "new"
 
 
 def _launch_single_tmux_worktree(
@@ -691,51 +651,6 @@ def _run_tmux_existing_session_workflow(
     return None
 
 
-def _codex_goal_text_for_worktree(
-    *,
-    worktree: CreatedPlanWorktree,
-    preset: str,
-    workflow_mode: str,
-    omx_workflow: str,
-) -> str:
-    plan_selector = str(worktree.plan_file or "").strip() or str(worktree.name).strip() or "selected plan"
-    lines = [
-        f"Implement the envctl plan-agent task for {plan_selector} in this worktree.",
-        "Authoritative source: MAIN_TASK.md in the current worktree.",
-        f"Initial preset: {str(preset).strip() or _DEFAULT_PRESET}.",
-        f"Workflow mode: {str(workflow_mode).strip() or _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT}.",
-    ]
-    normalized_omx = str(omx_workflow or "").strip().lower()
-    if normalized_omx:
-        lines.append(f"OMX workflow: ${normalized_omx}; keep its completion contract active after this goal frame.")
-    lines.append("Complete the implementation, run relevant tests, commit, and open/update the PR when green.")
-    return " ".join(lines)
-
-
-def _emit_codex_goal_event(
-    runtime: Any,
-    event: str,
-    *,
-    cli: str,
-    workflow: _PlanAgentWorkflow,
-    transport: str,
-    worktree: CreatedPlanWorktree,
-    reason: str | None = None,
-    **target: object,
-) -> None:
-    payload: dict[str, object] = {
-        **target,
-        "worktree": worktree.name,
-        "cli": cli,
-        "workflow_mode": workflow.mode,
-        "codex_cycles": workflow.codex_cycles,
-        "transport": transport,
-    }
-    if reason is not None:
-        payload["reason"] = reason
-    runtime._emit(event, **payload)
-
-
 def _maybe_submit_tmux_codex_goal(
     runtime: Any,
     *,
@@ -1167,17 +1082,6 @@ def _queue_tmux_codex_message(
     return False
 
 
-def _queue_failure_event_context(reason: str) -> dict[str, object]:
-    context: dict[str, object] = {}
-    step_index = getattr(reason, "step_index", None)
-    if step_index is not None:
-        context["queue_failed_step_index"] = step_index
-    step_kind = getattr(reason, "step_kind", None)
-    if step_kind:
-        context["queue_failed_step_kind"] = step_kind
-    return context
-
-
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
     if attach_target.attach_via == "switch-client":
         result = _run_tmux_probe(
@@ -1190,28 +1094,6 @@ def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarge
             return 1
         return 0
     return _attach_interactive(runtime, attach_target.attach_command, cwd=attach_target.repo_root)
-
-
-def _tmux_display_message_succeeds(runtime: Any, session_name: str) -> tuple[bool, str]:
-    result = _run_tmux_probe(
-        runtime,
-        ("tmux", "display-message", "-p", "-t", session_name, "#{pane_id}"),
-        cwd=Path(runtime.config.base_dir).resolve(),
-    )
-    if result.returncode != 0:
-        return False, ""
-    return True, str(getattr(result, "stdout", "")).strip()
-
-
-def _tmux_active_pane_id(runtime: Any, session_name: str) -> str:
-    result = _run_tmux_probe(
-        runtime,
-        ("tmux", "display-message", "-p", "-t", session_name, "#{pane_id}"),
-        cwd=Path(runtime.config.base_dir).resolve(),
-    )
-    if result.returncode != 0:
-        return ""
-    return str(getattr(result, "stdout", "")).strip()
 
 
 def _ensure_tmux_window(

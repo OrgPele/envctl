@@ -7,7 +7,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from importlib import resources
@@ -36,15 +35,8 @@ from envctl_engine.planning.plan_agent.config import *
 from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
+from envctl_engine.planning.plan_agent.tmux_session import *
 
-
-def _tmux_transport_attr(name: str) -> Any:
-    module = sys.modules.get("envctl_engine.planning.plan_agent.tmux_transport")
-    if module is None:
-        from importlib import import_module
-
-        module = import_module("envctl_engine.planning.plan_agent.tmux_transport")
-    return getattr(module, name)
 
 def _launch_plan_agent_omx_terminals(
     runtime: Any,
@@ -55,6 +47,7 @@ def _launch_plan_agent_omx_terminals(
     created_worktrees: tuple[CreatedPlanWorktree, ...],
     base_payload: Mapping[str, object],
     prompt_on_existing: bool,
+    run_tmux_existing_session_workflow: Any,
 ) -> PlanAgentLaunchResult:
     if launch_config.cli != "codex":
         runtime._emit("planning.agent_launch.failed", reason="unsupported_omx_cli", **base_payload)
@@ -69,11 +62,11 @@ def _launch_plan_agent_omx_terminals(
         created_worktrees=created_worktrees,
     )
     if existing_attach_target is not None:
-        if not create_new_session and _tmux_transport_attr("_should_prompt_existing_tmux_session")(
+        if not create_new_session and _should_prompt_existing_tmux_session(
             runtime,
             prompt_on_existing=prompt_on_existing,
         ):
-            action = _tmux_transport_attr("_prompt_existing_tmux_session_action")(
+            action = _prompt_existing_tmux_session_action(
                 runtime,
                 attach_target=existing_attach_target,
             )
@@ -188,7 +181,7 @@ def _launch_plan_agent_omx_terminals(
                 )
             )
             continue
-        error = _tmux_transport_attr("_run_tmux_existing_session_workflow")(
+        error = run_tmux_existing_session_workflow(
             runtime,
             session_name=attach_target.session_name,
             window_name=attach_target.window_name,
@@ -369,17 +362,6 @@ def _cleanup_stale_omx_tmux_locks_under_root(root: Path) -> bool:
             continue
         removed_any = True
     return removed_any
-
-
-def _wrap_omx_initial_prompt_for_workflow(text: str, *, workflow: str) -> str:
-    normalized_workflow = str(workflow or "").strip().lower()
-    if normalized_workflow not in _OMX_WORKFLOW_KEYWORDS:
-        return text
-    stripped = str(text).lstrip()
-    prefix = f"${normalized_workflow}"
-    if stripped == prefix or stripped.startswith(f"{prefix} ") or stripped.startswith(f"{prefix}\n"):
-        return text
-    return f"{prefix}\n\n{text}"
 
 
 def _utc_timestamp_from_epoch(value: float | None = None) -> str:
@@ -564,7 +546,7 @@ def validate_plan_agent_attach_target(
         runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
         return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
     try:
-        pane_ok, pane_id = _tmux_transport_attr("_tmux_display_message_succeeds")(runtime, session_name)
+        pane_ok, pane_id = _tmux_display_message_succeeds(runtime, session_name)
     except OSError:
         pane_ok, pane_id = False, ""
     if not pane_ok:
@@ -864,7 +846,7 @@ def _attach_target_from_omx_record(
         return PlanAgentAttachTarget(
             repo_root=repo_root,
             session_name=candidate,
-            window_name=_tmux_transport_attr("_tmux_active_pane_id")(runtime, candidate),
+            window_name=_tmux_active_pane_id(runtime, candidate),
             attach_via=attach_via,
             attach_command=_guidance_attach_command(candidate),
         )

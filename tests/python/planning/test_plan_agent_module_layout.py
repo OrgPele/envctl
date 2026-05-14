@@ -68,6 +68,26 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                     peer = f"{module.rsplit('.', 1)[-1]}.py"
                     if peer in transport_modules:
                         violations.append(f"{filename}: import peer transport {module}")
+                if isinstance(node, ast.Call):
+                    call_name = ""
+                    if isinstance(node.func, ast.Name):
+                        call_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        call_name = node.func.attr
+                    if call_name in {"import_module", "get"}:
+                        for arg in node.args[:1]:
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                                value = arg.value
+                                if value.startswith("envctl_engine.planning.plan_agent."):
+                                    peer = f"{value.rsplit('.', 1)[-1]}.py"
+                                    if peer in transport_modules:
+                                        violations.append(f"{filename}: dynamic peer transport lookup {value}")
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    value = node.value
+                    if value.startswith("envctl_engine.planning.plan_agent."):
+                        peer = f"{value.rsplit('.', 1)[-1]}.py"
+                        if peer in transport_modules:
+                            violations.append(f"{filename}: string peer transport reference {value}")
         self.assertEqual([], violations)
 
     def test_launch_module_owns_public_dispatch_functions(self) -> None:
@@ -98,6 +118,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_resolve_preset_submission_text",
                 "_shape_prompt_text",
                 "_runtime_addresses_prompt_section",
+                "_codex_goal_text_for_worktree",
+                "_emit_codex_goal_event",
+                "_wrap_omx_initial_prompt_for_workflow",
             },
             "terminal_screen.py": {
                 "_screen_looks_ready",
@@ -123,6 +146,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "plan_agent_native_recovery_command",
                 "_new_session_command_for_route",
                 "_plan_selector_for_route",
+                "_queue_failure_event_context",
             },
         }
         definitions: dict[str, set[str]] = {}
