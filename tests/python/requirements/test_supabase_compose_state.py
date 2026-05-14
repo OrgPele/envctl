@@ -10,6 +10,7 @@ from envctl_engine.requirements.supabase import (
     _compose_service_state,
     _compose_service_states,
     _compose_services_ready_for_handoff,
+    _compose_timeout_recovered,
 )
 
 
@@ -24,6 +25,8 @@ class _ComposeStateRunner:
         self.inspect_state_stdout: dict[str, str] = {}
         self.inspect_returncode: dict[str, int] = {}
         self.inspect_stderr: dict[str, str] = {}
+        self.wait_for_port_calls: list[tuple[int, float]] = []
+        self.wait_for_port_result = False
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
         _ = cwd, env, timeout, process_started_callback
@@ -49,6 +52,11 @@ class _ComposeStateRunner:
             stdout = self.inspect_state_stdout.get(container, "")
             return subprocess.CompletedProcess(command, rc, stdout if rc == 0 else "", stderr)
         return subprocess.CompletedProcess(command, 0, "", "")
+
+    def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
+        _ = host
+        self.wait_for_port_calls.append((port, float(timeout)))
+        return self.wait_for_port_result
 
 
 class SupabaseComposeStateTests(unittest.TestCase):
@@ -178,6 +186,103 @@ class SupabaseComposeStateTests(unittest.TestCase):
                 service_names=["supabase-db"],
             )
         )
+
+    def test_timeout_recovery_uses_json_compose_service_state(self) -> None:
+        runner = _ComposeStateRunner()
+        runner.compose_json_stdout["supabase-auth"] = json.dumps(
+            [{"Service": "supabase-auth", "ID": "auth123", "State": "exited", "ExitCode": 1}]
+        )
+
+        self.assertTrue(
+            _compose_timeout_recovered(
+                process_runner=runner,
+                compose_root=Path("/tmp/supabase"),
+                compose_project_name="envctl-supabase-test",
+                compose_path=Path("/tmp/supabase/docker-compose.yml"),
+                env={},
+                service_name="supabase-auth",
+                probe_port=None,
+                error="Command timed out after 120.0s: docker compose up -d supabase-auth",
+            )
+        )
+        self.assertTrue(any(cmd[-4:] == ["ps", "--format", "json", "supabase-auth"] for cmd in runner.commands))
+        self.assertFalse(any(cmd[-3:] == ["ps", "-q", "supabase-auth"] for cmd in runner.commands))
+
+    def test_timeout_recovery_falls_back_to_inspected_service_state(self) -> None:
+        runner = _ComposeStateRunner()
+        runner.compose_json_returncode["supabase-auth"] = 1
+        runner.compose_ps_q_stdout["supabase-auth"] = "auth-container\n"
+        runner.inspect_state_stdout["auth-container"] = json.dumps({"Status": "created", "ExitCode": 0})
+
+        self.assertTrue(
+            _compose_timeout_recovered(
+                process_runner=runner,
+                compose_root=Path("/tmp/supabase"),
+                compose_project_name="envctl-supabase-test",
+                compose_path=Path("/tmp/supabase/docker-compose.yml"),
+                env={},
+                service_name="supabase-auth",
+                probe_port=None,
+                error="Command timed out after 120.0s: docker compose up -d supabase-auth",
+            )
+        )
+        self.assertTrue(any(cmd[-3:] == ["ps", "-q", "supabase-auth"] for cmd in runner.commands))
+        self.assertTrue(
+            any(cmd[-1] == "auth-container" and cmd[:3] == ["docker", "inspect", "-f"] for cmd in runner.commands)
+        )
+
+    def test_timeout_recovery_rejects_missing_or_inspect_error_without_probe_port(self) -> None:
+        missing_runner = _ComposeStateRunner()
+        missing_runner.compose_json_stdout["missing"] = "[]"
+        self.assertFalse(
+            _compose_timeout_recovered(
+                process_runner=missing_runner,
+                compose_root=Path("/tmp/supabase"),
+                compose_project_name="envctl-supabase-test",
+                compose_path=Path("/tmp/supabase/docker-compose.yml"),
+                env={},
+                service_name="missing",
+                probe_port=None,
+                error="Command timed out after 120.0s: docker compose up -d missing",
+            )
+        )
+
+        inspect_runner = _ComposeStateRunner()
+        inspect_runner.compose_json_returncode["inspect-error"] = 1
+        inspect_runner.compose_ps_q_stdout["inspect-error"] = "broken123\n"
+        inspect_runner.inspect_returncode["broken123"] = 1
+        inspect_runner.inspect_stderr["broken123"] = "inspect failed"
+        self.assertFalse(
+            _compose_timeout_recovered(
+                process_runner=inspect_runner,
+                compose_root=Path("/tmp/supabase"),
+                compose_project_name="envctl-supabase-test",
+                compose_path=Path("/tmp/supabase/docker-compose.yml"),
+                env={},
+                service_name="inspect-error",
+                probe_port=None,
+                error="Command timed out after 120.0s: docker compose up -d inspect-error",
+            )
+        )
+
+    def test_timeout_recovery_keeps_probe_port_fallback(self) -> None:
+        runner = _ComposeStateRunner()
+        runner.compose_json_stdout["supabase-db"] = "[]"
+        runner.wait_for_port_result = True
+
+        self.assertTrue(
+            _compose_timeout_recovered(
+                process_runner=runner,
+                compose_root=Path("/tmp/supabase"),
+                compose_project_name="envctl-supabase-test",
+                compose_path=Path("/tmp/supabase/docker-compose.yml"),
+                env={},
+                service_name="supabase-db",
+                probe_port=5432,
+                error="Command timed out after 120.0s: docker compose up -d supabase-db",
+            )
+        )
+        self.assertEqual(runner.wait_for_port_calls, [(5432, 5.0)])
 
 
 if __name__ == "__main__":
