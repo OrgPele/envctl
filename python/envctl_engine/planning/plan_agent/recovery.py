@@ -75,7 +75,7 @@ def plan_agent_native_recovery_command(
     command.extend(
         [
             "ENVCTL_USE_REPO_WRAPPER=1",
-            str(repo_root / "bin" / "envctl"),
+            _cli_display_path(repo_root / "bin" / "envctl"),
             "--plan",
             selector,
             "--tmux",
@@ -116,6 +116,13 @@ def plan_agent_native_recovery_command(
         command.append("--headless")
     command.append("--tmux-new-session")
     return tuple(command)
+
+
+def _cli_display_path(path: Path) -> str:
+    raw = str(path)
+    if raw.startswith("/private/var/"):
+        return raw.removeprefix("/private")
+    return raw
 
 
 def _plan_agent_recovery_command_text(command: tuple[str, ...]) -> str:
