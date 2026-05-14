@@ -80,8 +80,11 @@ These sections are separate from the managed startup block:
   dependency ports so generated DB/Redis URLs do not bind the same well-known host ports on every run
 - explicit dependency toggles still win; for example `MAIN_POSTGRES_ENABLE=false` keeps PostgreSQL disabled even when a
   template references `ENVCTL_SOURCE_DATABASE_URL`
+- a dependency already configured as managed/enabled stays managed even if the default app `.env` contains an old
+  dependency URL from a previous run
 - if any other referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
-- custom aliases/templates are injected into launched processes only; backend `.env` writeback stays canonical
+- custom aliases/templates are injected into launched processes only; the default backend `.env` is not rewritten with
+  per-run managed PostgreSQL or Redis URLs
 - after envctl seeds the launch env sections, `envctl config` leaves them unchanged
 
 Supported template inputs include:
@@ -243,6 +246,8 @@ Runtime dependency projection also applies to migrate:
 - inherited shell backend keys such as `DATABASE_URL`, `APP_ENV_FILE`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `DB_*` are scrubbed before target-specific merge
 - if the selected project already has saved requirements state, envctl reuses its canonical dependency URLs such as `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `REDIS_URL`
 - the default backend `.env` is not authoritative for those projected dependency URLs during migrate or startup bootstrap
+- default backend `.env` writeback is limited to cleanup of stale DB alias keys and does not persist current run
+  `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, or `REDIS_URL` values
 - an explicit non-default backend env override file remains authoritative for DB-family keys, matching the existing `SKIP_LOCAL_DB_ENV` semantics
 
 Relevant keys:

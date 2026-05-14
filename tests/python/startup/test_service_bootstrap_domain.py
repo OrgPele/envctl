@@ -27,6 +27,8 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _run_backend_migration_step,
     _rewrite_database_url_to_asyncpg,
     _service_env_from_file,
+    _sync_backend_env_file,
+    _env_assignment_key,
     _write_backend_bootstrap_state,
     _write_backend_runtime_prep_state,
 )
@@ -58,6 +60,7 @@ class _FakeRuntime:
 
     _backend_async_driver_mismatch_error = staticmethod(_backend_async_driver_mismatch_error)
     _rewrite_database_url_to_asyncpg = staticmethod(_rewrite_database_url_to_asyncpg)
+    _env_assignment_key = staticmethod(_env_assignment_key)
 
 
 class ServiceBootstrapDomainTests(unittest.TestCase):
@@ -678,6 +681,35 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             )
             self.assertTrue(any(event.get("event") == "backend.env.resolved" for event in runtime.events))
 
+    def test_default_backend_env_keeps_stale_redis_url_out_of_persistence_but_not_launch_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            backend_dir = tree_root / "backend"
+            env_file = backend_dir / ".env"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            env_file.write_text(
+                "REDIS_URL=redis://localhost:6518/0\nCUSTOM_BACKEND_FLAG=enabled\n",
+                encoding="utf-8",
+            )
+            runtime = _FakeRuntime(repo_root=repo)
+            context = SimpleNamespace(name="feature-a-1", root=tree_root)
+
+            result = _resolve_backend_env_contract(
+                runtime,
+                context=context,
+                backend_cwd=backend_dir,
+                base_env={},
+                projected_env={"REDIS_URL": "redis://localhost:6603/0"},
+            )
+            _sync_backend_env_file(runtime, env_file, env=result.env)
+
+            self.assertEqual(result.env["REDIS_URL"], "redis://localhost:6603/0")
+            content = env_file.read_text(encoding="utf-8")
+            self.assertIn("REDIS_URL=redis://localhost:6518/0", content)
+            self.assertIn("CUSTOM_BACKEND_FLAG=enabled", content)
+            self.assertNotIn("REDIS_URL=redis://localhost:6603/0", content)
+
     def test_resolve_backend_env_contract_keeps_explicit_override_authoritative(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -719,6 +751,34 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
                 result.env["ASYNC_DATABASE_URL"],
                 "postgresql+psycopg2://override_user:override_pass@db.internal/override_db",
             )
+            self.assertTrue(result.override_authoritative)
+            self.assertEqual(result.env_file_source, "explicit_override")
+
+    def test_explicit_backend_env_override_remains_authoritative_for_redis_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            backend_dir = tree_root / "backend"
+            override_file = repo / "config" / "backend.override.env"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            override_file.parent.mkdir(parents=True, exist_ok=True)
+            override_file.write_text(
+                "REDIS_URL=redis://cache.example.test:6382/0\nCUSTOM_BACKEND_FLAG=override-enabled\n",
+                encoding="utf-8",
+            )
+            runtime = _FakeRuntime(repo_root=repo, env={"BACKEND_ENV_FILE_OVERRIDE": str(override_file)})
+            context = SimpleNamespace(name="feature-a-1", root=tree_root)
+
+            result = _resolve_backend_env_contract(
+                runtime,
+                context=context,
+                backend_cwd=backend_dir,
+                base_env={},
+                projected_env={"REDIS_URL": "redis://localhost:6603/0"},
+            )
+
+            self.assertEqual(result.env["REDIS_URL"], "redis://cache.example.test:6382/0")
+            self.assertEqual(result.env["CUSTOM_BACKEND_FLAG"], "override-enabled")
             self.assertTrue(result.override_authoritative)
             self.assertEqual(result.env_file_source, "explicit_override")
 

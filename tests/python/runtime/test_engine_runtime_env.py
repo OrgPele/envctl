@@ -351,6 +351,27 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertFalse(dependency_external_mode(runtime, "redis", mode="main", route=route))
         self.assertFalse(requirement_enabled_for_mode(runtime, "main", "supabase", route=route))
 
+    def test_main_managed_redis_ignores_stale_default_backend_env_for_auto_external_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            backend = repo / "backend"
+            backend.mkdir()
+            backend.joinpath(".env").write_text("REDIS_URL=redis://localhost:6518/0\n", encoding="utf-8")
+            runtime = SimpleNamespace(
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    base_dir=repo,
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    startup_enabled_for_mode=lambda _mode: True,
+                    requirement_enabled_for_mode=lambda _mode, name: name == "redis",
+                ),
+            )
+
+            self.assertFalse(dependency_external_mode(runtime, "redis", mode="main"))
+            self.assertTrue(requirement_enabled_for_mode(runtime, "main", "redis"))
+
     def test_global_managed_dependency_env_disables_main_auto_external_dependency_detection(self) -> None:
         runtime = SimpleNamespace(
             env={
