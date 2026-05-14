@@ -16,6 +16,8 @@ from envctl_engine.requirements.redis import start_redis_container
 from envctl_engine.requirements.supabase import (
     _auth_recreate_probe_attempts,
     _auth_restart_probe_attempts,
+    _compose_services_started,
+    _compose_timeout_recovered,
     _condense_probe_error,
     _probe_supabase_auth_health,
     build_supabase_project_name,
@@ -60,6 +62,9 @@ class _FakeRunner:
         self.compose_stderr: dict[str, str] = {}
         self.compose_returncode_sequence: dict[str, list[int]] = {}
         self.compose_stderr_sequence: dict[str, list[str]] = {}
+        self.compose_ps_json_stdout: dict[str, str] = {}
+        self.compose_ps_json_returncode: dict[str, int] = {}
+        self.compose_ps_json_stderr: dict[str, str] = {}
         self.compose_ps_q_stdout: dict[str, list[str] | str] = {}
         self.compose_ps_q_returncode: dict[str, int] = {}
         self.compose_ps_q_stderr: dict[str, str] = {}
@@ -254,6 +259,36 @@ class _FakeRunner:
         if len(command) >= 4 and command[:2] == ["docker", "compose"] and "-f" in command:
             compose_args = command[command.index("-f") + 2 :]
             compose_key = " ".join(compose_args)
+            if len(compose_args) >= 4 and compose_args[:3] == ["ps", "--format", "json"]:
+                service_name = compose_args[3]
+                rc = self.compose_ps_json_returncode.get(
+                    service_name,
+                    self.compose_ps_q_returncode.get(service_name, 0),
+                )
+                stderr = self.compose_ps_json_stderr.get(
+                    service_name,
+                    self.compose_ps_q_stderr.get(service_name, ""),
+                )
+                if service_name in self.compose_ps_json_stdout:
+                    stdout = self.compose_ps_json_stdout[service_name]
+                else:
+                    container_id = self.compose_ps_q_stdout.get(service_name, f"{service_name}-container-id\n")
+                    if isinstance(container_id, list):
+                        container_id = container_id[0] if container_id else ""
+                    container_id = str(container_id).strip()
+                    status = self.status.get(container_id, "running") if container_id else "missing"
+                    health = self.health_status.get(container_id)
+                    item: dict[str, object] = {
+                        "ID": container_id,
+                        "Name": container_id,
+                        "Service": service_name,
+                        "State": status,
+                        "Status": status,
+                    }
+                    if health:
+                        item["Health"] = health
+                    stdout = json.dumps([item]) if container_id else "[]"
+                return subprocess.CompletedProcess(command, rc, stdout if rc == 0 else "", stderr)
             if compose_args[:2] == ["ps", "-q"] and len(compose_args) >= 3:
                 service_name = compose_args[2]
                 rc = self.compose_ps_q_returncode.get(service_name, 0)
@@ -858,15 +893,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "supabase-db"]
-                    for cmd in runner.commands
-                )
-            )
-            self.assertTrue(
-                any(
                     cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"]
-                    and "supabase-auth" in cmd
-                    and "supabase-kong" in cmd
+                    and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
                     for cmd in runner.commands
                 )
             )
@@ -880,8 +908,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
-            runner.compose_stderr_sequence["up -d supabase-db"] = [
+            runner.compose_returncode_sequence["up -d supabase-db supabase-auth supabase-kong"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db supabase-auth supabase-kong"] = [
                 "Error response from daemon: all predefined address pools have been fully subnetted",
                 "",
             ]
@@ -906,10 +934,13 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
             self.assertTrue(result.success)
-            db_ups = [
-                cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
+            graph_ups = [
+                cmd
+                for cmd in runner.commands
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
             ]
-            self.assertEqual(len(db_ups), 2)
+            self.assertEqual(len(graph_ups), 2)
             removed_networks = [cmd[-1] for cmd in runner.commands if cmd[:3] == ["docker", "network", "rm"]]
             self.assertEqual(
                 removed_networks,
@@ -930,8 +961,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
-            runner.compose_stderr_sequence["up -d supabase-db"] = [
+            runner.compose_returncode_sequence["up -d supabase-db supabase-auth supabase-kong"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db supabase-auth supabase-kong"] = [
                 "failed to set up container networking: network 3b2e1a0f9d8c not found",
                 "",
             ]
@@ -946,10 +977,13 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
-            db_ups = [
-                cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
+            graph_ups = [
+                cmd
+                for cmd in runner.commands
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
             ]
-            self.assertEqual(len(db_ups), 2)
+            self.assertEqual(len(graph_ups), 2)
             self.assertTrue(
                 any(
                     cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"]
@@ -973,8 +1007,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            runner.compose_returncode_sequence["up -d supabase-auth supabase-kong"] = [1, 0]
-            runner.compose_stderr_sequence["up -d supabase-auth supabase-kong"] = [
+            runner.compose_returncode_sequence["up -d supabase-db supabase-auth supabase-kong"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db supabase-auth supabase-kong"] = [
                 "failed to set up container networking: network 0123456789abcdef not found",
                 "",
             ]
@@ -990,12 +1024,13 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
             self.assertTrue(result.success)
-            secondary_ups = [
+            graph_ups = [
                 cmd
                 for cmd in runner.commands
-                if cmd[:2] == ["docker", "compose"] and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
             ]
-            self.assertEqual(len(secondary_ups), 2)
+            self.assertEqual(len(graph_ups), 2)
             self.assertTrue(any(cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["down", "--remove-orphans"] for cmd in runner.commands))
 
     def test_supabase_missing_network_recovery_does_not_remove_other_worktree_or_non_empty_networks(self) -> None:
@@ -1008,8 +1043,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
             runner = _FakeRunner()
-            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 0]
-            runner.compose_stderr_sequence["up -d supabase-db"] = [
+            runner.compose_returncode_sequence["up -d supabase-db supabase-auth supabase-kong"] = [1, 0]
+            runner.compose_stderr_sequence["up -d supabase-db supabase-auth supabase-kong"] = [
                 "Error response from daemon: failed to set up container networking: network 0123456789ab not found",
                 "",
             ]
@@ -1053,8 +1088,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            runner.compose_returncode_sequence["up -d supabase-db"] = [1, 1]
-            runner.compose_stderr_sequence["up -d supabase-db"] = [
+            runner.compose_returncode_sequence["up -d supabase-db supabase-auth supabase-kong"] = [1, 1]
+            runner.compose_stderr_sequence["up -d supabase-db supabase-auth supabase-kong"] = [
                 "failed to set up container networking: network 0123456789ab not found",
                 "still missing network",
             ]
@@ -1423,7 +1458,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertFalse(any(cmd[:2] == ["docker", "compose"] and "restart" in cmd for cmd in runner.commands))
             self.assertFalse(any(cmd[:2] == ["docker", "compose"] and "rm" in cmd for cmd in runner.commands))
 
-    def test_supabase_stack_starts_secondary_services_before_auth_health_probe(self) -> None:
+    def test_supabase_stack_starts_full_graph_before_auth_health_probe(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             supabase_dir = root / "supabase"
@@ -1440,12 +1475,164 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
             self.assertTrue(result.success)
-            self.assertTrue(
+            graph_ups = [
+                cmd
+                for cmd in runner.commands
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
+            ]
+            self.assertEqual(len(graph_ups), 1)
+            self.assertFalse(
                 any(
                     cmd[:2] == ["docker", "compose"] and cmd[-4:] == ["up", "-d", "supabase-auth", "supabase-kong"]
                     for cmd in runner.commands
                 )
             )
+            stage_names = [str(item.get("stage", "")) for item in result.stage_events or []]
+            self.assertIn("supabase.graph.up", stage_names)
+            self.assertIn("supabase.db.probe", stage_names)
+            self.assertIn("supabase.auth.probe", stage_names)
+
+    def test_supabase_graph_startup_does_not_fail_when_auth_kong_progress_past_old_compose_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_ps_q_stdout["supabase-db"] = "db-container-id\n"
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["db-container-id"] = "running"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "created"
+            runner.wait_for_port_overrides[5432] = True
+            runner.wait_for_port_overrides[54321] = True
+            runner.health_returncode_sequence = [0]
+
+            def _hung_graph(cmd, *, cwd=None, env=None):  # noqa: ANN001
+                _ = cwd, env
+                runner.commands.append(list(cmd))
+                return _FakeComposeProcess(returncode=None)
+
+            runner.compose_up_process = _hung_graph  # type: ignore[method-assign]
+
+            with mock.patch("envctl_engine.requirements.supabase.os.killpg", side_effect=OSError()):
+                result = start_supabase_stack(
+                    process_runner=runner,
+                    project_root=root,
+                    project_name="feature-a-1",
+                    db_port=5432,
+                    public_port=54321,
+                )
+
+            self.assertTrue(result.success)
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+            self.assertEqual(runner.health_urls, ["http://127.0.0.1:54321/auth/v1/health"])
+
+    def test_supabase_compose_handoff_does_not_treat_created_service_as_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            compose_path = supabase_dir / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-auth: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.status["auth-container-id"] = "created"
+
+            ready = _compose_services_started(
+                process_runner=runner,
+                compose_root=supabase_dir,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={},
+                service_names=["supabase-auth"],
+            )
+
+            self.assertFalse(ready)
+
+    def test_supabase_timeout_recovery_for_auth_kong_requires_running_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            compose_path = supabase_dir / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-auth: {}\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.status["auth-container-id"] = "created"
+
+            created_recovered = _compose_timeout_recovered(
+                process_runner=runner,
+                compose_root=supabase_dir,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={},
+                service_name="supabase-auth",
+                probe_port=None,
+                error="Command timed out after 45.0s: docker compose up -d supabase-auth supabase-kong",
+            )
+            runner.status["auth-container-id"] = "running"
+            running_recovered = _compose_timeout_recovered(
+                process_runner=runner,
+                compose_root=supabase_dir,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={},
+                service_name="supabase-auth",
+                probe_port=None,
+                error="Command timed out after 45.0s: docker compose up -d supabase-auth supabase-kong",
+            )
+
+            self.assertFalse(created_recovered)
+            self.assertTrue(running_recovered)
+
+    def test_supabase_graph_startup_failure_reports_phase_timeout_port_and_service_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _FakeRunner()
+            runner.compose_returncode["up -d supabase-db supabase-auth supabase-kong"] = 1
+            runner.compose_stderr["up -d supabase-db supabase-auth supabase-kong"] = "Container supabase-kong-1 Starting"
+            runner.compose_ps_q_stdout["supabase-db"] = "db-container-id\n"
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["db-container-id"] = "running"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "created"
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "45"},
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("phase=compose_graph", result.error or "")
+            self.assertIn("compose_timeout_s=45", result.error or "")
+            self.assertIn("public_port=54321", result.error or "")
+            self.assertIn("probe_url=http://127.0.0.1:54321/auth/v1/health", result.error or "")
+            self.assertIn("supabase-kong", result.error or "")
+            self.assertIn("status=created", result.error or "")
+            self.assertIn("last_error=Container supabase-kong-1 Starting", result.error or "")
 
     def test_supabase_recovers_when_initial_up_times_out_but_service_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1544,7 +1731,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
             ]
             self.assertEqual(len(db_ups), 1)
-            self.assertTrue(any(cmd[-3:] == ["ps", "-q", "supabase-db"] for cmd in runner.commands))
+            self.assertTrue(any(cmd[-4:] == ["ps", "--format", "json", "supabase-db"] for cmd in runner.commands))
 
     def test_supabase_stack_uses_discovered_alternative_service_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1568,13 +1755,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             compose_project = build_supabase_project_name(project_root=root, project_name="feature-a-1")
             self.assertTrue(
                 any(
-                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and cmd[-2:] == ["-d", "db"]
-                    for cmd in runner.commands
-                )
-            )
-            self.assertTrue(
-                any(
-                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"] and "auth" in cmd and "kong" in cmd
+                    cmd[:5] == ["docker", "compose", "-p", compose_project, "-f"]
+                    and cmd[-5:] == ["up", "-d", "db", "auth", "kong"]
                     for cmd in runner.commands
                 )
             )
@@ -1608,10 +1790,17 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 db_port=5432,
             )
             self.assertTrue(result.success)
-            db_ups = [
+            graph_ups = [
+                cmd
+                for cmd in runner.commands
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
+            ]
+            db_retry_ups = [
                 cmd for cmd in runner.commands if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["-d", "supabase-db"]
             ]
-            self.assertGreaterEqual(len(db_ups), 2)
+            self.assertEqual(len(graph_ups), 1)
+            self.assertGreaterEqual(len(db_retry_ups), 1)
 
     def test_supabase_stack_fails_after_db_probe_retry_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2032,8 +2221,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
 
             runner = _FakeRunner()
-            runner.compose_returncode["up -d supabase-db"] = 1
-            runner.compose_stderr["up -d supabase-db"] = (
+            runner.compose_returncode["up -d supabase-db supabase-auth supabase-kong"] = 1
+            runner.compose_stderr["up -d supabase-db supabase-auth supabase-kong"] = (
                 "Container supabase-supabase-db-1 Error response from daemon: Conflict. "
                 'The container name "/supabase-supabase-db-1" is already in use by container "abc".\n'
                 'Error response from daemon: Conflict. The container name "/supabase-supabase-db-1" is already in use by container "abc".'
