@@ -4,6 +4,7 @@ import re
 
 from envctl_engine.debug.debug_utils import scrub_sensitive_text
 from envctl_engine.planning.plan_agent.models import AiCliReadyResult
+from envctl_engine.planning.plan_agent.constants import _CODEX_QUEUE_CONFIRMED_MARKERS, _CODEX_QUEUE_READY_HINT
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›][ \t]*.*$")
@@ -157,3 +158,63 @@ def _format_ai_cli_ready_failure(result: AiCliReadyResult) -> str:
 def _normalized_screen_text(raw: str) -> str:
     cleaned = _strip_ansi_sequences(raw).lower()
     return " ".join(cleaned.split())
+
+
+def _codex_queue_screen_looks_ready(screen: str) -> bool:
+    cleaned = _strip_ansi_sequences(screen)
+    if not cleaned.strip():
+        return True
+    return _screen_looks_ready("codex", cleaned)
+
+
+def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    if _CODEX_QUEUE_READY_HINT not in normalized_screen:
+        return False
+    normalized_text = _normalized_screen_text(text)
+    if not normalized_text:
+        return False
+    if normalized_text in normalized_screen:
+        return True
+    first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not require_text_match:
+        return "pasted content" in normalized_screen or (
+            bool(first_visible_line) and _normalized_screen_text(first_visible_line) in normalized_screen
+        )
+    if not first_visible_line:
+        return False
+    return _normalized_screen_text(first_visible_line) in normalized_screen
+
+
+def _codex_queue_screen_confirms_queued(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    if any(marker in normalized_screen for marker in _CODEX_QUEUE_CONFIRMED_MARKERS):
+        return True
+    if _CODEX_QUEUE_READY_HINT in normalized_screen:
+        return False
+    if _codex_queue_text_is_visible(screen, text, require_text_match=require_text_match):
+        return False
+    return True
+
+
+def _codex_queue_text_is_visible(screen: str, text: str, *, require_text_match: bool = True) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    normalized_text = _normalized_screen_text(text)
+    if normalized_text and normalized_text in normalized_screen:
+        return True
+    first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+    if not first_visible_line:
+        return False
+    if not require_text_match and "pasted content" in normalized_screen:
+        return True
+    return _normalized_screen_text(first_visible_line) in normalized_screen
+
+
+__all__ = tuple(name for name in globals() if not name.startswith("__"))
+

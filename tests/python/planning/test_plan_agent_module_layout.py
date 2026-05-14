@@ -72,7 +72,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
 
     def test_launch_module_owns_public_dispatch_functions(self) -> None:
         launch_path = PLAN_AGENT_ROOT / "launch.py"
-        tree = ast.parse(launch_path.read_text(encoding="utf-8"), filename=str(launch_path))
+        text = launch_path.read_text(encoding="utf-8")
+        self.assertLessEqual(len(text.splitlines()), 1500)
+        tree = ast.parse(text, filename=str(launch_path))
         defs = {
             node.name
             for node in ast.walk(tree)
@@ -81,10 +83,70 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
         for name in (
             "inspect_plan_agent_launch",
             "launch_plan_agent_terminals",
-            "launch_review_agent_terminal",
-            "review_agent_launch_readiness",
         ):
             self.assertIn(name, defs)
+
+    def test_core_helpers_live_in_owner_modules(self) -> None:
+        expected = {
+            "config.py": {
+                "_parse_codex_cycles",
+                "resolve_plan_agent_launch_config",
+                "plan_agent_launch_prereq_commands",
+            },
+            "workflow.py": {
+                "_workflow_step_prompt_text",
+                "_resolve_preset_submission_text",
+                "_shape_prompt_text",
+                "_runtime_addresses_prompt_section",
+            },
+            "terminal_screen.py": {
+                "_screen_looks_ready",
+                "_codex_queue_screen_looks_ready",
+                "_codex_queue_message_needs_tab",
+            },
+            "tmux_transport.py": {
+                "_tmux_session_name_for_worktree",
+                "_run_tmux_worktree_bootstrap",
+                "_queue_tmux_codex_workflow_steps",
+            },
+            "cmux_transport.py": {
+                "_prepare_surface",
+                "_ensure_workspace_id",
+                "launch_review_agent_terminal",
+            },
+            "omx_transport.py": {
+                "_spawn_omx_session_for_worktree",
+                "_find_existing_omx_attach_target",
+                "validate_plan_agent_attach_target",
+            },
+            "recovery.py": {
+                "plan_agent_native_recovery_command",
+                "_new_session_command_for_route",
+                "_plan_selector_for_route",
+            },
+        }
+        definitions: dict[str, set[str]] = {}
+        for path in PLAN_AGENT_ROOT.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            definitions[path.name] = {
+                node.name
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+        for filename, names in expected.items():
+            missing = sorted(names - definitions.get(filename, set()))
+            self.assertEqual([], missing, filename)
+            for other_filename, other_defs in definitions.items():
+                if other_filename == filename:
+                    continue
+                duplicates = sorted(names & other_defs)
+                self.assertEqual([], duplicates, f"{filename} ownership duplicated in {other_filename}")
+
+    def test_no_placeholder_extraction_modules_remain(self) -> None:
+        for filename in ("config.py", "constants.py", "recovery.py"):
+            text = (PLAN_AGENT_ROOT / filename).read_text(encoding="utf-8")
+            self.assertNotIn("Extracted in later mechanical waves", text)
+            self.assertNotIn("Constants stay in launch", text)
 
 
 if __name__ == "__main__":
