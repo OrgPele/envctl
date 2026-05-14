@@ -1372,7 +1372,7 @@ def _compose_run(
 
 
 def _compose_up_timeout_seconds(env: Mapping[str, str] | None, *, service_names: list[str]) -> float:
-    default_timeout = 45.0
+    default_timeout = 120.0
     if len(service_names) > 1 and "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS" not in (env or {}):
         default_timeout = _supabase_startup_budget_seconds(env)
     parsed = env_float(

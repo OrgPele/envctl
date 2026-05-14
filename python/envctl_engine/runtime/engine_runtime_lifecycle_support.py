@@ -292,7 +292,7 @@ def _blast_tree_cwd_processes(runtime: Any, *, project_name: str, project_root: 
     skip_pids = {os.getpid(), os.getppid()}
     proc_root = Path("/proc")
     try:
-        proc_dirs = tuple(proc_root.iterdir())
+        proc_dirs = list(proc_root.iterdir())
     except FileNotFoundError:
         return
 

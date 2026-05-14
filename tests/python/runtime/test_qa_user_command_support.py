@@ -17,6 +17,12 @@ from envctl_engine.runtime.qa_user_command_support import run_qa_user_command
 from envctl_engine.state.models import RequirementsResult, RunState
 
 
+def _macos_public_tmp_path(raw: str) -> str:
+    if raw.startswith("/private/var/"):
+        return raw.removeprefix("/private")
+    return raw
+
+
 def _state() -> RunState:
     return RunState(
         run_id="run-qa",
@@ -271,8 +277,8 @@ class QaUserCommandSupportTests(unittest.TestCase):
             self.assertIn("http://127.0.0.1:54321", result["stdout"])
             self.assertNotIn("service-secret", json.dumps(payload))
             self.assertEqual(
-                Path((project_root / "seed.cwd").read_text(encoding="utf-8")).resolve(),
-                project_root.resolve(),
+                _macos_public_tmp_path((project_root / "seed.cwd").read_text(encoding="utf-8")),
+                str(project_root),
             )
 
     def test_seed_hook_runs_with_timeout_and_reports_timeout_failure(self) -> None:

@@ -125,6 +125,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .release-tmp
+          release_notes="docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
+          if [ -s "$release_notes" ]; then
+            cp "$release_notes" .release-tmp/notes-body.md
+            echo "--- checked-in release notes preview ---"
+            head -n 40 .release-tmp/notes-body.md || true
+            exit 0
+          fi
+
           payload=".release-tmp/notes-payload.json"
           if [ -n "${PREVIOUS_TAG}" ]; then
             jq -n --arg tag "$NEW_VERSION" --arg target "main" --arg prev "$PREVIOUS_TAG" \
