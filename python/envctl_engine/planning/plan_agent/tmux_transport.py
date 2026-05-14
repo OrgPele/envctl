@@ -803,13 +803,15 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
 
 def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
     target = _tmux_target(session_name, window_name)
+    tmux_env = dict(os.environ)
+    tmux_env.update(dict(getattr(runtime, "env", {}) or {}))
     load_result = subprocess.run(
         ["tmux", "load-buffer", "-t", target, "-"],
         input=text,
         capture_output=True,
         text=True,
         cwd=Path(runtime.config.base_dir).resolve(),
-        env=dict(getattr(runtime, "env", {})),
+        env=tmux_env,
         timeout=10.0,
     )
     if load_result.returncode != 0:
@@ -821,7 +823,7 @@ def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text
         capture_output=True,
         text=True,
         cwd=Path(runtime.config.base_dir).resolve(),
-        env=dict(getattr(runtime, "env", {})),
+        env=tmux_env,
         timeout=10.0,
     )
     if paste_result.returncode != 0:
