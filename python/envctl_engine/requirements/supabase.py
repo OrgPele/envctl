@@ -1166,7 +1166,7 @@ def _compose_run(
         timeout_seconds = env_float(
             env,
             "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS",
-            45.0,
+            120.0,
             minimum=5.0,
         )
         service_names = [value for value in args[2:] if value]

@@ -16,6 +16,7 @@ from envctl_engine.requirements.redis import start_redis_container
 from envctl_engine.requirements.supabase import (
     _auth_recreate_probe_attempts,
     _auth_restart_probe_attempts,
+    _compose_run,
     _condense_probe_error,
     _probe_supabase_auth_health,
     build_supabase_project_name,
@@ -419,6 +420,32 @@ class _FlakyHealthRunner:
 
 
 class RequirementsAdaptersRealContractsTests(unittest.TestCase):
+    def test_supabase_compose_up_default_timeout_is_120_seconds(self) -> None:
+        runner = _FakeRunner()
+        captured: dict[str, float] = {}
+
+        def _capture_handoff(**kwargs):  # noqa: ANN001
+            captured["timeout_seconds"] = kwargs["timeout_seconds"]
+            return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            with mock.patch("envctl_engine.requirements.supabase._compose_up_handoff", side_effect=_capture_handoff):
+                result = _compose_run(
+                    process_runner=runner,
+                    compose_root=root,
+                    compose_project_name="envctl-supabase-test",
+                    compose_path=compose_path,
+                    env={},
+                    args=["up", "-d", "supabase-db"],
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(captured["timeout_seconds"], 120.0)
+
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
         runner = _FlakyHealthRunner()
 
