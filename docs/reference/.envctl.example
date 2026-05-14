@@ -142,7 +142,8 @@ ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 # External dependency mode can be configured in this same .envctl file.
 # Default mode is managed: envctl starts enabled dependencies and projects localhost values.
 # Main mode auto-uses an external dependency when that dependency's own env vars exist
-# in shell env, .envctl, project root .env, backend .env, or frontend .env.
+# in shell env, .envctl, project root .env, backend .env, or frontend .env,
+# unless that dependency is already configured as managed/enabled.
 # Trees mode defaults to managed/internal dependencies unless external mode is explicit.
 # For one-off main runs that should ignore external env auto-detection, use
 # `envctl --main --managed-deps` or the alias `envctl --main --no-external-deps`.

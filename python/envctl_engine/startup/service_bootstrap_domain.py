@@ -1554,14 +1554,8 @@ def _read_env_file_safe(path: Path) -> dict[str, str]:
 
 
 def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> None:
-    updates: dict[str, str] = {}
+    _ = env
     removals = {"SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL"}
-    for key in ("DATABASE_URL", "SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL", "REDIS_URL"):
-        value = env.get(key)
-        if isinstance(value, str) and value.strip():
-            updates[key] = value
-    if not updates and not removals:
-        return
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1575,24 +1569,11 @@ def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> 
         if key is None or key in replaced:
             rendered.append(line)
             continue
-        if key in removals and key not in updates:
+        if key in removals:
             changed = True
             replaced.add(key)
             continue
-        if key not in updates:
-            rendered.append(line)
-            continue
-        new_line = f"{key}={updates[key]}"
-        if line != new_line:
-            changed = True
-        rendered.append(new_line)
-        replaced.add(key)
-
-    for key, value in updates.items():
-        if key in replaced:
-            continue
-        rendered.append(f"{key}={value}")
-        changed = True
+        rendered.append(line)
 
     if not changed:
         return

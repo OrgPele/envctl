@@ -194,6 +194,8 @@ Active backend launch templates for `ENVCTL_SOURCE_DATABASE_URL` and `ENVCTL_SOU
 for envctl-managed dynamic PostgreSQL/Redis URLs when the matching dependency toggle is not present in `.envctl`.
 If you want the template line to stay present but the dependency to remain disabled, add the explicit toggle such as
 `MAIN_POSTGRES_ENABLE=false` or `MAIN_REDIS_ENABLE=false`.
+Those dynamic URLs are injected into launched processes for the current run; envctl does not rewrite the default
+backend `.env` with the current managed PostgreSQL or Redis port.
 
 For Main-mode managed dependencies that keep the built-in DB/Redis port defaults, envctl adds a per-session offset to
 the dependency ports before generating those URLs. Backend/frontend app ports remain at their configured bases. Set

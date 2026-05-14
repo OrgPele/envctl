@@ -36,6 +36,8 @@ def dependency_external_mode(runtime: Any, dependency_id: str, *, mode: str | No
     external_list = _raw(runtime, "ENVCTL_EXTERNAL_DEPENDENCIES")
     if dependency in _parse_dependency_list(external_list):
         return True
+    if _dependency_configured_for_managed_mode(runtime, dependency, mode=mode):
+        return False
     return _dependency_auto_external_mode(runtime, dependency, mode=mode)
 
 
@@ -43,6 +45,30 @@ def _dependency_auto_external_mode(runtime: Any, dependency_id: str, *, mode: st
     if str(mode or "").strip().lower() != "main":
         return False
     return external_dependency_validation_error(runtime, dependency_id) is None
+
+
+def _dependency_configured_for_managed_mode(runtime: Any, dependency_id: str, *, mode: str | None) -> bool:
+    if str(mode or "").strip().lower() != "main":
+        return False
+    if parse_bool(_raw_without_app_env(runtime, "SKIP_LOCAL_DB_ENV"), False):
+        return False
+    config = getattr(runtime, "config", None)
+    enabled_for_mode = getattr(config, "requirement_enabled_for_mode", None)
+    if callable(enabled_for_mode):
+        try:
+            return bool(enabled_for_mode("main", dependency_id))
+        except Exception:  # noqa: BLE001
+            return False
+    attr_name = {
+        "postgres": "postgres_main_enable",
+        "redis": "redis_main_enable",
+        "supabase": "supabase_main_enable",
+        "n8n": "n8n_main_enable",
+    }.get(dependency_id)
+    if not attr_name:
+        return False
+    raw = getattr(config, attr_name, None)
+    return bool(raw)
 
 
 def _route_forces_managed_dependencies(route: Any) -> bool:
