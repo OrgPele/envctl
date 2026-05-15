@@ -589,14 +589,22 @@ def _plan_matches_for_feature(planning_root: Path, *, feature_name: str) -> list
 
 def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str | None:
     planning_root = repo_root / _PLANNING_ROOT
+    path_pairs = [(planning_root, plan_path)]
     try:
-        selector = str(plan_path.relative_to(planning_root)).replace("\\", "/")
-    except ValueError:
-        return None
-    selector = selector.strip()
-    if not selector:
-        return None
-    return selector
+        resolved_pair = (planning_root.resolve(strict=False), plan_path.resolve(strict=False))
+    except OSError:
+        resolved_pair = None
+    if resolved_pair is not None and resolved_pair not in path_pairs:
+        path_pairs.append(resolved_pair)
+    for root_candidate, plan_candidate in path_pairs:
+        try:
+            selector = str(plan_candidate.relative_to(root_candidate)).replace("\\", "/")
+        except ValueError:
+            continue
+        selector = selector.strip()
+        if selector:
+            return selector
+    return None
 
 
 def resolve_plan_agent_launch_command(

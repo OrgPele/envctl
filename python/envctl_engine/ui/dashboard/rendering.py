@@ -1130,7 +1130,7 @@ def _dashboard_session_name_matches_envctl_plan_agent(*, project_root: Path, pro
     if repo_root is None:
         return False
     try:
-        worktree = CreatedPlanWorktree(name=project, root=project_root.resolve(strict=False), plan_file="")
+        worktree = CreatedPlanWorktree(name=project, root=project_root, plan_file="")
         expected_names = {
             _tmux_session_name_for_worktree(repo_root, worktree, cli=cli).lower()
             for cli in ("codex", "opencode")
@@ -1186,7 +1186,7 @@ def _dashboard_repo_root_for_project(*, project_root: Path | None) -> Path | Non
     tree_layout_repo_root = _dashboard_repo_root_from_tree_layout(project_root=project_root)
     if tree_layout_repo_root is not None:
         return tree_layout_repo_root
-    current = project_root.resolve(strict=False)
+    current = project_root.expanduser()
     for candidate in (current, *current.parents):
         if (candidate / "todo" / "plans").is_dir() or (candidate / "todo" / "done").is_dir():
             return candidate
@@ -1210,14 +1210,14 @@ def _dashboard_repo_root_from_provenance(*, project_root: Path) -> Path | None:
     repo_root_raw = str(provenance.get("created_from_repo", "") or "").strip()
     if not repo_root_raw:
         return None
-    repo_root = Path(repo_root_raw).expanduser().resolve(strict=False)
+    repo_root = Path(repo_root_raw).expanduser()
     if (repo_root / ".git").exists() or (repo_root / "todo").is_dir():
         return repo_root
     return None
 
 
 def _dashboard_repo_root_from_tree_layout(*, project_root: Path) -> Path | None:
-    current = project_root.resolve(strict=False)
+    current = project_root.expanduser()
     for trees_dir in current.parents:
         if trees_dir.name != "trees":
             continue
@@ -1236,7 +1236,7 @@ def _dashboard_repo_root_from_tree_layout(*, project_root: Path) -> Path | None:
 
 
 def _dashboard_worktree_ai_launch_command(*, project_root: Path, envctl_executable: str) -> str | None:
-    root = project_root.expanduser().resolve(strict=False)
+    root = project_root.expanduser()
     if not (root / "MAIN_TASK.md").is_file():
         return None
     return " ".join(

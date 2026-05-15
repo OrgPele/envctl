@@ -494,8 +494,8 @@ class ProcessRunner:
             stdout = exc.stdout if isinstance(exc.stdout, str) else ""
             stderr_prefix = exc.stderr if isinstance(exc.stderr, str) else ""
             return self._timeout_result(command, timeout=timeout, stdout=stdout, stderr_prefix=stderr_prefix)
-        except OSError:
-            raise
+        except OSError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout="", stderr=str(exc))
 
     def tracked_launches(self, *, active_only: bool = False) -> list[dict[str, object]]:
         launches: list[dict[str, object]] = []
