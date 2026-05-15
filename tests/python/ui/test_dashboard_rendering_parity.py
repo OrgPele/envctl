@@ -936,6 +936,11 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn('AI session: OpenCode already running in cmux tab "features_feature_a-1"', output)
+            self.assertIn(
+                "highlight: cmux tab-action --action mark-unread --workspace workspace:8 --surface surface:44 && "
+                "cmux trigger-flash --workspace workspace:8 --surface surface:44",
+                output,
+            )
             self.assertNotIn("cmux workspace:8 surface:44", output)
             self.assertNotIn("Run AI:", output)
 

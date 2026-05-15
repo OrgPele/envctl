@@ -1066,6 +1066,9 @@ def _print_dashboard_ai_session_row(
             )
             tab_title = _dashboard_cmux_launch_tab_title(launch, project=project)
             print(f"    {gray}AI session:{reset} {dim}{cli_label} already running in cmux tab \"{tab_title}\"{reset}")
+            highlight_command = _dashboard_cmux_launch_highlight_command(launch)
+            if highlight_command:
+                print(f"      {gray}highlight:{reset} {dim}{highlight_command}{reset}")
         return
     sessions = list_tmux_sessions()
     matching = [
@@ -1131,6 +1134,18 @@ def _dashboard_cmux_launch_tab_title(launch: dict[str, object], *, project: str)
     from envctl_engine.planning.plan_agent_launch_support import _tab_title_for_worktree  # noqa: PLC0415
 
     return _tab_title_for_worktree(worktree_name)
+
+
+def _dashboard_cmux_launch_highlight_command(launch: dict[str, object]) -> str:
+    workspace = str(launch.get("workspace_id", "") or "").strip()
+    surface = str(launch.get("surface_id", "") or "").strip()
+    if not workspace or not surface:
+        return ""
+    mark_unread = shlex.join(
+        ["cmux", "tab-action", "--action", "mark-unread", "--workspace", workspace, "--surface", surface]
+    )
+    trigger_flash = shlex.join(["cmux", "trigger-flash", "--workspace", workspace, "--surface", surface])
+    return f"{mark_unread} && {trigger_flash}"
 
 
 def _dashboard_cmux_launch_matches_project(
