@@ -1708,7 +1708,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
             runner.status["db-container-id"] = "running"
             runner.status["auth-container-id"] = "running"
-            runner.status["kong-container-id"] = "created"
+            runner.status["kong-container-id"] = "running"
+            runner.health_status["kong-container-id"] = "healthy"
             runner.wait_for_port_overrides[5432] = True
             runner.wait_for_port_overrides[54321] = True
             runner.health_returncode_sequence = [0]

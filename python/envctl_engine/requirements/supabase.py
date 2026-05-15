@@ -2613,20 +2613,26 @@ def _gateway_public_port_mismatch(
         cwd=compose_root,
         env=env,
     )
-    if actual_port is None and status == "created":
-        actual_port = _container_host_config_port(
+    if actual_port is None:
+        configured_port = _container_host_config_port(
             process_runner=process_runner,
             container_name=container,
             container_port=8000,
             cwd=compose_root,
             env=env,
         )
-    if actual_port is None:
-        mismatch = dict(service_state)
-        mismatch["actual_port"] = "unpublished"
-        if port_error:
-            mismatch["port_error"] = _sanitize_service_state_text(port_error)
-        return mismatch
+        if configured_port is None:
+            return None
+        if status == "created":
+            actual_port = configured_port
+        elif int(configured_port) != int(expected_port):
+            actual_port = configured_port
+        else:
+            mismatch = dict(service_state)
+            mismatch["actual_port"] = "unpublished"
+            if port_error:
+                mismatch["port_error"] = _sanitize_service_state_text(port_error)
+            return mismatch
     if int(actual_port) == int(expected_port):
         return None
     mismatch = dict(service_state)
