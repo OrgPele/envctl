@@ -109,6 +109,48 @@ def start_supabase_stack(
     compose_up_timeout = _compose_up_timeout_seconds(env, service_names=graph_services)
 
     db_handoff_recovered = False
+    if gateway_service and secondary_services:
+        gateway_port_mismatch = _gateway_public_port_mismatch(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            gateway_service=gateway_service,
+            expected_port=resolved_public_port,
+            include_created=True,
+        )
+        if gateway_port_mismatch is not None:
+            stage_events.append(
+                {
+                    "stage": "supabase.gateway.port_mismatch.preflight",
+                    "reason": "remove_stale",
+                    "detail": _format_gateway_port_mismatch(gateway_port_mismatch, expected_port=resolved_public_port),
+                    "startup_budget_s": startup_budget.timeout_seconds,
+                    "elapsed_ms": startup_budget.elapsed_ms(),
+                }
+            )
+            remove_error = _remove_auth_gateway_services(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_names=secondary_services,
+            )
+            if remove_error is not None:
+                detail = remove_error.strip()
+                return ContainerStartResult(
+                    success=False,
+                    container_name=compose_project_name,
+                    error=(
+                        f"failed removing stale Supabase Auth/Kong before startup: {detail}"
+                        if detail
+                        else "failed removing stale Supabase Auth/Kong before startup"
+                    ),
+                    stage_events=stage_events,
+                )
+
     graph_event = {
         "stage": "supabase.graph.up" if secondary_services else "supabase.db.up",
         "detail": ",".join(graph_services),
@@ -2267,6 +2309,7 @@ def _gateway_public_port_mismatch(
     env: Mapping[str, str] | None,
     gateway_service: str,
     expected_port: int,
+    include_created: bool = False,
 ) -> dict[str, object] | None:
     if expected_port <= 0:
         return None
@@ -2280,7 +2323,10 @@ def _gateway_public_port_mismatch(
     )
     container = str(service_state.get("container") or "").strip()
     status = str(service_state.get("status") or "").strip().lower()
-    if not container or status in {"", "missing", "unknown", "created"}:
+    ignored_statuses = {"", "missing", "unknown"}
+    if not include_created:
+        ignored_statuses.add("created")
+    if not container or status in ignored_statuses:
         return None
     actual_port, port_error = container_host_port(
         process_runner,
@@ -2375,6 +2421,37 @@ def _recreate_auth_gateway_services(
     env: Mapping[str, str] | None,
     service_names: list[str],
 ) -> str | None:
+    remove_error = _remove_auth_gateway_services(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_names=service_names,
+    )
+    if remove_error is not None:
+        return remove_error
+    return _compose_run(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        args=["up", "-d", *service_names],
+    )
+
+
+def _remove_auth_gateway_services(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+) -> str | None:
+    if not service_names:
+        return None
     stop_error = _compose_run(
         process_runner=process_runner,
         compose_root=compose_root,
@@ -2385,23 +2462,13 @@ def _recreate_auth_gateway_services(
     )
     if stop_error is not None:
         return stop_error
-    rm_error = _compose_run(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        compose_project_name=compose_project_name,
-        compose_path=compose_path,
-        env=env,
-        args=["rm", "-f", *service_names],
-    )
-    if rm_error is not None:
-        return rm_error
     return _compose_run(
         process_runner=process_runner,
         compose_root=compose_root,
         compose_project_name=compose_project_name,
         compose_path=compose_path,
         env=env,
-        args=["up", "-d", *service_names],
+        args=["rm", "-f", *service_names],
     )
 
 
