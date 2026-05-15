@@ -1623,10 +1623,22 @@ def _compose_up_handoff(
             result = subprocess.CompletedProcess(command, returncode, stdout or "", stderr or "")
             if returncode == 0:
                 return None
-            return _normalize_compose_error(
+            raw_error = _normalize_compose_error(
                 run_result_error(result, f"docker compose {' '.join(args)} failed"),
                 compose_project_name=compose_project_name,
             )
+            stalled_detail = _compose_stalled_port_detail(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_names=service_names,
+                probe_port=probe_port,
+            )
+            if stalled_detail:
+                return f"{raw_error}; {stalled_detail}"
+            return raw_error
 
         if service_names and _compose_handoff_ready(
             process_runner=process_runner,
