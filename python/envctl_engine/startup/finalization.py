@@ -126,6 +126,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
                     "surface_id": getattr(outcome, "surface_id", None),
                     "status": str(getattr(outcome, "status", "")).strip(),
                     "reason": getattr(outcome, "reason", None),
+                    "transport": getattr(outcome, "transport", None),
+                    "cli": getattr(outcome, "cli", None),
+                    "workspace_id": getattr(outcome, "workspace_id", None),
                 }
             )
         if launch_outcomes:

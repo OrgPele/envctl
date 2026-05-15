@@ -117,9 +117,9 @@ CMUX=true
 CYCLES=3
 ```
 
-For cmux launches, enabling the feature uses the selected cmux workspace when available and otherwise creates/reuses a repo-named implementation workspace. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
+For cmux launches, enabling the feature creates or reuses a repo-named implementations workspace. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
-The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it uses the selected cmux workspace when available and otherwise creates/reuses a repo-named reviews workspace.
+The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it creates or reuses a repo-named reviews workspace.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 

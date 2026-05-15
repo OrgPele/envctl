@@ -4982,7 +4982,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="* workspace:4  envctl  [selected]\n  workspace:8  envctl implementation\n",
+                        stdout="* workspace:4  envctl  [selected]\n  workspace:8  repo implementations\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:12\n", stderr=""),
@@ -5122,7 +5122,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])
             self.assertEqual(
                 rt.process_runner.calls[3],
-                ["cmux", "rename-workspace", "--workspace", "workspace:9", "envctl implementation"],
+                ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"],
             )
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
@@ -5278,14 +5278,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
         * workspace:1  envctl  [selected]
-          workspace:2  envctl implementation
+          workspace:2  repo implementations
           workspace:3  supportopia
         """
         self.assertEqual(
             launch_support._workspace_entries_from_list_output(payload),
             (
                 ("workspace:1", "envctl"),
-                ("workspace:2", "envctl implementation"),
+                ("workspace:2", "repo implementations"),
                 ("workspace:3", "supportopia"),
             ),
         )
@@ -5554,11 +5554,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
             self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])
-            self.assertEqual(rt.process_runner.calls[3], ["cmux", "rename-workspace", "--workspace", "workspace:9", "envctl implementation"])
+            self.assertEqual(rt.process_runner.calls[3], ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"])
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
 
-    def test_cmux_alias_resolves_uuid_workspace_context_before_default_launch(self) -> None:
+    def test_cmux_alias_without_required_context_uses_repo_default_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -5579,22 +5579,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         stdout="* workspace:7  envctl  [selected]\n  workspace:2  supportopia\n",
                         stderr="",
                     ),
-                    subprocess.CompletedProcess(
-                        args=["cmux"],
-                        returncode=0,
-                        stdout=(
-                            '{\n'
-                            '  "caller": {\n'
-                            '    "workspace_ref": "workspace:7"\n'
-                            "  },\n"
-                            '  "focused": {\n'
-                            '    "workspace_ref": "workspace:7"\n'
-                            "  }\n"
-                            "}\n"
-                        ),
-                        stderr="",
-                    ),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="workspace:9\n", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:10\n", stderr=""),
@@ -5613,11 +5597,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "identify"])
-            self.assertEqual(rt.process_runner.calls[2], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
-            self.assertEqual(rt.process_runner.calls[3], ["cmux", "current-workspace"])
-            self.assertEqual(rt.process_runner.calls[4], ["cmux", "rename-workspace", "--workspace", "workspace:9", "envctl implementation"])
-            self.assertEqual(rt.process_runner.calls[5], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"])
+            self.assertEqual(rt.process_runner.calls[3], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
 
     def test_cmux_workspace_alias_resolves_workspace_name(self) -> None:
@@ -5960,7 +5942,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="* workspace:4  envctl  [selected]\n  workspace:9  envctl implementation\n",
+                        stdout="* workspace:4  envctl  [selected]\n  workspace:9  repo implementations\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:77\n", stderr=""),
@@ -5999,7 +5981,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="* workspace:4  envctl  [selected]\n  workspace:9  envctl implementation\n",
+                        stdout="* workspace:4  envctl  [selected]\n  workspace:9  repo implementations\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:77\n", stderr=""),
@@ -6061,7 +6043,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="* workspace:4  envctl  [selected]\n  workspace:8  envctl implementation\n",
+                        stdout="* workspace:4  envctl  [selected]\n  workspace:8  repo implementations\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="workspace:10\n", stderr=""),
@@ -6090,7 +6072,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
             self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
-            self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:10", "envctl reviews"])
+            self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:10", "repo reviews"])
             self.assertEqual(rt.process_runner.calls[3], ["cmux", "list-pane-surfaces", "--workspace", "workspace:10"])
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "new-surface", "--workspace", "workspace:10"])
             self.assertIn(

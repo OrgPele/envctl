@@ -170,6 +170,9 @@ class PlanAgentLaunchOutcome:
     surface_id: str | None
     status: str
     reason: str | None = None
+    transport: str | None = None
+    cli: str | None = None
+    workspace_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -1497,6 +1500,9 @@ def _launch_single_worktree(
             surface_id=None,
             status="failed",
             reason=create_error or "surface_create_failed",
+            transport="cmux",
+            cli=launch_config.cli,
+            workspace_id=workspace_id,
         )
     runtime._emit(
         "planning.agent_launch.surface_created",
@@ -1517,6 +1523,9 @@ def _launch_single_worktree(
         worktree_root=worktree.root,
         surface_id=surface_id,
         status="launched",
+        transport="cmux",
+        cli=launch_config.cli,
+        workspace_id=workspace_id,
     )
 
 
@@ -4125,20 +4134,21 @@ def _default_workspace_target(
     if _missing_required_cmux_context(runtime, launch_config):
         return None, None
     entries = _list_workspaces(runtime)
-    current_title = _current_workspace_title(
-        runtime,
-        require_cmux_context=launch_config.require_cmux_context,
-        workspace_entries=entries,
-    )
-    if not current_title:
-        if launch_config.require_cmux_context:
+    if launch_config.require_cmux_context:
+        base_title = _current_workspace_title(
+            runtime,
+            require_cmux_context=True,
+            workspace_entries=entries,
+        )
+        if not base_title:
             return None, None
-        current_title = _default_cmux_workspace_base_title(runtime)
-    if workspace_mode == "current":
-        target_title = current_title
     else:
-        suffix = " reviews" if workspace_mode == "reviews" else " implementation"
-        target_title = current_title if current_title.endswith(suffix) else f"{current_title}{suffix}"
+        base_title = _default_cmux_workspace_base_title(runtime)
+    if workspace_mode == "current":
+        target_title = base_title
+    else:
+        suffix = " reviews" if workspace_mode == "reviews" else " implementations"
+        target_title = base_title if base_title.endswith(suffix) else f"{base_title}{suffix}"
     for workspace_ref, workspace_title in entries:
         if workspace_title == target_title:
             return target_title, workspace_ref

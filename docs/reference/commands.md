@@ -474,14 +474,14 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` queues the Codex/OMX `$browser-use` E2E follow-up; set it to `false` in `.envctl` to skip that prompt
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` queues the final Codex/OMX PR review-comments follow-up; set it to `false` in `.envctl` to skip that prompt
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
-- `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=false` lets envctl use the selected cmux workspace or create/reuse a repo-named implementation workspace; set it to `true` to require caller `CMUX_WORKSPACE_ID`
+- `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=false` lets envctl create or reuse a repo-named implementations workspace; set it to `true` to require caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CODEX_YOLO=true` appends `--dangerously-bypass-approvals-and-sandbox` to the default envctl-owned Codex cmux/tmux launch command; set it to `false` in `.envctl` when your Codex wrapper or config already supplies that flag
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/tmux launches; when set, this raw command wins over the default Codex YOLO command builder; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session after discovering it from the selected OMX state root
 - plan-agent launches prepare backend and frontend dependencies inside the selected worktree before the AI prompt is submitted; this is dependency prep only, not service startup or migrations
 - generic configured backend Python commands such as `ENVCTL_BACKEND_START_CMD=python -m uvicorn ...` use the prepared backend runtime when a Poetry project or backend virtualenv is available
 - `--ultragoal`, `--ralph`, and `--team` are mutually exclusive OMX-only launch modifiers; using them without `--omx` fails fast
 - OMX-managed Team launches force `OMX_TEAM_WORKER_LAUNCH_ARGS=--dangerously-bypass-approvals-and-sandbox` so the worker lanes stay non-sandboxed too
-- when cmux launch is enabled without an explicit workspace override, envctl uses the selected cmux workspace when available and otherwise creates/reuses a repo-named implementation workspace
+- when cmux launch is enabled without an explicit workspace override, envctl creates or reuses a repo-named implementations workspace
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123` targets an explicit cmux workspace and also enables the feature
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
@@ -506,7 +506,7 @@ Optional dashboard review-tab launch:
 
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
-- when no explicit workspace override is set, the review tab uses the selected cmux workspace when available and otherwise creates/reuses a repo-named reviews workspace
+- when no explicit workspace override is set, the review tab creates or reuses a repo-named reviews workspace
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow

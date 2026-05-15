@@ -1056,6 +1056,15 @@ def _print_dashboard_ai_session_row(
             project_root=project_root,
             envctl_executable=envctl_executable,
         )
+    cmux_launches = _dashboard_cmux_launches_for_project(state=state, project=project, project_root=project_root)
+    if cmux_launches:
+        for launch in cmux_launches:
+            cli = str(launch.get("cli", "") or "AI").strip()
+            cli_label = cli[:1].upper() + cli[1:] if cli else "AI"
+            workspace = str(launch.get("workspace_id", "") or "unknown-workspace").strip()
+            surface = str(launch.get("surface_id", "") or "unknown-surface").strip()
+            print(f"    {gray}AI session:{reset} {dim}cmux {workspace} {surface} ({cli_label} already running){reset}")
+        return
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -1079,6 +1088,49 @@ def _print_dashboard_ai_session_row(
     if not render_launch_fallback or not launch_command:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
+
+
+def _dashboard_cmux_launches_for_project(
+    *,
+    state: RunState,
+    project: str,
+    project_root: Path | None,
+) -> list[dict[str, object]]:
+    metadata = getattr(state, "metadata", {}) or {}
+    outcomes = metadata.get("plan_agent_launch_outcomes")
+    if not isinstance(outcomes, list):
+        return []
+    matches: list[dict[str, object]] = []
+    for raw_outcome in outcomes:
+        if not isinstance(raw_outcome, dict):
+            continue
+        if str(raw_outcome.get("status", "") or "").strip() != "launched":
+            continue
+        if str(raw_outcome.get("transport", "") or "").strip().lower() != "cmux":
+            continue
+        if not str(raw_outcome.get("surface_id", "") or "").strip():
+            continue
+        if _dashboard_cmux_launch_matches_project(
+            outcome=raw_outcome,
+            project=project,
+            project_root=project_root,
+        ):
+            matches.append(raw_outcome)
+    return matches
+
+
+def _dashboard_cmux_launch_matches_project(
+    *,
+    outcome: dict[str, object],
+    project: str,
+    project_root: Path | None,
+) -> bool:
+    if str(outcome.get("worktree_name", "") or "").strip() == project:
+        return True
+    raw_root = str(outcome.get("worktree_root", "") or "").strip()
+    if not raw_root or project_root is None:
+        return False
+    return Path(raw_root).expanduser().resolve(strict=False) == project_root.expanduser().resolve(strict=False)
 
 
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:

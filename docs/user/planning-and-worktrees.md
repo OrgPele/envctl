@@ -76,7 +76,7 @@ Behavior:
 - current planning follow-ups choose one launch surface per invocation; do not assume a later second launch can attach to the same reconciliation unless envctl explicitly says it created or recovered the target worktree(s)
 - skips `--planning-prs`
 - skips cleanly when the feature is disabled, no launch target was selected, or a cmux launch cannot resolve a workspace while strict caller-context mode is enabled
-- for cmux launches without an explicit workspace override, envctl uses the selected cmux workspace when available and otherwise creates/reuses a repo-named implementation workspace; set `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` to require caller `CMUX_WORKSPACE_ID`
+- for cmux launches without an explicit workspace override, envctl creates or reuses a repo-named implementations workspace; set `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` to require caller `CMUX_WORKSPACE_ID`
 - if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
 - the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
 - when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
