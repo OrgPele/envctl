@@ -1395,7 +1395,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             rendered = out.getvalue()
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
+            self.assertIn(
+                f"ENVCTL_USE_REPO_WRAPPER=1 {repo.resolve() / 'bin' / 'envctl'} --plan feature-a --tmux",
+                rendered,
+            )
             self.assertIn("--codex", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
@@ -1658,6 +1661,69 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertTrue(validation.ok)
             self.assertEqual(validation.reason, "ok")
+
+    def test_validate_omx_attach_target_treats_tmux_probe_error_as_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-missing-tmux",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-missing-tmux"),
+            )
+
+            with patch(
+                "envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists",
+                side_effect=FileNotFoundError("tmux"),
+            ):
+                validation = launch_support.validate_plan_agent_attach_target(
+                    rt,
+                    attach_target,
+                    worktree=worktree,
+                    transport="omx",
+                    phase="post_workflow_queue",
+                )
+
+            self.assertFalse(validation.ok)
+            self.assertEqual(validation.reason, "omx_attach_target_stale")
+
+    def test_validate_omx_attach_target_treats_display_probe_error_as_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md")
+            attach_target = launch_support.PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-display-probe-failed",
+                window_name="%42",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-display-probe-failed"),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch(
+                    "envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds",
+                    side_effect=FileNotFoundError("tmux"),
+                ),
+            ):
+                validation = launch_support.validate_plan_agent_attach_target(
+                    rt,
+                    attach_target,
+                    worktree=worktree,
+                    transport="omx",
+                    phase="post_workflow_queue",
+                )
+
+            self.assertFalse(validation.ok)
+            self.assertEqual(validation.reason, "omx_session_unavailable")
 
     def test_omx_workflow_launch_wraps_initial_prompt_with_workflow_keyword(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
