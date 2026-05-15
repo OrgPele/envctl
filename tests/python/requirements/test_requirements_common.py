@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import threading
 import time
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -83,11 +84,17 @@ class RequirementsCommonTests(unittest.TestCase):
         self.assertIsNone(mapped_port)
 
     def test_docker_port_publish_lock_auto_defaults_to_darwin_only(self) -> None:
-        with mock.patch("envctl_engine.requirements.common.sys.platform", "darwin"):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+            "envctl_engine.requirements.common.sys.platform",
+            "darwin",
+        ):
             self.assertTrue(_docker_port_publish_lock_enabled({}))
             self.assertTrue(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
 
-        with mock.patch("envctl_engine.requirements.common.sys.platform", "linux"):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+            "envctl_engine.requirements.common.sys.platform",
+            "linux",
+        ):
             self.assertFalse(_docker_port_publish_lock_enabled({}))
             self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
 

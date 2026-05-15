@@ -55,6 +55,7 @@ class _FakeRunner:
         self.run_stderr: dict[str, str] = {}
         self.run_returncode_sequence: dict[str, list[int]] = {}
         self.run_stderr_sequence: dict[str, list[str]] = {}
+        self.images: set[str] = set()
         self.run_timeout: set[str] = set()
         self.create_returncode: dict[str, int] = {}
         self.create_stderr: dict[str, str] = {}
@@ -238,10 +239,21 @@ class _FakeRunner:
                 self.status[container] = "created"
             return subprocess.CompletedProcess(command, rc, "container-id\n" if rc == 0 else "", stderr)
 
+        if command[:3] == ["docker", "image", "inspect"]:
+            image = command[3]
+            return subprocess.CompletedProcess(
+                command,
+                0 if image in self.images else 1,
+                "image-id\n" if image in self.images else "",
+                "" if image in self.images else "No such image\n",
+            )
+
         if command[:2] == ["docker", "pull"]:
             image = command[2]
             rc = self.run_returncode.get(f"pull:{image}", 0)
             stderr = self.run_stderr.get(f"pull:{image}", "")
+            if rc == 0:
+                self.images.add(image)
             return subprocess.CompletedProcess(command, rc, "pulled\n" if rc == 0 else "", stderr)
 
         if command[:2] == ["docker", "exec"]:
@@ -959,7 +971,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(create_commands)
             self.assertEqual(create_commands[0][-1], "n8nio/n8n:1.0.0")
 
-    def test_n8n_pulls_image_before_create_by_default(self) -> None:
+    def test_n8n_pulls_image_before_create_by_default_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             runner = _FakeRunner()
@@ -970,6 +982,43 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 project_name="Main",
                 port=5680,
                 env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "create"])
+            self.assertLess(pull_index, create_index)
+
+    def test_n8n_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("n8nio/n8n:latest")
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
+
+    def test_n8n_legacy_pull_flag_forces_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("n8nio/n8n:latest")
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={"ENVCTL_N8N_PULL_IMAGE": "true"},
             )
 
             self.assertTrue(result.success)
