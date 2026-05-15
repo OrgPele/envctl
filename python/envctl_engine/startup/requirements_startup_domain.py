@@ -273,7 +273,8 @@ def _start_requirement_component(
 
             fingerprint_path = self._supabase_fingerprint_path(context.name)
             previous = read_supabase_fingerprint(fingerprint_path)
-            if previous is not None and previous != contract.fingerprint:
+            compatible_fingerprints = set(getattr(contract, "compatible_fingerprints", ()) or ())
+            if previous is not None and previous != contract.fingerprint and previous not in compatible_fingerprints:
                 self._emit(
                     "supabase.fingerprint.changed",
                     project=context.name,
@@ -292,6 +293,14 @@ def _start_requirement_component(
                 if reinit_error is not None:
                     return False, reinit_error
                 self._emit("supabase.reinit.executed", project=context.name, fingerprint_path=str(fingerprint_path))
+            elif previous is not None and previous in compatible_fingerprints:
+                self._emit(
+                    "supabase.fingerprint.compatible",
+                    project=context.name,
+                    previous=previous,
+                    current=contract.fingerprint,
+                    fingerprint_path=str(fingerprint_path),
+                )
             pending_supabase_fingerprint = contract.fingerprint
 
         nonlocal command_source

@@ -1202,6 +1202,7 @@ class SupabaseReliabilityContract:
     fingerprint: str
     errors: list[str]
     compose_path: Path | None
+    compatible_fingerprints: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -1272,6 +1273,11 @@ def evaluate_supabase_reliability_contract(project_root: Path) -> SupabaseReliab
         fingerprint=fingerprint,
         errors=errors,
         compose_path=compose_path,
+        compatible_fingerprints=_compatible_contract_fingerprints(
+            compose_root,
+            compose_text=compose_text,
+            canonical_fingerprint=fingerprint,
+        ),
     )
 
 
@@ -1336,12 +1342,21 @@ def evaluate_managed_supabase_reliability_contract() -> SupabaseReliabilityContr
         fingerprint=fingerprint,
         errors=errors,
         compose_path=compose_path,
+        compatible_fingerprints=_compatible_contract_fingerprints(
+            compose_root,
+            compose_text=compose_text,
+            canonical_fingerprint=fingerprint,
+        ),
     )
 
 
 def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> str:
+    return _fingerprint_contract_hash(compose_root, compose_text=_fingerprint_relevant_compose_text(compose_text))
+
+
+def _fingerprint_contract_hash(compose_root: Path, *, compose_text: str) -> str:
     hasher = hashlib.sha256()
-    hasher.update(_fingerprint_relevant_compose_text(compose_text).encode("utf-8"))
+    hasher.update(compose_text.encode("utf-8"))
     for rel in (
         Path("kong.yml"),
         Path("init/01-create-n8n-db.sql"),
@@ -1357,6 +1372,27 @@ def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> st
         else:
             hasher.update(b"<missing>")
     return hasher.hexdigest()
+
+
+def _compatible_contract_fingerprints(
+    compose_root: Path,
+    *,
+    compose_text: str,
+    canonical_fingerprint: str,
+) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for candidate_text in (
+        compose_text,
+        _fingerprint_relevant_compose_text_legacy_pull_policy_only(compose_text),
+        _legacy_managed_supabase_healthcheck_text(compose_text),
+        _fingerprint_relevant_compose_text_legacy_pull_policy_only(
+            _legacy_managed_supabase_healthcheck_text(compose_text)
+        ),
+    ):
+        candidate = _fingerprint_contract_hash(compose_root, compose_text=candidate_text)
+        if candidate != canonical_fingerprint and candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
 
 
 def _fingerprint_relevant_compose_text(compose_text: str) -> str:
@@ -1376,6 +1412,23 @@ def _fingerprint_relevant_compose_text(compose_text: str) -> str:
             continue
         lines.append(line.rstrip())
     return "\n".join(lines) + "\n"
+
+
+def _fingerprint_relevant_compose_text_legacy_pull_policy_only(compose_text: str) -> str:
+    lines = []
+    for line in compose_text.splitlines():
+        if line.strip().startswith("pull_policy:"):
+            continue
+        lines.append(line.rstrip())
+    return "\n".join(lines) + "\n"
+
+
+def _legacy_managed_supabase_healthcheck_text(compose_text: str) -> str:
+    return (
+        compose_text.replace("interval: 1s", "interval: 10s")
+        .replace("timeout: 2s", "timeout: 5s")
+        .replace("retries: 30", "retries: 10")
+    )
 
 
 def _compose_service_list(

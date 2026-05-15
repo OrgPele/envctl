@@ -214,6 +214,64 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             self.assertFalse(second.success)
             self.assertIn("reinit workflow", second.error or "")
 
+    def test_runtime_accepts_compatible_supabase_contract_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime_dir = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            _write_supabase_files(repo)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    "SUPABASE_MAIN_ENABLE": "true",
+                }
+            )
+            runtime = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_REQUIREMENT_SUPABASE_CMD": "sh -lc true",
+                },
+            )
+            runtime._wait_for_requirement_listener = lambda _port: True  # type: ignore[method-assign]
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
+
+            with patch(
+                "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
+                side_effect=[
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
+                    SupabaseReliabilityContract(
+                        ok=True,
+                        fingerprint="v2",
+                        errors=[],
+                        compose_path=Path("/managed/supabase/docker-compose.yml"),
+                        compatible_fingerprints=("v1",),
+                    ),
+                ],
+            ):
+                first = runtime._start_requirement_component(
+                    context,
+                    "supabase",
+                    context.ports["db"],
+                    reserve_next=lambda port: port,
+                )
+                self.assertTrue(first.success)
+                second = runtime._start_requirement_component(
+                    context,
+                    "supabase",
+                    context.ports["db"],
+                    reserve_next=lambda port: port,
+                )
+            self.assertTrue(second.success)
+            fingerprint_path = runtime._supabase_fingerprint_path("Main")
+            self.assertIn('"fingerprint": "v2"', fingerprint_path.read_text(encoding="utf-8"))
+
     def test_runtime_auto_reinit_runs_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
