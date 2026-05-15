@@ -80,7 +80,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertTrue(
                 requirements_parallel_enabled(
                     orchestrator,
-                    route=parse_route(["start", "--parallel"], env={}),
+                    route=parse_route(["start", "--deps-parallel"], env={}),
                     enabled_count=3,
                 )
             )

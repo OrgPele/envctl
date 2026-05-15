@@ -92,7 +92,8 @@ _BOOLEAN_FLAG_TOKENS = (
     "--dry-run",
     "--yes",
     "--force",
-    "--parallel",
+    "--deps-parallel",
+    "--parallel-deps",
     "--requirements-parallel",
     "--parallel-trees",
     "--test-parallel",
@@ -214,6 +215,8 @@ SPECIAL_FLAGS = {
     "--no-service-parallel",
     "--service-prep-sequential",
     "--no-service-prep-parallel",
+    "--deps-sequential",
+    "--sequential-deps",
     "--requirements-sequential",
     "--no-requirements-parallel",
     "--only-backend",
@@ -854,7 +857,12 @@ def _handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["service_parallel"] = False
     elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
         flags["service_prep_parallel"] = False
-    elif token in {"--requirements-sequential", "--no-requirements-parallel"}:
+    elif token in {
+        "--deps-sequential",
+        "--sequential-deps",
+        "--requirements-sequential",
+        "--no-requirements-parallel",
+    }:
         flags["requirements_parallel"] = False
     elif token == "--ignore-service-deps":
         flags["ignore_service_deps"] = True
@@ -1173,7 +1181,8 @@ def _boolean_flag_name(token: str) -> str:
         "--dry-run": "dry_run",
         "--yes": "yes",
         "--force": "force",
-        "--parallel": "requirements_parallel",
+        "--deps-parallel": "requirements_parallel",
+        "--parallel-deps": "requirements_parallel",
         "--requirements-parallel": "requirements_parallel",
         "--parallel-trees": "parallel_trees",
         "--test-parallel": "test_parallel",

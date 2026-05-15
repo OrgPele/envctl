@@ -371,8 +371,8 @@ Possible outcomes:
 - computes requirement enablement once into `enabled_lookup`
 - pre-populates disabled definitions as skipped outcomes with zero timing
 - decides requirement-level parallelism with:
-  - `--parallel` / `--requirements-parallel`
-  - `--requirements-sequential`
+  - `--deps-parallel` / `--parallel-deps` / `--requirements-parallel`
+  - `--deps-sequential` / `--sequential-deps` / `--requirements-sequential`
   - `ENVCTL_REQUIREMENTS_PARALLEL`
   - `ENVCTL_REQUIREMENTS_PARALLEL_MAX`
 - runs only enabled definitions in the executor
