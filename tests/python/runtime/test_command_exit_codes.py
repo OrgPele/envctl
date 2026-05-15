@@ -140,6 +140,55 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("command"), "start")
             self.assertEqual(seen.get("mode"), "trees")
 
+    def test_plan_command_with_repo_resolves_config_relative_to_repo_from_other_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            outside = root / "outside"
+            runtime = root / "runtime"
+            plan_path = repo / "todo" / "plans" / "features" / "interactive-onboarding-configuration-flow.md"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text("# Plan\n", encoding="utf-8")
+            outside.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, config):  # noqa: ANN001
+                seen["command"] = route.command
+                seen["mode"] = route.mode
+                seen["passthrough_args"] = list(route.passthrough_args)
+                seen["base_dir"] = config.base_dir
+                seen["planning_dir"] = config.planning_dir
+                return 0
+
+            with (
+                patch("envctl_engine.runtime.cli.Path.cwd", return_value=outside.resolve()),
+                patch("envctl_engine.runtime.cli.check_prereqs", return_value=(True, None)),
+            ):
+                code = cli.run(
+                    [
+                        "--repo",
+                        str(repo),
+                        "--plan",
+                        "features/interactive-onboarding-configuration-flow.md",
+                        "--tmux",
+                        "--opencode",
+                        "--headless",
+                        "--tmux-new-session",
+                    ],
+                    env={"RUN_SH_RUNTIME_DIR": str(runtime)},
+                    dispatcher=dispatcher,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen.get("command"), "plan")
+        self.assertEqual(seen.get("mode"), "trees")
+        self.assertEqual(seen.get("passthrough_args"), ["features/interactive-onboarding-configuration-flow.md"])
+        self.assertEqual(seen.get("base_dir"), repo.resolve())
+        self.assertEqual(seen.get("planning_dir"), repo.resolve() / "todo" / "plans")
+
     def test_start_command_fails_with_source_checkout_runtime_bootstrap_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

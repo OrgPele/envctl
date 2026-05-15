@@ -67,6 +67,22 @@ class PlanningSelectionTests(unittest.TestCase):
 
             self.assertEqual(counts, OrderedDict([("backend/task.md", 1)]))
 
+    def test_resolve_planning_files_accepts_feature_slug_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            planning_dir = repo / "todo" / "plans"
+            planning_dir.mkdir(parents=True, exist_ok=True)
+            available = ["features/interactive-onboarding-configuration-flow.md"]
+
+            counts = resolve_planning_files(
+                selection_raw="features_interactive_onboarding_configuration_flow.md",
+                planning_files=available,
+                base_dir=repo,
+                planning_dir=planning_dir,
+            )
+
+            self.assertEqual(counts, OrderedDict([("features/interactive-onboarding-configuration-flow.md", 1)]))
+
     def test_resolve_planning_files_duplicates_count_when_plan_agent_cli_is_both(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -90,7 +106,7 @@ class PlanningSelectionTests(unittest.TestCase):
             ("feature_a_task-1", Path("/tmp/feature_a_task/1")),
             ("feature_b_task-1", Path("/tmp/feature_b_task/1")),
         ]
-        plan_counts = OrderedDict(
+        plan_counts: OrderedDict[str, int] = OrderedDict(
             [
                 ("feature-a/task.md", 1),
                 ("feature-b/task.md", 1),
@@ -109,7 +125,7 @@ class PlanningSelectionTests(unittest.TestCase):
                 ("feature_a_task-1", repo / "trees" / "feature_a_task" / "1"),
                 ("feature_b_task-1", repo / "trees" / "feature_b_task" / "1"),
             ]
-            plan_counts = OrderedDict(
+            plan_counts: OrderedDict[str, int] = OrderedDict(
                 [
                     ("feature-a/task.md", 3),
                     ("feature-b/task.md", 1),
