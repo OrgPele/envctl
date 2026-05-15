@@ -544,6 +544,35 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertIn("no active host port is published", result or "")
         self.assertIn("supabase-db", result or "")
 
+    def test_supabase_graph_handoff_does_not_finish_when_only_db_is_ready(self) -> None:
+        runner = _FakeRunner()
+        runner.wait_for_port_result = True
+        runner.compose_up_process = lambda *args, **kwargs: _FakeComposeProcess(returncode=None)  # type: ignore[method-assign]
+        runner.status["supabase-db-container-id"] = "running"
+        runner.health_status["supabase-db-container-id"] = "healthy"
+        runner.status["supabase-auth-container-id"] = "created"
+        runner.status["supabase-kong-container-id"] = "created"
+        runner.port_mappings[("supabase-db-container-id", "5432")] = "0.0.0.0:5432\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
+
+            result = _compose_run(
+                process_runner=runner,
+                compose_root=root,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={"ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1"},
+                args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn("stalled before all Supabase services started", result or "")
+        self.assertIn("supabase-auth", result or "")
+
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
         runner = _FlakyHealthRunner()
 

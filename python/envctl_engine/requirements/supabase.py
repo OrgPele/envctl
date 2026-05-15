@@ -1689,8 +1689,11 @@ def _compose_unpublished_port_detail(
     )
     if not states or any(_compose_service_state_failed(state) for state in states):
         return None
+    not_ready_services: list[str] = []
     for service_state in states:
         service_name = str(service_state.get("service") or "").strip()
+        if not _compose_service_state_ready(service_state):
+            not_ready_services.append(_format_auth_service_state(service_state))
         container_port = _published_container_port_for_service(service_name)
         if container_port is None:
             continue
@@ -1722,6 +1725,8 @@ def _compose_unpublished_port_detail(
             f"Docker reported {service_name} running/healthy with HostConfig publishing port "
             f"{configured_port}, but no active host port is published.{error_detail}"
         )
+    if not_ready_services and any(_compose_service_state_ready(state) for state in states):
+        return "Docker Compose stalled before all Supabase services started: " + "|".join(not_ready_services)
     return None
 
 
@@ -1979,9 +1984,60 @@ def _compose_handoff_ready(
         return False
     if any(_compose_service_state_failed(state) for state in states):
         return False
+    services_ready = all(_compose_service_state_ready(state) for state in states)
     if probe_port is not None:
-        return bool(process_runner.wait_for_port(probe_port, timeout=0.5))
-    return all(_compose_service_state_ready(state) for state in states)
+        if not bool(process_runner.wait_for_port(probe_port, timeout=0.5)):
+            return False
+        if len(service_names) == 1:
+            return True
+        return services_ready and _compose_published_ports_active(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            env=env,
+            service_states=states,
+        )
+    return services_ready and _compose_published_ports_active(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        env=env,
+        service_states=states,
+    )
+
+
+def _compose_published_ports_active(
+    *,
+    process_runner,
+    compose_root: Path,
+    env: Mapping[str, str] | None,
+    service_states: list[dict[str, object]],
+) -> bool:
+    for service_state in service_states:
+        service_name = str(service_state.get("service") or "").strip()
+        container_port = _published_container_port_for_service(service_name)
+        if container_port is None:
+            continue
+        container = str(service_state.get("container") or "").strip()
+        if not container:
+            return False
+        configured_port = _container_host_config_port(
+            process_runner=process_runner,
+            container_name=container,
+            container_port=container_port,
+            cwd=compose_root,
+            env=env,
+        )
+        if configured_port is None:
+            continue
+        active_port, _active_error = _container_active_host_port(
+            process_runner=process_runner,
+            container_name=container,
+            container_port=container_port,
+            cwd=compose_root,
+            env=env,
+        )
+        if active_port != configured_port:
+            return False
+    return True
 
 
 def _compose_service_state_ready(service_state: Mapping[str, object]) -> bool:
