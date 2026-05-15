@@ -496,11 +496,12 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
         or ""
     )
+    env_requested_cycles = _parse_codex_cycles(env_map.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES") or "")[0] > 0
     enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or _route_explicitly_requests_plan_agent_launch(route)
+    ) or bool(cmux_workspace) or env_requested_cycles or _route_explicitly_requests_plan_agent_launch(route)
     opencode_direct_prompt_default = transport in {"cmux", "tmux"} and cli == "opencode"
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
@@ -561,7 +562,7 @@ def resolve_plan_agent_launch_config(
         require_cmux_context=parse_bool(
             env_map.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT")
             or config.raw.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"),
-            True,
+            False,
         ),
         cmux_workspace=cmux_workspace,
         direct_prompt_enabled=direct_prompt_enabled,
@@ -4130,7 +4131,9 @@ def _default_workspace_target(
         workspace_entries=entries,
     )
     if not current_title:
-        return None, None
+        if launch_config.require_cmux_context:
+            return None, None
+        current_title = _default_cmux_workspace_base_title(runtime)
     if workspace_mode == "current":
         target_title = current_title
     else:
@@ -4140,6 +4143,15 @@ def _default_workspace_target(
         if workspace_title == target_title:
             return target_title, workspace_ref
     return target_title, None
+
+
+def _default_cmux_workspace_base_title(runtime: Any) -> str:
+    base_dir = getattr(getattr(runtime, "config", None), "base_dir", None)
+    if isinstance(base_dir, str | os.PathLike):
+        name = Path(base_dir).expanduser().name
+        if name:
+            return name
+    return "envctl"
 
 
 def _review_prompt_arguments(

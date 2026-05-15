@@ -208,6 +208,24 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(launch_config.transport, "tmux")
             self.assertEqual(launch_config.cli, "codex")
 
+    def test_command_scoped_codex_cycles_enable_plan_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "7"})
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "darwin"):
+                launch_config = launch_support.resolve_plan_agent_launch_config(
+                    rt.config,
+                    rt.env,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                )
+
+            self.assertTrue(launch_config.enabled)
+            self.assertEqual(launch_config.transport, "cmux")
+            self.assertEqual(launch_config.codex_cycles, 7)
+
     def test_cmux_opencode_route_uses_cmux_transport(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -232,7 +250,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
+                },
+            )
 
             result = launch_plan_agent_terminals(
                 rt,
@@ -249,7 +274,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
+                },
+            )
 
             buffer = StringIO()
             with redirect_stdout(buffer):

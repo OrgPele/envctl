@@ -406,6 +406,55 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(launched, [("feature-a-1",)])
 
+    def test_command_scoped_cycles_launch_targets_existing_selected_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(
+                repo,
+                runtime,
+                extra={
+                    "TREES_STARTUP_ENABLE": "false",
+                },
+            )
+            engine.env["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = "7"
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            launched: list[tuple[str, ...]] = []
+
+            def fake_launch(_runtime: object, *, route: object, created_worktrees: tuple[CreatedPlanWorktree, ...]):
+                _ = route
+                launched.append(tuple(worktree.name for worktree in created_worktrees))
+                return PlanAgentLaunchResult(status="skipped", reason="test")
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=fake_launch),
+                patch.object(engine, "_write_artifacts"),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                code = engine.dispatch(
+                    parse_route(
+                        ["--plan", "feature-a", "--headless", "--no-deps"],
+                        env={"ENVCTL_DEFAULT_MODE": "trees"},
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(launched, [("feature-a-1",)])
+
     def test_headless_plan_does_not_print_stale_attach_target_after_validation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

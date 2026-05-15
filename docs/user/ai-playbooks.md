@@ -117,9 +117,9 @@ CMUX=true
 CYCLES=3
 ```
 
-For cmux launches, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
+For cmux launches, enabling the feature uses the selected cmux workspace when available and otherwise creates/reuses a repo-named implementation workspace. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
-The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it targets a sibling workspace named `"<current workspace> reviews"`.
+The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it uses the selected cmux workspace when available and otherwise creates/reuses a repo-named reviews workspace.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 
@@ -136,7 +136,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser-use` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
-- `CYCLES` does not enable plan-agent launch by itself
+- a positive command-scoped `CYCLES` or `ENVCTL_PLAN_AGENT_CODEX_CYCLES` value is treated as launch intent for that `envctl --plan` invocation; the config/default value only controls cycle count after launch is otherwise enabled
 - envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
 
 Then run:

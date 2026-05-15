@@ -58,7 +58,7 @@ ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 ENVCTL_PLAN_AGENT_SHELL=zsh
-ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
+ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=false
 ```
 
 Shorthand aliases also work:
@@ -71,16 +71,16 @@ CYCLES=3
 Behavior:
 
 - only runs for `--plan`
-- launches for worktrees created during the current reconciliation; explicit `--cmux --new-session` can also launch a fresh surface for an already-selected implementation worktree
+- launches for worktrees created during the current reconciliation, and for already-selected implementation worktrees when the launcher is enabled by config/env or an explicit launch flag
 - when no transport is selected, Linux defaults to tmux; other hosts prefer cmux and fall back to tmux when cmux is not installed
 - current planning follow-ups choose one launch surface per invocation; do not assume a later second launch can attach to the same reconciliation unless envctl explicitly says it created or recovered the target worktree(s)
 - skips `--planning-prs`
 - skips cleanly when the feature is disabled, no launch target was selected, or a cmux launch cannot resolve a workspace while strict caller-context mode is enabled
-- for cmux launches without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
+- for cmux launches without an explicit workspace override, envctl uses the selected cmux workspace when available and otherwise creates/reuses a repo-named implementation workspace; set `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` to require caller `CMUX_WORKSPACE_ID`
 - if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
 - the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
 - when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
-- `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
+- `CMUX=true` is shorthand for enabling the feature with the default cmux workspace target
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser-use` E2E follow-up when browser validation is not applicable
@@ -117,7 +117,7 @@ Each launched surface stays interactive. Envctl creates the tab/window, renames 
 - `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser-use` E2E, and the PR review-comments follow-up
 - `3` or more keep that first commit/push/PR/status-check follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
-- `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
+- a positive command-scoped `CYCLES` or `ENVCTL_PLAN_AGENT_CODEX_CYCLES` value is treated as launch intent for that `envctl --plan` invocation; the config/default value only controls cycle count after launch is otherwise enabled
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
