@@ -36,7 +36,7 @@ class RunReuseDecision:
 
     @property
     def will_resume_services(self) -> bool:
-        return self.decision_kind in {"resume_exact", "resume_subset"}
+        return self.decision_kind in {"resume_exact", "resume_subset", "reuse_expand"}
 
 
 def build_startup_identity_metadata(
@@ -163,32 +163,48 @@ def evaluate_run_reuse(
             startup_enabled=startup_enabled,
         )
 
-    current_identity = _startup_identity_payload(
-        runtime,
-        runtime_mode=runtime_mode,
-        project_contexts=contexts,
-        route=route,
+    weak_identity = any(identity.root is None for identity in state_identities)
+    selected_keys = _identity_keys(selected_identities, weak=weak_identity)
+    state_keys = _identity_keys(state_identities, weak=weak_identity)
+    exact_match = selected_keys == state_keys
+    subset_match = runtime_mode == "trees" and selected_keys.issubset(state_keys)
+    expand_match = (
+        runtime_mode == "trees" and route.command in {"start", "plan"} and state_keys.issubset(selected_keys)
     )
+    if not (exact_match or subset_match or expand_match):
+        return RunReuseDecision(
+            candidate_state=candidate,
+            decision_kind="fresh_run",
+            reason="project_selection_mismatch",
+            selected_projects=selected_payload,
+            state_projects=state_payload,
+            weak_identity=weak_identity,
+            startup_enabled=startup_enabled,
+        )
+
     previous_identity = candidate.metadata.get("startup_identity")
     if isinstance(previous_identity, dict):
-        previous_fingerprint = str(previous_identity.get("fingerprint", "")).strip()
-        current_fingerprint = str(current_identity.get("fingerprint", "")).strip()
-        if previous_fingerprint != current_fingerprint:
+        state_identity_under_current_runtime = _startup_identity_payload(
+            runtime,
+            runtime_mode=runtime_mode,
+            project_contexts=list(state_identities),
+            route=route,
+        )
+        identity_mismatch = _startup_identity_mismatch(
+            previous_identity,
+            state_identity_under_current_runtime,
+        )
+        if identity_mismatch:
             return RunReuseDecision(
                 candidate_state=candidate,
                 decision_kind="fresh_run",
                 reason="startup_fingerprint_mismatch",
                 selected_projects=selected_payload,
                 state_projects=state_payload,
+                mismatch_details=identity_mismatch,
+                weak_identity=weak_identity,
                 startup_enabled=startup_enabled,
             )
-
-    weak_identity = any(identity.root is None for identity in state_identities)
-    selected_keys = _identity_keys(selected_identities, weak=weak_identity)
-    state_keys = _identity_keys(state_identities, weak=weak_identity)
-    exact_match = selected_keys == state_keys
-    subset_match = runtime_mode == "trees" and selected_keys.issubset(state_keys)
-    expand_match = runtime_mode == "trees" and route.command == "plan" and state_keys.issubset(selected_keys)
 
     if exact_match:
         if state_has_resumable_services(runtime, candidate):
@@ -232,12 +248,35 @@ def evaluate_run_reuse(
     return RunReuseDecision(
         candidate_state=candidate,
         decision_kind="fresh_run",
-        reason="project_selection_mismatch",
+        reason="no_reusable_runtime",
         selected_projects=selected_payload,
         state_projects=state_payload,
         weak_identity=weak_identity,
         startup_enabled=startup_enabled,
     )
+
+
+def _startup_identity_mismatch(previous: Mapping[str, object], current: Mapping[str, object]) -> dict[str, object]:
+    previous_fingerprint = str(previous.get("fingerprint", "")).strip()
+    current_fingerprint = str(current.get("fingerprint", "")).strip()
+    if previous_fingerprint and current_fingerprint and previous_fingerprint == current_fingerprint:
+        return {}
+
+    previous_payload = _startup_identity_comparison_payload(previous)
+    current_payload = _startup_identity_comparison_payload(current)
+    if previous_payload == current_payload:
+        return {}
+
+    changed_fields = [
+        key
+        for key in sorted(set(previous_payload) | set(current_payload))
+        if previous_payload.get(key) != current_payload.get(key)
+    ]
+    return {"fields": changed_fields}
+
+
+def _startup_identity_comparison_payload(identity: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
 
 
 def project_identities_from_contexts(contexts: list[object]) -> list[ProjectIdentity]:
