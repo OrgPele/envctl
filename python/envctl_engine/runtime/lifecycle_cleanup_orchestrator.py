@@ -502,7 +502,10 @@ class LifecycleCleanupOrchestrator:
             removed = self.blast_all_docker_cleanup(route=volume_route)
             rt._emit("cleanup.stop_all.remove_volumes.finish", removed=removed)  # type: ignore[attr-defined]
 
-        rt._release_port_session()  # type: ignore[attr-defined]
+        if aggressive:
+            self.release_all_runtime_ports()
+        else:
+            rt._release_port_session()  # type: ignore[attr-defined]
         self._state_repository(rt).purge(aggressive=aggressive)  # type: ignore[attr-defined]
         if aggressive:
             self.blast_all_purge_legacy_state_artifacts()
@@ -750,12 +753,29 @@ class LifecycleCleanupOrchestrator:
             (rt.config.db_port_base, infra_span),  # type: ignore[attr-defined]
             (rt.config.redis_port_base, infra_span),  # type: ignore[attr-defined]
             (rt.config.n8n_port_base, infra_span),  # type: ignore[attr-defined]
+            (rt.config.port_defaults.dependency_port("supabase", "api"), infra_span),  # type: ignore[attr-defined]
         ):
             if base <= 0:
                 continue
             for port in range(base, base + span + 1):
                 candidates.add(port)
+        for service in getattr(rt.config, "additional_services", ()):  # type: ignore[attr-defined]
+            base = getattr(service, "port_base", None)
+            if not isinstance(base, int) or base <= 0:
+                continue
+            for port in range(base, base + app_span + 1):
+                candidates.add(port)
         return sorted(candidates)
+
+    def release_all_runtime_ports(self) -> None:
+        port_planner = getattr(self.runtime, "port_planner", None)
+        release_all = getattr(port_planner, "release_all", None)
+        if callable(release_all):
+            release_all()
+            return
+        release_session = getattr(self.runtime, "_release_port_session", None)
+        if callable(release_session):
+            release_session()
 
     def blast_all_scan_span(self, *, default: int, minimum: int) -> int:
         rt = self.runtime
