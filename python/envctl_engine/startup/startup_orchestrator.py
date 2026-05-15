@@ -10,17 +10,17 @@ import time
 from typing import Callable, Mapping, cast, Iterable
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
-from envctl_engine.planning.plan_agent_launch_support import (
+from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
+from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
+from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
     PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
-    attach_plan_agent_terminal,
-    launch_plan_agent_terminals,
-    plan_agent_native_recovery_command,
-    resolve_plan_agent_launch_config,
-    validate_plan_agent_attach_target,
 )
+from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
+from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
+from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository

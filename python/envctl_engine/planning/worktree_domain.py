@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
-from envctl_engine.planning.plan_agent_launch_support import (
+from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanSelectionResult,
     PlanWorktreeSyncResult,

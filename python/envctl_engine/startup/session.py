@@ -8,7 +8,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 if TYPE_CHECKING:
-    from envctl_engine.planning.plan_agent_launch_support import (
+    from envctl_engine.planning.plan_agent.models import (
         CreatedPlanWorktree,
         PlanAgentAttachTarget,
         PlanAgentLaunchResult,

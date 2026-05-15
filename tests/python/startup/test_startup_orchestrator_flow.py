@@ -494,8 +494,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_record_launch),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -658,8 +658,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                         attach_target=attach_target,
                     ),
                 ),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch(
                     "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
                     return_value=RunReuseDecision(
@@ -896,8 +896,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
                     engine,
                     "_start_project_context",
@@ -995,8 +995,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
                     engine,
                     "_start_project_context",

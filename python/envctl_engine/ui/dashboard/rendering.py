@@ -1037,7 +1037,7 @@ def _print_dashboard_ai_session_row(
     render_launch_fallback: bool,
 ) -> None:
     import subprocess  # noqa: PLC0415
-    from envctl_engine.planning.plan_agent_launch_support import resolve_plan_agent_launch_command  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.workflow import resolve_plan_agent_launch_command  # noqa: PLC0415
     from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
 
     project_root = _dashboard_project_root(self, state=state, project=project)
@@ -1110,8 +1110,8 @@ def _dashboard_session_is_attached(
 
 
 def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool:
-    from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree  # noqa: PLC0415
-    from envctl_engine.planning.plan_agent_launch_support import _tmux_window_name_for_worktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.tmux_transport import _tmux_window_name_for_worktree  # noqa: PLC0415
 
     expected_window = _tmux_window_name_for_worktree(CreatedPlanWorktree(name=project, root=Path("."), plan_file=""))
     normalized_expected = str(expected_window).strip().lower()
@@ -1120,8 +1120,8 @@ def _dashboard_window_matches_project(*, project: str, window_name: str) -> bool
 
 
 def _dashboard_session_name_matches_envctl_plan_agent(*, project_root: Path, project: str, session_name: str) -> bool:
-    from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree  # noqa: PLC0415
-    from envctl_engine.planning.plan_agent_launch_support import _tmux_session_name_for_worktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.tmux_transport import _tmux_session_name_for_worktree  # noqa: PLC0415
 
     normalized_session = str(session_name or "").strip().lower()
     if not normalized_session:

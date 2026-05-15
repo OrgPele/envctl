@@ -4,8 +4,33 @@ from pathlib import Path
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+ENGINE_ROOT = REPO_ROOT / "python" / "envctl_engine"
 PLAN_AGENT_ROOT = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent"
 FACADE = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent_launch_support.py"
+
+PUBLIC_FACADE_NAMES = {
+    "AgentTerminalLaunchResult",
+    "AiCliReadyResult",
+    "CreatedPlanWorktree",
+    "PlanAgentAttachTarget",
+    "PlanAgentAttachValidation",
+    "PlanAgentLaunchConfig",
+    "PlanAgentLaunchOutcome",
+    "PlanAgentLaunchResult",
+    "PlanSelectionResult",
+    "PlanWorktreeSyncResult",
+    "ReviewAgentLaunchReadiness",
+    "attach_plan_agent_terminal",
+    "inspect_plan_agent_launch",
+    "launch_plan_agent_terminals",
+    "launch_review_agent_terminal",
+    "plan_agent_launch_prereq_commands",
+    "plan_agent_native_recovery_command",
+    "resolve_plan_agent_launch_command",
+    "resolve_plan_agent_launch_config",
+    "review_agent_launch_readiness",
+    "validate_plan_agent_attach_target",
+}
 
 
 class PlanAgentModuleLayoutTests(unittest.TestCase):
@@ -29,12 +54,48 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
     def test_legacy_module_is_small_compatibility_facade(self) -> None:
         text = FACADE.read_text(encoding="utf-8")
         self.assertLessEqual(len(text.splitlines()), 80)
-        self.assertIn("envctl_engine.planning.plan_agent.launch", text)
+        self.assertIn("__all__", text)
+        self.assertNotIn("sys.modules[__name__]", text)
 
-    def test_legacy_import_surface_uses_launch_module_identity(self) -> None:
+    def test_legacy_import_surface_is_public_reexport_layer(self) -> None:
         legacy = importlib.import_module("envctl_engine.planning.plan_agent_launch_support")
         launch = importlib.import_module("envctl_engine.planning.plan_agent.launch")
-        self.assertIs(legacy, launch)
+        self.assertIsNot(legacy, launch)
+        self.assertEqual(PUBLIC_FACADE_NAMES, set(legacy.__all__))
+        for name in PUBLIC_FACADE_NAMES:
+            self.assertTrue(hasattr(legacy, name), name)
+        private_exports = sorted(
+            name
+            for name in dir(legacy)
+            if name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+        )
+        self.assertEqual([], private_exports)
+
+    def test_launch_module_does_not_mirror_private_owner_symbols(self) -> None:
+        text = (PLAN_AGENT_ROOT / "launch.py").read_text(encoding="utf-8")
+        for forbidden in (
+            "_PATCH_MIRROR_MODULES",
+            "_export_owner_symbols",
+            "_PlanAgentLaunchModule",
+            "sys.modules[__name__].__class__",
+        ):
+            self.assertNotIn(forbidden, text)
+
+    def test_production_modules_do_not_import_private_names_from_legacy_facade(self) -> None:
+        violations: list[str] = []
+        for path in ENGINE_ROOT.rglob("*.py"):
+            if path == FACADE:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "envctl_engine.planning.plan_agent_launch_support":
+                    continue
+                for alias in node.names:
+                    if alias.name.startswith("_"):
+                        violations.append(f"{path.relative_to(REPO_ROOT)}: imports {alias.name}")
+        self.assertEqual([], violations)
 
     def test_transport_modules_do_not_import_legacy_facade_or_each_other(self) -> None:
         transport_modules = {

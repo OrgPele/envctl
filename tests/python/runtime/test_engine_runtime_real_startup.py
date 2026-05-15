@@ -3337,9 +3337,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             with (
                 patch.object(engine, "_command_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support.subprocess.Popen", _DummyPopen),
-                patch("envctl_engine.planning.plan_agent_launch_support._git_branch_name", return_value="feature/task"),
-                patch("envctl_engine.planning.plan_agent_launch_support._run_tmux_existing_session_workflow", return_value=None),
+                patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _DummyPopen),
+                patch("envctl_engine.planning.plan_agent.omx_transport._git_branch_name", return_value="feature/task"),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
             ):
                 out = StringIO()
                 with redirect_stdout(out):
@@ -3567,8 +3567,8 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
                     return_value=launch_result,
                 ),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent_launch_support._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
                     engine,
                     "_start_project_context",

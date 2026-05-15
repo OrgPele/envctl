@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: F403,F405
-import sys
-import types
-from importlib import import_module
 from typing import Any
 
 from envctl_engine.planning.plan_agent.config import *
@@ -13,46 +10,6 @@ from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_transport import *
 from envctl_engine.planning.plan_agent.cmux_transport import *
 from envctl_engine.planning.plan_agent.omx_transport import *
-
-_PATCH_MIRROR_MODULES = (
-    "envctl_engine.planning.plan_agent.config",
-    "envctl_engine.planning.plan_agent.workflow",
-    "envctl_engine.planning.plan_agent.terminal_screen",
-    "envctl_engine.planning.plan_agent.recovery",
-    "envctl_engine.planning.plan_agent.tmux_transport",
-    "envctl_engine.planning.plan_agent.cmux_transport",
-    "envctl_engine.planning.plan_agent.omx_transport",
-)
-
-
-def _export_owner_symbols() -> None:
-    current_module = sys.modules[__name__]
-    for module_name in _PATCH_MIRROR_MODULES:
-        module = import_module(module_name)
-        for name, value in vars(module).items():
-            if name.startswith("__"):
-                continue
-            if name in {"sys", "types", "import_module", "Any"}:
-                continue
-            if not hasattr(current_module, name):
-                setattr(current_module, name, value)
-
-
-_export_owner_symbols()
-
-
-class _PlanAgentLaunchModule(types.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        if name.startswith("__"):
-            return
-        for module_name in _PATCH_MIRROR_MODULES:
-            module = sys.modules.get(module_name)
-            if module is not None and hasattr(module, name):
-                object.__setattr__(module, name, value)
-
-
-sys.modules[__name__].__class__ = _PlanAgentLaunchModule
 
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:

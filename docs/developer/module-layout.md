@@ -25,7 +25,7 @@
 - Reusable selector target resolution belongs in `python/envctl_engine/ui/selection_support.py`.
 - Shared Textual list navigation belongs in `python/envctl_engine/ui/textual/list_controller.py`.
 - Shared prompt-toolkit list execution belongs in `python/envctl_engine/ui/prompt_toolkit_list.py`.
-- Plan-agent launch internals belong in `python/envctl_engine/planning/plan_agent/`; keep `planning/plan_agent_launch_support.py` as the compatibility facade for old imports and private patch paths.
+- Plan-agent launch internals belong in `python/envctl_engine/planning/plan_agent/`; keep `planning/plan_agent_launch_support.py` as the public compatibility facade for old public imports only. Internal code and tests must import private helpers from the owner modules under `planning/plan_agent/`.
 - New shared helpers should be imported from their owning module, not redefined locally.
 
 ## Orchestrator ownership
