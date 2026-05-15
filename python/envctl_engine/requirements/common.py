@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ from typing import Callable, Iterator
 
 from envctl_engine.debug.debug_utils import file_lock
 from envctl_engine.shared.protocols import CommandResult, ProcessRuntime
+
+_DOCKER_PORT_PUBLISH_THREAD_LOCK = threading.RLock()
 
 
 @dataclass(slots=True)
@@ -155,8 +158,9 @@ def docker_port_publish_lock(env: Mapping[str, str] | None) -> Iterator[None]:
         or str(Path(tempfile.gettempdir()) / "envctl-runtime")
     )
     lock_timeout = _env_float(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK_TIMEOUT_SECONDS", 180.0, minimum=1.0)
-    with file_lock(Path(runtime_root) / "docker-port-publish.lock", timeout=lock_timeout):
-        yield
+    with _DOCKER_PORT_PUBLISH_THREAD_LOCK:
+        with file_lock(Path(runtime_root) / "docker-port-publish.lock", timeout=lock_timeout):
+            yield
 
 
 def run_result_error(result: CommandResult, fallback: str) -> str:

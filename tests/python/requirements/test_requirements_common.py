@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.requirements.common import build_container_name, container_host_port
+from envctl_engine.requirements.common import build_container_name, container_host_port, docker_port_publish_lock
 
 
 class _Runner:
@@ -72,6 +75,35 @@ class RequirementsCommonTests(unittest.TestCase):
         )
         self.assertIsNone(error)
         self.assertIsNone(mapped_port)
+
+    def test_docker_port_publish_lock_serializes_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {"RUN_SH_RUNTIME_DIR": tmpdir}
+            first_entered = threading.Event()
+            release_first = threading.Event()
+            second_entered = threading.Event()
+
+            def hold_lock() -> None:
+                with docker_port_publish_lock(env):
+                    first_entered.set()
+                    release_first.wait(timeout=5.0)
+
+            def wait_for_lock() -> None:
+                first_entered.wait(timeout=5.0)
+                with docker_port_publish_lock(env):
+                    second_entered.set()
+
+            first = threading.Thread(target=hold_lock)
+            second = threading.Thread(target=wait_for_lock)
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=5.0))
+            second.start()
+            time.sleep(0.1)
+            self.assertFalse(second_entered.is_set())
+            release_first.set()
+            first.join(timeout=5.0)
+            second.join(timeout=5.0)
+            self.assertTrue(second_entered.is_set())
 
 
 if __name__ == "__main__":
