@@ -14,6 +14,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.startup_progress import ProjectSpinnerGroup
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.requirements.orchestrator import RequirementOutcome
@@ -2003,6 +2004,170 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
             self.assertEqual(run_state.services["Main Backend"].pid, 11111)
             self.assertEqual(run_state.services["Main Frontend"].pid, 44444)
             self.assertNotIn("dashboard_stopped_services", run_state.metadata)
+
+    def test_reuse_expand_project_spinner_marks_restored_and_new_project_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            for rel in ("feature-a/1", "feature-b/1", "feature-c/1"):
+                (repo / "trees" / rel).mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+                }
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_UI_SPINNER_MODE": "on",
+                    "ENVCTL_BACKEND_START_CMD": "echo backend",
+                    "ENVCTL_FRONTEND_START_CMD": "echo frontend",
+                },
+            )
+            contexts = [
+                ProjectContext(
+                    name="feature-a-1",
+                    root=repo / "trees" / "feature-a" / "1",
+                    ports={
+                        "backend": PortPlan("feature-a-1", 8100, 8100, 8100, "requested"),
+                        "frontend": PortPlan("feature-a-1", 9100, 9100, 9100, "requested"),
+                    },
+                ),
+                ProjectContext(
+                    name="feature-b-1",
+                    root=repo / "trees" / "feature-b" / "1",
+                    ports={
+                        "backend": PortPlan("feature-b-1", 8200, 8200, 8200, "requested"),
+                        "frontend": PortPlan("feature-b-1", 9200, 9200, 9200, "requested"),
+                    },
+                ),
+                ProjectContext(
+                    name="feature-c-1",
+                    root=repo / "trees" / "feature-c" / "1",
+                    ports={
+                        "backend": PortPlan("feature-c-1", 8300, 8300, 8300, "requested"),
+                        "frontend": PortPlan("feature-c-1", 9300, 9300, 9300, "requested"),
+                    },
+                ),
+            ]
+            previous_state = RunState(
+                run_id="run-existing-expand",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(contexts[0].root / "backend"),
+                    )
+                },
+                requirements={"feature-a-1": RequirementsResult(project="feature-a-1")},
+                metadata={"project_roots": {"feature-a-1": str(Path(contexts[0].root).resolve())}},
+            )
+            calls: list[tuple[str, str, str]] = []
+
+            class _GroupStub:
+                def __init__(self, projects, **_kwargs):  # noqa: ANN001
+                    self._projects = list(projects)
+
+                def __enter__(self):
+                    calls.append(("enter", ",".join(self._projects), ""))
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+                    _ = exc_type, exc, tb
+                    calls.append(("exit", "", ""))
+                    return False
+
+                def update_project(self, project: str, message: str) -> None:
+                    calls.append(("update", project, message))
+
+                def mark_success(self, project: str, message: str) -> None:
+                    calls.append(("success", project, message))
+
+                def mark_failure(self, project: str, message: str) -> None:
+                    calls.append(("failure", project, message))
+
+                def print_detail(self, project: str, message: str) -> None:
+                    calls.append(("detail", project, message))
+
+            def start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            requested_port=context.ports["backend"].final,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        ),
+                        f"{context.name} Frontend": ServiceRecord(
+                            name=f"{context.name} Frontend",
+                            type="frontend",
+                            cwd=str(context.root / "frontend"),
+                            requested_port=context.ports["frontend"].final,
+                            actual_port=context.ports["frontend"].final,
+                            status="running",
+                        ),
+                    },
+                )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=contexts),
+                patch.object(engine, "_select_plan_projects", return_value=contexts),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=previous_state,
+                        decision_kind="reuse_expand",
+                        reason="expand_match",
+                        selected_projects=[
+                            {"name": context.name, "root": str(Path(context.root).resolve())}
+                            for context in contexts
+                        ],
+                        state_projects=[{"name": "feature-a-1", "root": str(Path(contexts[0].root).resolve())}],
+                    ),
+                ),
+                patch.object(engine, "_reconcile_state_truth", return_value=[]),
+                patch.object(engine, "_start_project_context", side_effect=start_project_context),
+                patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
+                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch.object(engine, "_print_summary"),
+            ):
+                policy_mock.side_effect = lambda *_args, **_kwargs: type(
+                    "_Policy",
+                    (),
+                    {
+                        "mode": "on",
+                        "enabled": True,
+                        "reason": "",
+                        "backend": "rich",
+                        "min_ms": 120,
+                        "verbose_events": False,
+                        "style": "dots",
+                    },
+                )()
+                code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b,feature-c", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            success_rows = [(project, message) for kind, project, message in calls if kind == "success"]
+            self.assertIn(("feature-a-1", "restored"), success_rows)
+            self.assertTrue(
+                any(project == "feature-b-1" and "startup completed" in message for project, message in success_rows)
+            )
+            self.assertTrue(
+                any(project == "feature-c-1" and "startup completed" in message for project, message in success_rows)
+            )
 
 
 if __name__ == "__main__":

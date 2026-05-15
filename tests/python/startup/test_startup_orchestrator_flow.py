@@ -429,7 +429,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("Plan agent launch did not leave an attachable AI session.", rendered)
             self.assertIn("reason: attach_target_stale_after_launch", rendered)
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
+            resolved_envctl = Path(repo).resolve() / "bin" / "envctl"
+            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {resolved_envctl} --plan feature-a --tmux", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
             self.assertIn("--tmux-new-session", rendered)
@@ -1570,6 +1571,171 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             written_state = cast(RunState, captured["state"])
             self.assertEqual(set(written_state.services), {"feature-a-1 Backend", "feature-b-1 Backend"})
             self.assertEqual(captured["errors"], [])
+
+    def test_reuse_expand_preserves_existing_project_state_and_starts_only_new_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"ENVCTL_DEFAULT_MODE": "trees"})
+            context_a = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            context_b = self._tree_context(repo, "feature-b-1", "feature-b/1", backend_port=8200, frontend_port=9200)
+            preserved_requirements = RequirementsResult(
+                project="feature-a-1",
+                redis={"enabled": True, "success": True, "final": 6379},
+            )
+            preserved_service = ServiceRecord(
+                name="feature-a-1 Backend",
+                type="backend",
+                cwd=str(Path(context_a.root) / "backend"),
+                pid=1111,
+                requested_port=8100,
+                actual_port=8100,
+                status="running",
+            )
+            existing_state = RunState(
+                run_id="run-existing-expand",
+                mode="trees",
+                services={"feature-a-1 Backend": preserved_service},
+                requirements={"feature-a-1": preserved_requirements},
+                metadata={"project_roots": {"feature-a-1": str(Path(context_a.root).resolve())}},
+            )
+            started_projects: list[str] = []
+            captured: dict[str, object] = {}
+
+            def start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+                started_projects.append(context.name)
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(
+                        project=context.name,
+                        redis={"enabled": True, "success": True, "final": 6380},
+                    ),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(Path(context.root) / "backend"),
+                            pid=2222,
+                            requested_port=context.ports["backend"].final,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        )
+                    },
+                )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context_a, context_b]),
+                patch.object(engine, "_select_plan_projects", return_value=[context_a, context_b]),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=existing_state,
+                        decision_kind="reuse_expand",
+                        reason="expand_match",
+                        selected_projects=[
+                            {"name": "feature-a-1", "root": str(Path(context_a.root).resolve())},
+                            {"name": "feature-b-1", "root": str(Path(context_b.root).resolve())},
+                        ],
+                        state_projects=[{"name": "feature-a-1", "root": str(Path(context_a.root).resolve())}],
+                    ),
+                ),
+                patch.object(engine, "_reconcile_state_truth", return_value=[]),
+                patch.object(engine, "_start_project_context", side_effect=start_project_context),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                patch.object(engine, "_print_summary"),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(started_projects, ["feature-b-1"])
+            written_state = cast(RunState, captured["state"])
+            self.assertIs(written_state.services["feature-a-1 Backend"], preserved_service)
+            self.assertEqual(written_state.services["feature-b-1 Backend"].pid, 2222)
+            self.assertIs(written_state.requirements["feature-a-1"], preserved_requirements)
+            self.assertIn("feature-b-1", written_state.requirements)
+            self.assertEqual(written_state.metadata.get("last_reuse_reason"), "reuse_expand")
+
+    def test_stale_reuse_expand_does_not_preserve_candidate_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"ENVCTL_DEFAULT_MODE": "trees"})
+            context_a = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            context_b = self._tree_context(repo, "feature-b-1", "feature-b/1", backend_port=8200, frontend_port=9200)
+            existing_state = RunState(
+                run_id="run-existing-expand",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(Path(context_a.root) / "backend"),
+                        pid=1111,
+                    )
+                },
+            )
+            started_projects: list[str] = []
+            captured: dict[str, object] = {}
+
+            def start_project_context(*, context, mode, route, run_id):  # noqa: ANN001
+                started_projects.append(context.name)
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name),
+                    services={
+                        f"{context.name} Backend": ServiceRecord(
+                            name=f"{context.name} Backend",
+                            type="backend",
+                            cwd=str(Path(context.root) / "backend"),
+                            pid=3333,
+                        )
+                    },
+                )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context_a, context_b]),
+                patch.object(engine, "_select_plan_projects", return_value=[context_a, context_b]),
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    return_value=RunReuseDecision(
+                        candidate_state=existing_state,
+                        decision_kind="reuse_expand",
+                        reason="expand_match",
+                        selected_projects=[
+                            {"name": "feature-a-1", "root": str(Path(context_a.root).resolve())},
+                            {"name": "feature-b-1", "root": str(Path(context_b.root).resolve())},
+                        ],
+                        state_projects=[{"name": "feature-a-1", "root": str(Path(context_a.root).resolve())}],
+                    ),
+                ),
+                patch.object(engine, "_reconcile_state_truth", return_value=["feature-a-1 Backend"]),
+                patch.object(engine, "_start_project_context", side_effect=start_project_context),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                patch.object(engine, "_print_summary"),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature-a,feature-b", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(started_projects, ["feature-a-1", "feature-b-1"])
+            written_state = cast(RunState, captured["state"])
+            self.assertEqual(set(written_state.services), {"feature-a-1 Backend", "feature-b-1 Backend"})
+            self.assertEqual(written_state.services["feature-a-1 Backend"].pid, 3333)
+            skipped = [event for event in engine.events if event.get("event") == "state.run_reuse.skipped"]
+            self.assertEqual(skipped[-1].get("reason"), "stale_existing_state")
 
     def test_plan_launch_hook_runs_before_disabled_startup_dashboard_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

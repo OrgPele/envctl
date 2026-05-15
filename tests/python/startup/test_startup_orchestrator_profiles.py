@@ -181,6 +181,43 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         self.assertEqual(state.metadata.get("dependency_mode"), "shared")
         self.assertTrue(state.metadata.get("shared_dependencies"))
 
+    def test_build_run_state_merges_preserved_services_before_new_project_results(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1"),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, _service_name: False,
+        )
+        context = SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})
+        route = parse_route(["--main"], env={})
+        preserved_backend = ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/repo/backend", pid=1111)
+        new_backend = ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/repo/backend", pid=2222)
+        preserved_worker = ServiceRecord(name="Main Worker", type="worker", cwd="/tmp/repo/worker", pid=3333)
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="start",
+            runtime_mode="main",
+            run_id="run-main",
+            selected_contexts=[context],
+            preserved_services={
+                "Main Backend": preserved_backend,
+                "Main Worker": preserved_worker,
+            },
+            preserved_requirements={
+                "Main": RequirementsResult(project="Main", redis={"enabled": True, "success": True, "final": 6379})
+            },
+            services_by_project={"Main": {"Main Backend": new_backend}},
+            requirements_by_project={
+                "Main": RequirementsResult(project="Main", redis={"enabled": True, "success": True, "final": 6380})
+            },
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertIs(state.services["Main Backend"], new_backend)
+        self.assertIs(state.services["Main Worker"], preserved_worker)
+        self.assertEqual(state.requirements["Main"].redis["final"], 6380)
+
     def test_restart_service_types_respect_default_service_set(self) -> None:
         route = parse_route(["restart", "--service", "Main Frontend"], env={"ENVCTL_DEFAULT_MODE": "main"})
         route.flags["_restart_request"] = True

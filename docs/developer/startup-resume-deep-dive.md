@@ -149,6 +149,15 @@ The runtime class is intentionally mostly glue. Most behavior lives in domain mo
 
 The main startup command flow lives in [python/envctl_engine/startup/startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py).
 
+`StartupOrchestrator.execute(...)` is intentionally a phase coordinator. The reusable startup decision objects live in:
+
+- [python/envctl_engine/startup/execution_plan.py](../../python/envctl_engine/startup/execution_plan.py):
+  transient startup plans, restored/new project work items, and session accumulator helpers.
+- [python/envctl_engine/startup/run_reuse_application.py](../../python/envctl_engine/startup/run_reuse_application.py):
+  application of run-reuse decisions to a startup session, including resume route construction, reuse-expand preservation, dashboard-stopped service restore, and fresh-start replacement service selection.
+- [python/envctl_engine/startup/project_execution.py](../../python/envctl_engine/startup/project_execution.py):
+  tree-level project execution policy, worker selection, `startup.execution` events, deterministic result recording, progress flag injection, and degraded plan-agent handoff handling.
+
 ### Phase 1: Contract and mode validation
 
 `StartupOrchestrator.execute(...)` starts by:
@@ -213,6 +222,12 @@ Interactive tree selection itself lives in [python/envctl_engine/startup/startup
 
 Auto-resume only applies to `start` and `plan` and is enabled by [python/envctl_engine/runtime/engine_runtime_startup_support.py](../../python/envctl_engine/runtime/engine_runtime_startup_support.py).
 
+The split is:
+
+- [python/envctl_engine/startup/run_reuse_support.py](../../python/envctl_engine/startup/run_reuse_support.py) evaluates a `RunReuseDecision`.
+- [python/envctl_engine/startup/run_reuse_application.py](../../python/envctl_engine/startup/run_reuse_application.py) applies that decision to the current `StartupSession` and emits the existing reuse events.
+- [python/envctl_engine/startup/execution_plan.py](../../python/envctl_engine/startup/execution_plan.py) captures the resulting selected/restored/new project plan for tests and accumulator updates.
+
 The orchestrator evaluates:
 
 - exact match:
@@ -233,7 +248,7 @@ Outcomes:
 
 ### Phase 5: Tree-level parallelism
 
-Tree-level startup parallelism is decided by [python/envctl_engine/runtime/engine_runtime_startup_support.py](../../python/envctl_engine/runtime/engine_runtime_startup_support.py).
+Tree-level startup parallelism is configured by [python/envctl_engine/runtime/engine_runtime_startup_support.py](../../python/envctl_engine/runtime/engine_runtime_startup_support.py) and applied by [python/envctl_engine/startup/project_execution.py](../../python/envctl_engine/startup/project_execution.py).
 
 Rules:
 
@@ -244,7 +259,7 @@ Rules:
 - `--sequential` forces sequential behavior
 - worker cap comes from `--parallel-trees-max` or `RUN_SH_OPT_PARALLEL_TREES_MAX`
 
-This is the outermost concurrency boundary: multiple projects can be started simultaneously.
+This is the outermost concurrency boundary: multiple projects can be started simultaneously. `project_execution.py` owns the sequential-vs-parallel branch, stable result recording in selected project order, project-spinner row updates, startup warning rendering hooks, and failure aggregation.
 
 ### Phase 6: Docker prewarm
 
@@ -272,6 +287,8 @@ For each context it performs:
 6. post-start service truth assertion
 7. service-ready progress emission
 8. return of requirements, service records, and warnings
+
+The returned `ProjectStartupResult` is recorded through the accumulator helpers in [python/envctl_engine/startup/execution_plan.py](../../python/envctl_engine/startup/execution_plan.py), so preserved run state and newly started project state merge through one path before finalization.
 
 ## Port Planning and Reservation
 
@@ -839,9 +856,15 @@ This appendix lists every file on the startup/resume path that matters to the cu
 - [python/envctl_engine/startup/protocols.py](../../python/envctl_engine/startup/protocols.py)
   Startup-facing runtime and orchestrator protocol contract.
 - [python/envctl_engine/startup/startup_orchestrator.py](../../python/envctl_engine/startup/startup_orchestrator.py)
-  Command-level startup flow, restart pre-stop, project selection, auto-resume, tree-level parallel startup, artifact write, summary output.
+  Command-level startup phase ordering, restart pre-stop, project selection, disabled-startup dashboard path, artifact write, summary output, and compatibility facades.
+- [python/envctl_engine/startup/execution_plan.py](../../python/envctl_engine/startup/execution_plan.py)
+  Internal startup execution plan models, restored/new project work items, run-reuse application result shape, and session accumulator helpers.
+- [python/envctl_engine/startup/run_reuse_application.py](../../python/envctl_engine/startup/run_reuse_application.py)
+  Run-reuse decision application, resume route construction, reuse-expand state preservation, stale-state skip handling, dashboard-stopped service restore route rewrite, and fresh-start replacement service selection.
+- [python/envctl_engine/startup/project_execution.py](../../python/envctl_engine/startup/project_execution.py)
+  Tree-level project startup coordination, worker selection, progress/spinner wiring, deterministic result recording, failure aggregation, and degraded plan-agent handoff.
 - [python/envctl_engine/startup/startup_execution_support.py](../../python/envctl_engine/startup/startup_execution_support.py)
-  Per-project startup execution, requirement startup orchestration, service attach orchestration, startup summaries, docker prewarm, timing utilities.
+  Per-project startup execution, requirement startup orchestration, service attach compatibility facades, startup summaries, docker prewarm, timing utilities.
 - [python/envctl_engine/startup/startup_selection_support.py](../../python/envctl_engine/startup/startup_selection_support.py)
   Tree selector policy, restart target selection, service-type selection, state-vs-selection matching.
 - [python/envctl_engine/startup/startup_progress.py](../../python/envctl_engine/startup/startup_progress.py)
