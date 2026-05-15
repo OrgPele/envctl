@@ -1610,13 +1610,14 @@ def _compose_up_handoff(
             return None
 
         if monotonic() >= stall_deadline:
-            stalled_detail = _compose_unpublished_port_detail(
+            stalled_detail = _compose_stalled_port_detail(
                 process_runner=process_runner,
                 compose_root=compose_root,
                 compose_project_name=compose_project_name,
                 compose_path=compose_path,
                 env=env,
                 service_names=service_names,
+                probe_port=probe_port,
             )
             if stalled_detail is not None:
                 stdout, stderr = _terminate_compose_process(process)
@@ -1625,14 +1626,7 @@ def _compose_up_handoff(
                     phase="compose_graph" if len(service_names) > 1 else "compose_up",
                     error=f"{raw_error}; {stalled_detail}",
                     services=service_names,
-                    service_states=_inspect_auth_gateway_services(
-                        process_runner=process_runner,
-                        compose_root=compose_root,
-                        compose_project_name=compose_project_name,
-                        compose_path=compose_path,
-                        env=env,
-                        service_names=service_names,
-                    ),
+                    service_states=[],
                     compose_timeout_seconds=timeout_seconds,
                     public_port=None,
                     health_url=None,
@@ -1729,6 +1723,32 @@ def _compose_unpublished_port_detail(
     if not_ready_services and any(_compose_service_state_ready(state) for state in states):
         return "Docker Compose stalled before all Supabase services started: " + "|".join(not_ready_services)
     return None
+
+
+def _compose_stalled_port_detail(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+    probe_port: int | None,
+) -> str | None:
+    if probe_port is not None and not bool(process_runner.wait_for_port(probe_port, timeout=0.2)):
+        return f"Docker Compose stalled before publishing Supabase DB host port {probe_port}."
+    public_port = _compose_public_port(compose_root=compose_root)
+    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
+        if not bool(process_runner.wait_for_port(public_port, timeout=0.2)):
+            return f"Docker Compose stalled before publishing Supabase API host port {public_port}."
+    return _compose_unpublished_port_detail(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_names=service_names,
+    )
 
 
 def _published_container_port_for_service(service_name: str) -> int | None:
@@ -1954,6 +1974,12 @@ def _compose_handoff_ready(
     service_names: list[str],
     probe_port: int | None,
 ) -> bool:
+    if probe_port is not None and not bool(process_runner.wait_for_port(probe_port, timeout=0.5)):
+        return False
+    public_port = _compose_public_port(compose_root=compose_root)
+    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
+        if not bool(process_runner.wait_for_port(public_port, timeout=0.5)):
+            return False
     states = _inspect_auth_gateway_services(
         process_runner=process_runner,
         compose_root=compose_root,
@@ -1967,14 +1993,8 @@ def _compose_handoff_ready(
     if any(_compose_service_state_failed(state) for state in states):
         return False
     services_ready = all(_compose_service_state_ready(state) for state in states)
-    if probe_port is not None:
-        if not bool(process_runner.wait_for_port(probe_port, timeout=0.5)):
-            return False
     if not services_ready:
         return False
-    public_port = _compose_public_port(compose_root=compose_root)
-    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
-        return bool(process_runner.wait_for_port(public_port, timeout=0.5))
     return True
 
 

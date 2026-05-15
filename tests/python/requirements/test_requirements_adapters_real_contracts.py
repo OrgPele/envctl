@@ -541,7 +541,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(result)
-        self.assertIn("expected host port 5432 is not reachable", result or "")
+        self.assertIn("stalled before publishing Supabase DB host port 5432", result or "")
         self.assertIn("supabase-db", result or "")
 
     def test_supabase_graph_handoff_does_not_finish_when_only_db_is_ready(self) -> None:
