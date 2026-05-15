@@ -871,9 +871,8 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertNotIn("Main Voice Runtime", trees_records)
         self.assertFalse(trees_records["Main Worker"].listener_expected)
         self.assertIsNone(trees_records["Main Worker"].actual_port)
-        self.assertIn(("backend", "frontend"), started_layers)
-        self.assertIn(("voice-runtime",), started_layers)
-        self.assertIn(("worker",), started_layers)
+        self.assertIn(("backend", "frontend", "voice-runtime"), started_layers)
+        self.assertIn(("backend", "frontend", "worker"), started_layers)
 
     def test_start_project_services_resolves_additional_relative_command_from_service_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

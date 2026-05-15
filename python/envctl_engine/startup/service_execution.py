@@ -55,7 +55,7 @@ def ordered_service_layers(
             continue
         for dependency in tuple(getattr(service, "depends_on", ()) or ()):
             normalized = str(dependency).strip().lower()
-            if normalized in selected_set:
+            if normalized in selected_set and normalized in service_by_name:
                 dependencies[name].add(normalized)
 
     layers: list[tuple[str, ...]] = []
