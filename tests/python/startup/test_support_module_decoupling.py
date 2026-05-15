@@ -13,8 +13,12 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
+import envctl_engine.startup.requirements_execution as requirements_execution_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
-from envctl_engine.startup.requirements_execution import start_requirements_for_project as requirements_start_impl  # noqa: E402
+from envctl_engine.startup.requirements_execution import (  # noqa: E402
+    requirements_parallel_enabled,
+    start_requirements_for_project as requirements_start_impl,
+)
 from envctl_engine.startup.service_execution import start_project_services as service_start_impl  # noqa: E402
 from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     _annotate_shared_main_requirements,
@@ -64,6 +68,40 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
+        runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
+        orchestrator = SimpleNamespace(runtime=runtime)
+
+        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+            self.assertFalse(
+                requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
+            )
+            self.assertTrue(
+                requirements_parallel_enabled(
+                    orchestrator,
+                    route=parse_route(["start", "--parallel"], env={}),
+                    enabled_count=3,
+                )
+            )
+
+        with mock.patch.object(requirements_execution_module.sys, "platform", "linux"):
+            self.assertTrue(
+                requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
+            )
+            self.assertFalse(
+                requirements_parallel_enabled(
+                    orchestrator,
+                    route=parse_route(["start", "--requirements-sequential"], env={}),
+                    enabled_count=3,
+                )
+            )
+
+        runtime.env["ENVCTL_REQUIREMENTS_PARALLEL"] = "true"
+        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+            self.assertTrue(
+                requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
+            )
 
     def test_annotate_shared_main_requirements_reconciles_container_ports_before_reuse(self) -> None:
         requirements = RequirementsResult(

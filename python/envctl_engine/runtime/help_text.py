@@ -270,6 +270,8 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--backend|--frontend|--fullstack|--dependencies|--entire-system  choose startup scope",
             "--shared-deps|--isolated-deps  choose tree dependency source",
             "--only-backend|--only-frontend|--no-deps|--no-infra  reduce startup/plan launch scope",
+            "--parallel|--requirements-parallel  force managed dependencies to start concurrently",
+            "--requirements-sequential  force managed dependencies to start one at a time",
             "--project <name>        limit startup to selected project/worktree when supported",
             "--no-resume             skip automatic resume of a compatible saved run",
         ),

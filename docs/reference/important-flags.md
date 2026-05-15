@@ -82,6 +82,8 @@ Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implemen
 | --- | --- |
 | `--fast` | Enable startup caches. |
 | `--refresh-cache` | Force full scan and refresh cached metadata. |
+| `--parallel` / `--requirements-parallel` | Force managed requirement startup to run in parallel. |
+| `--requirements-sequential` | Force managed requirement startup to run one dependency at a time. |
 | `--parallel-trees` | Enable parallel tree startup workers. |
 | `--parallel-trees-max <n>` | Max parallel tree startup workers. |
 | `--service-parallel` / `--service-sequential` | Run backend+frontend startup attach in parallel or sequential mode (default: parallel). |
