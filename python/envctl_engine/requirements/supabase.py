@@ -185,14 +185,16 @@ def start_supabase_stack(
                 error=up_db,
             )
         if not db_handoff_recovered:
-            service_states = _inspect_auth_gateway_services(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                service_names=graph_services,
-            )
+            service_states = []
+            if not _is_compose_port_publish_stall(up_db):
+                service_states = _inspect_auth_gateway_services(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    service_names=graph_services,
+                )
             return ContainerStartResult(
                 success=False,
                 container_name=compose_project_name,
