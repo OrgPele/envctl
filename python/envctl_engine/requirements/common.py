@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 from collections.abc import Mapping
@@ -124,10 +125,14 @@ def run_docker(
     return result, None
 
 
-def _env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
+def _env_value(env: Mapping[str, str] | None, key: str) -> str | None:
     raw = (env or {}).get(key)
     if raw is None:
         raw = os.environ.get(key)
+    return raw
+
+
+def _parse_env_bool(raw: str | None, default: bool) -> bool:
     if raw is None:
         return default
     normalized = str(raw).strip().lower()
@@ -136,10 +141,12 @@ def _env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
     return normalized not in {"0", "false", "no", "off", "disable", "disabled"}
 
 
+def _env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
+    return _parse_env_bool(_env_value(env, key), default)
+
+
 def _env_float(env: Mapping[str, str] | None, key: str, default: float, *, minimum: float) -> float:
-    raw = (env or {}).get(key)
-    if raw is None:
-        raw = os.environ.get(key)
+    raw = _env_value(env, key)
     try:
         parsed = float(str(raw).strip()) if raw is not None else default
     except ValueError:
@@ -147,9 +154,23 @@ def _env_float(env: Mapping[str, str] | None, key: str, default: float, *, minim
     return max(parsed, minimum)
 
 
+def _docker_port_publish_lock_default_enabled() -> bool:
+    # Docker Desktop for macOS can reserve published ports without making them reachable
+    # when several port-publishing container operations race each other.
+    return sys.platform == "darwin"
+
+
+def _docker_port_publish_lock_enabled(env: Mapping[str, str] | None) -> bool:
+    raw = _env_value(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK")
+    normalized = str(raw).strip().lower() if raw is not None else ""
+    if not normalized or normalized == "auto":
+        return _docker_port_publish_lock_default_enabled()
+    return _parse_env_bool(raw, default=True)
+
+
 @contextmanager
 def docker_port_publish_lock(env: Mapping[str, str] | None) -> Iterator[None]:
-    if not _env_bool(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK", True):
+    if not _docker_port_publish_lock_enabled(env):
         yield
         return
     runtime_root = (

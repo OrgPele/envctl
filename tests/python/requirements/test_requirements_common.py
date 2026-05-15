@@ -5,11 +5,17 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.requirements.common import build_container_name, container_host_port, docker_port_publish_lock
+from envctl_engine.requirements.common import (
+    _docker_port_publish_lock_enabled,
+    build_container_name,
+    container_host_port,
+    docker_port_publish_lock,
+)
 
 
 class _Runner:
@@ -76,9 +82,25 @@ class RequirementsCommonTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIsNone(mapped_port)
 
+    def test_docker_port_publish_lock_auto_defaults_to_darwin_only(self) -> None:
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "darwin"):
+            self.assertTrue(_docker_port_publish_lock_enabled({}))
+            self.assertTrue(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
+
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "linux"):
+            self.assertFalse(_docker_port_publish_lock_enabled({}))
+            self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
+
+    def test_docker_port_publish_lock_env_overrides_auto_default(self) -> None:
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "linux"):
+            self.assertTrue(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "true"}))
+
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "darwin"):
+            self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "false"}))
+
     def test_docker_port_publish_lock_serializes_threads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env = {"RUN_SH_RUNTIME_DIR": tmpdir}
+            env = {"RUN_SH_RUNTIME_DIR": tmpdir, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "true"}
             first_entered = threading.Event()
             release_first = threading.Event()
             second_entered = threading.Event()
