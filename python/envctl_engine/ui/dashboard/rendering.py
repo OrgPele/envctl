@@ -1064,9 +1064,8 @@ def _print_dashboard_ai_session_row(
                 cli.lower(),
                 cli[:1].upper() + cli[1:] if cli else "AI",
             )
-            workspace = str(launch.get("workspace_id", "") or "unknown-workspace").strip()
-            surface = str(launch.get("surface_id", "") or "unknown-surface").strip()
-            print(f"    {gray}AI session:{reset} {dim}cmux {workspace} {surface} ({cli_label} already running){reset}")
+            tab_title = _dashboard_cmux_launch_tab_title(launch, project=project)
+            print(f"    {gray}AI session:{reset} {dim}{cli_label} already running in cmux tab \"{tab_title}\"{reset}")
         return
     sessions = list_tmux_sessions()
     matching = [
@@ -1120,6 +1119,18 @@ def _dashboard_cmux_launches_for_project(
         ):
             matches.append(raw_outcome)
     return matches
+
+
+def _dashboard_cmux_launch_tab_title(launch: dict[str, object], *, project: str) -> str:
+    configured = str(launch.get("tab_title", "") or "").strip()
+    if configured:
+        return configured
+    worktree_name = str(launch.get("worktree_name", "") or "").strip() or str(project).strip()
+    if not worktree_name:
+        return "implementation"
+    from envctl_engine.planning.plan_agent_launch_support import _tab_title_for_worktree  # noqa: PLC0415
+
+    return _tab_title_for_worktree(worktree_name)
 
 
 def _dashboard_cmux_launch_matches_project(

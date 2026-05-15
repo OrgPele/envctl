@@ -935,7 +935,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn("AI session: cmux workspace:8 surface:44 (OpenCode already running)", output)
+            self.assertIn('AI session: OpenCode already running in cmux tab "features_feature_a-1"', output)
+            self.assertNotIn("cmux workspace:8 surface:44", output)
             self.assertNotIn("Run AI:", output)
 
     def test_dashboard_renders_additional_service_rows_and_metadata(self) -> None:
