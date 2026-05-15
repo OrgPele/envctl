@@ -1470,6 +1470,33 @@ def _compose_run_locked(
             if cleanup_error:
                 return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
             return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
+        if up_error is not None and _is_compose_port_publish_stall(up_error):
+            recovered, recovery_detail = _recover_missing_supabase_network_for_project(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+            )
+            if recovered:
+                retry_error = _compose_up_handoff(
+                    process_runner=process_runner,
+                    compose_root=compose_root,
+                    compose_project_name=compose_project_name,
+                    compose_path=compose_path,
+                    env=env,
+                    args=args,
+                    timeout_seconds=timeout_seconds,
+                    service_names=service_names,
+                    probe_port=probe_port,
+                )
+                if retry_error is None:
+                    return None
+                return (
+                    f"{retry_error}; after Supabase port-publish recovery: "
+                    f"{recovery_detail or 'compose_down_remove_orphans'}"
+                )
+            return f"{up_error}; Supabase port-publish recovery failed: {recovery_detail or 'compose down failed'}"
         if up_error is not None and _is_docker_network_missing(up_error):
             recovered, recovery_detail = _recover_missing_supabase_network_for_project(
                 process_runner=process_runner,
@@ -1788,6 +1815,11 @@ def _is_docker_network_missing(error: str | None) -> bool:
     ):
         return True
     return bool(re.search(r"\bnetwork\s+[0-9a-f]{12,64}\s+not\s+found\b", normalized))
+
+
+def _is_compose_port_publish_stall(error: str | None) -> bool:
+    normalized = " ".join(str(error or "").lower().split())
+    return "docker compose stalled before publishing supabase" in normalized
 
 
 def _recover_missing_supabase_network_for_project(
