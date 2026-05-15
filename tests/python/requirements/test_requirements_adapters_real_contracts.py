@@ -487,6 +487,30 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(captured["timeout_seconds"], 120.0)
 
+    def test_supabase_compose_run_reports_lock_timeout(self) -> None:
+        runner = _FakeRunner()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            lock_context = mock.MagicMock()
+            lock_context.__enter__.side_effect = TimeoutError("busy")
+            with mock.patch("envctl_engine.requirements.supabase.file_lock", return_value=lock_context):
+                result = _compose_run(
+                    process_runner=runner,
+                    compose_root=root,
+                    compose_project_name="envctl-supabase-test",
+                    compose_path=compose_path,
+                    env={"ENVCTL_SUPABASE_COMPOSE_LOCK_TIMEOUT_SECONDS": "1"},
+                    args=["up", "-d", "supabase-db"],
+                )
+
+        self.assertIsNotNone(result)
+        self.assertIn("timed out acquiring Supabase compose lock after 1.0s", result or "")
+        self.assertIn("busy", result or "")
+
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
         runner = _FlakyHealthRunner()
 

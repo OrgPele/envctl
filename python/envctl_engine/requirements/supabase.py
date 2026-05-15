@@ -14,6 +14,7 @@ from typing import cast
 
 from collections.abc import Mapping
 
+from envctl_engine.debug.debug_utils import file_lock
 from envctl_engine.shared.protocols import ProcessRuntime
 
 from .adapter_base import env_bool, env_float, env_int, port_mismatch_policy, timeout_error
@@ -1380,6 +1381,31 @@ def _compose_run(
     env: Mapping[str, str] | None,
     args: list[str],
 ) -> str | None:
+    lock_timeout = _compose_lock_timeout_seconds(env)
+    lock_path = _compose_project_lock_path(compose_root=compose_root, compose_project_name=compose_project_name)
+    try:
+        with file_lock(lock_path, timeout=lock_timeout):
+            return _compose_run_locked(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                args=args,
+            )
+    except TimeoutError as exc:
+        return f"timed out acquiring Supabase compose lock after {lock_timeout:.1f}s: {exc}"
+
+
+def _compose_run_locked(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    args: list[str],
+) -> str | None:
     timeout_seconds = 180.0
     if args[:2] == ["up", "-d"]:
         service_names = [value for value in args[2:] if value]
@@ -1476,6 +1502,15 @@ def _compose_run(
             compose_project_name=compose_project_name,
         )
     return None
+
+
+def _compose_project_lock_path(*, compose_root: Path, compose_project_name: str) -> Path:
+    safe_project = re.sub(r"[^A-Za-z0-9_.-]+", "_", compose_project_name).strip("._-") or "supabase"
+    return compose_root / f".envctl-{safe_project}.compose.lock"
+
+
+def _compose_lock_timeout_seconds(env: Mapping[str, str] | None) -> float:
+    return env_float(env, "ENVCTL_SUPABASE_COMPOSE_LOCK_TIMEOUT_SECONDS", 180.0, minimum=1.0)
 
 
 def _compose_up_timeout_seconds(env: Mapping[str, str] | None, *, service_names: list[str]) -> float:
