@@ -5053,6 +5053,25 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:8", "--surface", "surface:12"],
                 rt.process_runner.calls,
             )
+            self.assertIn(
+                ["cmux", "tab-action", "--action", "mark-unread", "--workspace", "workspace:8", "--surface", "surface:12"],
+                rt.process_runner.calls,
+            )
+            self.assertIn(
+                ["cmux", "trigger-flash", "--workspace", "workspace:8", "--surface", "surface:12"],
+                rt.process_runner.calls,
+            )
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.surface_highlighted"),
+                [
+                    {
+                        "event": "planning.agent_launch.surface_highlighted",
+                        "workspace_id": "workspace:8",
+                        "surface_id": "surface:12",
+                        "actions": ["mark_unread", "trigger_flash"],
+                    }
+                ],
+            )
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 3)
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
@@ -5067,6 +5086,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertGreaterEqual(len(sleep_mock.call_args_list), 2)
             self.assertIn(0.15, [call.args[0] for call in sleep_mock.call_args_list])
             self.assertIn(0.1, [call.args[0] for call in sleep_mock.call_args_list[1:]])
+
+    def test_highlight_cmux_surface_is_best_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={})
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=1, stdout="", stderr="unsupported"),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+
+            launch_support._highlight_cmux_surface(rt, workspace_id="workspace:8", surface_id="surface:12")
+
+        self.assertEqual(
+            rt.process_runner.calls,
+            [
+                ["cmux", "tab-action", "--action", "mark-unread", "--workspace", "workspace:8", "--surface", "surface:12"],
+                ["cmux", "trigger-flash", "--workspace", "workspace:8", "--surface", "surface:12"],
+            ],
+        )
+        self.assertEqual(
+            self._events(rt, "planning.agent_launch.surface_highlight_failed"),
+            [
+                {
+                    "event": "planning.agent_launch.surface_highlight_failed",
+                    "workspace_id": "workspace:8",
+                    "surface_id": "surface:12",
+                    "failures": [{"action": "mark_unread", "error": "unsupported"}],
+                }
+            ],
+        )
 
     def test_created_default_workspace_reuses_single_starter_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -3137,6 +3137,7 @@ def _complete_surface_bootstrap_with_events(
             worktree=worktree,
         )
         if error is None:
+            _highlight_cmux_surface(runtime, workspace_id=workspace_id, surface_id=surface_id)
             runtime._emit(
                 "planning.agent_launch.command_sent",
                 workspace_id=workspace_id,
@@ -3169,6 +3170,38 @@ def _complete_surface_bootstrap_with_events(
         return error
     finally:
         _persist_runtime_events_snapshot(runtime)
+
+
+def _highlight_cmux_surface(runtime: Any, *, workspace_id: str, surface_id: str) -> None:
+    failures: list[dict[str, str]] = []
+    commands = (
+        (
+            "mark_unread",
+            ["cmux", "tab-action", "--action", "mark-unread", "--workspace", workspace_id, "--surface", surface_id],
+        ),
+        (
+            "trigger_flash",
+            ["cmux", "trigger-flash", "--workspace", workspace_id, "--surface", surface_id],
+        ),
+    )
+    for action, command in commands:
+        error = _run_cmux_command(runtime, command, emit_failure_event=False)
+        if error is not None:
+            failures.append({"action": action, "error": error})
+    if failures:
+        runtime._emit(
+            "planning.agent_launch.surface_highlight_failed",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            failures=failures,
+        )
+        return
+    runtime._emit(
+        "planning.agent_launch.surface_highlighted",
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        actions=[action for action, _command in commands],
+    )
 
 
 def _complete_review_surface_bootstrap(
