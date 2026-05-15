@@ -25,6 +25,7 @@ from .common import (
     container_exists,
     container_host_port,
     container_status,
+    docker_port_publish_lock,
     is_bind_conflict,
     run_docker,
     run_result_error,
@@ -1385,6 +1386,16 @@ def _compose_run(
     lock_path = _compose_project_lock_path(compose_root=compose_root, compose_project_name=compose_project_name)
     try:
         with file_lock(lock_path, timeout=lock_timeout):
+            if _compose_args_mutate_port_bindings(args):
+                with docker_port_publish_lock(env):
+                    return _compose_run_locked(
+                        process_runner=process_runner,
+                        compose_root=compose_root,
+                        compose_project_name=compose_project_name,
+                        compose_path=compose_path,
+                        env=env,
+                        args=args,
+                    )
             return _compose_run_locked(
                 process_runner=process_runner,
                 compose_root=compose_root,
@@ -1395,6 +1406,10 @@ def _compose_run(
             )
     except TimeoutError as exc:
         return f"timed out acquiring Supabase compose lock after {lock_timeout:.1f}s: {exc}"
+
+
+def _compose_args_mutate_port_bindings(args: list[str]) -> bool:
+    return bool(args) and args[0] in {"up", "start", "restart", "create", "rm", "down"}
 
 
 def _compose_run_locked(
@@ -1702,28 +1717,14 @@ def _compose_unpublished_port_detail(
         container = str(service_state.get("container") or "").strip()
         if not container or status != "running" or health not in {"", "healthy"}:
             continue
-        configured_port = _container_host_config_port(
-            process_runner=process_runner,
-            container_name=container,
-            container_port=container_port,
-            cwd=compose_root,
-            env=env,
-        )
-        if configured_port is None:
+        expected_port = _expected_host_port_for_service(service_name, compose_root=compose_root)
+        if expected_port is None:
             continue
-        active_port, active_error = _container_active_host_port(
-            process_runner=process_runner,
-            container_name=container,
-            container_port=container_port,
-            cwd=compose_root,
-            env=env,
-        )
-        if active_port == configured_port:
+        if bool(process_runner.wait_for_port(expected_port, timeout=0.5)):
             continue
-        error_detail = f" docker_port_error={_sanitize_service_state_text(active_error)}" if active_error else ""
         return (
-            f"Docker reported {service_name} running/healthy with HostConfig publishing port "
-            f"{configured_port}, but no active host port is published.{error_detail}"
+            f"Docker reported {service_name} running/healthy, but expected host port "
+            f"{expected_port} is not reachable."
         )
     if not_ready_services and any(_compose_service_state_ready(state) for state in states):
         return "Docker Compose stalled before all Supabase services started: " + "|".join(not_ready_services)
@@ -1739,36 +1740,17 @@ def _published_container_port_for_service(service_name: str) -> int | None:
     return None
 
 
-def _container_active_host_port(
-    *,
-    process_runner,
-    container_name: str,
-    container_port: int,
-    cwd: Path,
-    env: Mapping[str, str] | None,
-) -> tuple[int | None, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["port", container_name, str(container_port)],
-        cwd=cwd,
-        env=env,
-        timeout=10.0,
-    )
-    if result is None:
-        return None, error
-    if getattr(result, "returncode", 1) != 0:
-        return None, run_result_error(result, "failed reading active container port mapping")
-    raw = str(getattr(result, "stdout", "") or "").strip()
-    if not raw:
-        return None, None
-    first = raw.splitlines()[0].strip()
-    if ":" not in first:
-        return None, None
-    try:
-        parsed = int(first.rsplit(":", 1)[1])
-    except ValueError:
-        return None, None
-    return (parsed if parsed > 0 else None), None
+def _expected_host_port_for_service(service_name: str, *, compose_root: Path) -> int | None:
+    normalized = str(service_name or "").strip().lower()
+    if normalized in {"supabase-db", "db"}:
+        return _compose_db_port(compose_root=compose_root)
+    if _is_gateway_service_name(normalized):
+        return _compose_public_port(compose_root=compose_root)
+    return None
+
+
+def _is_gateway_service_name(service_name: str) -> bool:
+    return str(service_name or "").strip().lower() in {"supabase-kong", "kong", "gateway"}
 
 
 def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
@@ -1988,55 +1970,11 @@ def _compose_handoff_ready(
     if probe_port is not None:
         if not bool(process_runner.wait_for_port(probe_port, timeout=0.5)):
             return False
-        if len(service_names) == 1:
-            return True
-        return services_ready and _compose_published_ports_active(
-            process_runner=process_runner,
-            compose_root=compose_root,
-            env=env,
-            service_states=states,
-        )
-    return services_ready and _compose_published_ports_active(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        env=env,
-        service_states=states,
-    )
-
-
-def _compose_published_ports_active(
-    *,
-    process_runner,
-    compose_root: Path,
-    env: Mapping[str, str] | None,
-    service_states: list[dict[str, object]],
-) -> bool:
-    for service_state in service_states:
-        service_name = str(service_state.get("service") or "").strip()
-        container_port = _published_container_port_for_service(service_name)
-        if container_port is None:
-            continue
-        container = str(service_state.get("container") or "").strip()
-        if not container:
-            return False
-        configured_port = _container_host_config_port(
-            process_runner=process_runner,
-            container_name=container,
-            container_port=container_port,
-            cwd=compose_root,
-            env=env,
-        )
-        if configured_port is None:
-            continue
-        active_port, _active_error = _container_active_host_port(
-            process_runner=process_runner,
-            container_name=container,
-            container_port=container_port,
-            cwd=compose_root,
-            env=env,
-        )
-        if active_port != configured_port:
-            return False
+    if not services_ready:
+        return False
+    public_port = _compose_public_port(compose_root=compose_root)
+    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
+        return bool(process_runner.wait_for_port(public_port, timeout=0.5))
     return True
 
 
@@ -2192,6 +2130,25 @@ def _compose_db_port(*, compose_root: Path) -> int | None:
     except OSError:
         return None
     match = re.search(r"^SUPABASE_DB_PORT=(\d+)$", text, re.MULTILINE)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _compose_public_port(*, compose_root: Path) -> int | None:
+    env_path = compose_root / ".env"
+    if not env_path.is_file():
+        return None
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"^SUPABASE_PUBLIC_PORT=(\d+)$", text, re.MULTILINE)
+    if not match:
+        match = re.search(r"^SUPABASE_API_PORT=(\d+)$", text, re.MULTILINE)
     if not match:
         return None
     try:
@@ -2606,39 +2563,23 @@ def _gateway_public_port_mismatch(
         ignored_statuses.add("created")
     if not container or status in ignored_statuses:
         return None
-    actual_port, port_error = _container_active_host_port(
+    configured_port = _container_host_config_port(
         process_runner=process_runner,
         container_name=container,
         container_port=8000,
         cwd=compose_root,
         env=env,
     )
-    if actual_port is None:
-        configured_port = _container_host_config_port(
-            process_runner=process_runner,
-            container_name=container,
-            container_port=8000,
-            cwd=compose_root,
-            env=env,
-        )
-        if configured_port is None:
-            return None
-        if status == "created":
-            actual_port = configured_port
-        elif int(configured_port) != int(expected_port):
-            actual_port = configured_port
-        else:
-            mismatch = dict(service_state)
-            mismatch["actual_port"] = "unpublished"
-            if port_error:
-                mismatch["port_error"] = _sanitize_service_state_text(port_error)
-            return mismatch
-    if int(actual_port) == int(expected_port):
+    if configured_port is None:
         return None
+    if int(configured_port) == int(expected_port):
+        if status == "created" or bool(process_runner.wait_for_port(expected_port, timeout=0.5)):
+            return None
+        mismatch = dict(service_state)
+        mismatch["actual_port"] = "unpublished"
+        return mismatch
     mismatch = dict(service_state)
-    mismatch["actual_port"] = int(actual_port)
-    if port_error:
-        mismatch["port_error"] = _sanitize_service_state_text(port_error)
+    mismatch["actual_port"] = int(configured_port)
     return mismatch
 
 

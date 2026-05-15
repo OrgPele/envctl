@@ -21,6 +21,7 @@ from .common import (
     container_host_port,
     container_state_error,
     container_status,
+    docker_port_publish_lock,
     is_bind_conflict,
     is_missing_port_mapping_error,
     run_docker,
@@ -439,13 +440,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                 stage="start.inspect.failed",
             )
         if status != "running":
-            start_result, start_error = run_docker(
-                template.process_runner,
-                ["start", template.container_name],
-                cwd=template.project_root,
-                env=template.env,
-                timeout=120.0,
-            )
+            with docker_port_publish_lock(template.env):
+                start_result, start_error = run_docker(
+                    template.process_runner,
+                    ["start", template.container_name],
+                    cwd=template.project_root,
+                    env=template.env,
+                    timeout=120.0,
+                )
             if start_result is None:
                 state_error_text, _ = container_state_error(
                     template.process_runner,
@@ -663,13 +665,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
         )
         restart_started = time.monotonic()
-        restart_result, restart_error = run_docker(
-            template.process_runner,
-            ["restart", template.container_name],
-            cwd=template.project_root,
-            env=template.env,
-            timeout=120.0,
-        )
+        with docker_port_publish_lock(template.env):
+            restart_result, restart_error = run_docker(
+                template.process_runner,
+                ["restart", template.container_name],
+                cwd=template.project_root,
+                env=template.env,
+                timeout=120.0,
+            )
         if restart_result is None:
             _add_stage_duration("restart", restart_started)
             detail = (restart_error or "").strip()

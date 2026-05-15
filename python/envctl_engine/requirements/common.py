@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
+from envctl_engine.debug.debug_utils import file_lock
 from envctl_engine.shared.protocols import CommandResult, ProcessRuntime
 
 
@@ -117,6 +121,44 @@ def run_docker(
     return result, None
 
 
+def _env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
+    raw = (env or {}).get(key)
+    if raw is None:
+        raw = os.environ.get(key)
+    if raw is None:
+        return default
+    normalized = str(raw).strip().lower()
+    if not normalized:
+        return default
+    return normalized not in {"0", "false", "no", "off", "disable", "disabled"}
+
+
+def _env_float(env: Mapping[str, str] | None, key: str, default: float, *, minimum: float) -> float:
+    raw = (env or {}).get(key)
+    if raw is None:
+        raw = os.environ.get(key)
+    try:
+        parsed = float(str(raw).strip()) if raw is not None else default
+    except ValueError:
+        parsed = default
+    return max(parsed, minimum)
+
+
+@contextmanager
+def docker_port_publish_lock(env: Mapping[str, str] | None) -> Iterator[None]:
+    if not _env_bool(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK", True):
+        yield
+        return
+    runtime_root = (
+        (env or {}).get("RUN_SH_RUNTIME_DIR")
+        or os.environ.get("RUN_SH_RUNTIME_DIR")
+        or str(Path(tempfile.gettempdir()) / "envctl-runtime")
+    )
+    lock_timeout = _env_float(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK_TIMEOUT_SECONDS", 180.0, minimum=1.0)
+    with file_lock(Path(runtime_root) / "docker-port-publish.lock", timeout=lock_timeout):
+        yield
+
+
 def run_result_error(result: CommandResult, fallback: str) -> str:
     stderr = result.stderr
     stdout = result.stdout
@@ -220,11 +262,24 @@ def container_host_port(
         except ValueError:
             return None
 
+    inspect_result, inspect_error = run_docker(
+        process_runner,
+        ["inspect", "-f", "{{json .HostConfig.PortBindings}}", container_name],
+        cwd=cwd,
+        env=env,
+        timeout=10.0,
+    )
+    if inspect_result is not None and getattr(inspect_result, "returncode", 1) == 0:
+        inspected = _parse_port_binding_json(str(getattr(inspect_result, "stdout", "") or ""))
+        if inspected is not None:
+            return inspected, None
+
     result, error = run_docker(
         process_runner,
         ["port", container_name, str(container_port)],
         cwd=cwd,
         env=env,
+        timeout=10.0,
     )
     if result is None:
         return None, error
@@ -233,20 +288,11 @@ def container_host_port(
         if not is_missing_port_mapping_error(port_error):
             return None, port_error
 
-        # `docker port` returns "no public port..." for stopped containers even if
-        # HostConfig still has the published mapping. Inspect fallback preserves reuse.
-        inspect_result, inspect_error = run_docker(
-            process_runner,
-            ["inspect", "-f", "{{json .HostConfig.PortBindings}}", container_name],
-            cwd=cwd,
-            env=env,
-        )
         if inspect_result is None:
             return None, inspect_error
         if getattr(inspect_result, "returncode", 1) != 0:
             return None, port_error
-        inspected = _parse_port_binding_json(str(getattr(inspect_result, "stdout", "") or ""))
-        return inspected, None
+        return None, None
     raw = (getattr(result, "stdout", "") or "").strip()
     if not raw:
         return None, None

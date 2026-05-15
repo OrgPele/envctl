@@ -19,6 +19,7 @@ from .common import (
     build_container_name,
     container_exists,
     container_status,
+    docker_port_publish_lock,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -110,6 +111,26 @@ def _create_n8n_container(
     )
     if pull_error:
         return pull_error
+    with docker_port_publish_lock(env):
+        return _create_n8n_container_locked(
+            process_runner=process_runner,
+            project_root=project_root,
+            container_name=container_name,
+            port=port,
+            env=env,
+            image=image,
+        )
+
+
+def _create_n8n_container_locked(
+    *,
+    process_runner: ProcessRuntime,
+    project_root: Path,
+    container_name: str,
+    port: int,
+    env: Mapping[str, str] | None,
+    image: str,
+) -> str | None:
     create_timeout_seconds = env_float(
         env,
         "ENVCTL_N8N_CREATE_TIMEOUT_SECONDS",
@@ -173,7 +194,10 @@ def _create_n8n_container(
             timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
         ):
             return None
-        return start_error or "failed starting n8n container"
+        return (
+            f"probe timeout waiting for readiness on port {port} after docker start timeout"
+            + (f": {start_error}" if start_error else "")
+        )
     if start_result is None:
         if _recover_n8n_start_timeout(
             process_runner=process_runner,
@@ -184,7 +208,10 @@ def _create_n8n_container(
             timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
         ):
             return None
-        return start_error
+        return (
+            f"probe timeout waiting for readiness on port {port} after docker start failure"
+            + (f": {start_error}" if start_error else "")
+        )
     if getattr(start_result, "returncode", 1) != 0:
         if _recover_n8n_start_timeout(
             process_runner=process_runner,
@@ -195,7 +222,8 @@ def _create_n8n_container(
             timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
         ):
             return None
-        return run_result_error(start_result, "failed starting n8n container")
+        detail = run_result_error(start_result, "failed starting n8n container")
+        return f"probe timeout waiting for readiness on port {port} after docker start failure: {detail}"
     if create_timed_out and not _recover_n8n_start_timeout(
         process_runner=process_runner,
         container_name=container_name,
