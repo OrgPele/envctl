@@ -1473,6 +1473,8 @@ def _compose_run_locked(
                 return f"{up_error}; could not recover Docker address-pool exhaustion: {cleanup_error}"
             return f"{up_error}; no empty envctl Supabase networks were available for scoped cleanup"
         if up_error is not None and _is_compose_port_publish_stall(up_error):
+            if not env_bool(env, "ENVCTL_SUPABASE_PORT_PUBLISH_STALL_RECOVERY", False):
+                return up_error
             recovered, recovery_detail = _recover_missing_supabase_network_for_project(
                 process_runner=process_runner,
                 compose_root=compose_root,
@@ -1612,6 +1614,7 @@ def _compose_up_handoff(
     )
     monotonic = getattr(process_runner, "monotonic", time.monotonic)
     deadline = monotonic() + timeout_seconds
+    stall_deadline = monotonic() + _compose_port_publish_stall_seconds(env)
     sleeper = getattr(process_runner, "sleep", time.sleep)
     while True:
         returncode = process.poll()
@@ -1636,6 +1639,30 @@ def _compose_up_handoff(
         ):
             _terminate_compose_process(process)
             return None
+
+        if monotonic() >= stall_deadline:
+            stalled_detail = _compose_stalled_port_detail(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_names=service_names,
+                probe_port=probe_port,
+            )
+            if stalled_detail is not None:
+                stdout, stderr = _terminate_compose_process(process)
+                raw_error = stderr or stdout or f"docker compose {' '.join(args)} stalled"
+                return _supabase_compose_failure_detail(
+                    phase="compose_graph" if len(service_names) > 1 else "compose_up",
+                    error=f"{raw_error}; {stalled_detail}",
+                    services=service_names,
+                    service_states=[],
+                    compose_timeout_seconds=timeout_seconds,
+                    public_port=None,
+                    health_url=None,
+                )
+            stall_deadline = monotonic() + _compose_port_publish_stall_seconds(env)
 
         if monotonic() >= deadline:
             stdout, stderr = _terminate_compose_process(process)
@@ -1688,6 +1715,10 @@ def _compose_up_handoff(
             )
 
         sleeper(0.25)
+
+
+def _compose_port_publish_stall_seconds(env: Mapping[str, str] | None) -> float:
+    return env_float(env, "ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS", 45.0, minimum=5.0)
 
 
 def _compose_unpublished_port_detail(
