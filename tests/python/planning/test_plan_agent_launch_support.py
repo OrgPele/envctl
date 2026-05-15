@@ -466,7 +466,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:7"])
+            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:7", "--focus", "true"])
             self.assertIn(["cmux", "rename-tab", "--workspace", "workspace:7", "--surface", "surface:9", "feature-a-1"], rt.process_runner.calls)
             self.assertIn(["cmux", "respawn-pane", "--workspace", "workspace:7", "--surface", "surface:9", "--command", "zsh"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:7", "--surface", "surface:9", f"cd {repo}"], rt.process_runner.calls)
@@ -5008,6 +5008,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout="Sisyphus - Ultraworker\nesc interrupt\ntab agents  ctrl+p commands\n",
+                        stderr="",
+                    ),
                 ]
             )
 
@@ -5025,7 +5031,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:8"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:8", "--focus", "true"])
             self.assertIn(
                 ["cmux", "respawn-pane", "--workspace", "workspace:8", "--surface", "surface:12", "--command", "zsh"],
                 rt.process_runner.calls,
@@ -5118,14 +5124,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve()), "--focus", "true"])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])
             self.assertEqual(
                 rt.process_runner.calls[3],
                 ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"],
             )
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
-            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
+            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"], rt.process_runner.calls)
             self.assertIn(
                 ["cmux", "rename-tab", "--workspace", "workspace:9", "--surface", "surface:77", "feature-a-1"],
                 rt.process_runner.calls,
@@ -5385,8 +5391,12 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_opencode_post_submit_accepts_busy_or_cleared_screen(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         busy = "Sisyphus is working...\nEsc to interrupt\n"
+        cmux_busy = "▣  Sisyphus - Ultraworker · GPT-5.5\n■■■■⬝⬝⬝⬝  esc interrupt  tab agents  ctrl+p commands\n"
+        returned_ready = "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n tab agents  ctrl+p commands\n ~/repo ⊙ 3 MCP /status 1.15.0\n"
         cleared = '  ┃  Ask anything... "Follow up"\n  ctrl+p commands\n  ~/repo /status\n'
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", busy, prompt))
+        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cmux_busy, prompt))
+        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", returned_ready, prompt))
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
 
     def test_opencode_post_submit_accepts_busy_screen_with_prompt_history(self) -> None:
@@ -5465,7 +5475,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
+            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"])
             self.assertNotIn(["cmux", "current-workspace"], rt.process_runner.calls)
 
     def test_explicit_workspace_override_resolves_workspace_name(self) -> None:
@@ -5509,7 +5519,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:1"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:1", "--focus", "true"])
             self.assertNotIn(["cmux", "current-workspace"], rt.process_runner.calls)
 
     def test_cmux_alias_enables_default_implementation_workspace_launch(self) -> None:
@@ -5552,11 +5562,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve()), "--focus", "true"])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])
             self.assertEqual(rt.process_runner.calls[3], ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"])
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
-            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
+            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"], rt.process_runner.calls)
 
     def test_cmux_alias_without_required_context_uses_repo_default_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5597,10 +5607,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve()), "--focus", "true"])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:9", "repo implementations"])
             self.assertEqual(rt.process_runner.calls[3], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
-            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
+            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"], rt.process_runner.calls)
 
     def test_cmux_workspace_alias_resolves_workspace_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5643,7 +5653,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:1"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:1", "--focus", "true"])
 
     def test_created_named_workspace_reuses_single_starter_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5684,14 +5694,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve()), "--focus", "true"])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])
             self.assertEqual(
                 rt.process_runner.calls[3],
                 ["cmux", "rename-workspace", "--workspace", "workspace:3", "brand-new-workspace"],
             )
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:3"])
-            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:3"], rt.process_runner.calls)
+            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:3", "--focus", "true"], rt.process_runner.calls)
 
     def test_new_session_flag_skips_cmux_starter_surface_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5732,7 +5742,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertIn(["cmux", "new-surface", "--workspace", "workspace:3"], rt.process_runner.calls)
+            self.assertIn(["cmux", "new-surface", "--workspace", "workspace:3", "--focus", "true"], rt.process_runner.calls)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.surface_created")[-1],
                 {
@@ -5849,7 +5859,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:3"])
-            self.assertEqual(rt.process_runner.calls[5], ["cmux", "new-surface", "--workspace", "workspace:3"])
+            self.assertEqual(rt.process_runner.calls[5], ["cmux", "new-surface", "--workspace", "workspace:3", "--focus", "true"])
 
     def test_created_workspace_emits_probe_and_fallback_events_when_probe_is_ambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5961,7 +5971,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:9"])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"])
 
     def test_existing_workspace_emits_new_surface_event_without_probe_or_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6071,10 +6081,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
-            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
+            self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve()), "--focus", "true"])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "rename-workspace", "--workspace", "workspace:10", "repo reviews"])
             self.assertEqual(rt.process_runner.calls[3], ["cmux", "list-pane-surfaces", "--workspace", "workspace:10"])
-            self.assertEqual(rt.process_runner.calls[4], ["cmux", "new-surface", "--workspace", "workspace:10"])
+            self.assertEqual(rt.process_runner.calls[4], ["cmux", "new-surface", "--workspace", "workspace:10", "--focus", "true"])
             self.assertIn(
                 ["cmux", "send", "--workspace", "workspace:10", "--surface", "surface:12", f"cd {repo}"],
                 rt.process_runner.calls,
@@ -6146,7 +6156,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
+            self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9", "--focus", "true"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
             direct_prompt_calls = [
                 call

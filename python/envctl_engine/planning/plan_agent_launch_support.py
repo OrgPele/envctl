@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
@@ -173,6 +173,7 @@ class PlanAgentLaunchOutcome:
     transport: str | None = None
     cli: str | None = None
     workspace_id: str | None = None
+    bootstrap_tracker: _SurfaceBootstrapTracker | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -221,6 +222,13 @@ class ReviewAgentLaunchReadiness:
     reason: str
     cli: str
     missing: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class _SurfaceBootstrapTracker:
+    thread: object | None = None
+    finished: bool = False
+    error: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -984,6 +992,7 @@ def launch_plan_agent_terminals(
         )
         outcomes.append(outcome)
         starter_surface_id = None
+    outcomes = _wait_for_cmux_bootstrap_outcomes(outcomes)
 
     launched = [item for item in outcomes if item.status == "launched"]
     failed = [item for item in outcomes if item.status == "failed"]
@@ -1511,7 +1520,7 @@ def _launch_single_worktree(
         worktree=worktree.name,
         source=surface_source,
     )
-    _start_background_surface_bootstrap(
+    bootstrap_tracker = _start_background_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
@@ -1526,6 +1535,7 @@ def _launch_single_worktree(
         transport="cmux",
         cli=launch_config.cli,
         workspace_id=workspace_id,
+        bootstrap_tracker=bootstrap_tracker,
     )
 
 
@@ -2980,7 +2990,7 @@ def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarge
 
 def _create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str | None]:
     result = runtime.process_runner.run(
-        ["cmux", "new-surface", "--workspace", workspace_id],
+        ["cmux", "new-surface", "--workspace", workspace_id, "--focus", "true"],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
         timeout=10.0,
@@ -2997,20 +3007,42 @@ def _start_background_surface_bootstrap(
     surface_id: str,
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
-) -> None:
+) -> _SurfaceBootstrapTracker:
+    tracker = _SurfaceBootstrapTracker()
     thread = threading.Thread(
-        target=_complete_surface_bootstrap,
+        target=_complete_surface_bootstrap_tracked,
         kwargs={
             "runtime": runtime,
             "workspace_id": workspace_id,
             "surface_id": surface_id,
             "launch_config": launch_config,
             "worktree": worktree,
+            "tracker": tracker,
         },
         name=f"envctl-plan-agent-{worktree.name}",
         daemon=False,
     )
+    tracker.thread = thread
     thread.start()
+    return tracker
+
+
+def _wait_for_cmux_bootstrap_outcomes(outcomes: list[PlanAgentLaunchOutcome]) -> list[PlanAgentLaunchOutcome]:
+    completed: list[PlanAgentLaunchOutcome] = []
+    for outcome in outcomes:
+        tracker = outcome.bootstrap_tracker
+        if tracker is None:
+            completed.append(outcome)
+            continue
+        thread = tracker.thread
+        join = getattr(thread, "join", None)
+        if callable(join) and not tracker.finished:
+            join()
+        if tracker.error:
+            completed.append(replace(outcome, status="failed", reason=tracker.error))
+            continue
+        completed.append(outcome)
+    return completed
 
 
 def _start_background_review_surface_bootstrap(
@@ -3050,6 +3082,44 @@ def _complete_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> None:
+    _complete_surface_bootstrap_with_events(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        worktree=worktree,
+    )
+
+
+def _complete_surface_bootstrap_tracked(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    worktree: CreatedPlanWorktree,
+    tracker: _SurfaceBootstrapTracker,
+) -> None:
+    try:
+        tracker.error = _complete_surface_bootstrap_with_events(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            launch_config=launch_config,
+            worktree=worktree,
+        )
+    finally:
+        tracker.finished = True
+
+
+def _complete_surface_bootstrap_with_events(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    launch_config: PlanAgentLaunchConfig,
+    worktree: CreatedPlanWorktree,
+) -> str | None:
     workflow = _build_plan_agent_workflow(
         cli=launch_config.cli,
         preset=launch_config.preset,
@@ -3076,7 +3146,7 @@ def _complete_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
             )
-            return
+            return None
         runtime._emit(
             "planning.agent_launch.failed",
             reason="bootstrap_failed",
@@ -3085,6 +3155,18 @@ def _complete_surface_bootstrap(
             worktree=worktree.name,
             error=error,
         )
+        return error
+    except Exception as exc:
+        error = f"bootstrap_exception: {exc}"
+        runtime._emit(
+            "planning.agent_launch.failed",
+            reason="bootstrap_failed",
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            worktree=worktree.name,
+            error=error,
+        )
+        return error
     finally:
         _persist_runtime_events_snapshot(runtime)
 
@@ -4511,7 +4593,7 @@ def _create_named_workspace(
     event_prefix: str = "planning.agent_launch",
 ) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
     create_result = runtime.process_runner.run(
-        ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
+        ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir), "--focus", "true"],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
         timeout=10.0,
@@ -5384,13 +5466,13 @@ def _post_submit_screen_looks_accepted(cli: str, screen: str, prompt_text: str) 
     lower_text = cleaned.lower()
     if "no matching items" in lower_text or "unrecognized command" in lower_text:
         return False
-    if "ask anything" in lower_text and "/status" in lower_text:
-        return True
     if _screen_looks_active(normalized_cli, screen):
         return True
     prompt_lines = [line.strip().lower() for line in str(prompt_text).splitlines() if line.strip()]
     if prompt_lines and all(line in lower_text for line in prompt_lines):
         return False
+    if _screen_looks_ready(normalized_cli, screen):
+        return True
     return False
 
 
@@ -5399,7 +5481,20 @@ def _screen_looks_active(cli: str, screen: str) -> bool:
     cleaned = _strip_ansi_sequences(screen)
     lower_text = cleaned.lower()
     if normalized_cli in {"opencode", "codex"}:
-        return "esc to interrupt" in lower_text and ("working" in lower_text or "ctrl+c" in lower_text)
+        interrupt_hint = "esc to interrupt" in lower_text or "esc interrupt" in lower_text
+        activity_context = any(
+            marker in lower_text
+            for marker in (
+                "working",
+                "ctrl+c",
+                "ultraworker",
+                "sisyphus",
+                "openai",
+                "tab agents",
+                "ctrl+p commands",
+            )
+        )
+        return interrupt_hint and activity_context
     return False
 
 
@@ -5475,6 +5570,12 @@ def _screen_looks_ready(cli: str, screen: str) -> bool:
     if any(marker in lower_text for marker in _OPENCODE_LOADING_MARKERS):
         return False
     if all(marker in lower_text for marker in _OPENCODE_READY_MARKERS):
+        return True
+    if (
+        "ctrl+p commands" in lower_text
+        and "/status" in lower_text
+        and any(marker in lower_text for marker in ("openai", "sisyphus", "ultraworker"))
+    ):
         return True
     return False
 

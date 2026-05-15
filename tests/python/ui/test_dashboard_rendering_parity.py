@@ -918,7 +918,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                             "worktree_name": project,
                             "worktree_root": str(project_root),
                             "transport": "cmux",
-                            "cli": "codex",
+                            "cli": "opencode",
                             "workspace_id": "workspace:8",
                             "surface_id": "surface:44",
                             "status": "launched",
@@ -935,7 +935,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn("AI session: cmux workspace:8 surface:44 (Codex already running)", output)
+            self.assertIn("AI session: cmux workspace:8 surface:44 (OpenCode already running)", output)
             self.assertNotIn("Run AI:", output)
 
     def test_dashboard_renders_additional_service_rows_and_metadata(self) -> None:

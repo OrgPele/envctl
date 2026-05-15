@@ -1060,7 +1060,10 @@ def _print_dashboard_ai_session_row(
     if cmux_launches:
         for launch in cmux_launches:
             cli = str(launch.get("cli", "") or "AI").strip()
-            cli_label = cli[:1].upper() + cli[1:] if cli else "AI"
+            cli_label = {"opencode": "OpenCode", "codex": "Codex"}.get(
+                cli.lower(),
+                cli[:1].upper() + cli[1:] if cli else "AI",
+            )
             workspace = str(launch.get("workspace_id", "") or "unknown-workspace").strip()
             surface = str(launch.get("surface_id", "") or "unknown-surface").strip()
             print(f"    {gray}AI session:{reset} {dim}cmux {workspace} {surface} ({cli_label} already running){reset}")
