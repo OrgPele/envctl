@@ -3998,11 +3998,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertNotIn("Current envctl runtime addresses", prompt_text)
         self.assertNotIn("localhost:8000", prompt_text)
 
-    def test_resolve_preset_submission_text_prepends_ulw_loop_for_direct_prompts(self) -> None:
+    def test_resolve_preset_submission_text_submits_one_line_ulw_loop_for_opencode_implement_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            prompt_path.write_text("Implement this directly.\nWith a second line.\n", encoding="utf-8")
             runtime = _RuntimeHarness(
                 config=load_config(
                     {
@@ -4037,8 +4037,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
         self.assertIsNone(error)
-        self.assertTrue(prompt_text.startswith("/ulw-loop "))
-        self.assertIn("Implement this directly.", prompt_text)
+        self.assertEqual(prompt_text, "/ulw-loop Implement this directly. With a second line.")
+        self.assertNotIn("\n", prompt_text)
 
     def test_resolve_preset_submission_text_appends_ulw_suffix_in_slash_mode(self) -> None:
         runtime = _RuntimeHarness(

@@ -107,7 +107,7 @@ Use `--no-deps` when you want to launch the AI session without dependency prep o
 and dependency prep. Use `--no-infra` when the task does not need backend, frontend, managed dependencies, or
 dependency prep at all.
 
-Each launched surface stays interactive. Envctl creates the tab/window, renames it to a compact worktree-derived title when supported, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux/tmux launches submit the rendered prompt body directly by default. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab/window, renames it to a compact worktree-derived title when supported, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux/tmux ULW launches submit `/ulw-loop <rendered prompt body>` as one normalized command line, so cmux does not fan out a large multi-line prompt paste. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 

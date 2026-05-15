@@ -3575,6 +3575,8 @@ def _shape_prompt_text(
         if not stripped.startswith("/ulw-loop"):
             shaped = f"/ulw-loop {stripped}" if stripped else "/ulw-loop"
             stripped = shaped.strip()
+        shaped = " ".join(shaped.split())
+        stripped = shaped.strip()
     if ulw_suffix and not stripped.endswith(" ulw") and stripped != "ulw":
         shaped = f"{shaped.rstrip()} ulw" if shaped.rstrip() else "ulw"
     return shaped, None
