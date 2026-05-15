@@ -1476,6 +1476,12 @@ def render_default_frontend_dependency_env_section() -> str:
 
 def render_default_dependency_env_sections() -> str:
     prelude = (
+        "# Managed dependency startup parallelism can be configured here too.",
+        "# Linux defaults to parallel startup. macOS defaults to sequential startup",
+        "# to avoid Docker Desktop port-publish stalls. Override either default with:",
+        "# ENVCTL_REQUIREMENTS_PARALLEL=true",
+        "# ENVCTL_REQUIREMENTS_PARALLEL_MAX=4",
+        "",
         "# External dependency mode can be configured in this same .envctl file.",
         "# Default mode is managed: envctl starts enabled dependencies and projects localhost values.",
         "# Main mode auto-uses an external dependency when that dependency's own env vars exist",

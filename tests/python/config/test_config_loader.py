@@ -200,6 +200,9 @@ class ConfigLoaderTests(unittest.TestCase):
 
         self.assertIn("ENVCTL_EXTERNAL_DEPENDENCIES=supabase,redis,postgres,n8n", example)
         self.assertIn("Main mode auto-uses an external dependency", example)
+        self.assertIn("Linux defaults to parallel startup. macOS defaults to sequential startup", example)
+        self.assertIn("ENVCTL_REQUIREMENTS_PARALLEL=true", example)
+        self.assertIn("ENVCTL_REQUIREMENTS_PARALLEL_MAX=4", example)
         self.assertIn("backend .env, or frontend .env", example)
         self.assertIn("unless that dependency is already configured as managed/enabled", example)
         self.assertIn("Trees mode defaults to managed/internal dependencies", example)
@@ -215,6 +218,9 @@ class ConfigLoaderTests(unittest.TestCase):
 
         generated = render_default_dependency_env_sections()
         self.assertIn("Main mode auto-uses an external dependency", generated)
+        self.assertIn("Linux defaults to parallel startup. macOS defaults to sequential startup", generated)
+        self.assertIn("ENVCTL_REQUIREMENTS_PARALLEL=true", generated)
+        self.assertIn("ENVCTL_REQUIREMENTS_PARALLEL_MAX=4", generated)
         self.assertIn("backend .env, or frontend .env", generated)
         self.assertIn("unless that dependency is already configured as managed/enabled", generated)
         self.assertIn("Trees mode defaults to managed/internal dependencies", generated)
