@@ -259,6 +259,74 @@ class EngineRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["REDIS_URL"], "redis://localhost:16609/0")
         self.assertEqual(env["N8N_URL"], "http://localhost:15908")
 
+    def test_no_deps_still_projects_launch_env_without_enabling_requirements(self) -> None:
+        runtime = SimpleNamespace(
+            env={},
+            _command_override_value=lambda _key: None,
+            config=SimpleNamespace(
+                raw={},
+                dependency_env_section_present=True,
+                dependency_env_template_errors=(),
+                dependency_env_templates=(
+                    SimpleNamespace(
+                        name="DATABASE_URL",
+                        template="${ENVCTL_SOURCE_DATABASE_URL}",
+                        line_number=1,
+                    ),
+                    SimpleNamespace(
+                        name="REDIS_URL",
+                        template="${ENVCTL_SOURCE_REDIS_URL}",
+                        line_number=2,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(
+            name="feature-a-1",
+            ports={
+                "db": PortPlan(project="feature-a-1", requested=5432, assigned=5520, final=5520, source="assigned"),
+                "redis": PortPlan(
+                    project="feature-a-1", requested=6379, assigned=6467, final=6467, source="assigned"
+                ),
+                "n8n": PortPlan(project="feature-a-1", requested=5678, assigned=5766, final=5766, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="feature-a-1", requested=54321, assigned=5473, final=5473, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            db={"enabled": False, "success": True, "final": 5520},
+            redis={"enabled": False, "success": True, "final": 6467},
+            n8n={"enabled": False, "success": True, "final": 5766},
+            supabase={
+                "enabled": False,
+                "success": True,
+                "final": 5520,
+                "resources": {"db": 5520, "api": 5473, "primary": 5520},
+            },
+        )
+        route = parse_route(["--plan", "feature-a", "--no-deps"], env={})
+
+        self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "redis", route=route))
+        internal_env = project_service_env_internal(runtime, context, requirements=requirements, route=route)
+        backend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=route,
+            service_name="backend",
+        )
+
+        self.assertEqual(
+            internal_env["DATABASE_URL"],
+            "postgresql+asyncpg://postgres:supabase-db-password@localhost:5520/postgres",
+        )
+        self.assertEqual(internal_env["REDIS_URL"], "redis://localhost:6467/0")
+        self.assertEqual(backend_env["DATABASE_URL"], internal_env["DATABASE_URL"])
+        self.assertEqual(backend_env["REDIS_URL"], internal_env["REDIS_URL"])
+        self.assertNotIn("DB_HOST", backend_env)
+
     def test_project_service_env_projects_external_supabase_contract_without_local_defaults(self) -> None:
         overrides = {
             "SUPABASE_URL": "https://supabase.example.test",
