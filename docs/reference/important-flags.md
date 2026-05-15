@@ -66,18 +66,19 @@ pass `--interactive` only when you want prompts.
 | `--setup-worktree <FEATURE> <ITER>` | Create one worktree iteration directly. |
 | `--include-existing-worktrees <a,b>` | Include specific existing iterations. |
 | `--keep-plan` | Keep planning files in place after execution. |
+| `--cmux` | For `--plan`, explicitly launch the implementation prompt workflow in a cmux surface. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
-| `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
+| `--opencode` | With `--plan --cmux` or `--plan --tmux`, launch OpenCode instead of Codex. Without `--cmux`, `--opencode` keeps the existing tmux direct-prompt behavior. |
 | `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
-| `--new-worktree` | For AI-driven `--plan` launches, create one more implementation worktree for the selected plan and launch a fresh AI session there. Works with tmux, cmux, and OMX launch surfaces. |
-| `--new-session` | For AI-driven `--plan` launches, create a fresh AI terminal session/surface instead of reusing or attaching to an existing one. This is implied by `--new-worktree`; use it only when the selected plan already creates a new worktree but you also want to suppress terminal reuse. Works with tmux, cmux, and OMX launch surfaces. |
+| `--new-worktree` | For AI-driven `--plan` launches, create the next implementation worktree for the selected plan and launch a fresh AI session there. This explicit flag also enables cmux plan-agent launch when no tmux/OMX transport is selected. |
+| `--new-session` / `--fresh-session` | For AI-driven `--plan` launches, create a fresh AI terminal session/surface for the selected worktree(s) instead of reusing or attaching to an existing one. This is implied by `--new-worktree` and works with cmux, tmux, and OMX launch surfaces. |
 | `--tmux-new-session` | Deprecated compatibility alias for `--new-worktree`. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly; envctl selects a deterministic OMX state root under the worktree so prompt handoff remains discoverable when OMX boxes unsafe runtime state. |
 | `--ultragoal` | OMX workflow modifier for `--plan --omx`; starts the default/recommended Ultragoal workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 | `--ralph` | OMX workflow modifier for `--plan --omx`; starts the Ralph compatibility workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 | `--team` | OMX workflow modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
 
-Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. For OMX-managed launches, envctl revalidates the tmux attach target before printing `attach:` guidance; stale, exited, wrong-worktree, or removed-worktree OMX sessions are reported as a failed/degraded handoff with diagnostic metadata instead of a copy-pastable stale attach command. Those OMX failures include a `recovery:` command that switches the same plan selector to native envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--new-worktree`, and omits OMX-only workflow flags. Non-plan commands and plan runs without a running AI session remain fatal.
+Plan-agent handoff note: if `--plan --cmux/--tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with attach guidance instead of a plain fatal startup summary. For OMX-managed launches, envctl revalidates the tmux attach target before printing `attach:` guidance; stale, exited, wrong-worktree, or removed-worktree OMX sessions are reported as a failed/degraded handoff with diagnostic metadata instead of a copy-pastable stale attach command. Those OMX failures include a `recovery:` command that switches the same plan selector to native envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--new-worktree`, and omits OMX-only workflow flags. Non-plan commands and plan runs without a running AI session remain fatal.
 
 ## Performance and Reliability
 | Flag | Purpose |

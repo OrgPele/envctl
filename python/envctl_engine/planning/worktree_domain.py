@@ -496,7 +496,7 @@ def _select_plan_projects(
                         or ""
                     ),
                 )
-                plan_counts = _adjust_plan_counts_for_fresh_ai_launch(
+                plan_counts = _adjust_plan_counts_for_new_plan_worktree(
                     raw_projects=raw_projects,
                     plan_counts=plan_counts,
                     route=route,
@@ -542,8 +542,8 @@ def _select_plan_projects(
                 plan_counts=plan_counts,
                 raw_projects=raw_projects,
                 keep_plan=keep_plan,
-                fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-                launch_transport=_fresh_ai_launch_transport(route),
+                fresh_ai_launch=_route_requests_new_plan_worktree(route),
+                launch_transport=_plan_agent_launch_transport(route),
             )
             raw_projects = list(sync_result.raw_projects)
             if sync_result.error:
@@ -575,7 +575,7 @@ def _select_plan_projects(
                 )
                 return []
             filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
-            if _route_requests_fresh_ai_worktree(route) and sync_result.created_worktrees:
+            if _route_requests_new_plan_worktree(route) and sync_result.created_worktrees:
                 created_names = {item.name for item in sync_result.created_worktrees}
                 filtered = [project for project in filtered if project[0] in created_names]
             if filtered:
@@ -715,8 +715,8 @@ def _select_plan_projects(
         plan_counts=plan_counts,
         raw_projects=raw_projects,
         keep_plan=keep_plan,
-        fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-        launch_transport=_fresh_ai_launch_transport(route),
+        fresh_ai_launch=_route_requests_new_plan_worktree(route),
+        launch_transport=_plan_agent_launch_transport(route),
     )
     raw_projects = list(sync_result.raw_projects)
     if sync_result.error:
@@ -819,7 +819,7 @@ def _prompt_planning_selection(
     return chosen
 
 
-def _route_requests_fresh_ai_worktree(route: Route) -> bool:
+def _route_requests_new_plan_worktree(route: Route) -> bool:
     flags = getattr(route, "flags", {}) or {}
     if not bool(flags.get("new_worktree") or flags.get("tmux_new_session")):
         return False
@@ -828,22 +828,22 @@ def _route_requests_fresh_ai_worktree(route: Route) -> bool:
     return True
 
 
-def _fresh_ai_launch_transport(route: Route) -> str:
+def _plan_agent_launch_transport(route: Route) -> str:
     flags = getattr(route, "flags", {}) or {}
     if bool(flags.get("omx")):
         return "omx"
     if bool(flags.get("tmux")):
         return "tmux"
-    return ""
+    return "cmux"
 
 
-def _adjust_plan_counts_for_fresh_ai_launch(
+def _adjust_plan_counts_for_new_plan_worktree(
     *,
     raw_projects: list[tuple[str, Path]],
     plan_counts: OrderedDict[str, int],
     route: Route,
 ) -> OrderedDict[str, int]:
-    if not _route_requests_fresh_ai_worktree(route):
+    if not _route_requests_new_plan_worktree(route):
         return plan_counts
     existing_counts = planning_existing_counts(projects=raw_projects, planning_files=list(plan_counts.keys()))
     adjusted: OrderedDict[str, int] = OrderedDict()

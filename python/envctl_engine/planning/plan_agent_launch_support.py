@@ -400,7 +400,11 @@ def resolve_plan_agent_launch_config(
     transport: Literal["cmux", "tmux", "omx"] = (
         "omx"
         if bool(route_flags.get("omx"))
-        else ("tmux" if bool(route_flags.get("tmux")) or opencode_launch_requested else "cmux")
+        else (
+            "cmux"
+            if bool(route_flags.get("cmux"))
+            else ("tmux" if bool(route_flags.get("tmux")) or opencode_launch_requested else "cmux")
+        )
     )
     cli = str(
         "opencode"
@@ -409,9 +413,9 @@ def resolve_plan_agent_launch_config(
             "codex"
             if bool(route_flags.get("codex")) or transport == "omx"
             else (
-            env_map.get("ENVCTL_PLAN_AGENT_CLI")
-            or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-            or "codex"
+                env_map.get("ENVCTL_PLAN_AGENT_CLI")
+                or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
+                or "codex"
             )
         )
     ).strip().lower() or "codex"
@@ -449,7 +453,7 @@ def resolve_plan_agent_launch_config(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or transport in {"tmux", "omx"}
+    ) or bool(cmux_workspace) or transport in {"tmux", "omx"} or _route_explicitly_requests_plan_agent_launch(route)
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
@@ -533,9 +537,26 @@ def _route_requests_ulw(route: object | None) -> bool:
     return bool(getattr(route, "flags", {}).get("ulw"))
 
 
-def _route_requests_new_session(route: object | None) -> bool:
+def _route_requests_new_plan_worktree(route: object | None) -> bool:
     flags = getattr(route, "flags", {}) or {}
-    return bool(flags.get("new_session") or flags.get("new_worktree") or flags.get("tmux_new_session"))
+    return bool(flags.get("new_worktree") or flags.get("tmux_new_session"))
+
+
+def _route_requests_fresh_plan_agent_session(route: object | None) -> bool:
+    flags = getattr(route, "flags", {}) or {}
+    return bool(flags.get("new_session") or _route_requests_new_plan_worktree(route))
+
+
+def _route_explicitly_requests_plan_agent_launch(route: object | None) -> bool:
+    flags = getattr(route, "flags", {}) or {}
+    return bool(
+        flags.get("cmux")
+        or flags.get("tmux")
+        or flags.get("omx")
+        or flags.get("codex")
+        or flags.get("opencode")
+        or _route_requests_fresh_plan_agent_session(route)
+    )
 
 
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
@@ -844,7 +865,7 @@ def launch_plan_agent_terminals(
             reason=workspace_target.starter_surface_probe_result,
         )
     outcomes: list[PlanAgentLaunchOutcome] = []
-    starter_surface_id = None if _route_requests_new_session(route) else workspace_target.starter_surface_id
+    starter_surface_id = None if _route_requests_fresh_plan_agent_session(route) else workspace_target.starter_surface_id
     for worktree in created_worktrees:
         outcome = _launch_single_worktree(
             runtime,
@@ -882,7 +903,7 @@ def _launch_plan_agent_tmux_terminals(
 ) -> PlanAgentLaunchResult:
     repo_root = Path(runtime.config.base_dir).resolve()
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    create_new_session = _route_requests_new_session(route)
+    create_new_session = _route_requests_fresh_plan_agent_session(route)
     prompt_existing_possible = not create_new_session and _should_prompt_existing_tmux_session(
         runtime,
         prompt_on_existing=prompt_on_existing,
@@ -1037,7 +1058,7 @@ def _launch_plan_agent_omx_terminals(
         return PlanAgentLaunchResult(status="failed", reason="unsupported_omx_cli")
     repo_root = Path(runtime.config.base_dir).resolve()
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    create_new_session = _route_requests_new_session(route)
+    create_new_session = _route_requests_fresh_plan_agent_session(route)
     existing_attach_target = _find_existing_omx_attach_target(
         runtime,
         repo_root=repo_root,

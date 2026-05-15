@@ -358,7 +358,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for selected implementation worktrees. Explicit `--cmux` and `--new-worktree` route flags also enable cmux launch for a single run. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for `--tmux --opencode`. |

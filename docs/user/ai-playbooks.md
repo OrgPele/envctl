@@ -99,7 +99,7 @@ envctl test --all
 
 Use this to run many implementations at the same time and inspect behavior in one place.
 
-To auto-open one AI terminal per newly created planning worktree in your current `cmux` workspace:
+To auto-open one AI terminal per selected planning worktree in your current `cmux` workspace, either enable the launch flow in config/env or pass `--cmux` / `--new-worktree` on the command:
 
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true

@@ -462,6 +462,7 @@ Optional plan-agent launch config for `--plan`:
 - if that handoff fails, envctl records structured diagnostics that distinguish spawn failure, missing `session.json`, wrong-worktree state, tmux candidate mismatch, prompt bootstrap failure, stale final attach targets, exited OMX sessions, and removed worktrees
 - OMX-managed plan launches revalidate the final tmux attach target before headless output prints `attach:` guidance; stale or exited OMX sessions are reported as failed/degraded handoffs with diagnostic metadata instead of stale attach commands
 - when an OMX handoff is stale, unavailable, exited, or tied to a removed worktree, envctl does not silently start native tmux in the same command; it prints a `recovery:` command that switches the same plan selector to envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--new-worktree`, and omits OMX-only workflow flags such as `--ultragoal`, `--ralph`, and `--team`
+- `--cmux` explicitly selects the cmux launch surface and enables plan-agent launch for that run; `--new-worktree` also enables cmux launch when no tmux/OMX transport is selected
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
@@ -480,7 +481,7 @@ Optional plan-agent launch config for `--plan`:
 - generic configured backend Python commands such as `ENVCTL_BACKEND_START_CMD=python -m uvicorn ...` use the prepared backend runtime when a Poetry project or backend virtualenv is available
 - `--ultragoal`, `--ralph`, and `--team` are mutually exclusive OMX-only launch modifiers; using them without `--omx` fails fast
 - OMX-managed Team launches force `OMX_TEAM_WORKER_LAUNCH_ARGS=--dangerously-bypass-approvals-and-sandbox` so the worker lanes stay non-sandboxed too
-- when enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`
+- when cmux launch is enabled without an explicit workspace override, envctl derives the target as `"<current workspace> implementation"`
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=workspace:123` targets an explicit cmux workspace and also enables the feature
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface

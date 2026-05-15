@@ -172,6 +172,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.reason, "disabled")
             self.assertEqual(rt.process_runner.calls, [])
 
+    def test_new_worktree_flag_enables_default_cmux_launch_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                rt.config,
+                rt.env,
+                route=parse_route(["--plan", "feature-a", "--new-worktree"], env={}),
+            )
+
+            self.assertTrue(launch_config.enabled)
+            self.assertEqual(launch_config.transport, "cmux")
+            self.assertEqual(launch_config.cli, "codex")
+
+    def test_cmux_opencode_route_uses_cmux_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                rt.config,
+                rt.env,
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--fresh-session"], env={}),
+            )
+
+            self.assertTrue(launch_config.enabled)
+            self.assertEqual(launch_config.transport, "cmux")
+            self.assertEqual(launch_config.cli, "opencode")
+
     def test_enabled_feature_without_created_worktrees_returns_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

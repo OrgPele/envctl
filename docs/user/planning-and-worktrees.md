@@ -48,7 +48,7 @@ envctl explain-startup --json
 
 ## Optional Cmux Agent Launch
 
-`--plan` can now open one new `cmux` terminal surface per newly created worktree when the feature is enabled in config or env:
+`--plan` can open one new `cmux` terminal surface per selected implementation worktree when the feature is enabled in config/env, or when you explicitly pass `--cmux` or `--new-worktree`:
 
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
@@ -71,10 +71,10 @@ CYCLES=3
 Behavior:
 
 - only runs for `--plan`
-- only launches for worktrees created during the current reconciliation
+- launches for worktrees created during the current reconciliation; explicit `--cmux --new-session` can also launch a fresh surface for an already-selected implementation worktree
 - current planning follow-ups choose one launch surface per invocation; do not assume a later second launch can attach to the same reconciliation unless envctl explicitly says it created or recovered the target worktree(s)
 - skips `--planning-prs`
-- skips cleanly when the feature is disabled, no new worktrees were created, or the caller is not inside `cmux` while strict caller-context mode is enabled
+- skips cleanly when the feature is disabled, no launch target was selected, or the caller is not inside `cmux` while strict caller-context mode is enabled
 - when enabled without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
 - if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
 - the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
