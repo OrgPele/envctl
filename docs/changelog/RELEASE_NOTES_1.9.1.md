@@ -9,6 +9,7 @@
 * Complete bounded Supabase startup wait and diagnostics by @kfiramar in https://github.com/OrgPele/envctl/pull/216
 * Plan-Agent Compatibility Facade Cleanup by @kfiramar in https://github.com/OrgPele/envctl/pull/219
 * Fix dependency launch env and startup recovery by @kfiramar in https://github.com/OrgPele/envctl/pull/221
+* Fix release preparation PR failure reporting and canonical release badge URLs
 
 
 **Full Changelog**: https://github.com/OrgPele/envctl/compare/1.9.0...1.9.1

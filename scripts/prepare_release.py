@@ -15,6 +15,7 @@ GitHub Release with the same notes file once the PR merges.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tomllib
@@ -23,6 +24,8 @@ from pathlib import Path
 
 VERSION_PATTERN = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 PYPROJECT_VERSION_LINE = re.compile(r'^(?P<lead>version\s*=\s*")(?P<version>[^"]+)(?P<trail>".*)$', re.MULTILINE)
+RELEASE_REPOSITORY_FALLBACK = "OrgPele/envctl"
+RELEASE_URL_PATTERN = re.compile(r"https://github\.com/[^/]+/[^/]+/releases/tag/")
 
 
 @dataclass(frozen=True)
@@ -82,7 +85,15 @@ def update_readme_badges(repo_root: Path, old_version: str, new_version: str) ->
         if needle not in new_text:
             raise RuntimeError(f"README.md is missing expected fragment {needle!r}; cannot update badges safely")
         new_text = new_text.replace(needle, replacement)
+    new_text = RELEASE_URL_PATTERN.sub(f"https://github.com/{_release_repository_slug()}/releases/tag/", new_text)
     readme_path.write_text(new_text, encoding="utf-8")
+
+
+def _release_repository_slug() -> str:
+    raw = os.environ.get("GITHUB_REPOSITORY", RELEASE_REPOSITORY_FALLBACK).strip()
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", raw):
+        return raw
+    return RELEASE_REPOSITORY_FALLBACK
 
 
 def render_release_notes(version: str, body: str) -> str:
