@@ -36,16 +36,27 @@ def _write_supabase_files(
     static_network_name: bool = False,
     bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n",
     pull_policy: bool = False,
+    healthcheck_interval: str | None = None,
 ) -> None:
     supabase_dir = repo / "supabase"
     init_dir = supabase_dir / "init"
     init_dir.mkdir(parents=True, exist_ok=True)
     network_block = "  supabase-net:\n    name: fallback\n" if static_network_name else "  supabase-net: {}\n"
     pull_policy_line = "    pull_policy: missing\n" if pull_policy else ""
+    healthcheck_block = (
+        "    healthcheck:\n"
+        "      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n"
+        f"      interval: {healthcheck_interval}\n"
+        "      timeout: 2s\n"
+        "      retries: 30\n"
+        if healthcheck_interval
+        else ""
+    )
     compose = (
         "services:\n"
         "  supabase-auth:\n"
         f"{pull_policy_line}"
+        f"{healthcheck_block}"
         "    environment:\n"
         "      GOTRUE_DB_DATABASE_URL: postgres://postgres:postgres@supabase-db:5432/postgres?search_path=auth,public\n"
         "      GOTRUE_DB_NAMESPACE: auth\n"
@@ -92,6 +103,17 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             _write_supabase_files(repo, pull_policy=False)
             first = evaluate_supabase_reliability_contract(repo)
             _write_supabase_files(repo, pull_policy=True)
+            second = evaluate_supabase_reliability_contract(repo)
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(first.fingerprint, second.fingerprint)
+
+    def test_contract_fingerprint_ignores_compose_healthcheck_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            _write_supabase_files(repo, healthcheck_interval="10s")
+            first = evaluate_supabase_reliability_contract(repo)
+            _write_supabase_files(repo, healthcheck_interval="1s")
             second = evaluate_supabase_reliability_contract(repo)
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)

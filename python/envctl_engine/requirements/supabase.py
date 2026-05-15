@@ -1360,11 +1360,19 @@ def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> st
 
 
 def _fingerprint_relevant_compose_text(compose_text: str) -> str:
-    ignored_prefixes = ("pull_policy:",)
     lines = []
+    skip_indent: int | None = None
     for line in compose_text.splitlines():
         stripped = line.strip()
-        if any(stripped.startswith(prefix) for prefix in ignored_prefixes):
+        indent = len(line) - len(line.lstrip(" "))
+        if skip_indent is not None:
+            if stripped and indent > skip_indent:
+                continue
+            skip_indent = None
+        if stripped.startswith("pull_policy:"):
+            continue
+        if stripped == "healthcheck:" or stripped.startswith("healthcheck: "):
+            skip_indent = indent
             continue
         lines.append(line.rstrip())
     return "\n".join(lines) + "\n"

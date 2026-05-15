@@ -21,9 +21,9 @@ services:
       - ./init/02-bootstrap-gotrue-auth.sql:/docker-entrypoint-initdb.d/02-bootstrap-gotrue-auth.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      interval: 1s
+      timeout: 2s
+      retries: 30
 
   supabase-auth:
     image: ${SUPABASE_AUTH_IMAGE:-supabase/gotrue:v2.150.0}
