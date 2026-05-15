@@ -473,6 +473,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             root = Path(tmpdir)
             compose_path = root / "docker-compose.yml"
             compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
 
             with mock.patch("envctl_engine.requirements.supabase._compose_up_handoff", side_effect=_capture_handoff):
                 result = _compose_run(
@@ -510,6 +511,38 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn("timed out acquiring Supabase compose lock after 1.0s", result or "")
         self.assertIn("busy", result or "")
+
+    def test_supabase_compose_up_fails_fast_when_docker_never_publishes_probe_port(self) -> None:
+        runner = _FakeRunner()
+        runner.wait_for_port_result = False
+        runner.compose_up_process = lambda *args, **kwargs: _FakeComposeProcess(returncode=None)  # type: ignore[method-assign]
+        runner.status["supabase-db-container-id"] = "running"
+        runner.health_status["supabase-db-container-id"] = "healthy"
+        runner.status["supabase-auth-container-id"] = "created"
+        runner.status["supabase-kong-container-id"] = "created"
+        runner.port_mappings[("supabase-db-container-id", "5432")] = "0.0.0.0:5432\n"
+        runner.port_mapping_errors[("supabase-db-container-id", "5432")] = (
+            "no public port '5432' published for supabase-db-container-id"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
+
+            result = _compose_run(
+                process_runner=runner,
+                compose_root=root,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={"ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1"},
+                args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn("no active host port is published", result or "")
+        self.assertIn("supabase-db", result or "")
 
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
         runner = _FlakyHealthRunner()

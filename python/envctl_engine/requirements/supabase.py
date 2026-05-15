@@ -1565,8 +1565,10 @@ def _compose_up_handoff(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-        )
-    deadline = time.monotonic() + timeout_seconds
+    )
+    monotonic = getattr(process_runner, "monotonic", time.monotonic)
+    deadline = monotonic() + timeout_seconds
+    stall_deadline = monotonic() + _compose_port_publish_stall_seconds(env)
     sleeper = getattr(process_runner, "sleep", time.sleep)
     while True:
         returncode = process.poll()
@@ -1592,7 +1594,38 @@ def _compose_up_handoff(
             _terminate_compose_process(process)
             return None
 
-        if time.monotonic() >= deadline:
+        if probe_port is not None and monotonic() >= stall_deadline:
+            stalled_detail = _compose_unpublished_probe_port_detail(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_names=service_names,
+                probe_port=probe_port,
+            )
+            if stalled_detail is not None:
+                stdout, stderr = _terminate_compose_process(process)
+                raw_error = stderr or stdout or f"docker compose {' '.join(args)} stalled"
+                return _supabase_compose_failure_detail(
+                    phase="compose_graph" if len(service_names) > 1 else "compose_up",
+                    error=f"{raw_error}; {stalled_detail}",
+                    services=service_names,
+                    service_states=_inspect_auth_gateway_services(
+                        process_runner=process_runner,
+                        compose_root=compose_root,
+                        compose_project_name=compose_project_name,
+                        compose_path=compose_path,
+                        env=env,
+                        service_names=service_names,
+                    ),
+                    compose_timeout_seconds=timeout_seconds,
+                    public_port=None,
+                    health_url=None,
+                )
+            stall_deadline = monotonic() + _compose_port_publish_stall_seconds(env)
+
+        if monotonic() >= deadline:
             stdout, stderr = _terminate_compose_process(process)
             timed_out_error = f"Command timed out after {timeout_seconds:.1f}s: docker compose {' '.join(args)}"
             if (
@@ -1632,6 +1665,95 @@ def _compose_up_handoff(
             )
 
         sleeper(0.25)
+
+
+def _compose_port_publish_stall_seconds(env: Mapping[str, str] | None) -> float:
+    return env_float(env, "ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS", 8.0, minimum=1.0)
+
+
+def _compose_unpublished_probe_port_detail(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    service_names: list[str],
+    probe_port: int,
+) -> str | None:
+    states = _inspect_auth_gateway_services(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_names=service_names,
+    )
+    if not states or any(_compose_service_state_failed(state) for state in states):
+        return None
+    probe_service = next((state for state in states if str(state.get("service") or "") in {"supabase-db", "db"}), None)
+    if probe_service is None:
+        return None
+    status = str(probe_service.get("status") or "").strip().lower()
+    health = str(probe_service.get("health") or "").strip().lower()
+    container = str(probe_service.get("container") or "").strip()
+    if not container or status != "running" or health not in {"", "healthy"}:
+        return None
+    active_port, active_error = _container_active_host_port(
+        process_runner=process_runner,
+        container_name=container,
+        container_port=5432,
+        cwd=compose_root,
+        env=env,
+    )
+    if active_port == probe_port:
+        return None
+    configured_port = _container_host_config_port(
+        process_runner=process_runner,
+        container_name=container,
+        container_port=5432,
+        cwd=compose_root,
+        env=env,
+    )
+    if configured_port != probe_port:
+        return None
+    error_detail = f" docker_port_error={_sanitize_service_state_text(active_error)}" if active_error else ""
+    return (
+        "Docker reported the Supabase DB container running/healthy with HostConfig publishing "
+        f"port {probe_port}, but no active host port is published.{error_detail}"
+    )
+
+
+def _container_active_host_port(
+    *,
+    process_runner,
+    container_name: str,
+    container_port: int,
+    cwd: Path,
+    env: Mapping[str, str] | None,
+) -> tuple[int | None, str | None]:
+    result, error = run_docker(
+        process_runner,
+        ["port", container_name, str(container_port)],
+        cwd=cwd,
+        env=env,
+        timeout=10.0,
+    )
+    if result is None:
+        return None, error
+    if getattr(result, "returncode", 1) != 0:
+        return None, run_result_error(result, "failed reading active container port mapping")
+    raw = str(getattr(result, "stdout", "") or "").strip()
+    if not raw:
+        return None, None
+    first = raw.splitlines()[0].strip()
+    if ":" not in first:
+        return None, None
+    try:
+        parsed = int(first.rsplit(":", 1)[1])
+    except ValueError:
+        return None, None
+    return (parsed if parsed > 0 else None), None
 
 
 def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
