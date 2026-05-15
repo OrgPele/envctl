@@ -533,6 +533,11 @@ def _route_requests_ulw(route: object | None) -> bool:
     return bool(getattr(route, "flags", {}).get("ulw"))
 
 
+def _route_requests_new_session(route: object | None) -> bool:
+    flags = getattr(route, "flags", {}) or {}
+    return bool(flags.get("new_session") or flags.get("new_worktree") or flags.get("tmux_new_session"))
+
+
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
     return launch_config.transport == "tmux" and launch_config.cli == "opencode"
 
@@ -839,7 +844,7 @@ def launch_plan_agent_terminals(
             reason=workspace_target.starter_surface_probe_result,
         )
     outcomes: list[PlanAgentLaunchOutcome] = []
-    starter_surface_id = workspace_target.starter_surface_id
+    starter_surface_id = None if _route_requests_new_session(route) else workspace_target.starter_surface_id
     for worktree in created_worktrees:
         outcome = _launch_single_worktree(
             runtime,
@@ -877,8 +882,7 @@ def _launch_plan_agent_tmux_terminals(
 ) -> PlanAgentLaunchResult:
     repo_root = Path(runtime.config.base_dir).resolve()
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    route_flags = getattr(route, "flags", {}) or {}
-    create_new_session = bool(route_flags.get("tmux_new_session"))
+    create_new_session = _route_requests_new_session(route)
     prompt_existing_possible = not create_new_session and _should_prompt_existing_tmux_session(
         runtime,
         prompt_on_existing=prompt_on_existing,
@@ -1033,8 +1037,7 @@ def _launch_plan_agent_omx_terminals(
         return PlanAgentLaunchResult(status="failed", reason="unsupported_omx_cli")
     repo_root = Path(runtime.config.base_dir).resolve()
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    route_flags = getattr(route, "flags", {}) or {}
-    create_new_session = bool(route_flags.get("tmux_new_session"))
+    create_new_session = _route_requests_new_session(route)
     existing_attach_target = _find_existing_omx_attach_target(
         runtime,
         repo_root=repo_root,
@@ -1392,6 +1395,7 @@ def _launch_single_worktree(
 
 
 def _tmux_session_name_for_worktree(repo_root: Path, worktree: CreatedPlanWorktree, *, cli: str) -> str:
+    repo_root = Path(repo_root).resolve()
     worktree_root = Path(worktree.root).resolve()
     relative = worktree_root.relative_to(repo_root)
     relative_slug = _sanitize_tmux_name(str(relative), fallback=worktree.name)
@@ -1524,7 +1528,7 @@ def plan_agent_native_recovery_command(
         command.append("--isolated-deps")
     if bool(route_flags.get("batch") or route_flags.get("default_headless")):
         command.append("--headless")
-    command.append("--tmux-new-session")
+    command.append("--new-worktree")
     return tuple(command)
 
 
@@ -1558,7 +1562,7 @@ def _new_session_command_for_route(
     for flag_name, token in workflow_tokens:
         if bool(route_flags.get(flag_name)):
             command.append(token)
-    command.append("--tmux-new-session")
+    command.append("--new-worktree")
     command.append("--headless")
     return tuple(command)
 
@@ -2359,7 +2363,18 @@ def validate_plan_agent_attach_target(
         runtime._emit("planning.agent_launch.worktree_missing_after_launch", reason=reason, **payload)
         runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
         return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
-    if not _tmux_session_exists(runtime, session_name):
+    try:
+        tmux_session_exists = _tmux_session_exists(runtime, session_name)
+    except OSError as exc:
+        reason = "omx_attach_target_stale" if str(transport).strip().lower() == "omx" else "attach_target_stale"
+        runtime._emit(
+            "planning.agent_launch.attach_validation.failed",
+            reason=reason,
+            error=str(exc),
+            **payload,
+        )
+        return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
+    if not tmux_session_exists:
         reason = "omx_attach_target_stale" if str(transport).strip().lower() == "omx" else "attach_target_stale"
         runtime._emit("planning.agent_launch.attach_validation.failed", reason=reason, **payload)
         return PlanAgentAttachValidation(False, reason, session_name=session_name, attach_command=attach_command)
@@ -4107,7 +4122,7 @@ def resolve_plan_agent_launch_command(
             "--tmux",
             "--opencode",
             "--headless",
-            "--tmux-new-session",
+            "--new-worktree",
         )
     )
 

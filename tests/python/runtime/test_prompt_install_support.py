@@ -571,7 +571,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             "create_plan_auto_codex": {
                 "command": (
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> "
-                    "envctl --plan <category>/<slug> --tmux --entire-system --headless --tmux-new-session"
+                    "envctl --plan <category>/<slug> --tmux --entire-system --headless --new-worktree"
                 ),
                 "phrases": (
                     "recommended_codex_cycles=<n>",
@@ -584,7 +584,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             "create_plan_auto_opencode": {
                 "command": (
                     "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
-                    "--headless --tmux-new-session"
+                    "--headless --new-worktree"
                 ),
                 "phrases": (
                     "OpenCode plan-agent launches use the `/ulw-loop` prefix by default",
@@ -593,7 +593,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 ),
             },
             "create_plan_auto_omx": {
-                "command": "envctl --plan <category>/<slug> --omx --ultragoal --entire-system --headless --tmux-new-session",
+                "command": "envctl --plan <category>/<slug> --omx --ultragoal --entire-system --headless --new-worktree",
                 "phrases": (
                     "Recommended Codex-equivalent cycles: <n>",
                     "informational",
@@ -629,7 +629,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 for phrase in contract["phrases"]:
                     self.assertIn(phrase, body)
                 self.assertIn("--headless", body)
-                self.assertIn("--tmux-new-session", body)
+                self.assertIn("--new-worktree", body)
                 self.assertIn("Launch scope default", body)
                 self.assertIn("--entire-system", body)
                 self.assertIn("backend-only", body)
@@ -832,7 +832,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "create another tmux or OMX-managed session instead of attaching to an existing one",
+            "create one more implementation worktree and launch a fresh AI session there",
             plan_prompt.body,
         )
         self.assertIn(
@@ -867,12 +867,12 @@ class PromptInstallSupportTests(unittest.TestCase):
             "cd <repo> && envctl --plan <selector> --omx --entire-system",
             plan_prompt.body,
         )
-        self.assertIn("--tmux-new-session", plan_prompt.body)
+        self.assertIn("--new-worktree", plan_prompt.body)
         self.assertIn("prepends `/ulw-loop` to the first submitted prompt by default", plan_prompt.body)
         self.assertIn("use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`", plan_prompt.body)
-        self.assertIn("create another tmux or OMX-managed session instead of attaching to an existing one", plan_prompt.body)
-        self.assertIn("when you execute envctl launch commands yourself from an AI session, always add `--tmux-new-session`", plan_prompt.body)
-        self.assertIn("do not surface the internal `--tmux-new-session` default in the user-facing approval question", plan_prompt.body)
+        self.assertIn("create one more implementation worktree and launch a fresh AI session there", plan_prompt.body)
+        self.assertIn("when you execute envctl launch commands yourself from an AI session, always add `--new-worktree`", plan_prompt.body)
+        self.assertIn("do not surface the internal `--new-worktree` default in the user-facing approval question", plan_prompt.body)
         self.assertIn("if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn("if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations", plan_prompt.body)
         self.assertIn(
@@ -976,7 +976,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             written = expected.read_text(encoding="utf-8")
             self.assertIn(
                 "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
-                "--headless --tmux-new-session",
+                "--headless --new-worktree",
                 written,
             )
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
@@ -1085,7 +1085,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("--tmux --opencode --entire-system --headless --tmux-new-session", resolved)
+        self.assertIn("--tmux --opencode --entire-system --headless --new-worktree", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:

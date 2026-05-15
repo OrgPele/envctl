@@ -385,7 +385,9 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--codex             force Codex for tmux launches",
             "--opencode          force OpenCode for tmux launches",
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
-            "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
+            "--new-worktree      create one more implementation worktree and launch a fresh AI session there",
+            "--new-session       create a fresh AI terminal session/surface instead of reusing an attachable one",
+            "--tmux-new-session  deprecated compatibility alias for --new-worktree",
         ),
         examples=(
             "envctl --plan feature/task --headless",

@@ -1385,11 +1385,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             rendered = out.getvalue()
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
+            self.assertIn(
+                f"ENVCTL_USE_REPO_WRAPPER=1 {repo.resolve() / 'bin' / 'envctl'} --plan feature-a --tmux",
+                rendered,
+            )
             self.assertIn("--codex", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
-            self.assertIn("--tmux-new-session", rendered)
+            self.assertIn("--new-worktree", rendered)
             self.assertNotIn("--omx", rendered)
             self.assertNotIn("--ralph", rendered)
             self.assertNotIn("--ultragoal", rendered)
@@ -2917,7 +2920,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "--tmux",
                 "--opencode",
                 "--ulw",
-                "--tmux-new-session",
+                "--new-worktree",
                 "--headless",
             ),
         )
@@ -2954,7 +2957,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     )
 
                     self.assertIn(token, command)
-                    self.assertLess(command.index(token), command.index("--tmux-new-session"))
+                    self.assertLess(command.index(token), command.index("--new-worktree"))
 
     def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5542,6 +5545,57 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:3"])
             self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:3"], rt.process_runner.calls)
+
+    def test_new_session_flag_skips_cmux_starter_surface_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "brand-new-workspace",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout="* workspace:1  envctl  [selected]\n  workspace:2  supportopia\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="workspace:3\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:44\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:45\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._start_background_surface_bootstrap", return_value=None),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--new-session"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIn(["cmux", "new-surface", "--workspace", "workspace:3"], rt.process_runner.calls)
+            self.assertEqual(
+                self._events(rt, "planning.agent_launch.surface_created")[-1],
+                {
+                    "event": "planning.agent_launch.surface_created",
+                    "workspace_id": "workspace:3",
+                    "surface_id": "surface:45",
+                    "worktree": "feature-a-1",
+                    "source": "new_surface",
+                },
+            )
 
     def test_created_workspace_emits_probe_and_reused_surface_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

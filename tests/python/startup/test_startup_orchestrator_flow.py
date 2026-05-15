@@ -331,7 +331,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "feature-a",
                     "--tmux",
                     "--opencode",
-                    "--tmux-new-session",
+                    "--new-worktree",
                     "--headless",
                 ),
             )
@@ -361,7 +361,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 rendered,
             )
             self.assertIn("attach: tmux attach -t envctl-test-session", rendered)
-            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --tmux-new-session --headless", rendered)
+            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --new-worktree --headless", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
     def test_headless_plan_does_not_print_stale_attach_target_after_validation_failure(self) -> None:
@@ -426,10 +426,13 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("Plan agent launch did not leave an attachable AI session.", rendered)
             self.assertIn("reason: attach_target_stale_after_launch", rendered)
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
+            self.assertIn(
+                f"ENVCTL_USE_REPO_WRAPPER=1 {repo.resolve() / 'bin' / 'envctl'} --plan feature-a --tmux",
+                rendered,
+            )
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
-            self.assertIn("--tmux-new-session", rendered)
+            self.assertIn("--new-worktree", rendered)
             self.assertNotIn("--omx", rendered)
             state = cast(RunState, captured["state"])
             self.assertEqual(state.metadata["plan_agent_launch_status"], "failed")
@@ -440,7 +443,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             recovery_command = str(state.metadata["plan_agent_recovery_command"])
             self.assertIn("--tmux", recovery_command)
             self.assertIn("--entire-system", recovery_command)
-            self.assertIn("--tmux-new-session", recovery_command)
+            self.assertIn("--new-worktree", recovery_command)
             self.assertNotIn("--omx", recovery_command)
             self.assertNotIn("--ralph", recovery_command)
             self.assertNotIn("--ultragoal", recovery_command)
@@ -474,7 +477,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "feature-a",
                     "--omx",
                     "--codex",
-                    "--tmux-new-session",
+                    "--new-worktree",
                     "--headless",
                 ),
             )
@@ -511,7 +514,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 rendered,
             )
             self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
-            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --tmux-new-session --headless", rendered)
+            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --new-worktree --headless", rendered)
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
     def test_resume_dashboard_exact_headless_plan_prints_attach_command(self) -> None:

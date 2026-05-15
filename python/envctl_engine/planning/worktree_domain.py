@@ -821,11 +821,11 @@ def _prompt_planning_selection(
 
 def _route_requests_fresh_ai_worktree(route: Route) -> bool:
     flags = getattr(route, "flags", {}) or {}
-    if not bool(flags.get("tmux_new_session")):
+    if not bool(flags.get("new_worktree") or flags.get("tmux_new_session")):
         return False
     if bool(flags.get("dry_run")):
         return False
-    return bool(flags.get("tmux") or flags.get("omx"))
+    return True
 
 
 def _fresh_ai_launch_transport(route: Route) -> str:
