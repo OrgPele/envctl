@@ -40,12 +40,14 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         frontend_dir_name: str = "frontend",
         enabled_dependencies: tuple[str, ...] = ("postgres", "redis"),
         external_env: dict[str, str] | None = None,
+        additional_services: tuple[object, ...] = (),
     ) -> SimpleNamespace:
         config = SimpleNamespace(
             base_dir=Path("/repo"),
             raw={},
             backend_dir_name=backend_dir_name,
             frontend_dir_name=frontend_dir_name,
+            additional_services=additional_services,
             startup_enabled_for_mode=lambda _mode: startup_enabled,
             service_enabled_for_mode=lambda _mode, service_name: {
                 "backend": backend_enabled,
@@ -166,6 +168,115 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
 
         self.assertEqual(decision.decision_kind, "fresh_run")
         self.assertEqual(decision.reason, "project_root_mismatch")
+
+    def test_run_reuse_expands_tree_start_when_existing_state_is_subset(self) -> None:
+        context_a = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        context_b = ProjectContext(name="feature-b-1", root=Path("/repo/trees/feature-b/1"), ports={})
+        route = Route(command="start", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
+        state_runtime = self._reuse_runtime(state=None)
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="trees",
+            project_contexts=[context_a],
+        )
+        state = RunState(
+            run_id="run-expand",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context_a.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context_a, context_b],
+        )
+
+        self.assertEqual(decision.decision_kind, "reuse_expand")
+        self.assertEqual(decision.reason, "expand_match")
+        self.assertIs(decision.candidate_state, state)
+        self.assertTrue(decision.will_resume_services)
+
+    def test_run_reuse_expand_ignores_new_project_sensitive_service_payload(self) -> None:
+        context_a = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        context_b = ProjectContext(name="feature-b-1", root=Path("/repo/trees/feature-b/1"), ports={})
+        voice_runtime = SimpleNamespace(
+            name="voice-runtime",
+            enabled_for_project_root=lambda _mode, root: "feature-b" in str(root),
+        )
+        route = Route(command="start", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
+        state_runtime = self._reuse_runtime(state=None, additional_services=(voice_runtime,))
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="trees",
+            project_contexts=[context_a],
+        )
+        state = RunState(
+            run_id="run-expand-project-service",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context_a.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state, additional_services=(voice_runtime,))
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context_a, context_b],
+        )
+
+        self.assertEqual(decision.decision_kind, "reuse_expand")
+        self.assertEqual(decision.reason, "expand_match")
+
+    def test_run_reuse_expand_rejects_existing_state_contract_change(self) -> None:
+        context_a = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})
+        context_b = ProjectContext(name="feature-b-1", root=Path("/repo/trees/feature-b/1"), ports={})
+        route = Route(command="start", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
+        state_runtime = self._reuse_runtime(state=None, frontend_enabled=False)
+        metadata = startup_support.build_startup_identity_metadata(
+            state_runtime,
+            runtime_mode="trees",
+            project_contexts=[context_a],
+        )
+        state = RunState(
+            run_id="run-expand-contract-change",
+            mode="trees",
+            services={
+                "feature-a-1 Backend": ServiceRecord(
+                    name="feature-a-1 Backend",
+                    type="backend",
+                    cwd=str(context_a.root / "backend"),
+                )
+            },
+            metadata=metadata,
+        )
+        runtime = self._reuse_runtime(state=state, frontend_enabled=True)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=route,
+            contexts=[context_a, context_b],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
+        self.assertEqual(decision.mismatch_details, {"fields": ["services"]})
 
     def test_run_reuse_rejects_startup_fingerprint_mismatch(self) -> None:
         context = ProjectContext(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), ports={})

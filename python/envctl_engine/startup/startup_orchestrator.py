@@ -1079,6 +1079,11 @@ class StartupOrchestrator:
         if not selected_services:
             return
         rt = self.runtime
+        self._announce_session_identifiers(session)
+        self._report_progress(
+            route,
+            f"Startup selection changed; replacing {len(selected_services)} existing service(s)...",
+        )
         rt._emit(
             "state.run_reuse.replace_existing_services",
             run_id=candidate_state.run_id,

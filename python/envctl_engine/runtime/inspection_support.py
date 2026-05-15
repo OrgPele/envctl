@@ -685,7 +685,7 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
             "existing_state_found": run_reuse_decision.candidate_state is not None,
             "exact_match": run_reuse_decision.decision_kind in {"resume_exact", "resume_dashboard_exact"},
             "subset_match": run_reuse_decision.decision_kind == "resume_subset",
-            "will_resume": run_reuse_decision.decision_kind in {"resume_exact", "resume_subset"},
+            "will_resume": run_reuse_decision.decision_kind in {"resume_exact", "resume_subset", "reuse_expand"},
             "reason": run_reuse_decision.reason,
         }
     )

@@ -69,6 +69,9 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 "ports": {
                     "backend": PortPlan(name, backend_port, backend_port, backend_port, "requested"),
                     "frontend": PortPlan(name, frontend_port, frontend_port, frontend_port, "requested"),
+                    "db": PortPlan(name, backend_port - 2600, backend_port - 2600, backend_port - 2600, "planned"),
+                    "redis": PortPlan(name, backend_port - 1600, backend_port - 1600, backend_port - 1600, "planned"),
+                    "n8n": PortPlan(name, backend_port - 2300, backend_port - 2300, backend_port - 2300, "planned"),
                 },
             },
         )()
@@ -1484,6 +1487,89 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             written_state = cast(RunState, captured["state"])
             self.assertEqual(written_state.run_id, "run-fresh-expand-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)
+
+    def test_tree_start_reuse_expand_preserves_existing_services_and_starts_only_new_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime, extra={"ENVCTL_DEFAULT_MODE": "trees"})
+            context_a = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8100, frontend_port=9100)
+            context_b = self._tree_context(repo, "feature-b-1", "feature-b/1", backend_port=8200, frontend_port=9200)
+            metadata = startup_support.build_startup_identity_metadata(
+                engine,
+                runtime_mode="trees",
+                project_contexts=[context_a],
+            )
+            existing_state = RunState(
+                run_id="run-existing-expand",
+                mode="trees",
+                services={
+                    "feature-a-1 Backend": ServiceRecord(
+                        name="feature-a-1 Backend",
+                        type="backend",
+                        cwd=str(Path(context_a.root) / "backend"),
+                        pid=1111,
+                        requested_port=8100,
+                        actual_port=8100,
+                        status="running",
+                    )
+                },
+                metadata=metadata,
+            )
+            captured: dict[str, object] = {}
+            started: list[str] = []
+
+            def _start_context(context: object, **_kwargs: object) -> ProjectStartupResult:
+                name = str(getattr(context, "name", ""))
+                started.append(name)
+                self.assertEqual(name, "feature-b-1")
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=name, health="healthy"),
+                    services={
+                        "feature-b-1 Backend": ServiceRecord(
+                            name="feature-b-1 Backend",
+                            type="backend",
+                            cwd=str(Path(getattr(context, "root")) / "backend"),
+                            pid=2222,
+                            requested_port=8200,
+                            actual_port=8200,
+                            status="running",
+                        )
+                    },
+                    warnings=[],
+                )
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context_a, context_b]),
+                patch.object(engine, "_try_load_existing_state", return_value=existing_state),
+                patch.object(engine, "_reconcile_state_truth", return_value=[]),
+                patch.object(engine, "_start_project_context", side_effect=_start_context),
+                patch.object(engine, "_terminate_services_from_state") as terminate_mock,
+                patch.object(engine.startup_orchestrator, "_terminate_restart_orphan_listeners") as orphan_mock,
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+            ):
+                code = engine.dispatch(
+                    parse_route(
+                        ["--trees", "--project", "feature-a-1", "--project", "feature-b-1", "--batch"],
+                        env={},
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(started, ["feature-b-1"])
+            terminate_mock.assert_not_called()
+            orphan_mock.assert_not_called()
+            written_state = cast(RunState, captured["state"])
+            self.assertEqual(set(written_state.services), {"feature-a-1 Backend", "feature-b-1 Backend"})
+            self.assertEqual(captured["errors"], [])
 
     def test_plan_launch_hook_runs_before_disabled_startup_dashboard_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
