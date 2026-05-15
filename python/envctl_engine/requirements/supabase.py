@@ -1594,15 +1594,14 @@ def _compose_up_handoff(
             _terminate_compose_process(process)
             return None
 
-        if probe_port is not None and monotonic() >= stall_deadline:
-            stalled_detail = _compose_unpublished_probe_port_detail(
+        if monotonic() >= stall_deadline:
+            stalled_detail = _compose_unpublished_port_detail(
                 process_runner=process_runner,
                 compose_root=compose_root,
                 compose_project_name=compose_project_name,
                 compose_path=compose_path,
                 env=env,
                 service_names=service_names,
-                probe_port=probe_port,
             )
             if stalled_detail is not None:
                 stdout, stderr = _terminate_compose_process(process)
@@ -1671,7 +1670,7 @@ def _compose_port_publish_stall_seconds(env: Mapping[str, str] | None) -> float:
     return env_float(env, "ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS", 8.0, minimum=1.0)
 
 
-def _compose_unpublished_probe_port_detail(
+def _compose_unpublished_port_detail(
     *,
     process_runner,
     compose_root: Path,
@@ -1679,7 +1678,6 @@ def _compose_unpublished_probe_port_detail(
     compose_path: Path,
     env: Mapping[str, str] | None,
     service_names: list[str],
-    probe_port: int,
 ) -> str | None:
     states = _inspect_auth_gateway_services(
         process_runner=process_runner,
@@ -1691,37 +1689,49 @@ def _compose_unpublished_probe_port_detail(
     )
     if not states or any(_compose_service_state_failed(state) for state in states):
         return None
-    probe_service = next((state for state in states if str(state.get("service") or "") in {"supabase-db", "db"}), None)
-    if probe_service is None:
-        return None
-    status = str(probe_service.get("status") or "").strip().lower()
-    health = str(probe_service.get("health") or "").strip().lower()
-    container = str(probe_service.get("container") or "").strip()
-    if not container or status != "running" or health not in {"", "healthy"}:
-        return None
-    active_port, active_error = _container_active_host_port(
-        process_runner=process_runner,
-        container_name=container,
-        container_port=5432,
-        cwd=compose_root,
-        env=env,
-    )
-    if active_port == probe_port:
-        return None
-    configured_port = _container_host_config_port(
-        process_runner=process_runner,
-        container_name=container,
-        container_port=5432,
-        cwd=compose_root,
-        env=env,
-    )
-    if configured_port != probe_port:
-        return None
-    error_detail = f" docker_port_error={_sanitize_service_state_text(active_error)}" if active_error else ""
-    return (
-        "Docker reported the Supabase DB container running/healthy with HostConfig publishing "
-        f"port {probe_port}, but no active host port is published.{error_detail}"
-    )
+    for service_state in states:
+        service_name = str(service_state.get("service") or "").strip()
+        container_port = _published_container_port_for_service(service_name)
+        if container_port is None:
+            continue
+        status = str(service_state.get("status") or "").strip().lower()
+        health = str(service_state.get("health") or "").strip().lower()
+        container = str(service_state.get("container") or "").strip()
+        if not container or status != "running" or health not in {"", "healthy"}:
+            continue
+        configured_port = _container_host_config_port(
+            process_runner=process_runner,
+            container_name=container,
+            container_port=container_port,
+            cwd=compose_root,
+            env=env,
+        )
+        if configured_port is None:
+            continue
+        active_port, active_error = _container_active_host_port(
+            process_runner=process_runner,
+            container_name=container,
+            container_port=container_port,
+            cwd=compose_root,
+            env=env,
+        )
+        if active_port == configured_port:
+            continue
+        error_detail = f" docker_port_error={_sanitize_service_state_text(active_error)}" if active_error else ""
+        return (
+            f"Docker reported {service_name} running/healthy with HostConfig publishing port "
+            f"{configured_port}, but no active host port is published.{error_detail}"
+        )
+    return None
+
+
+def _published_container_port_for_service(service_name: str) -> int | None:
+    normalized = str(service_name or "").strip().lower()
+    if normalized in {"supabase-db", "db"}:
+        return 5432
+    if normalized in {"supabase-kong", "kong", "gateway"}:
+        return 8000
+    return None
 
 
 def _container_active_host_port(
@@ -2485,14 +2495,14 @@ def _gateway_public_port_mismatch(
         ignored_statuses.add("created")
     if not container or status in ignored_statuses:
         return None
-    actual_port, port_error = container_host_port(
-        process_runner,
+    actual_port, port_error = _container_active_host_port(
+        process_runner=process_runner,
         container_name=container,
         container_port=8000,
         cwd=compose_root,
         env=env,
     )
-    if actual_port is None:
+    if actual_port is None and status == "created":
         actual_port = _container_host_config_port(
             process_runner=process_runner,
             container_name=container,
@@ -2501,7 +2511,11 @@ def _gateway_public_port_mismatch(
             env=env,
         )
     if actual_port is None:
-        return None
+        mismatch = dict(service_state)
+        mismatch["actual_port"] = "unpublished"
+        if port_error:
+            mismatch["port_error"] = _sanitize_service_state_text(port_error)
+        return mismatch
     if int(actual_port) == int(expected_port):
         return None
     mismatch = dict(service_state)
