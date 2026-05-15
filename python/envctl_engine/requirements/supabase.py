@@ -364,6 +364,72 @@ def start_supabase_stack(
     public_health_url = _supabase_auth_health_url(env, resolved_public_port)
     health_url = _supabase_local_auth_health_url(resolved_public_port)
     actions_attempted: list[str] = ["initial_probe"]
+    container_recreated = False
+    if gateway_service:
+        gateway_port_mismatch = _gateway_public_port_mismatch(
+            process_runner=process_runner,
+            compose_root=compose_root,
+            compose_project_name=compose_project_name,
+            compose_path=compose_path,
+            env=env,
+            gateway_service=gateway_service,
+            expected_port=resolved_public_port,
+        )
+        if gateway_port_mismatch is not None:
+            stage_events.append(
+                {
+                    "stage": "supabase.gateway.port_mismatch",
+                    "reason": "recreate",
+                    "detail": _format_gateway_port_mismatch(gateway_port_mismatch, expected_port=resolved_public_port),
+                    "startup_budget_s": startup_budget.timeout_seconds,
+                    "elapsed_ms": startup_budget.elapsed_ms(),
+                }
+            )
+            recreate_error = _recreate_auth_gateway_services(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                service_names=secondary_services,
+            )
+            if recreate_error is not None:
+                detail = recreate_error.strip()
+                return ContainerStartResult(
+                    success=False,
+                    container_name=compose_project_name,
+                    error=(
+                        f"failed recreating Supabase Auth/Kong after gateway port mismatch: {detail}"
+                        if detail
+                        else "failed recreating Supabase Auth/Kong after gateway port mismatch"
+                    ),
+                    stage_events=stage_events,
+                    probe_attempts=probe_attempts,
+                    probe_attempt_count=len(probe_attempts),
+                )
+            container_recreated = True
+            gateway_port_mismatch = _gateway_public_port_mismatch(
+                process_runner=process_runner,
+                compose_root=compose_root,
+                compose_project_name=compose_project_name,
+                compose_path=compose_path,
+                env=env,
+                gateway_service=gateway_service,
+                expected_port=resolved_public_port,
+            )
+            if gateway_port_mismatch is not None:
+                return ContainerStartResult(
+                    success=False,
+                    container_name=compose_project_name,
+                    error=(
+                        "Supabase gateway published port mismatch after recreate: "
+                        + _format_gateway_port_mismatch(gateway_port_mismatch, expected_port=resolved_public_port)
+                    ),
+                    stage_events=stage_events,
+                    probe_attempts=probe_attempts,
+                    probe_attempt_count=len(probe_attempts),
+                    container_recreated=container_recreated,
+                )
     stage_events.append(
         {
             "stage": "supabase.auth.probe",
@@ -403,7 +469,6 @@ def start_supabase_stack(
                 }
             )
 
-    container_recreated = False
     if not auth_probe.ready and secondary_services:
         record_auth_service_state("initial_probe_failed")
         if _auth_services_progressing(service_state_summaries) and startup_budget.remaining_seconds() > 0:
@@ -2191,6 +2256,101 @@ def _format_auth_service_state(service_state: Mapping[str, object]) -> str:
 
 def _format_auth_service_states(service_states: list[dict[str, object]]) -> str:
     return "|".join(_format_auth_service_state(service_state) for service_state in service_states)
+
+
+def _gateway_public_port_mismatch(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    compose_path: Path,
+    env: Mapping[str, str] | None,
+    gateway_service: str,
+    expected_port: int,
+) -> dict[str, object] | None:
+    if expected_port <= 0:
+        return None
+    service_state = _inspect_auth_gateway_service(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        compose_path=compose_path,
+        env=env,
+        service_name=gateway_service,
+    )
+    container = str(service_state.get("container") or "").strip()
+    status = str(service_state.get("status") or "").strip().lower()
+    if not container or status in {"", "missing", "unknown", "created"}:
+        return None
+    actual_port, port_error = container_host_port(
+        process_runner,
+        container_name=container,
+        container_port=8000,
+        cwd=compose_root,
+        env=env,
+    )
+    if actual_port is None:
+        actual_port = _container_host_config_port(
+            process_runner=process_runner,
+            container_name=container,
+            container_port=8000,
+            cwd=compose_root,
+            env=env,
+        )
+    if actual_port is None:
+        return None
+    if int(actual_port) == int(expected_port):
+        return None
+    mismatch = dict(service_state)
+    mismatch["actual_port"] = int(actual_port)
+    if port_error:
+        mismatch["port_error"] = _sanitize_service_state_text(port_error)
+    return mismatch
+
+
+def _container_host_config_port(
+    *,
+    process_runner,
+    container_name: str,
+    container_port: int,
+    cwd: Path,
+    env: Mapping[str, str] | None,
+) -> int | None:
+    result, error = run_docker(
+        process_runner,
+        ["inspect", "-f", "{{json .HostConfig.PortBindings}}", container_name],
+        cwd=cwd,
+        env=env,
+        timeout=10.0,
+    )
+    if result is None or error is not None or getattr(result, "returncode", 1) != 0:
+        return None
+    try:
+        payload = json.loads(str(getattr(result, "stdout", "") or "").strip() or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    bindings = payload.get(f"{container_port}/tcp")
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    first = bindings[0]
+    if not isinstance(first, dict):
+        return None
+    raw_port = str(first.get("HostPort") or "").strip()
+    if not raw_port:
+        return None
+    try:
+        parsed = int(raw_port)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _format_gateway_port_mismatch(mismatch: Mapping[str, object], *, expected_port: int) -> str:
+    actual = str(mismatch.get("actual_port") or "unknown").strip()
+    base = _format_auth_service_state(mismatch)
+    return f"expected_public_port={expected_port} actual_public_port={actual} service_state={base}"
 
 
 def _sanitize_service_state_text(value: str) -> str:

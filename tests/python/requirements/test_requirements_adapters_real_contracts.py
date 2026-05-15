@@ -1833,6 +1833,77 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 any(item.get("stage") == "supabase.auth.wait_progress" for item in result.stage_events or [])
             )
 
+    def test_supabase_recreates_auth_gateway_when_kong_uses_stale_public_port(self) -> None:
+        class _Runner(_FakeRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.auth_gateway_removed = False
+
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                result = super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+                command = list(cmd)
+                if (
+                    len(command) >= 4
+                    and command[:2] == ["docker", "compose"]
+                    and command[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                ):
+                    self.auth_gateway_removed = True
+                if (
+                    self.auth_gateway_removed
+                    and len(command) >= 4
+                    and command[:2] == ["docker", "compose"]
+                    and command[-2:] == ["supabase-auth", "supabase-kong"]
+                ):
+                    self.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54321\n"
+                return result
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _Runner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [True]
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "running"
+            runner.health_status["auth-container-id"] = "healthy"
+            runner.health_status["kong-container-id"] = "healthy"
+            runner.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54349\n"
+            runner.health_returncode_sequence = [0]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "5"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(result.container_recreated)
+            self.assertTrue(
+                any(item.get("stage") == "supabase.gateway.port_mismatch" for item in result.stage_events or [])
+            )
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+
     def test_supabase_db_probe_failure_reports_phase_budget_elapsed_and_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
