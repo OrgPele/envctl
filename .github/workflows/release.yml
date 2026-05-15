@@ -220,8 +220,9 @@ jobs:
             if gh pr edit "$existing_url" --title "Release envctl ${NEW_VERSION}" --body-file "$body"; then
               echo "Release PR already exists: $existing_url"
             else
-              echo "::warning::release branch was pushed, but the workflow token could not update the existing release PR: $existing_url" >&2
-              echo "::warning::configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write to let Actions update release PRs under restrictive repository policies." >&2
+              echo "::error::release branch was pushed, but the workflow token could not update the existing release PR: $existing_url" >&2
+              echo "::error::configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write to let Actions update release PRs under restrictive repository policies." >&2
+              exit 1
             fi
           else
             create_output="$(
@@ -235,8 +236,9 @@ jobs:
             if [ "$create_status" -eq 0 ]; then
               echo "$create_output"
             elif echo "$create_output" | grep -qi "not permitted to create.*pull requests"; then
-              echo "::warning::release branch was pushed, but this repository does not permit GitHub Actions to create pull requests with the configured token." >&2
-              echo "::warning::open the release PR manually from https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}, or configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write." >&2
+              echo "::error::release branch was pushed, but this repository does not permit GitHub Actions to create pull requests with the configured token." >&2
+              echo "::error::open the release PR manually from https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}, or configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write." >&2
+              exit 1
             else
               echo "$create_output" >&2
               exit "$create_status"

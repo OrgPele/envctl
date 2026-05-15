@@ -458,6 +458,7 @@ class CliPackagingTests(unittest.TestCase):
         version = str(project["version"])
 
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"https://github.com/OrgPele/envctl/releases/tag/{version}", readme)
         self.assertIn(f"releases/tag/{version}", readme)
         self.assertIn(f"release-{version}", readme)
         self.assertIn(f"Release {version}", readme)
