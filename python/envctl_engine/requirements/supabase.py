@@ -1727,11 +1727,8 @@ def _compose_unpublished_port_detail(
     )
     if not states or any(_compose_service_state_failed(state) for state in states):
         return None
-    not_ready_services: list[str] = []
     for service_state in states:
         service_name = str(service_state.get("service") or "").strip()
-        if not _compose_service_state_ready(service_state):
-            not_ready_services.append(_format_auth_service_state(service_state))
         container_port = _published_container_port_for_service(service_name)
         if container_port is None:
             continue
@@ -1745,12 +1742,11 @@ def _compose_unpublished_port_detail(
             continue
         if bool(process_runner.wait_for_port(expected_port, timeout=0.5)):
             continue
+        host_port_label = "API" if _is_gateway_service_name(service_name) else "DB"
         return (
-            f"Docker reported {service_name} running/healthy, but expected host port "
-            f"{expected_port} is not reachable."
+            f"Docker Compose stalled before publishing Supabase {host_port_label} host port {expected_port}: "
+            f"Docker reported {service_name} running/healthy, but the host socket is not reachable."
         )
-    if not_ready_services and any(_compose_service_state_ready(state) for state in states):
-        return "Docker Compose stalled before all Supabase services started: " + "|".join(not_ready_services)
     return None
 
 
@@ -1764,12 +1760,7 @@ def _compose_stalled_port_detail(
     service_names: list[str],
     probe_port: int | None,
 ) -> str | None:
-    if probe_port is not None and not bool(process_runner.wait_for_port(probe_port, timeout=0.2)):
-        return f"Docker Compose stalled before publishing Supabase DB host port {probe_port}."
-    public_port = _compose_public_port(compose_root=compose_root)
-    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
-        if not bool(process_runner.wait_for_port(public_port, timeout=0.2)):
-            return f"Docker Compose stalled before publishing Supabase API host port {public_port}."
+    _ = probe_port
     return _compose_unpublished_port_detail(
         process_runner=process_runner,
         compose_root=compose_root,

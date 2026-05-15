@@ -565,12 +565,15 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 compose_root=root,
                 compose_project_name="envctl-supabase-test",
                 compose_path=compose_path,
-                env={"ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1"},
+                env={
+                    "ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1",
+                    "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5",
+                },
                 args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
             )
 
         self.assertIsNotNone(result)
-        self.assertIn("stalled before all Supabase services started", result or "")
+        self.assertIn("Command timed out after 5.0s", result or "")
         self.assertIn("supabase-auth", result or "")
 
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:

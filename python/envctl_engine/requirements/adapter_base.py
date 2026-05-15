@@ -548,6 +548,15 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                         failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
                         stage="start.bind_conflict.unresolved",
                     )
+                if template.retryable_probe_error(create_error):
+                    return _failure(
+                        create_error,
+                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                        failure_class=reason_code_to_string(
+                            RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                        ),
+                        stage="start.create.probe_timeout",
+                    )
                 return _failure(
                     create_error,
                     reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
@@ -758,6 +767,15 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             if recreate_error:
                 if not (timeout_error(recreate_error) and _recover_timeout_created_container(recreate=True)):
                     _add_stage_duration("recreate", recreate_started)
+                    if template.retryable_probe_error(recreate_error):
+                        return _failure(
+                            f"failed recreating {template.service_name} container: {recreate_error}",
+                            reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                            failure_class=reason_code_to_string(
+                                RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                            ),
+                            stage="probe.retry.recreate.probe_timeout",
+                        )
                     return _failure(
                         f"failed recreating {template.service_name} container: {recreate_error}",
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),

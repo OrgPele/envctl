@@ -111,15 +111,14 @@ def _create_n8n_container(
     )
     if pull_error:
         return pull_error
-    with docker_port_publish_lock(env):
-        return _create_n8n_container_locked(
-            process_runner=process_runner,
-            project_root=project_root,
-            container_name=container_name,
-            port=port,
-            env=env,
-            image=image,
-        )
+    return _create_n8n_container_locked(
+        process_runner=process_runner,
+        project_root=project_root,
+        container_name=container_name,
+        port=port,
+        env=env,
+        image=image,
+    )
 
 
 def _create_n8n_container_locked(
@@ -137,53 +136,54 @@ def _create_n8n_container_locked(
         30.0,
         minimum=5.0,
     )
-    create_result, create_error = run_docker(
-        process_runner,
-        [
-            "create",
-            "--name",
-            container_name,
-            "-e",
-            "N8N_HOST=localhost",
-            "-e",
-            "N8N_PORT=5678",
-            "-e",
-            "N8N_PROTOCOL=http",
-            "-p",
-            f"{port}:5678",
-            image,
-        ],
-        cwd=project_root,
-        env=env,
-        timeout=create_timeout_seconds,
-    )
-    create_timed_out = (create_result is None and "timed out" in (create_error or "").lower()) or (
-        create_result is not None and getattr(create_result, "returncode", 1) == 124
-    )
-    if create_timed_out:
-        exists, exists_error = container_exists(
+    with docker_port_publish_lock(env):
+        create_result, create_error = run_docker(
             process_runner,
-            container_name=container_name,
+            [
+                "create",
+                "--name",
+                container_name,
+                "-e",
+                "N8N_HOST=localhost",
+                "-e",
+                "N8N_PORT=5678",
+                "-e",
+                "N8N_PROTOCOL=http",
+                "-p",
+                f"{port}:5678",
+                image,
+            ],
             cwd=project_root,
             env=env,
+            timeout=create_timeout_seconds,
         )
-        if exists_error or not exists:
-            return create_error or "failed creating n8n container"
-    elif create_result is None:
-        return create_error
-    elif getattr(create_result, "returncode", 1) != 0:
-        return run_result_error(create_result, "failed creating n8n container")
+        create_timed_out = (create_result is None and "timed out" in (create_error or "").lower()) or (
+            create_result is not None and getattr(create_result, "returncode", 1) == 124
+        )
+        if create_timed_out:
+            exists, exists_error = container_exists(
+                process_runner,
+                container_name=container_name,
+                cwd=project_root,
+                env=env,
+            )
+            if exists_error or not exists:
+                return create_error or "failed creating n8n container"
+        elif create_result is None:
+            return create_error
+        elif getattr(create_result, "returncode", 1) != 0:
+            return run_result_error(create_result, "failed creating n8n container")
 
-    start_result, start_error = run_docker(
-        process_runner,
-        ["start", container_name],
-        cwd=project_root,
-        env=env,
-        timeout=env_float(env, "ENVCTL_N8N_START_TIMEOUT_SECONDS", 8.0, minimum=1.0),
-    )
-    start_timed_out = (start_result is None and "timed out" in (start_error or "").lower()) or (
-        start_result is not None and getattr(start_result, "returncode", 1) == 124
-    )
+        start_result, start_error = run_docker(
+            process_runner,
+            ["start", container_name],
+            cwd=project_root,
+            env=env,
+            timeout=env_float(env, "ENVCTL_N8N_START_TIMEOUT_SECONDS", 8.0, minimum=1.0),
+        )
+        start_timed_out = (start_result is None and "timed out" in (start_error or "").lower()) or (
+            start_result is not None and getattr(start_result, "returncode", 1) == 124
+        )
     if start_timed_out:
         if _recover_n8n_start_timeout(
             process_runner=process_runner,
