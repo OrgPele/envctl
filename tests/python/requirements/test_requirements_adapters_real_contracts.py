@@ -723,6 +723,45 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertEqual(result.effective_port, 6380)
             self.assertFalse(result.container_recreated)
 
+    def test_redis_recovers_when_docker_start_reports_failure_but_container_is_running(self) -> None:
+        class _Runner(_FakeRunner):
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                command = list(cmd)
+                if command[:2] == ["docker", "start"]:
+                    container = command[2]
+                    self.commands.append(command)
+                    self.existing.add(container)
+                    self.status[container] = "running"
+                    return subprocess.CompletedProcess(command, 1, "", "")
+                return super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _Runner()
+            container_name = build_container_name(
+                prefix="envctl-redis",
+                project_root=root,
+                project_name="Main",
+            )
+            runner.port_mappings[(container_name, "6379")] = "0.0.0.0:6380\n"
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 6380)
+
     def test_redis_recovered_create_uses_settle_probe_without_restart_or_recreate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -765,6 +804,45 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner.create_timeout.add(container_name)
             runner.port_mappings[(container_name, "5678")] = "0.0.0.0:5680\n"
             runner.wait_for_port_sequences[5680] = [False, False, True]
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 5680)
+
+    def test_n8n_recovers_when_docker_start_reports_failure_but_container_is_running(self) -> None:
+        class _Runner(_FakeRunner):
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                command = list(cmd)
+                if command[:2] == ["docker", "start"]:
+                    container = command[2]
+                    self.commands.append(command)
+                    self.existing.add(container)
+                    self.status[container] = "running"
+                    return subprocess.CompletedProcess(command, 1, "", "")
+                return super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _Runner()
+            container_name = build_container_name(
+                prefix="envctl-n8n",
+                project_root=root,
+                project_name="Main",
+            )
+            runner.port_mappings[(container_name, "5678")] = "0.0.0.0:5680\n"
 
             result = start_n8n_container(
                 process_runner=runner,

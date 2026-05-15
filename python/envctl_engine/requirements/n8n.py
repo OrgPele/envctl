@@ -18,6 +18,7 @@ from .common import (
     RetryResult,
     build_container_name,
     container_exists,
+    container_status,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -165,17 +166,41 @@ def _create_n8n_container(
     if start_timed_out:
         if _recover_n8n_start_timeout(
             process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
             port=port,
             timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
         ):
             return None
         return start_error or "failed starting n8n container"
     if start_result is None:
+        if _recover_n8n_start_timeout(
+            process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
+            port=port,
+            timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
+        ):
+            return None
         return start_error
     if getattr(start_result, "returncode", 1) != 0:
+        if _recover_n8n_start_timeout(
+            process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
+            port=port,
+            timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
+        ):
+            return None
         return run_result_error(start_result, "failed starting n8n container")
     if create_timed_out and not _recover_n8n_start_timeout(
         process_runner=process_runner,
+        container_name=container_name,
+        project_root=project_root,
+        env=env,
         port=port,
         timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
     ):
@@ -215,12 +240,23 @@ def _pull_n8n_image_if_needed(
 def _recover_n8n_start_timeout(
     *,
     process_runner: ProcessRuntime,
+    container_name: str,
+    project_root: Path,
+    env: Mapping[str, str] | None,
     port: int,
     timeout_seconds: float,
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if bool(process_runner.wait_for_port(port, timeout=1.0)):
+            return True
+        status, _status_error = container_status(
+            process_runner,
+            container_name=container_name,
+            cwd=project_root,
+            env=env,
+        )
+        if status == "running" and bool(process_runner.wait_for_port(port, timeout=1.0)):
             return True
         time.sleep(1.0)
     return False
