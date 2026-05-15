@@ -2300,6 +2300,16 @@ def _inspect_auth_gateway_service(
     env: Mapping[str, str] | None,
     service_name: str,
 ) -> dict[str, object]:
+    direct_summary = _inspect_compose_service_from_container_name(
+        process_runner=process_runner,
+        compose_root=compose_root,
+        compose_project_name=compose_project_name,
+        env=env,
+        service_name=service_name,
+    )
+    if direct_summary is not None:
+        return direct_summary
+
     json_summary = _inspect_compose_service_from_ps_json(
         process_runner=process_runner,
         compose_root=compose_root,
@@ -2344,6 +2354,54 @@ def _inspect_auth_gateway_service(
         summary["inspect_error"] = _sanitize_service_state_text(run_result_error(state_result, "docker inspect failed"))
         return summary
     state_text = str(getattr(state_result, "stdout", "") or "").strip()
+    _populate_service_summary_from_state(summary, state_text)
+    if len(summary) == 2 and "container" in summary:
+        summary["status"] = "unknown"
+    return summary
+
+
+def _inspect_compose_service_from_container_name(
+    *,
+    process_runner,
+    compose_root: Path,
+    compose_project_name: str,
+    env: Mapping[str, str] | None,
+    service_name: str,
+) -> dict[str, object] | None:
+    container_name = _compose_container_name(compose_project_name=compose_project_name, service_name=service_name)
+    exists, exists_error = container_exists(
+        process_runner,
+        container_name=container_name,
+        cwd=compose_root,
+        env=env,
+    )
+    if exists_error is not None or not exists:
+        return None
+    summary: dict[str, object] = {"service": service_name, "container": container_name}
+    state_result, state_error = run_docker(
+        process_runner,
+        ["inspect", "-f", "{{json .State}}", container_name],
+        cwd=compose_root,
+        env=env,
+        timeout=10.0,
+    )
+    if state_result is None:
+        summary["inspect_error"] = _sanitize_service_state_text(state_error or "docker inspect failed")
+        return summary
+    if getattr(state_result, "returncode", 1) != 0:
+        return None
+    _populate_service_summary_from_state(summary, str(getattr(state_result, "stdout", "") or ""))
+    if len(summary) == 2 and "container" in summary:
+        summary["status"] = "unknown"
+    return summary
+
+
+def _compose_container_name(*, compose_project_name: str, service_name: str) -> str:
+    return f"{compose_project_name}-{service_name}-1"
+
+
+def _populate_service_summary_from_state(summary: dict[str, object], state_text: str) -> None:
+    state_text = str(state_text or "").strip()
     try:
         state = json.loads(state_text) if state_text else {}
     except json.JSONDecodeError:
@@ -2361,9 +2419,6 @@ def _inspect_auth_gateway_service(
         state_error_value = state.get("Error")
         if state_error_value:
             summary["state_error"] = _sanitize_service_state_text(str(state_error_value))
-    if len(summary) == 2 and "container" in summary:
-        summary["status"] = "unknown"
-    return summary
 
 
 def _inspect_compose_service_from_ps_json(
