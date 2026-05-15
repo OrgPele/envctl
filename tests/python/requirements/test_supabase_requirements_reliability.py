@@ -31,15 +31,21 @@ class _CompletedComposeProcess:
 
 
 def _write_supabase_files(
-    repo: Path, *, static_network_name: bool = False, bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n"
+    repo: Path,
+    *,
+    static_network_name: bool = False,
+    bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n",
+    pull_policy: bool = False,
 ) -> None:
     supabase_dir = repo / "supabase"
     init_dir = supabase_dir / "init"
     init_dir.mkdir(parents=True, exist_ok=True)
     network_block = "  supabase-net:\n    name: fallback\n" if static_network_name else "  supabase-net: {}\n"
+    pull_policy_line = "    pull_policy: missing\n" if pull_policy else ""
     compose = (
         "services:\n"
         "  supabase-auth:\n"
+        f"{pull_policy_line}"
         "    environment:\n"
         "      GOTRUE_DB_DATABASE_URL: postgres://postgres:postgres@supabase-db:5432/postgres?search_path=auth,public\n"
         "      GOTRUE_DB_NAMESPACE: auth\n"
@@ -79,6 +85,17 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)
             self.assertNotEqual(first.fingerprint, second.fingerprint)
+
+    def test_contract_fingerprint_ignores_compose_pull_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            _write_supabase_files(repo, pull_policy=False)
+            first = evaluate_supabase_reliability_contract(repo)
+            _write_supabase_files(repo, pull_policy=True)
+            second = evaluate_supabase_reliability_contract(repo)
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(first.fingerprint, second.fingerprint)
 
     def test_runtime_blocks_supabase_start_when_contract_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

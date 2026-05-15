@@ -1341,7 +1341,7 @@ def evaluate_managed_supabase_reliability_contract() -> SupabaseReliabilityContr
 
 def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> str:
     hasher = hashlib.sha256()
-    hasher.update(compose_text.encode("utf-8"))
+    hasher.update(_fingerprint_relevant_compose_text(compose_text).encode("utf-8"))
     for rel in (
         Path("kong.yml"),
         Path("init/01-create-n8n-db.sql"),
@@ -1357,6 +1357,17 @@ def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> st
         else:
             hasher.update(b"<missing>")
     return hasher.hexdigest()
+
+
+def _fingerprint_relevant_compose_text(compose_text: str) -> str:
+    ignored_prefixes = ("pull_policy:",)
+    lines = []
+    for line in compose_text.splitlines():
+        stripped = line.strip()
+        if any(stripped.startswith(prefix) for prefix in ignored_prefixes):
+            continue
+        lines.append(line.rstrip())
+    return "\n".join(lines) + "\n"
 
 
 def _compose_service_list(
