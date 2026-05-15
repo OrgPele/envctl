@@ -358,10 +358,14 @@ def _dependency_projector_env(
     route: Route | None = None,
 ) -> dict[str, str]:
     env: dict[str, str] = {}
+    project_disabled_launch_env = route is not None and route.flags.get("launch_dependencies") is False
     for definition in dependency_definitions():
         component = requirements.component(definition.id)
         if not bool(component.get("enabled", False)):
-            continue
+            if not project_disabled_launch_env or not _disabled_dependency_has_projectable_resources(
+                definition, component=component, context=context
+            ):
+                continue
         if bool(component.get("external")) or str(component.get("runtime_status") or "").strip().lower() == "external":
             env.update(external_dependency_project_env(runtime, definition.id))
             continue
@@ -371,6 +375,28 @@ def _dependency_projector_env(
             )
     env.update(_supabase_auth_user_source_env(runtime, requirements=requirements))
     return env
+
+
+def _disabled_dependency_has_projectable_resources(
+    definition: Any, *, component: Mapping[str, Any], context: Any
+) -> bool:
+    if _positive_int(component.get("final")):
+        return True
+    resources = component.get("resources")
+    if isinstance(resources, Mapping) and any(_positive_int(value) for value in resources.values()):
+        return True
+    ports = getattr(context, "ports", {})
+    if not isinstance(ports, Mapping):
+        return False
+    for resource in getattr(definition, "resources", ()) or ():
+        plan = ports.get(getattr(resource, "legacy_port_key", ""))
+        if _positive_int(getattr(plan, "final", None)):
+            return True
+    return False
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and value > 0
 
 
 def _app_service_projector_env(runtime: Any, context: Any) -> dict[str, str]:
