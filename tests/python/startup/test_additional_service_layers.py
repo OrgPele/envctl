@@ -26,7 +26,26 @@ class AdditionalServiceLayerTests(unittest.TestCase):
         self.assertEqual(backend_env["FRONTEND_BASE_URL"], "http://localhost:9001")
         self.assertEqual(events[-1]["event"], "backend.cors.projected")
 
-    def test_ordered_service_layers_respects_backend_and_service_dependencies(self) -> None:
+    def test_ordered_service_layers_ignores_core_service_dependencies_for_launch(self) -> None:
+        services = (
+            AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=True,
+                dir_name="voice-runtime",
+                start_cmd="python voice.py {port}",
+                port_base=8010,
+                depends_on=("backend", "frontend"),
+                start_order=20,
+            ),
+        )
+
+        layers = ordered_service_layers(["backend", "frontend", "voice-runtime"], services)
+
+        self.assertEqual(layers, [("backend", "frontend", "voice-runtime")])
+
+    def test_ordered_service_layers_respects_additional_service_dependencies(self) -> None:
         services = (
             AppServiceConfig(
                 name="voice-runtime",

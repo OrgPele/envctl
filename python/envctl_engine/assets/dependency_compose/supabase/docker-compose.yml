@@ -1,6 +1,7 @@
 services:
   supabase-db:
     image: ${SUPABASE_DB_IMAGE:-supabase/postgres:15.1.0.147}
+    pull_policy: missing
     restart: unless-stopped
     networks:
       - default
@@ -20,12 +21,13 @@ services:
       - ./init/02-bootstrap-gotrue-auth.sql:/docker-entrypoint-initdb.d/02-bootstrap-gotrue-auth.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      interval: 1s
+      timeout: 2s
+      retries: 30
 
   supabase-auth:
     image: ${SUPABASE_AUTH_IMAGE:-supabase/gotrue:v2.150.0}
+    pull_policy: missing
     restart: unless-stopped
     networks:
       - default
@@ -53,6 +55,7 @@ services:
 
   supabase-kong:
     image: ${SUPABASE_KONG_IMAGE:-kong:2.8.1}
+    pull_policy: missing
     restart: unless-stopped
     networks:
       - default

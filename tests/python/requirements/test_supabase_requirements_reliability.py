@@ -31,15 +31,32 @@ class _CompletedComposeProcess:
 
 
 def _write_supabase_files(
-    repo: Path, *, static_network_name: bool = False, bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n"
+    repo: Path,
+    *,
+    static_network_name: bool = False,
+    bootstrap_sql: str = "CREATE SCHEMA IF NOT EXISTS auth;\n",
+    pull_policy: bool = False,
+    healthcheck_interval: str | None = None,
 ) -> None:
     supabase_dir = repo / "supabase"
     init_dir = supabase_dir / "init"
     init_dir.mkdir(parents=True, exist_ok=True)
     network_block = "  supabase-net:\n    name: fallback\n" if static_network_name else "  supabase-net: {}\n"
+    pull_policy_line = "    pull_policy: missing\n" if pull_policy else ""
+    healthcheck_block = (
+        "    healthcheck:\n"
+        "      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n"
+        f"      interval: {healthcheck_interval}\n"
+        "      timeout: 2s\n"
+        "      retries: 30\n"
+        if healthcheck_interval
+        else ""
+    )
     compose = (
         "services:\n"
         "  supabase-auth:\n"
+        f"{pull_policy_line}"
+        f"{healthcheck_block}"
         "    environment:\n"
         "      GOTRUE_DB_DATABASE_URL: postgres://postgres:postgres@supabase-db:5432/postgres?search_path=auth,public\n"
         "      GOTRUE_DB_NAMESPACE: auth\n"
@@ -79,6 +96,28 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)
             self.assertNotEqual(first.fingerprint, second.fingerprint)
+
+    def test_contract_fingerprint_ignores_compose_pull_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            _write_supabase_files(repo, pull_policy=False)
+            first = evaluate_supabase_reliability_contract(repo)
+            _write_supabase_files(repo, pull_policy=True)
+            second = evaluate_supabase_reliability_contract(repo)
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(first.fingerprint, second.fingerprint)
+
+    def test_contract_fingerprint_ignores_compose_healthcheck_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            _write_supabase_files(repo, healthcheck_interval="10s")
+            first = evaluate_supabase_reliability_contract(repo)
+            _write_supabase_files(repo, healthcheck_interval="1s")
+            second = evaluate_supabase_reliability_contract(repo)
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(first.fingerprint, second.fingerprint)
 
     def test_runtime_blocks_supabase_start_when_contract_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -174,6 +213,64 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                 )
             self.assertFalse(second.success)
             self.assertIn("reinit workflow", second.error or "")
+
+    def test_runtime_accepts_compatible_supabase_contract_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime_dir = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            _write_supabase_files(repo)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    "SUPABASE_MAIN_ENABLE": "true",
+                }
+            )
+            runtime = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_REQUIREMENT_SUPABASE_CMD": "sh -lc true",
+                },
+            )
+            runtime._wait_for_requirement_listener = lambda _port: True  # type: ignore[method-assign]
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
+
+            with patch(
+                "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
+                side_effect=[
+                    SupabaseReliabilityContract(
+                        ok=True, fingerprint="v1", errors=[], compose_path=Path("/managed/supabase/docker-compose.yml")
+                    ),
+                    SupabaseReliabilityContract(
+                        ok=True,
+                        fingerprint="v2",
+                        errors=[],
+                        compose_path=Path("/managed/supabase/docker-compose.yml"),
+                        compatible_fingerprints=("v1",),
+                    ),
+                ],
+            ):
+                first = runtime._start_requirement_component(
+                    context,
+                    "supabase",
+                    context.ports["db"],
+                    reserve_next=lambda port: port,
+                )
+                self.assertTrue(first.success)
+                second = runtime._start_requirement_component(
+                    context,
+                    "supabase",
+                    context.ports["db"],
+                    reserve_next=lambda port: port,
+                )
+            self.assertTrue(second.success)
+            fingerprint_path = runtime._supabase_fingerprint_path("Main")
+            self.assertIn('"fingerprint": "v2"', fingerprint_path.read_text(encoding="utf-8"))
 
     def test_runtime_auto_reinit_runs_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import re
+import sys
 import threading
 import time
 
@@ -24,6 +25,27 @@ _DOCKER_SOCKET_PATTERNS = (
     re.compile(r"dial unix (?P<path>[^\s:;]+docker\.sock)"),
 )
 REQUIREMENTS_PROGRESS_PROJECT_FLAG = "_requirements_progress_project"
+
+
+def requirements_parallel_platform_default() -> bool:
+    return sys.platform != "darwin"
+
+
+def requirements_parallel_enabled(
+    orchestrator: StartupOrchestratorLike,
+    *,
+    route: Route | None,
+    enabled_count: int,
+) -> bool:
+    if enabled_count <= 1:
+        return False
+    if route is not None:
+        route_value = route.flags.get("requirements_parallel")
+        if isinstance(route_value, bool):
+            return route_value
+    rt = orchestrator.runtime
+    raw_parallel = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL")
+    return parse_bool(raw_parallel, requirements_parallel_platform_default())
 
 
 def format_requirements_progress_message(*, active: set[str], pending: set[str]) -> str:
@@ -284,8 +306,11 @@ def start_requirements_for_project(
             failure_class=str(getattr(outcome, "failure_class", "")),
         )
         outcomes[definition.id] = outcome
-    raw_parallel = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL")
-    parallel_enabled = parse_bool(raw_parallel, True) and len(enabled_definitions) > 1
+    parallel_enabled = requirements_parallel_enabled(
+        orchestrator,
+        route=route,
+        enabled_count=len(enabled_definitions),
+    )
     raw_workers = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX") or rt.config.raw.get(
         "ENVCTL_REQUIREMENTS_PARALLEL_MAX"
     )

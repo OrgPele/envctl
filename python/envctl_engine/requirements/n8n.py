@@ -18,6 +18,9 @@ from .common import (
     RetryResult,
     build_container_name,
     container_exists,
+    container_status,
+    docker_port_publish_lock,
+    ensure_docker_image_present,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -109,73 +112,124 @@ def _create_n8n_container(
     )
     if pull_error:
         return pull_error
+    return _create_n8n_container_locked(
+        process_runner=process_runner,
+        project_root=project_root,
+        container_name=container_name,
+        port=port,
+        env=env,
+        image=image,
+    )
+
+
+def _create_n8n_container_locked(
+    *,
+    process_runner: ProcessRuntime,
+    project_root: Path,
+    container_name: str,
+    port: int,
+    env: Mapping[str, str] | None,
+    image: str,
+) -> str | None:
     create_timeout_seconds = env_float(
         env,
         "ENVCTL_N8N_CREATE_TIMEOUT_SECONDS",
         30.0,
         minimum=5.0,
     )
-    create_result, create_error = run_docker(
-        process_runner,
-        [
-            "create",
-            "--name",
-            container_name,
-            "-e",
-            "N8N_HOST=localhost",
-            "-e",
-            "N8N_PORT=5678",
-            "-e",
-            "N8N_PROTOCOL=http",
-            "-p",
-            f"{port}:5678",
-            image,
-        ],
-        cwd=project_root,
-        env=env,
-        timeout=create_timeout_seconds,
-    )
-    create_timed_out = (create_result is None and "timed out" in (create_error or "").lower()) or (
-        create_result is not None and getattr(create_result, "returncode", 1) == 124
-    )
-    if create_timed_out:
-        exists, exists_error = container_exists(
+    with docker_port_publish_lock(env):
+        create_result, create_error = run_docker(
             process_runner,
-            container_name=container_name,
+            [
+                "create",
+                "--name",
+                container_name,
+                "-e",
+                "N8N_HOST=localhost",
+                "-e",
+                "N8N_PORT=5678",
+                "-e",
+                "N8N_PROTOCOL=http",
+                "-p",
+                f"{port}:5678",
+                image,
+            ],
             cwd=project_root,
             env=env,
+            timeout=create_timeout_seconds,
         )
-        if exists_error or not exists:
-            return create_error or "failed creating n8n container"
-    elif create_result is None:
-        return create_error
-    elif getattr(create_result, "returncode", 1) != 0:
-        return run_result_error(create_result, "failed creating n8n container")
+        create_timed_out = (create_result is None and "timed out" in (create_error or "").lower()) or (
+            create_result is not None and getattr(create_result, "returncode", 1) == 124
+        )
+        if create_timed_out:
+            exists, exists_error = container_exists(
+                process_runner,
+                container_name=container_name,
+                cwd=project_root,
+                env=env,
+            )
+            if exists_error or not exists:
+                return create_error or "failed creating n8n container"
+        elif create_result is None:
+            return create_error
+        elif getattr(create_result, "returncode", 1) != 0:
+            return run_result_error(create_result, "failed creating n8n container")
 
-    start_result, start_error = run_docker(
-        process_runner,
-        ["start", container_name],
-        cwd=project_root,
-        env=env,
-        timeout=env_float(env, "ENVCTL_N8N_START_TIMEOUT_SECONDS", 8.0, minimum=1.0),
-    )
-    start_timed_out = (start_result is None and "timed out" in (start_error or "").lower()) or (
-        start_result is not None and getattr(start_result, "returncode", 1) == 124
-    )
+        start_result, start_error = run_docker(
+            process_runner,
+            ["start", container_name],
+            cwd=project_root,
+            env=env,
+            timeout=env_float(env, "ENVCTL_N8N_START_TIMEOUT_SECONDS", 8.0, minimum=1.0),
+        )
+        start_timed_out = (start_result is None and "timed out" in (start_error or "").lower()) or (
+            start_result is not None and getattr(start_result, "returncode", 1) == 124
+        )
     if start_timed_out:
         if _recover_n8n_start_timeout(
             process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
             port=port,
             timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
         ):
             return None
-        return start_error or "failed starting n8n container"
+        return (
+            f"probe timeout waiting for readiness on port {port} after docker start timeout"
+            + (f": {start_error}" if start_error else "")
+        )
     if start_result is None:
-        return start_error
+        if _recover_n8n_start_timeout(
+            process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
+            port=port,
+            timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
+        ):
+            return None
+        return (
+            f"probe timeout waiting for readiness on port {port} after docker start failure"
+            + (f": {start_error}" if start_error else "")
+        )
     if getattr(start_result, "returncode", 1) != 0:
-        return run_result_error(start_result, "failed starting n8n container")
+        if _recover_n8n_start_timeout(
+            process_runner=process_runner,
+            container_name=container_name,
+            project_root=project_root,
+            env=env,
+            port=port,
+            timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
+        ):
+            return None
+        detail = run_result_error(start_result, "failed starting n8n container")
+        return f"probe timeout waiting for readiness on port {port} after docker start failure: {detail}"
     if create_timed_out and not _recover_n8n_start_timeout(
         process_runner=process_runner,
+        container_name=container_name,
+        project_root=project_root,
+        env=env,
         port=port,
         timeout_seconds=env_float(env, "ENVCTL_N8N_START_RECOVERY_TIMEOUT_SECONDS", 18.0, minimum=1.0),
     ):
@@ -190,37 +244,38 @@ def _pull_n8n_image_if_needed(
     env: Mapping[str, str] | None,
     image: str,
 ) -> str | None:
-    if not env_bool(env, "ENVCTL_N8N_PULL_IMAGE", True):
-        return None
-    pull_timeout_seconds = env_float(
-        env,
-        "ENVCTL_N8N_PULL_TIMEOUT_SECONDS",
-        300.0,
-        minimum=30.0,
-    )
-    pull_result, pull_error = run_docker(
+    return ensure_docker_image_present(
         process_runner,
-        ["pull", image],
+        image=image,
         cwd=project_root,
         env=env,
-        timeout=pull_timeout_seconds,
+        pull_policy_key="ENVCTL_N8N_PULL_POLICY",
+        legacy_bool_key="ENVCTL_N8N_PULL_IMAGE",
+        inspect_timeout=env_float(env, "ENVCTL_N8N_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
+        pull_timeout=env_float(env, "ENVCTL_N8N_PULL_TIMEOUT_SECONDS", 300.0, minimum=30.0),
     )
-    if pull_result is None:
-        return pull_error
-    if getattr(pull_result, "returncode", 1) != 0:
-        return run_result_error(pull_result, f"failed pulling n8n image {image}")
-    return None
 
 
 def _recover_n8n_start_timeout(
     *,
     process_runner: ProcessRuntime,
+    container_name: str,
+    project_root: Path,
+    env: Mapping[str, str] | None,
     port: int,
     timeout_seconds: float,
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if bool(process_runner.wait_for_port(port, timeout=1.0)):
+            return True
+        status, _status_error = container_status(
+            process_runner,
+            container_name=container_name,
+            cwd=project_root,
+            env=env,
+        )
+        if status == "running" and bool(process_runner.wait_for_port(port, timeout=1.0)):
             return True
         time.sleep(1.0)
     return False

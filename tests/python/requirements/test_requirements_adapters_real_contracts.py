@@ -55,6 +55,7 @@ class _FakeRunner:
         self.run_stderr: dict[str, str] = {}
         self.run_returncode_sequence: dict[str, list[int]] = {}
         self.run_stderr_sequence: dict[str, list[str]] = {}
+        self.images: set[str] = set()
         self.run_timeout: set[str] = set()
         self.create_returncode: dict[str, int] = {}
         self.create_stderr: dict[str, str] = {}
@@ -238,10 +239,21 @@ class _FakeRunner:
                 self.status[container] = "created"
             return subprocess.CompletedProcess(command, rc, "container-id\n" if rc == 0 else "", stderr)
 
+        if command[:3] == ["docker", "image", "inspect"]:
+            image = command[3]
+            return subprocess.CompletedProcess(
+                command,
+                0 if image in self.images else 1,
+                "image-id\n" if image in self.images else "",
+                "" if image in self.images else "No such image\n",
+            )
+
         if command[:2] == ["docker", "pull"]:
             image = command[2]
             rc = self.run_returncode.get(f"pull:{image}", 0)
             stderr = self.run_stderr.get(f"pull:{image}", "")
+            if rc == 0:
+                self.images.add(image)
             return subprocess.CompletedProcess(command, rc, "pulled\n" if rc == 0 else "", stderr)
 
         if command[:2] == ["docker", "exec"]:
@@ -473,6 +485,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             root = Path(tmpdir)
             compose_path = root / "docker-compose.yml"
             compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
 
             with mock.patch("envctl_engine.requirements.supabase._compose_up_handoff", side_effect=_capture_handoff):
                 result = _compose_run(
@@ -486,6 +499,91 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(captured["timeout_seconds"], 120.0)
+
+    def test_supabase_compose_run_reports_lock_timeout(self) -> None:
+        runner = _FakeRunner()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+
+            lock_context = mock.MagicMock()
+            lock_context.__enter__.side_effect = TimeoutError("busy")
+            with mock.patch("envctl_engine.requirements.supabase.file_lock", return_value=lock_context):
+                result = _compose_run(
+                    process_runner=runner,
+                    compose_root=root,
+                    compose_project_name="envctl-supabase-test",
+                    compose_path=compose_path,
+                    env={"ENVCTL_SUPABASE_COMPOSE_LOCK_TIMEOUT_SECONDS": "1"},
+                    args=["up", "-d", "supabase-db"],
+                )
+
+        self.assertIsNotNone(result)
+        self.assertIn("timed out acquiring Supabase compose lock after 1.0s", result or "")
+        self.assertIn("busy", result or "")
+
+    def test_supabase_compose_up_reports_unpublished_probe_port_after_timeout(self) -> None:
+        runner = _FakeRunner()
+        runner.wait_for_port_result = False
+        runner.compose_up_process = lambda *args, **kwargs: _FakeComposeProcess(returncode=None)  # type: ignore[method-assign]
+        runner.status["supabase-db-container-id"] = "running"
+        runner.health_status["supabase-db-container-id"] = "healthy"
+        runner.status["supabase-auth-container-id"] = "created"
+        runner.status["supabase-kong-container-id"] = "created"
+        runner.port_mappings[("supabase-db-container-id", "5432")] = "0.0.0.0:5432\n"
+        runner.port_mapping_errors[("supabase-db-container-id", "5432")] = (
+            "no public port '5432' published for supabase-db-container-id"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
+
+            result = _compose_run(
+                process_runner=runner,
+                compose_root=root,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={"ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5"},
+                args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn("stalled before publishing Supabase DB host port 5432", result or "")
+        self.assertIn("supabase-db", result or "")
+
+    def test_supabase_graph_handoff_does_not_finish_when_only_db_is_ready(self) -> None:
+        runner = _FakeRunner()
+        runner.wait_for_port_result = True
+        runner.compose_up_process = lambda *args, **kwargs: _FakeComposeProcess(returncode=None)  # type: ignore[method-assign]
+        runner.status["supabase-db-container-id"] = "running"
+        runner.health_status["supabase-db-container-id"] = "healthy"
+        runner.status["supabase-auth-container-id"] = "created"
+        runner.status["supabase-kong-container-id"] = "created"
+        runner.port_mappings[("supabase-db-container-id", "5432")] = "0.0.0.0:5432\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
+
+            result = _compose_run(
+                process_runner=runner,
+                compose_root=root,
+                compose_project_name="envctl-supabase-test",
+                compose_path=compose_path,
+                env={"ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5"},
+                args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn("Command timed out after 5.0s", result or "")
+        self.assertIn("supabase-auth", result or "")
 
     def test_supabase_auth_health_probe_retries_transient_http_failure(self) -> None:
         runner = _FlakyHealthRunner()
@@ -547,6 +645,42 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
     def test_supabase_auth_recovery_defaults_allow_multiple_probe_windows(self) -> None:
         self.assertEqual(_auth_restart_probe_attempts({}), 2)
         self.assertEqual(_auth_recreate_probe_attempts({}), 3)
+
+    def test_redis_pulls_image_before_create_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "create"])
+            self.assertLess(pull_index, create_index)
+
+    def test_redis_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("redis:7-alpine")
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
 
     def test_redis_adopts_existing_port_mapping_without_recreate_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -723,6 +857,45 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertEqual(result.effective_port, 6380)
             self.assertFalse(result.container_recreated)
 
+    def test_redis_recovers_when_docker_start_reports_failure_but_container_is_running(self) -> None:
+        class _Runner(_FakeRunner):
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                command = list(cmd)
+                if command[:2] == ["docker", "start"]:
+                    container = command[2]
+                    self.commands.append(command)
+                    self.existing.add(container)
+                    self.status[container] = "running"
+                    return subprocess.CompletedProcess(command, 1, "", "")
+                return super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _Runner()
+            container_name = build_container_name(
+                prefix="envctl-redis",
+                project_root=root,
+                project_name="Main",
+            )
+            runner.port_mappings[(container_name, "6379")] = "0.0.0.0:6380\n"
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 6380)
+
     def test_redis_recovered_create_uses_settle_probe_without_restart_or_recreate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -777,6 +950,87 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.effective_port, 5680)
 
+    def test_n8n_recovers_when_docker_start_reports_failure_but_container_is_running(self) -> None:
+        class _Runner(_FakeRunner):
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                command = list(cmd)
+                if command[:2] == ["docker", "start"]:
+                    container = command[2]
+                    self.commands.append(command)
+                    self.existing.add(container)
+                    self.status[container] = "running"
+                    return subprocess.CompletedProcess(command, 1, "", "")
+                return super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _Runner()
+            container_name = build_container_name(
+                prefix="envctl-n8n",
+                project_root=root,
+                project_name="Main",
+            )
+            runner.port_mappings[(container_name, "5678")] = "0.0.0.0:5680\n"
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 5680)
+
+    def test_postgres_pulls_image_before_run_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_postgres_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5434,
+                db_user="postgres",
+                db_password="postgres",
+                db_name="postgres",
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            run_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "run"])
+            self.assertLess(pull_index, run_index)
+
+    def test_postgres_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("postgres:15-alpine")
+
+            result = start_postgres_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5434,
+                db_user="postgres",
+                db_password="postgres",
+                db_name="postgres",
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
+
     def test_n8n_uses_configured_image_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -795,7 +1049,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(create_commands)
             self.assertEqual(create_commands[0][-1], "n8nio/n8n:1.0.0")
 
-    def test_n8n_pulls_image_before_create_by_default(self) -> None:
+    def test_n8n_pulls_image_before_create_by_default_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             runner = _FakeRunner()
@@ -806,6 +1060,43 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 project_name="Main",
                 port=5680,
                 env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "create"])
+            self.assertLess(pull_index, create_index)
+
+    def test_n8n_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("n8nio/n8n:latest")
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
+
+    def test_n8n_legacy_pull_flag_forces_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("n8nio/n8n:latest")
+
+            result = start_n8n_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5680,
+                env={"ENVCTL_N8N_PULL_IMAGE": "true"},
             )
 
             self.assertTrue(result.success)
@@ -1544,7 +1835,8 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
             runner.status["db-container-id"] = "running"
             runner.status["auth-container-id"] = "running"
-            runner.status["kong-container-id"] = "created"
+            runner.status["kong-container-id"] = "running"
+            runner.health_status["kong-container-id"] = "healthy"
             runner.wait_for_port_overrides[5432] = True
             runner.wait_for_port_overrides[54321] = True
             runner.health_returncode_sequence = [0]
@@ -1754,6 +2046,170 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             self.assertTrue(
                 any(item.get("stage") == "supabase.auth.wait_progress" for item in result.stage_events or [])
             )
+
+    def test_supabase_recreates_auth_gateway_when_kong_uses_stale_public_port(self) -> None:
+        class _Runner(_FakeRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.auth_gateway_removed = False
+                self.graph_started = False
+
+            def compose_up_process(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                compose_args = list(cmd)[list(cmd).index("-f") + 2 :] if "-f" in list(cmd) else list(cmd)
+                if compose_args == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]:
+                    self.graph_started = True
+                    self.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+                    self.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+                    self.status["auth-container-id"] = "running"
+                    self.status["kong-container-id"] = "running"
+                    self.health_status["auth-container-id"] = "healthy"
+                    self.health_status["kong-container-id"] = "healthy"
+                    self.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54349\n"
+                if (
+                    self.auth_gateway_removed
+                    and compose_args == ["up", "-d", "supabase-auth", "supabase-kong"]
+                ):
+                    self.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54321\n"
+                return super().compose_up_process(cmd, cwd=cwd, env=env)
+
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                result = super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+                command = list(cmd)
+                if (
+                    len(command) >= 4
+                    and command[:2] == ["docker", "compose"]
+                    and command[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                ):
+                    self.auth_gateway_removed = True
+                return result
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _Runner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [True]
+            runner.health_returncode_sequence = [0]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "5"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(result.container_recreated)
+            self.assertTrue(runner.graph_started)
+            self.assertTrue(
+                any(item.get("stage") == "supabase.gateway.port_mismatch" for item in result.stage_events or [])
+            )
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "compose"]
+                    and cmd[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                    for cmd in runner.commands
+                )
+            )
+
+    def test_supabase_removes_stale_gateway_before_initial_graph_start(self) -> None:
+        class _Runner(_FakeRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.auth_gateway_removed = False
+
+            def compose_up_process(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
+                compose_args = list(cmd)[list(cmd).index("-f") + 2 :] if "-f" in list(cmd) else list(cmd)
+                if (
+                    self.auth_gateway_removed
+                    and compose_args == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
+                ):
+                    self.status["auth-container-id"] = "running"
+                    self.status["kong-container-id"] = "running"
+                    self.health_status["auth-container-id"] = "healthy"
+                    self.health_status["kong-container-id"] = "healthy"
+                    self.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54321\n"
+                return super().compose_up_process(cmd, cwd=cwd, env=env)
+
+            def run(self, cmd, *, cwd=None, env=None, timeout=None, process_started_callback=None):  # noqa: ANN001
+                result = super().run(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    timeout=timeout,
+                    process_started_callback=process_started_callback,
+                )
+                command = list(cmd)
+                if (
+                    len(command) >= 4
+                    and command[:2] == ["docker", "compose"]
+                    and command[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+                ):
+                    self.auth_gateway_removed = True
+                return result
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            supabase_dir = root / "supabase"
+            supabase_dir.mkdir(parents=True, exist_ok=True)
+            (supabase_dir / "docker-compose.yml").write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
+            (supabase_dir / ".env").write_text("SUPABASE_DB_PORT=5432\nSUPABASE_PUBLIC_PORT=54321\n", encoding="utf-8")
+
+            runner = _Runner()
+            runner.wait_for_port_sequences[5432] = [True]
+            runner.wait_for_port_sequences[54321] = [True]
+            runner.compose_ps_q_stdout["supabase-auth"] = "auth-container-id\n"
+            runner.compose_ps_q_stdout["supabase-kong"] = "kong-container-id\n"
+            runner.status["auth-container-id"] = "running"
+            runner.status["kong-container-id"] = "created"
+            runner.health_status["auth-container-id"] = "healthy"
+            runner.port_mappings[("kong-container-id", "8000")] = "0.0.0.0:54349\n"
+            runner.health_returncode_sequence = [0]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="feature-a-1",
+                db_port=5432,
+                public_port=54321,
+                env={"ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS": "5"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertFalse(result.container_recreated)
+            self.assertTrue(runner.auth_gateway_removed)
+            self.assertTrue(
+                any(
+                    item.get("stage") == "supabase.gateway.port_mismatch.preflight"
+                    and item.get("reason") == "remove_stale"
+                    for item in result.stage_events or []
+                )
+            )
+            preflight_index = next(
+                index
+                for index, cmd in enumerate(runner.commands)
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-4:] == ["rm", "-f", "supabase-auth", "supabase-kong"]
+            )
+            graph_up_index = next(
+                index
+                for index, cmd in enumerate(runner.commands)
+                if cmd[:2] == ["docker", "compose"]
+                and cmd[-5:] == ["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"]
+            )
+            self.assertLess(preflight_index, graph_up_index)
 
     def test_supabase_db_probe_failure_reports_phase_budget_elapsed_and_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

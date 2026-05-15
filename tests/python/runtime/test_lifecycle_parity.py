@@ -46,6 +46,18 @@ class _NoopPlanner:
         self.released_ports.append(port)
 
 
+class _TrackingPlanner:
+    def __init__(self) -> None:
+        self.released_session = False
+        self.released_all = False
+
+    def release_session(self) -> None:
+        self.released_session = True
+
+    def release_all(self) -> None:
+        self.released_all = True
+
+
 class _TrackingRunner:
     def __init__(self) -> None:
         self.terminated: list[int] = []
@@ -180,6 +192,11 @@ class LifecycleParityTests(unittest.TestCase):
                     "BACKEND_PORT_BASE": "8100",
                     "FRONTEND_PORT_BASE": "9100",
                     "PORT_SPACING": "20",
+                    "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime,relay",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "python -m voice_runtime {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8010",
+                    "ENVCTL_SERVICE_RELAY_START_CMD": "python -m relay {port}",
+                    "ENVCTL_SERVICE_RELAY_PORT_BASE": "13000",
                 }
             )
             engine = PythonEngineRuntime(config, env={})
@@ -189,6 +206,10 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertIn(8100, ports)
             self.assertIn(9100, ports)
             self.assertIn(9300, ports)
+            self.assertIn(54321, ports)
+            self.assertIn(54421, ports)
+            self.assertIn(13000, ports)
+            self.assertIn(13400, ports)
 
     def test_blast_all_kills_orphan_envctl_processes_but_skips_other_blast_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2644,6 +2665,28 @@ class LifecycleParityTests(unittest.TestCase):
             self.assertFalse((repo / "utils" / ".run-sh-port-reservations").exists())
             self.assertFalse(nested_state.exists())
             self.assertIn("Purging leftover state pointers and locks", out.getvalue())
+
+    def test_blast_all_releases_all_scoped_port_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_BLAST_ALL_ECOSYSTEM": "false"})
+            planner = _TrackingPlanner()
+            engine.port_planner = planner  # type: ignore[assignment]
+            engine.process_runner = _TrackingRunner()  # type: ignore[assignment]
+
+            code = engine.dispatch(parse_route(["blast-all"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertTrue(planner.released_all)
+            self.assertFalse(planner.released_session)
 
     def test_blast_all_uses_batched_lsof_port_sweep(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

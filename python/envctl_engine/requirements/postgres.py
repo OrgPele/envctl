@@ -20,6 +20,7 @@ from .common import (
     ContainerStartResult,
     RetryResult,
     build_container_name,
+    ensure_docker_image_present,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -162,6 +163,18 @@ def _create_postgres_container(
         25.0,
         minimum=5.0,
     )
+    image_error = ensure_docker_image_present(
+        process_runner,
+        image=image,
+        cwd=project_root,
+        env=env,
+        pull_policy_key="ENVCTL_POSTGRES_PULL_POLICY",
+        legacy_bool_key="ENVCTL_POSTGRES_PULL_IMAGE",
+        inspect_timeout=env_float(env, "ENVCTL_POSTGRES_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
+        pull_timeout=env_float(env, "ENVCTL_POSTGRES_PULL_TIMEOUT_SECONDS", 300.0, minimum=30.0),
+    )
+    if image_error is not None:
+        return image_error
     run_result, run_error = run_docker(
         process_runner,
         [

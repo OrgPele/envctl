@@ -352,6 +352,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | --- | --- | --- |
 | `ENVCTL_SERVICE_ATTACH_PARALLEL` | `true` | Run backend+frontend service attach in parallel when both are selected. |
 | `ENVCTL_SERVICE_PREP_PARALLEL` | follows `ENVCTL_SERVICE_ATTACH_PARALLEL` | Override backend+frontend bootstrap prep parallelism independently from attach mode. |
+| `ENVCTL_REQUIREMENTS_PARALLEL` | platform default | Run managed dependency startup in parallel. Default is `true` except on macOS, where Docker Desktop port publishing is serialized by default. |
+| `ENVCTL_REQUIREMENTS_PARALLEL_MAX` | `4` | Max concurrently starting managed dependencies when requirement parallel mode is enabled. |
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
 

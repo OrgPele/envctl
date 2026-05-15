@@ -371,11 +371,15 @@ Possible outcomes:
 - computes requirement enablement once into `enabled_lookup`
 - pre-populates disabled definitions as skipped outcomes with zero timing
 - decides requirement-level parallelism with:
+  - `--deps-parallel` / `--parallel-deps` / `--requirements-parallel`
+  - `--deps-sequential` / `--sequential-deps` / `--requirements-sequential`
   - `ENVCTL_REQUIREMENTS_PARALLEL`
   - `ENVCTL_REQUIREMENTS_PARALLEL_MAX`
 - runs only enabled definitions in the executor
 
 This means requirement parallelism is intra-project parallelism and is independent from tree-level parallelism.
+The default is parallel except on macOS, where managed Docker requirements start sequentially unless explicitly
+overridden because Docker Desktop port publishing can stall when multiple containers publish ports at once.
 
 ### Requirement startup mechanics
 

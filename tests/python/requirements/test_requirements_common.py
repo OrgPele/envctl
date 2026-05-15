@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.requirements.common import build_container_name, container_host_port
+from envctl_engine.requirements.common import (
+    _docker_port_publish_lock_enabled,
+    build_container_name,
+    container_host_port,
+    docker_image_pull_policy,
+    docker_port_publish_lock,
+)
 
 
 class _Runner:
@@ -72,6 +83,82 @@ class RequirementsCommonTests(unittest.TestCase):
         )
         self.assertIsNone(error)
         self.assertIsNone(mapped_port)
+
+    def test_docker_port_publish_lock_auto_defaults_to_darwin_only(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+            "envctl_engine.requirements.common.sys.platform",
+            "darwin",
+        ):
+            self.assertTrue(_docker_port_publish_lock_enabled({}))
+            self.assertTrue(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+            "envctl_engine.requirements.common.sys.platform",
+            "linux",
+        ):
+            self.assertFalse(_docker_port_publish_lock_enabled({}))
+            self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "auto"}))
+
+    def test_docker_port_publish_lock_env_overrides_auto_default(self) -> None:
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "linux"):
+            self.assertTrue(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "true"}))
+
+        with mock.patch("envctl_engine.requirements.common.sys.platform", "darwin"):
+            self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "false"}))
+
+    def test_docker_image_pull_policy_defaults_to_missing(self) -> None:
+        self.assertEqual(docker_image_pull_policy({}, "ENVCTL_TEST_PULL_POLICY"), "missing")
+        self.assertEqual(
+            docker_image_pull_policy({"ENVCTL_TEST_PULL_POLICY": "if-missing"}, "ENVCTL_TEST_PULL_POLICY"),
+            "missing",
+        )
+
+    def test_docker_image_pull_policy_supports_legacy_boolean_override(self) -> None:
+        self.assertEqual(
+            docker_image_pull_policy(
+                {"ENVCTL_TEST_PULL_IMAGE": "true"},
+                "ENVCTL_TEST_PULL_POLICY",
+                legacy_bool_key="ENVCTL_TEST_PULL_IMAGE",
+            ),
+            "always",
+        )
+        self.assertEqual(
+            docker_image_pull_policy(
+                {"ENVCTL_TEST_PULL_IMAGE": "false"},
+                "ENVCTL_TEST_PULL_POLICY",
+                legacy_bool_key="ENVCTL_TEST_PULL_IMAGE",
+            ),
+            "never",
+        )
+
+    def test_docker_port_publish_lock_serializes_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {"RUN_SH_RUNTIME_DIR": tmpdir, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "true"}
+            first_entered = threading.Event()
+            release_first = threading.Event()
+            second_entered = threading.Event()
+
+            def hold_lock() -> None:
+                with docker_port_publish_lock(env):
+                    first_entered.set()
+                    release_first.wait(timeout=5.0)
+
+            def wait_for_lock() -> None:
+                first_entered.wait(timeout=5.0)
+                with docker_port_publish_lock(env):
+                    second_entered.set()
+
+            first = threading.Thread(target=hold_lock)
+            second = threading.Thread(target=wait_for_lock)
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=5.0))
+            second.start()
+            time.sleep(0.1)
+            self.assertFalse(second_entered.is_set())
+            release_first.set()
+            first.join(timeout=5.0)
+            second.join(timeout=5.0)
+            self.assertTrue(second_entered.is_set())
 
 
 if __name__ == "__main__":
