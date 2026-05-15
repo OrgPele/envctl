@@ -1773,7 +1773,12 @@ def _compose_stalled_port_detail(
     service_names: list[str],
     probe_port: int | None,
 ) -> str | None:
-    _ = probe_port
+    if probe_port is not None and not bool(process_runner.wait_for_port(probe_port, timeout=0.2)):
+        return f"Docker Compose stalled before publishing Supabase DB host port {probe_port}."
+    public_port = _compose_public_port(compose_root=compose_root)
+    if public_port is not None and any(_is_gateway_service_name(service_name) for service_name in service_names):
+        if not bool(process_runner.wait_for_port(public_port, timeout=0.2)):
+            return f"Docker Compose stalled before publishing Supabase API host port {public_port}."
     return _compose_unpublished_port_detail(
         process_runner=process_runner,
         compose_root=compose_root,
