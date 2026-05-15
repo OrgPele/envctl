@@ -646,6 +646,42 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertEqual(_auth_restart_probe_attempts({}), 2)
         self.assertEqual(_auth_recreate_probe_attempts({}), 3)
 
+    def test_redis_pulls_image_before_create_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "create"])
+            self.assertLess(pull_index, create_index)
+
+    def test_redis_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("redis:7-alpine")
+
+            result = start_redis_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=6380,
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
+
     def test_redis_adopts_existing_port_mapping_without_recreate_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -952,6 +988,48 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             self.assertEqual(result.effective_port, 5680)
+
+    def test_postgres_pulls_image_before_run_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+
+            result = start_postgres_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5434,
+                db_user="postgres",
+                db_password="postgres",
+                db_name="postgres",
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            pull_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "pull"])
+            run_index = next(i for i, cmd in enumerate(runner.commands) if cmd[:2] == ["docker", "run"])
+            self.assertLess(pull_index, run_index)
+
+    def test_postgres_skips_default_pull_when_image_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            runner.images.add("postgres:15-alpine")
+
+            result = start_postgres_container(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                port=5434,
+                db_user="postgres",
+                db_password="postgres",
+                db_name="postgres",
+                env={},
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(any(cmd[:3] == ["docker", "image", "inspect"] for cmd in runner.commands))
+            self.assertFalse(any(cmd[:2] == ["docker", "pull"] for cmd in runner.commands))
 
     def test_n8n_uses_configured_image_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

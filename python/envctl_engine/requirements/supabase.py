@@ -26,6 +26,7 @@ from .common import (
     container_host_port,
     container_status,
     docker_port_publish_lock,
+    ensure_docker_image_present,
     is_bind_conflict,
     run_docker,
     run_result_error,
@@ -865,6 +866,19 @@ def _start_supabase_db_native(
                     container_name=container_name,
                     error=f"probe timeout waiting for readiness on port {db_port}; {remove_error}",
                 )
+
+    image_error = ensure_docker_image_present(
+        process_runner,
+        image=image,
+        cwd=project_root,
+        env=env,
+        pull_policy_key="ENVCTL_SUPABASE_DB_PULL_POLICY",
+        legacy_bool_key="ENVCTL_SUPABASE_DB_PULL_IMAGE",
+        inspect_timeout=env_float(env, "ENVCTL_SUPABASE_DB_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
+        pull_timeout=env_float(env, "ENVCTL_SUPABASE_DB_PULL_TIMEOUT_SECONDS", 300.0, minimum=30.0),
+    )
+    if image_error is not None:
+        return ContainerStartResult(success=False, container_name=container_name, error=image_error)
 
     env_values = env or {}
     jwt_secret = env_values.get("SUPABASE_JWT_SECRET") or DEFAULT_SUPABASE_JWT_SECRET

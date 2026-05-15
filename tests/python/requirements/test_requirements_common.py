@@ -15,6 +15,7 @@ from envctl_engine.requirements.common import (
     _docker_port_publish_lock_enabled,
     build_container_name,
     container_host_port,
+    docker_image_pull_policy,
     docker_port_publish_lock,
 )
 
@@ -104,6 +105,31 @@ class RequirementsCommonTests(unittest.TestCase):
 
         with mock.patch("envctl_engine.requirements.common.sys.platform", "darwin"):
             self.assertFalse(_docker_port_publish_lock_enabled({"ENVCTL_DOCKER_PORT_PUBLISH_LOCK": "false"}))
+
+    def test_docker_image_pull_policy_defaults_to_missing(self) -> None:
+        self.assertEqual(docker_image_pull_policy({}, "ENVCTL_TEST_PULL_POLICY"), "missing")
+        self.assertEqual(
+            docker_image_pull_policy({"ENVCTL_TEST_PULL_POLICY": "if-missing"}, "ENVCTL_TEST_PULL_POLICY"),
+            "missing",
+        )
+
+    def test_docker_image_pull_policy_supports_legacy_boolean_override(self) -> None:
+        self.assertEqual(
+            docker_image_pull_policy(
+                {"ENVCTL_TEST_PULL_IMAGE": "true"},
+                "ENVCTL_TEST_PULL_POLICY",
+                legacy_bool_key="ENVCTL_TEST_PULL_IMAGE",
+            ),
+            "always",
+        )
+        self.assertEqual(
+            docker_image_pull_policy(
+                {"ENVCTL_TEST_PULL_IMAGE": "false"},
+                "ENVCTL_TEST_PULL_POLICY",
+                legacy_bool_key="ENVCTL_TEST_PULL_IMAGE",
+            ),
+            "never",
+        )
 
     def test_docker_port_publish_lock_serializes_threads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

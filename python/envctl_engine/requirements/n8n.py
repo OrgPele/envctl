@@ -20,6 +20,7 @@ from .common import (
     container_exists,
     container_status,
     docker_port_publish_lock,
+    ensure_docker_image_present,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -243,70 +244,16 @@ def _pull_n8n_image_if_needed(
     env: Mapping[str, str] | None,
     image: str,
 ) -> str | None:
-    pull_policy = _n8n_pull_policy(env)
-    if pull_policy == "never":
-        return None
-    if pull_policy == "missing":
-        image_exists, image_exists_error = _n8n_image_exists(
-            process_runner=process_runner,
-            project_root=project_root,
-            env=env,
-            image=image,
-        )
-        if image_exists_error:
-            return image_exists_error
-        if image_exists:
-            return None
-    pull_timeout_seconds = env_float(
-        env,
-        "ENVCTL_N8N_PULL_TIMEOUT_SECONDS",
-        300.0,
-        minimum=30.0,
-    )
-    pull_result, pull_error = run_docker(
+    return ensure_docker_image_present(
         process_runner,
-        ["pull", image],
+        image=image,
         cwd=project_root,
         env=env,
-        timeout=pull_timeout_seconds,
+        pull_policy_key="ENVCTL_N8N_PULL_POLICY",
+        legacy_bool_key="ENVCTL_N8N_PULL_IMAGE",
+        inspect_timeout=env_float(env, "ENVCTL_N8N_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
+        pull_timeout=env_float(env, "ENVCTL_N8N_PULL_TIMEOUT_SECONDS", 300.0, minimum=30.0),
     )
-    if pull_result is None:
-        return pull_error
-    if getattr(pull_result, "returncode", 1) != 0:
-        return run_result_error(pull_result, f"failed pulling n8n image {image}")
-    return None
-
-
-def _n8n_pull_policy(env: Mapping[str, str] | None) -> str:
-    configured_policy = str((env or {}).get("ENVCTL_N8N_PULL_POLICY", "")).strip().lower()
-    normalized_policy = configured_policy.replace("_", "-")
-    if normalized_policy in {"always", "missing", "if-missing", "never"}:
-        return "missing" if normalized_policy == "if-missing" else normalized_policy
-
-    legacy_pull_flag = (env or {}).get("ENVCTL_N8N_PULL_IMAGE")
-    if legacy_pull_flag is not None:
-        return "always" if env_bool(env, "ENVCTL_N8N_PULL_IMAGE", True) else "never"
-
-    return "missing"
-
-
-def _n8n_image_exists(
-    *,
-    process_runner: ProcessRuntime,
-    project_root: Path,
-    env: Mapping[str, str] | None,
-    image: str,
-) -> tuple[bool, str | None]:
-    inspect_result, inspect_error = run_docker(
-        process_runner,
-        ["image", "inspect", image],
-        cwd=project_root,
-        env=env,
-        timeout=env_float(env, "ENVCTL_N8N_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
-    )
-    if inspect_result is None:
-        return False, inspect_error
-    return getattr(inspect_result, "returncode", 1) == 0, None
 
 
 def _recover_n8n_start_timeout(

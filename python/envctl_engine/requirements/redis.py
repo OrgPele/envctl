@@ -24,6 +24,7 @@ from .common import (
     container_exists,
     container_status,
     docker_port_publish_lock,
+    ensure_docker_image_present,
     run_docker,
     run_result_error,
     run_with_retry,
@@ -177,6 +178,18 @@ def _create_redis_container(
     env: Mapping[str, str] | None,
     image: str,
 ) -> str | None:
+    image_error = ensure_docker_image_present(
+        process_runner,
+        image=image,
+        cwd=project_root,
+        env=env,
+        pull_policy_key="ENVCTL_REDIS_PULL_POLICY",
+        legacy_bool_key="ENVCTL_REDIS_PULL_IMAGE",
+        inspect_timeout=env_float(env, "ENVCTL_REDIS_IMAGE_INSPECT_TIMEOUT_SECONDS", 10.0, minimum=1.0),
+        pull_timeout=env_float(env, "ENVCTL_REDIS_PULL_TIMEOUT_SECONDS", 300.0, minimum=30.0),
+    )
+    if image_error is not None:
+        return image_error
     return _create_redis_container_locked(
         process_runner=process_runner,
         project_root=project_root,

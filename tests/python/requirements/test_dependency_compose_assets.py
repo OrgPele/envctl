@@ -50,6 +50,7 @@ class DependencyComposeAssetsTests(unittest.TestCase):
             self.assertIn("SUPABASE_PUBLIC_PORT=54321", env_text)
             self.assertIn("SUPABASE_PUBLIC_URL=http://localhost:54321", env_text)
             self.assertIn('"${SUPABASE_PUBLIC_PORT:-54321}:8000"', compose_text)
+            self.assertEqual(compose_text.count("pull_policy: missing"), 3)
 
     def test_materialize_dependency_compose_repairs_stale_directories_at_file_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
