@@ -429,8 +429,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             self.assertIn("Plan agent launch did not leave an attachable AI session.", rendered)
             self.assertIn("reason: attach_target_stale_after_launch", rendered)
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            resolved_envctl = Path(repo).resolve() / "bin" / "envctl"
-            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {resolved_envctl} --plan feature-a --tmux", rendered)
+            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
             self.assertIn("--tmux-new-session", rendered)

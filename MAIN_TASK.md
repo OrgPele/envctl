@@ -1,95 +1,134 @@
-# No Remaining Startup Orchestration Decision-Boundary Work
+# Resolve Startup Refactor PR Conflicts With Main
 
 ## Context and objective
 
-The prior `MAIN_TASK.md` has been archived as `OLD_TASK_1.md`.
+The previous iteration task has been archived as `OLD_TASK_2.md`. The original startup orchestration decision-boundary task remains archived as `OLD_TASK_1.md`.
 
-This file is the next implementation-iteration task after auditing the archived startup orchestration decision-boundary refactor against code, tests, docs, git history, and PR evidence. The audit found that the prior task is fully implemented and validated. There is no remaining implementation scope to carry forward from the archived task.
+The startup orchestration implementation itself is complete: the branch contains the owner-module extraction, focused tests, docs updates, full local validation evidence, and PR #225 is open. A fresh audit found one remaining delivery blocker: PR #225 is now `CONFLICTING` / `DIRTY` against `origin/main` after upstream changes landed on `main`.
 
-The objective for this iteration is therefore to preserve that conclusion: do not implement additional startup orchestration changes under this task unless new evidence is first added to this file and mapped to a concrete failing requirement.
+Objective: fully resolve the PR #225 merge conflicts against `origin/main` end-to-end, preserving the startup orchestration refactor from this branch and the upstream behavior now present on `main`, then validate, commit, push, update PR #225, and verify review/check status.
 
 ## Remaining requirements (complete and exhaustive)
 
-There are no remaining requirements from the archived startup orchestration decision-boundary refactor.
-
-No backend, frontend, data, integration, documentation, test, or runtime behavior changes are required for this iteration.
+1. Rebase or merge the branch onto the current `origin/main` in the current worktree only.
+2. Resolve every Git conflict reported between `HEAD` and `origin/main`; do not use a blanket ours/theirs resolution.
+3. Preserve this branch's startup orchestration decision-boundary work:
+   - `python/envctl_engine/startup/execution_plan.py`
+   - `python/envctl_engine/startup/run_reuse_application.py`
+   - `python/envctl_engine/startup/project_execution.py`
+   - thin `StartupOrchestrator` delegation to those owner modules
+   - startup module-layout tests and focused reuse/project-execution tests
+   - docs mapping the startup phases to the new owner modules
+4. Preserve upstream `origin/main` behavior and tests, especially:
+   - plan-agent modularization and public compatibility facade behavior
+   - Supabase/dependency startup reliability and requirements parallelism behavior
+   - macOS tmux/path/lifecycle validation behavior
+   - upstream reuse-expand tree startup behavior from PR #223
+5. Integrate overlapping reuse-expand tests so both branch coverage and upstream coverage remain meaningful without duplicate or contradictory assertions.
+6. Update docs only where conflict resolution changes the accurate owner-module or runtime behavior descriptions.
+7. Keep task archive files intact:
+   - `OLD_TASK_1.md` remains the original archived implementation task.
+   - `OLD_TASK_2.md` remains the archived no-remaining-work audit task.
+8. When implementation is complete, run the required local validation, commit the resolved branch, push it, update PR #225 if needed, inspect unresolved PR review threads/comments, and verify GitHub checks or explicitly document that no checks are reported.
 
 ## Gaps from prior iteration (mapped to evidence)
 
-No gaps remain.
-
-Requirement status matrix from the archived task:
-
-| Archived requirement | Status | Evidence |
+| Gap | Status | Evidence |
 | --- | --- | --- |
-| Add characterization tests for reuse-expand, stale reuse-expand, resume failure behavior, dashboard resume, and reuse-expand spinner rows | Fully implemented | `tests/python/startup/test_startup_orchestrator_flow.py`, `tests/python/startup/test_startup_spinner_integration.py` |
-| Introduce explicit startup planning models and session accumulator helpers | Fully implemented | `python/envctl_engine/startup/execution_plan.py`, `tests/python/startup/test_startup_execution_plan.py` |
-| Extract run-reuse application from `StartupOrchestrator` while preserving event names and behavior | Fully implemented | `python/envctl_engine/startup/run_reuse_application.py`, `StartupOrchestrator._resolve_run_reuse(...)` delegates to `resolve_run_reuse_for_session(...)`, `tests/python/startup/test_startup_run_reuse_application.py` |
-| Extract project execution coordination from `StartupOrchestrator` | Fully implemented | `python/envctl_engine/startup/project_execution.py`, `StartupOrchestrator._start_selected_contexts(...)` delegates to `execute_project_startup_plan(...)`, `tests/python/startup/test_startup_project_execution.py` |
-| Keep `StartupSession` as accumulator and centralize preserved/new result application | Fully implemented | `apply_execution_plan_to_session(...)`, `apply_project_startup_result_to_session(...)`, `StartupSession.merged_services`, `StartupSession.merged_requirements`, focused accumulator tests |
-| Narrow `StartupOrchestrator.execute(...)` to phase orchestration and prevent ownership regression | Fully implemented | `StartupOrchestrator.execute(...)` phase list, thin wrapper tests in `tests/python/startup/test_startup_module_layout.py` |
-| Keep finalization behavior stable and cover preserved/new service merge behavior | Fully implemented | `tests/python/startup/test_startup_orchestrator_profiles.py` and existing finalization call paths |
-| Update developer docs and module ownership tests | Fully implemented | `docs/developer/startup-resume-deep-dive.md`, `tests/python/startup/test_startup_module_layout.py` |
-| Run focused startup/runtime suites, full pytest, runtime smoke, commit, push, and PR update | Fully implemented | Commits `263101c` and `3869c37`, PR #225, full pytest result `2342 passed, 2 skipped, 300 subtests passed` |
+| Prior `MAIN_TASK.md` stated no remaining implementation work, but the PR is not mergeable against `main` | Not implemented | `gh pr view 225 --json mergeable,mergeStateStatus,baseRefName,headRefName` reported `mergeable=CONFLICTING`, `mergeStateStatus=DIRTY`, base `main`, head `refactoring_startup_orchestration_decision_boundaries-1` |
+| Branch has content conflicts with current `origin/main` | Not implemented | `git merge-tree --name-only HEAD origin/main` reported conflicts in `python/envctl_engine/planning/plan_agent_launch_support.py`, `python/envctl_engine/requirements/supabase.py`, `python/envctl_engine/runtime/codex_tmux_support.py`, `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py`, `python/envctl_engine/startup/startup_orchestrator.py`, `tests/python/requirements/test_requirements_adapters_real_contracts.py`, `tests/python/runtime/test_qa_user_command_support.py`, and `tests/python/startup/test_startup_orchestrator_flow.py` |
+| Upstream reuse-expand tree coverage overlaps branch reuse-expand coverage | Partially implemented | `git merge-tree HEAD origin/main` shows conflict markers inside `tests/python/startup/test_startup_orchestrator_flow.py` around branch `test_reuse_expand_preserves_existing_project_state_and_starts_only_new_projects` / stale reuse tests and upstream `test_tree_start_reuse_expand_preserves_existing_services_and_starts_only_new_tree` |
+| PR has no review-thread blockers, but review/check state must be rechecked after the conflict-resolution push | Partially implemented | `gh api graphql ... reviewThreads` returned no nodes before this iteration; `gh pr checks 225` reported no checks on the current head before this iteration |
 
-Git evidence used for this audit:
+Git evidence used during audit:
 
 - `git status --short`
 - `git diff --name-status`
 - `git diff --cached --name-status`
 - `git log --oneline --decorate -n 30`
 - `git merge-base HEAD origin/fix/supabase-compose-timeout-120`
-- `git diff --name-status <merge-base>..HEAD`
-- `git log --oneline --decorate <merge-base>..HEAD`
-- `git show --name-status --oneline --decorate 263101c`
-- `git show --name-status --oneline --decorate 3869c37`
+- `git diff --name-status <originating-merge-base>..HEAD`
+- `git log --oneline --decorate <originating-merge-base>..HEAD`
+- `git show --name-status --oneline --decorate 263101c 3869c37 97cec75`
+- `git fetch origin fix/supabase-compose-timeout-120 main refactoring_startup_orchestration_decision_boundaries-1`
+- `gh pr view 225 --json number,url,state,baseRefName,headRefName,headRefOid,baseRefOid,mergeable,mergeStateStatus,isCrossRepository,reviewDecision`
+- `gh pr checks 225`
+- `gh api graphql ... reviewThreads`
+- `git merge-base HEAD origin/main`
+- `git diff --name-status <main-merge-base>..HEAD`
+- `git diff --name-status <main-merge-base>..origin/main`
+- `git log --oneline --decorate --left-right --cherry-pick HEAD...origin/main`
+- `git merge-tree --name-only HEAD origin/main`
+- `git merge-tree --messages HEAD origin/main`
 
 ## Acceptance criteria (requirement-by-requirement)
 
-This iteration is accepted when:
-
-- `OLD_TASK_1.md` exists and contains the archived startup orchestration decision-boundary task.
-- This `MAIN_TASK.md` states that no remaining implementation work exists from that archived task.
-- No new code or behavior changes are made solely to satisfy this no-op iteration.
-- If future reviewer findings, failed required checks, or new repo evidence contradict the audit, this file is updated before any implementation begins so each new requirement is explicit, testable, and mapped to evidence.
+1. The local branch is rebased onto or merged with current `origin/main`, and `git status --short` shows no unmerged paths.
+2. `gh pr view 225 --json mergeable,mergeStateStatus` no longer reports `CONFLICTING` / `DIRTY` after push.
+3. The startup owner modules remain wired and tested:
+   - `StartupOrchestrator._resolve_run_reuse(...)` delegates to `resolve_run_reuse_for_session(...)`.
+   - `StartupOrchestrator._start_selected_contexts(...)` delegates to `execute_project_startup_plan(...)`.
+   - `_record_project_startup(...)` delegates to `apply_project_startup_result_to_session(...)`.
+4. The upstream plan-agent facade/module split remains intact; internal code should import private helpers from owner modules under `planning/plan_agent/` when that is the upstream convention.
+5. The upstream Supabase/dependency startup behavior remains intact, including requirements parallelism flags and macOS/default behavior.
+6. Reuse-expand startup behavior covers both:
+   - branch behavior: preserved services/requirements from a reused project are merged with newly started projects, stale reuse-expand starts all selected projects fresh, and failure writes a fresh run id.
+   - upstream behavior: tree startup can reuse existing selected trees and starts only newly requested tree projects without terminating preserved services.
+7. No conflict markers remain in tracked files.
+8. `.envctl-commit-message.md` describes the final cumulative conflict-resolution commit.
+9. PR #225 is pushed and review threads/comments are inspected. Any actionable unresolved comments are addressed before final handoff.
 
 ## Required implementation scope (frontend/backend/data/integration)
 
 Frontend scope: none.
 
-Backend scope: none.
+Backend/runtime scope: Python runtime and startup orchestration conflict resolution only.
 
 Data or migration scope: none.
 
-Integration/runtime scope: none.
+Integration scope: PR branch synchronization with `origin/main`; no sibling worktree edits are allowed.
 
-Documentation scope: none beyond this iteration task handoff file.
+Documentation scope: only update docs touched by the merge when needed to keep startup, plan-agent, and dependency behavior accurate.
 
 ## Required tests and quality gates
 
-No tests are required for this no-op implementation iteration because no production or test code changes are required.
+Run the narrow tests first after resolving conflicts:
 
-Current validation evidence from the completed prior implementation:
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_execution_plan`
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_run_reuse_application`
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_project_execution`
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_module_layout`
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_orchestrator_flow`
+- `PYTHONPATH=python python3 -m unittest tests.python.startup.test_startup_spinner_integration`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_qa_user_command_support`
+- `PYTHONPATH=python python3 -m unittest tests.python.requirements.test_requirements_adapters_real_contracts`
+- `PYTHONPATH=python python3 -m unittest tests.python.planning.test_plan_agent_launch_support`
 
-- Focused startup/runtime unittest suite: `312 tests OK`.
-- Planning/dashboard/QA compatibility suite: `252 passed, 17 subtests passed`.
-- Full pytest suite: `2342 passed, 2 skipped, 300 subtests passed`.
-- Runtime smoke: `.venv/bin/envctl --entire-system --headless` succeeded with main startup disabled; `.venv/bin/envctl stop --entire-system --headless` stopped runtime state.
-- GitHub PR checks: no status checks reported for PR #225; branch protection API reports no required status checks on `main`.
-- PR review threads: none.
+Then run the full relevant suite:
 
-If any implementation changes are added after this file is written, rerun the relevant focused tests and the full `.venv/bin/python -m pytest -q` suite before handoff.
+- `.venv/bin/python -m pytest -q`
+
+If a runtime smoke is needed because conflict resolution touches startup runtime behavior beyond tests, use the smallest envctl scope that proves it. Use `envctl --entire-system --headless` if the resolution affects startup/service/dependency integration in a way not covered by tests.
+
+After pushing, run:
+
+- `gh pr checks 225 --watch` when checks are reported.
+- `gh pr checks 225` and record the no-checks output if no checks are configured.
+- GraphQL review-thread inspection for unresolved actionable comments.
 
 ## Edge cases and failure handling
 
-If a new actionable PR review comment appears, create explicit remaining requirements in this file before implementation.
-
-If GitHub starts reporting required status checks for PR #225, wait for those checks and add any failures here before implementation.
-
-If a future full-suite run fails, classify the failure against the archived task scope before changing code. Only carry forward failures that are caused by, or block acceptance of, the startup orchestration decision-boundary refactor.
+- If `origin/main` has advanced again before implementation starts, fetch and use the new `origin/main`.
+- If an upstream implementation already supersedes a branch-side helper, prefer the upstream owner boundary and adapt this branch's tests and call sites to preserve behavior without duplicate internals.
+- If a conflict is only in tests, still inspect the corresponding production code before resolving the test so assertions match real call paths.
+- If full pytest reveals failures outside the conflict files, classify whether they are caused by the rebase/merge. Fix caused failures in this iteration; document unrelated pre-existing failures with evidence only if they cannot be fixed within this task.
+- Do not delete branch-added task archives or tests to make the merge easier.
 
 ## Definition of done
 
-- The archived task remains preserved as `OLD_TASK_1.md`.
-- This `MAIN_TASK.md` remains the authoritative statement that no implementation scope is left from the archived task.
-- No additional feature, refactor, or test work is performed under this task unless new evidence is first recorded here.
+- Current `MAIN_TASK.md` is fully implemented end-to-end.
+- PR #225 is mergeable against current `origin/main`.
+- All conflict files are resolved with both branch and upstream behavior preserved.
+- Required focused tests and full pytest are green, or any unavoidable external/runtime limitation is documented with exact command output.
+- The branch is committed and pushed.
+- PR #225 is updated, unresolved review threads/comments are handled, and GitHub check status is verified.

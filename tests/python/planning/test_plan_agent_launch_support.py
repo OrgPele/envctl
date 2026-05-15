@@ -1395,10 +1395,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             rendered = out.getvalue()
             self.assertIn("recovery: ENVCTL_PLAN_AGENT_CODEX_CYCLES=2", rendered)
-            self.assertIn(
-                f"ENVCTL_USE_REPO_WRAPPER=1 {repo.resolve() / 'bin' / 'envctl'} --plan feature-a --tmux",
-                rendered,
-            )
+            self.assertIn(f"ENVCTL_USE_REPO_WRAPPER=1 {repo / 'bin' / 'envctl'} --plan feature-a --tmux", rendered)
             self.assertIn("--codex", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
