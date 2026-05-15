@@ -385,7 +385,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--no-goal           disable Codex /goal framing for this launch",
             "--codex             force Codex for cmux/tmux launches",
             "--opencode          force OpenCode for cmux/tmux launches",
-            "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
+            "--ulw               cmux/tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode direct prompts)",
             "--new-worktree      create one more implementation worktree and launch a fresh AI session there",
             "--new-session       create a fresh AI terminal session/surface instead of reusing an attachable one",
             "--fresh-session     clearer alias for --new-session",

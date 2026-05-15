@@ -46,9 +46,9 @@ envctl --list-trees --json
 envctl explain-startup --json
 ```
 
-## Optional Cmux Agent Launch
+## Optional Plan-Agent Launch
 
-`--plan` can open one new `cmux` terminal surface per selected implementation worktree when the feature is enabled in config/env, or when you explicitly pass `--cmux` or `--new-worktree`:
+`--plan` can open one new AI terminal session per selected implementation worktree when the feature is enabled in config/env, or when you explicitly pass `--cmux`, `--tmux`, `--omx`, or `--new-worktree`:
 
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
@@ -72,10 +72,11 @@ Behavior:
 
 - only runs for `--plan`
 - launches for worktrees created during the current reconciliation; explicit `--cmux --new-session` can also launch a fresh surface for an already-selected implementation worktree
+- when no transport is selected, Linux defaults to tmux; other hosts prefer cmux and fall back to tmux when cmux is not installed
 - current planning follow-ups choose one launch surface per invocation; do not assume a later second launch can attach to the same reconciliation unless envctl explicitly says it created or recovered the target worktree(s)
 - skips `--planning-prs`
-- skips cleanly when the feature is disabled, no launch target was selected, or the caller is not inside `cmux` while strict caller-context mode is enabled
-- when enabled without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
+- skips cleanly when the feature is disabled, no launch target was selected, or a cmux launch cannot resolve a workspace while strict caller-context mode is enabled
+- for cmux launches without an explicit workspace override, envctl derives the target workspace name as `"<current workspace> implementation"`
 - if `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` is set, envctl uses that workspace directly and treats the feature as enabled even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset
 - the workspace override accepts either a cmux handle such as `workspace:1` or a workspace title such as `envctl`
 - when a named target workspace does not exist yet, envctl creates it and reuses that workspace's initial cmux starter surface for the first plan-agent launch when it can identify that starter surface unambiguously; otherwise it falls back to opening a new surface
@@ -106,7 +107,7 @@ Use `--no-deps` when you want to launch the AI session without dependency prep o
 and dependency prep. Use `--no-infra` when the task does not need backend, frontend, managed dependencies, or
 dependency prep at all.
 
-Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux launches keep using `/<preset>`, while `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab/window, renames it to a compact worktree-derived title when supported, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux/tmux launches submit the rendered prompt body directly by default. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 

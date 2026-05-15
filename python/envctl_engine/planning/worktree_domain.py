@@ -834,6 +834,10 @@ def _plan_agent_launch_transport(route: Route) -> str:
         return "omx"
     if bool(flags.get("tmux")):
         return "tmux"
+    if bool(flags.get("cmux")):
+        return "cmux"
+    if sys.platform.startswith("linux"):
+        return "tmux"
     return "cmux"
 
 

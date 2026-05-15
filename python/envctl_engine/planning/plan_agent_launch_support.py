@@ -8,10 +8,10 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
@@ -333,6 +333,57 @@ def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
     return normalized_cli == "opencode" and direct_prompt_enabled
 
 
+def _host_default_plan_agent_transport(route: object | None) -> Literal["cmux", "tmux"]:
+    if str(getattr(route, "command", "") or "").strip() == "plan" and sys.platform.startswith("linux"):
+        return "tmux"
+    return "cmux"
+
+
+def _cmux_transport_configured(
+    *,
+    route_flags: Mapping[str, object],
+    env_map: Mapping[str, str],
+    config: EngineConfig,
+) -> bool:
+    if bool(route_flags.get("cmux")):
+        return True
+    if str(env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE") or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE") or "").strip():
+        return True
+    return parse_bool(env_map.get("CMUX") or config.raw.get("CMUX"), False)
+
+
+def _explicit_plan_agent_transport(
+    *,
+    route_flags: Mapping[str, object],
+    env_map: Mapping[str, str],
+    config: EngineConfig,
+) -> Literal["cmux", "tmux", "omx"] | None:
+    if bool(route_flags.get("omx")):
+        return "omx"
+    if bool(route_flags.get("tmux")):
+        return "tmux"
+    if _cmux_transport_configured(route_flags=route_flags, env_map=env_map, config=config):
+        return "cmux"
+    return None
+
+
+def _resolve_plan_agent_transport(
+    *,
+    route: object | None,
+    route_flags: Mapping[str, object],
+    env_map: Mapping[str, str],
+    config: EngineConfig,
+) -> Literal["cmux", "tmux", "omx"]:
+    explicit = _explicit_plan_agent_transport(
+        route_flags=route_flags,
+        env_map=env_map,
+        config=config,
+    )
+    if explicit is not None:
+        return explicit
+    return _host_default_plan_agent_transport(route)
+
+
 def _build_plan_agent_workflow(
     *,
     cli: str,
@@ -396,15 +447,11 @@ def resolve_plan_agent_launch_config(
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
-    opencode_launch_requested = bool(route_flags.get("opencode"))
-    transport: Literal["cmux", "tmux", "omx"] = (
-        "omx"
-        if bool(route_flags.get("omx"))
-        else (
-            "cmux"
-            if bool(route_flags.get("cmux"))
-            else ("tmux" if bool(route_flags.get("tmux")) or opencode_launch_requested else "cmux")
-        )
+    transport = _resolve_plan_agent_transport(
+        route=route,
+        route_flags=route_flags,
+        env_map=env_map,
+        config=config,
     )
     cli = str(
         "opencode"
@@ -453,16 +500,17 @@ def resolve_plan_agent_launch_config(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or transport in {"tmux", "omx"} or _route_explicitly_requests_plan_agent_launch(route)
+    ) or bool(cmux_workspace) or _route_explicitly_requests_plan_agent_launch(route)
+    opencode_direct_prompt_default = transport in {"cmux", "tmux"} and cli == "opencode"
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        True if (transport == "tmux" and cli == "opencode") else False,
+        opencode_direct_prompt_default,
     )
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        True if (transport == "tmux" and cli == "opencode" and direct_prompt_enabled) else False,
+        True if (opencode_direct_prompt_default and direct_prompt_enabled) else False,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
@@ -471,7 +519,7 @@ def resolve_plan_agent_launch_config(
     )
     if bool(route_flags.get("ulw")):
         ulw_loop_prefix = True
-        if transport == "tmux" and cli == "opencode":
+        if transport in {"cmux", "tmux"} and cli == "opencode":
             direct_prompt_enabled = True
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     if bool(route_flags.get("ultragoal")):
@@ -559,8 +607,55 @@ def _route_explicitly_requests_plan_agent_launch(route: object | None) -> bool:
     )
 
 
+def _cmux_transport_explicitly_requested(
+    *,
+    config: EngineConfig,
+    env: Mapping[str, str] | None,
+    route: object | None,
+) -> bool:
+    env_map = dict(env or {})
+    _apply_plan_agent_aliases(env_map, explicit_values=env_map)
+    route_flags = getattr(route, "flags", {}) or {}
+    return _cmux_transport_configured(route_flags=route_flags, env_map=env_map, config=config)
+
+
+def _maybe_fallback_default_cmux_to_tmux(
+    launch_config: PlanAgentLaunchConfig,
+    *,
+    config: EngineConfig,
+    env: Mapping[str, str] | None,
+    route: object | None,
+    command_exists: Callable[[str], bool],
+) -> PlanAgentLaunchConfig:
+    if launch_config.transport != "cmux":
+        return launch_config
+    if _cmux_transport_explicitly_requested(config=config, env=env, route=route):
+        return launch_config
+    if command_exists("cmux"):
+        return launch_config
+    if not command_exists("tmux"):
+        return launch_config
+    return replace(launch_config, transport="tmux")
+
+
+def _resolve_effective_plan_agent_launch_config(
+    runtime: Any,
+    *,
+    route: object | None = None,
+) -> PlanAgentLaunchConfig:
+    env = getattr(runtime, "env", {})
+    launch_config = resolve_plan_agent_launch_config(runtime.config, env, route=route)
+    return _maybe_fallback_default_cmux_to_tmux(
+        launch_config,
+        config=runtime.config,
+        env=env,
+        route=route,
+        command_exists=runtime._command_exists,
+    )
+
+
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
-    return launch_config.transport == "tmux" and launch_config.cli == "opencode"
+    return launch_config.transport in {"cmux", "tmux"} and launch_config.cli == "opencode"
 
 
 def _guidance_attach_command(session_name: str) -> tuple[str, ...]:
@@ -572,8 +667,17 @@ def plan_agent_launch_prereq_commands(
     env: dict[str, str] | None = None,
     *,
     route: object | None = None,
+    command_exists: Callable[[str], bool] | None = None,
 ) -> tuple[str, ...]:
     launch_config = resolve_plan_agent_launch_config(config, env, route=route)
+    if command_exists is not None:
+        launch_config = _maybe_fallback_default_cmux_to_tmux(
+            launch_config,
+            config=config,
+            env=env,
+            route=route,
+            command_exists=command_exists,
+        )
     if not launch_config.enabled:
         return ()
     if launch_config.transport == "omx":
@@ -586,7 +690,7 @@ def plan_agent_launch_prereq_commands(
 
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
+    launch_config = _resolve_effective_plan_agent_launch_config(runtime, route=route)
     workflow = _build_plan_agent_workflow(
         cli=launch_config.cli,
         preset=launch_config.preset,
@@ -749,7 +853,7 @@ def launch_plan_agent_terminals(
     route: object,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> PlanAgentLaunchResult:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
+    launch_config = _resolve_effective_plan_agent_launch_config(runtime, route=route)
     workflow = _build_plan_agent_workflow(
         cli=launch_config.cli,
         preset=launch_config.preset,
@@ -775,7 +879,7 @@ def launch_plan_agent_terminals(
         runtime._emit("planning.agent_launch.skipped", reason="disabled", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="disabled")
     if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
-        _print_launch_summary("Plan agent launch skipped: --ulw requires --tmux --opencode.")
+        _print_launch_summary("Plan agent launch skipped: --ulw requires --opencode with cmux or --tmux.")
         runtime._emit("planning.agent_launch.failed", reason="unsupported_ulw_flag", **base_payload)
         return PlanAgentLaunchResult(status="failed", reason="unsupported_ulw_flag")
     if not created_worktrees:
@@ -3094,6 +3198,7 @@ def _run_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
         )
     else:
         submit_error = _submit_prompt_workflow_step(
@@ -3206,6 +3311,7 @@ def _run_review_surface_bootstrap(
             workspace_id=workspace_id,
             surface_id=surface_id,
             prompt_text=prompt_text,
+            cli=launch_config.cli,
             failure_event="dashboard.review_tab.failed",
         )
     return _submit_prompt_workflow_step(
@@ -3678,6 +3784,7 @@ def _submit_direct_prompt_workflow_step(
     workspace_id: str,
     surface_id: str,
     prompt_text: str,
+    cli: str = "",
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     paste_error = _paste_surface_text(
@@ -3689,13 +3796,27 @@ def _submit_direct_prompt_workflow_step(
     )
     if paste_error is not None:
         return paste_error
-    return _send_surface_key(
+    enter_error = _send_surface_key(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         key="enter",
         failure_event=failure_event,
     )
+    if enter_error is not None:
+        return enter_error
+    if str(cli).strip().lower() != "opencode":
+        return None
+    accepted = _wait_for_surface_prompt_accepted(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cli=cli,
+        prompt_text=prompt_text,
+    )
+    if not accepted.ready:
+        return _format_ai_cli_ready_failure(accepted)
+    return None
 
 
 def _queue_codex_workflow_steps(
@@ -5275,6 +5396,31 @@ def _wait_for_tmux_prompt_accepted(
     last_screen = ""
     while time.monotonic() < deadline:
         last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
+        if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
+            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return AiCliReadyResult(
+        ready=False,
+        reason="opencode_prompt_accept_timeout",
+        screen_excerpt=_screen_excerpt(last_screen),
+    )
+
+
+def _wait_for_surface_prompt_accepted(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cli: str,
+    prompt_text: str,
+) -> AiCliReadyResult:
+    normalized_cli = str(cli).strip().lower()
+    if normalized_cli != "opencode":
+        return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
+    while time.monotonic() < deadline:
+        last_screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
             return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)

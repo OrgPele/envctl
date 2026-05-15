@@ -114,7 +114,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
     - `--cmux`: envctl opens a cmux surface, launches the selected CLI, and submits the workflow there
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
-    - `--tmux --opencode`: envctl creates or reuses the tmux session/window itself, launches OpenCode, and prepends `/ulw-loop` to the first submitted prompt by default
+    - `--cmux --opencode` / `--tmux --opencode`: envctl launches OpenCode, submits the rendered prompt body directly, and prepends `/ulw-loop` to the first submitted prompt by default
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
     - `--omx --ultragoal`: same OMX-managed launch, but the first submitted prompt enters the Ultragoal workflow
     - `--omx --ralph`: same OMX-managed launch, but the first submitted prompt enters the Ralph compatibility workflow

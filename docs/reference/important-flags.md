@@ -68,9 +68,9 @@ pass `--interactive` only when you want prompts.
 | `--keep-plan` | Keep planning files in place after execution. |
 | `--cmux` | For `--plan`, explicitly launch the implementation prompt workflow in a cmux surface. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
-| `--opencode` | With `--plan --cmux` or `--plan --tmux`, launch OpenCode instead of Codex. Without `--cmux`, `--opencode` keeps the existing tmux direct-prompt behavior. |
-| `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
-| `--new-worktree` | For AI-driven `--plan` launches, create the next implementation worktree for the selected plan and launch a fresh AI session there. This explicit flag also enables cmux plan-agent launch when no tmux/OMX transport is selected. |
+| `--opencode` | With `--plan`, launch OpenCode instead of Codex on the selected/default cmux or tmux transport. |
+| `--ulw` | With `--plan --opencode` on cmux or tmux, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode direct-prompt launches. |
+| `--new-worktree` | For AI-driven `--plan` launches, create the next implementation worktree for the selected plan and launch a fresh AI session there. When no transport is selected, Linux defaults to tmux; other hosts prefer cmux and fall back to tmux when cmux is not installed. |
 | `--new-session` / `--fresh-session` | For AI-driven `--plan` launches, create a fresh AI terminal session/surface for the selected worktree(s) instead of reusing or attaching to an existing one. This is implied by `--new-worktree` and works with cmux, tmux, and OMX launch surfaces. |
 | `--tmux-new-session` | Deprecated compatibility alias for `--new-worktree`. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly; envctl selects a deterministic OMX state root under the worktree so prompt handoff remains discoverable when OMX boxes unsafe runtime state. |

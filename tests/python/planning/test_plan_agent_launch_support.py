@@ -172,21 +172,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.reason, "disabled")
             self.assertEqual(rt.process_runner.calls, [])
 
-    def test_new_worktree_flag_enables_default_cmux_launch_config(self) -> None:
+    def test_new_worktree_flag_enables_default_cmux_launch_config_on_macos(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
             rt = self._runtime(repo, runtime)
 
-            launch_config = launch_support.resolve_plan_agent_launch_config(
-                rt.config,
-                rt.env,
-                route=parse_route(["--plan", "feature-a", "--new-worktree"], env={}),
-            )
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "darwin"):
+                launch_config = launch_support.resolve_plan_agent_launch_config(
+                    rt.config,
+                    rt.env,
+                    route=parse_route(["--plan", "feature-a", "--new-worktree"], env={}),
+                )
 
             self.assertTrue(launch_config.enabled)
             self.assertEqual(launch_config.transport, "cmux")
+            self.assertEqual(launch_config.cli, "codex")
+
+    def test_new_worktree_flag_defaults_to_tmux_on_linux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "linux"):
+                launch_config = launch_support.resolve_plan_agent_launch_config(
+                    rt.config,
+                    rt.env,
+                    route=parse_route(["--plan", "feature-a", "--new-worktree"], env={}),
+                )
+
+            self.assertTrue(launch_config.enabled)
+            self.assertEqual(launch_config.transport, "tmux")
             self.assertEqual(launch_config.cli, "codex")
 
     def test_cmux_opencode_route_uses_cmux_transport(self) -> None:
@@ -205,6 +224,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertTrue(launch_config.enabled)
             self.assertEqual(launch_config.transport, "cmux")
             self.assertEqual(launch_config.cli, "opencode")
+            self.assertTrue(launch_config.direct_prompt_enabled)
+            self.assertTrue(launch_config.ulw_loop_prefix)
 
     def test_enabled_feature_without_created_worktrees_returns_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -243,7 +264,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn("Plan agent launch skipped", buffer.getvalue())
             self.assertEqual(rt.process_runner.calls, [])
 
-    def test_missing_cmux_executable_returns_failed(self) -> None:
+    def test_explicit_cmux_route_with_missing_cmux_executable_returns_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -260,12 +281,44 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             result = launch_plan_agent_terminals(
                 rt,
-                route=parse_route(["--plan", "feature-a"], env={}),
+                route=parse_route(["--plan", "feature-a", "--cmux"], env={}),
                 created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
             )
 
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.reason, "missing_executables")
+            self.assertEqual(rt.process_runner.calls, [])
+
+    def test_default_cmux_route_with_missing_cmux_executable_falls_back_to_tmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "CMUX_WORKSPACE_ID": "workspace:7",
+                },
+            )
+            rt._command_exists = lambda command: command in {"codex", "tmux", "zsh"}  # type: ignore[assignment]
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "darwin"),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._launch_plan_agent_tmux_terminals",
+                    return_value=launch_support.PlanAgentLaunchResult(status="launched", reason="launched"),
+                ) as tmux_launch,
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertEqual(tmux_launch.call_args.kwargs["launch_config"].transport, "tmux")
             self.assertEqual(rt.process_runner.calls, [])
 
     def test_missing_selected_ai_cli_returns_failed(self) -> None:
@@ -457,7 +510,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.cli, "opencode")
         self.assertTrue(launch_config.enabled)
 
-    def test_resolve_plan_agent_launch_config_treats_explicit_opencode_as_tmux_launch(self) -> None:
+    def test_plan_agent_launch_prereqs_fall_back_to_tmux_when_default_cmux_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -469,23 +522,62 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 }
             )
 
-            launch_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-            )
-            prereqs = launch_support.plan_agent_launch_prereq_commands(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "darwin"):
+                prereqs = launch_support.plan_agent_launch_prereq_commands(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--new-worktree"], env={}),
+                    command_exists=lambda command: command in {"tmux", "codex"},
+                )
+
+        self.assertEqual(prereqs, ("tmux", "codex"))
+
+    def test_resolve_plan_agent_launch_config_uses_host_default_for_bare_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
             )
 
-        self.assertEqual(launch_config.transport, "tmux")
-        self.assertEqual(launch_config.cli, "opencode")
-        self.assertTrue(launch_config.enabled)
-        self.assertTrue(launch_config.direct_prompt_enabled)
-        self.assertTrue(launch_config.ulw_loop_prefix)
-        self.assertEqual(prereqs, ("tmux", "opencode"))
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "darwin"):
+                darwin_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
+                darwin_prereqs = launch_support.plan_agent_launch_prereq_commands(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
+            with patch("envctl_engine.planning.plan_agent_launch_support.sys.platform", "linux"):
+                linux_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
+                linux_prereqs = launch_support.plan_agent_launch_prereq_commands(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
+
+        self.assertEqual(darwin_config.transport, "cmux")
+        self.assertEqual(darwin_config.cli, "opencode")
+        self.assertTrue(darwin_config.enabled)
+        self.assertTrue(darwin_config.direct_prompt_enabled)
+        self.assertTrue(darwin_config.ulw_loop_prefix)
+        self.assertEqual(darwin_prereqs, ("cmux", "opencode"))
+        self.assertEqual(linux_config.transport, "tmux")
+        self.assertEqual(linux_config.cli, "opencode")
+        self.assertTrue(linux_config.direct_prompt_enabled)
+        self.assertTrue(linux_config.ulw_loop_prefix)
+        self.assertEqual(linux_prereqs, ("tmux", "opencode"))
 
     def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -534,9 +626,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             launch_config = launch_support.resolve_plan_agent_launch_config(
                 config,
                 {},
-                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw"], env={}),
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--ulw"], env={}),
             )
 
+        self.assertEqual(launch_config.transport, "cmux")
         self.assertTrue(launch_config.direct_prompt_enabled)
         self.assertTrue(launch_config.ulw_loop_prefix)
 
@@ -1712,7 +1805,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         omx_workflow=workflow_name,
                         codex_goal_enable=False,
                     )
-                    workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+                    workflow = _build_plan_agent_workflow(
+                        cli="codex",
+                        preset="implement_task",
+                        codex_cycles=0,
+                        browser_e2e_followup_enable=False,
+                        pr_review_comments_followup_enable=False,
+                    )
                     submitted_prompts: list[str] = []
 
                     with (
@@ -4831,11 +4930,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
+            installed_prompt = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
             repo.mkdir(parents=True, exist_ok=True)
+            installed_prompt.parent.mkdir(parents=True, exist_ok=True)
+            installed_prompt.write_text("Implement this directly.\n", encoding="utf-8")
             rt = self._runtime(
                 repo,
                 runtime,
                 env={
+                    "HOME": tmpdir,
+                    "CMUX": "true",
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CLI": "opencode",
                     "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "false",
@@ -4868,25 +4972,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout=(
-                            "  ┃ /implement_task                                                   ┃\n"
-                            "  ┃ /implement_task.bak-20260313-192914                               ┃\n"
-                            "  ┃ /implement_task.bak-20260315-173140                               ┃\n"
-                            "  ┃                                                                 \n"
-                            "  ┃  /implement_task                                                 \n"
-                        ),
-                        stderr="",
-                    ),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
-                    subprocess.CompletedProcess(
-                        args=["cmux"],
-                        returncode=0,
-                        stdout=(
-                            "  ┃                                                                 \n"
-                            "  ┃  /implement_task                                                 \n"
-                            "  ┃                                                                 \n"
-                            "  ┃  Sisyphus (Ultraworker)                                          \n"
-                        ),
+                        stdout='  ┃  Ask anything... "Fix broken tests"\n  ctrl+p commands\n  ~/repo  ⊙ 3 MCP /status    1.2.27\n',
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
@@ -4915,17 +5001,26 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "/implement_task"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-12"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertEqual(str(direct_prompt_calls[0][-1]), "/ulw-loop Implement this directly.")
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
             self.assertEqual(_ImmediateThread.created[0].daemon, False)
-            self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
+            self.assertIn(
+                ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:8", "--surface", "surface:12"],
+                rt.process_runner.calls,
+            )
             self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 3)
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
                     ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
                 ),
-                2,
+                3,
             )
             self.assertNotIn(
                 ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "tab"],
@@ -4977,6 +5072,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_picker_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent_launch_support._wait_for_prompt_submit_ready", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_surface_prompt_accepted",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="prompt_accepted"),
+                ),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -6035,19 +6134,19 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            direct_prompt = str(direct_prompt_calls[0][-1])
+            self.assertTrue(direct_prompt.startswith("/ulw-loop "))
+            self.assertIn(f'Review bundle: "{review_bundle}"', direct_prompt)
+            self.assertIn(f'Worktree directory: "{project_root}"', direct_prompt)
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}"', direct_prompt)
             self.assertIn(
-                [
-                    "cmux",
-                    "send",
-                    "--workspace",
-                    "workspace:9",
-                    "--surface",
-                    "surface:15",
-                    "/review_worktree_imp Project: feature-a-1\n"
-                    f'Review bundle: "{review_bundle}"\n'
-                    f'Worktree directory: "{project_root}"\n'
-                    f'Original plan file: "{original_plan.resolve()}"',
-                ],
+                ["cmux", "paste-buffer", "--name", "envctl-surface-15", "--workspace", "workspace:9", "--surface", "surface:15"],
                 rt.process_runner.calls,
             )
 
@@ -6093,6 +6192,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 patch("envctl_engine.planning.plan_agent_launch_support.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent_launch_support.threading.Thread", _ImmediateThread),
                 patch("envctl_engine.planning.plan_agent_launch_support._wait_for_cli_ready", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_surface_prompt_accepted",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="prompt_accepted"),
+                ),
             ):
                 _ImmediateThread.created = []
                 result = launch_support.launch_review_agent_terminal(

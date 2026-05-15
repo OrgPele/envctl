@@ -50,7 +50,13 @@ def check_prereqs(
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
     if route.command == "plan" and not bool(route.flags.get("planning_prs")):
-        required_tools.update(plan_agent_launch_prereq_commands(config, route=route))
+        required_tools.update(
+            plan_agent_launch_prereq_commands(
+                config,
+                route=route,
+                command_exists=lambda command: shutil.which(command) is not None,
+            )
+        )
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"
