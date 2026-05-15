@@ -512,7 +512,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
         self.assertIn("timed out acquiring Supabase compose lock after 1.0s", result or "")
         self.assertIn("busy", result or "")
 
-    def test_supabase_compose_up_fails_fast_when_docker_never_publishes_probe_port(self) -> None:
+    def test_supabase_compose_up_reports_unpublished_probe_port_after_timeout(self) -> None:
         runner = _FakeRunner()
         runner.wait_for_port_result = False
         runner.compose_up_process = lambda *args, **kwargs: _FakeComposeProcess(returncode=None)  # type: ignore[method-assign]
@@ -536,7 +536,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 compose_root=root,
                 compose_project_name="envctl-supabase-test",
                 compose_path=compose_path,
-                env={"ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1"},
+                env={"ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5"},
                 args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
             )
 
@@ -565,10 +565,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
                 compose_root=root,
                 compose_project_name="envctl-supabase-test",
                 compose_path=compose_path,
-                env={
-                    "ENVCTL_SUPABASE_COMPOSE_PORT_PUBLISH_STALL_SECONDS": "1",
-                    "ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5",
-                },
+                env={"ENVCTL_SUPABASE_COMPOSE_UP_TIMEOUT_SECONDS": "5"},
                 args=["up", "-d", "supabase-db", "supabase-auth", "supabase-kong"],
             )
 

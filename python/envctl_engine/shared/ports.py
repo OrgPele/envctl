@@ -424,12 +424,16 @@ class PortPlanner:
         if mode == "lock_only":
             return True
         if mode == "listener_query":
-            return self._is_port_available_via_listener_query(port)
+            host_available = self._is_port_available_via_listener_query(port)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
         if mode == "socket_bind":
-            return self._is_port_available_via_socket_bind(port, allow_permission_fallback=False)
+            host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=False)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
         if mode == "auto":
-            return self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
-        return self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+            host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
+        host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+        return host_available and self._is_port_available_via_docker_publish_filter(port)
 
     def _is_port_available_via_socket_bind(self, port: int, *, allow_permission_fallback: bool = True) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -458,6 +462,37 @@ class PortPlanner:
             return not bool(completed.stdout.strip())
         # lsof returns non-zero when no matches exist.
         return True
+
+    def _is_port_available_via_docker_publish_filter(self, port: int) -> bool:
+        docker_bin = shutil.which("docker")
+        if docker_bin is None:
+            return True
+        timeout_raw = os.environ.get("ENVCTL_PORT_AVAILABILITY_DOCKER_TIMEOUT_SECONDS")
+        try:
+            timeout_seconds = max(0.2, float(timeout_raw)) if timeout_raw is not None else 2.0
+        except ValueError:
+            timeout_seconds = 2.0
+        try:
+            completed = subprocess.run(
+                [
+                    docker_bin,
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"publish={port}",
+                    "--format",
+                    "{{.ID}}",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        if completed.returncode != 0:
+            return True
+        return not bool(completed.stdout.strip())
 
     def _emit(self, event_name: str, **payload: object) -> None:
         if self.event_handler is None:
